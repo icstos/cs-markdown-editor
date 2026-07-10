@@ -27,6 +27,7 @@ from styles import (
     C_TEXT,
     FONT_MAIN,
     FONT_MONO,
+    measure_text_width,
     prefix_style,
     segment_style,
 )
@@ -71,9 +72,17 @@ def active_text_field(
     base_size: int,
     multiline: bool = False,
 ) -> ft.TextField:
-    """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。"""
+    """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。
+
+    单行段：依据本地字体测量文本宽度，让 TextField 恰好包裹文本内容
+    （Typora 式最小编辑块），避免撑满整行破坏阅读节奏。
+    多行代码块：保持块级宽度，由父容器决定。
+    """
     is_code = seg.seg_type in (SEG_CODESPAN, SEG_CODE)
-    return ft.TextField(
+    font_family = FONT_MONO if is_code else FONT_MAIN
+    text_size = base_size if not is_code else max(base_size - 1, 12)
+
+    kwargs: dict = dict(
         value=draft,
         autofocus=True,
         multiline=multiline,
@@ -84,9 +93,9 @@ def active_text_field(
         filled=True,
         fill_color=C_ACTIVE_BG,
         content_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
-        text_size=base_size if not is_code else max(base_size - 1, 12),
+        text_size=text_size,
         text_style=ft.TextStyle(
-            font_family=FONT_MONO if is_code else FONT_MAIN,
+            font_family=font_family,
             color=C_TEXT,
         ),
         cursor_color=C_TEXT,
@@ -96,3 +105,11 @@ def active_text_field(
         on_submit=lambda e: on_submit(e.control.value),
         on_blur=lambda e: on_blur(),
     )
+
+    if not multiline:
+        # 文本像素宽 + 内边距(左右各4) + 光标/子像素余量；空文本给最小宽避免坍缩
+        text_w = measure_text_width(draft or "", font_family, text_size)
+        field_w = max(text_w + 8 + 6, 24)
+        kwargs["width"] = field_w
+
+    return ft.TextField(**kwargs)

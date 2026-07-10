@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import os
+
 import flet as ft
+from PIL import ImageFont as _PILImageFont
 
 from models import (
     BLOCK_CODE,
@@ -106,3 +109,43 @@ def only_border(*, top=None, bottom=None, left=None, right=None) -> ft.Border:
         bottom=bottom or _NO_BORDER,
         left=left or _NO_BORDER,
     )
+
+
+# ---------------------------------------------------------------------------
+# 文本宽度测量：基于本地字体精确计算像素宽度，用于编辑块宽度自适应。
+# 用 Pillow 的 FreeType 渲染器加载 .otf/.ttf，getlength 返回文本 advance 宽度，
+# 精度远高于“字符数 × 平均字宽”估算，能贴合 Flet 渲染逻辑像素。
+# ---------------------------------------------------------------------------
+
+_FONT_FILES = {
+    FONT_MAIN: os.path.join(
+        os.path.dirname(__file__), "assets", "fonts", "AlibabaPuHuiTi-3-55-Regular.otf"
+    ),
+    FONT_MONO: r"C:\Windows\Fonts\consola.ttf",  # 代码段等宽回退字体
+}
+_font_cache: dict[tuple[str, int], _PILImageFont.FreeTypeFont] = {}
+
+
+def _get_font(font_family: str, size: int) -> _PILImageFont.FreeTypeFont:
+    """按 (字体族, 字号) 缓存加载 ImageFont，避免重复磁盘 IO。"""
+    key = (font_family, size)
+    f = _font_cache.get(key)
+    if f is None:
+        path = _FONT_FILES.get(font_family)
+        try:
+            f = _PILImageFont.truetype(path, size) if path else _PILImageFont.load_default()
+        except OSError:
+            f = _PILImageFont.load_default()
+        _font_cache[key] = f
+    return f
+
+
+def measure_text_width(text: str, font_family: str, size: int) -> float:
+    """测量文本在指定字体/字号下的像素宽度。
+
+    返回值约为 Flet 逻辑像素宽度（桌面端 1.0 缩放下与渲染一致）。
+    """
+    if not text:
+        return 0.0
+    # Pillow getlength 逐字形累加 advance，最接近实际渲染宽度
+    return _get_font(font_family, size).getlength(text)

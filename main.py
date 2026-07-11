@@ -256,6 +256,7 @@ def App():
             expand=True,
         ),
         on_key_down=on_key,
+        expand=True,
     )
 
 
@@ -269,6 +270,7 @@ async def main(page: ft.Page):
             surface=ft.Colors.WHITE,
         ),
     )
+    page.scroll = ft.ScrollMode.AUTO
     page.bgcolor = ft.Colors.WHITE
     page.window.width = 960
     page.window.height = 720

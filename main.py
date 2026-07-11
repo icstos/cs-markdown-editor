@@ -21,18 +21,26 @@ _SAMPLE = """# Markdown 编辑器
 基于 Flet 0.85.3 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
 
 ## 特性
-
-- 所见即所得：**加粗**、*斜体*、`行内代码`、~~删除线~~、[链接](https://flet.dev)
+- 所见即所得
+- 内联格式：**加粗**、*斜体*、`行内代码`、~~删除线~~、[链接](https://flet.dev)、$a=b+c$
 - 段级编辑：点击任意段即显示其最小语法，其余保持渲染样式
 - 三级状态：文档 / 行 / 文本段
 - 支持 `代码块`、列表、引用、分隔线
 
+### 列表
+
+- 无序列表项一
+- 无序列表项二
+
+1. 有序列表项一
+2. 有序列表项二
 > 这是一段引用文字，左侧有边框、文字柔和。
 
 ```python
 def greet(name: str) -> str:
     return f"hello, {name}"
 ```
+
 
 ---
 
@@ -153,20 +161,29 @@ def App():
         nav = nav_ref.current
         if nav and nav.get("active") is not None:
             if norm == "home":
-                nav["move_home"](); return
+                nav["move_home"]()
+                return
             if norm == "end":
-                nav["move_end"](); return
+                nav["move_end"]()
+                return
             if norm == "arrowup":
-                nav["move_up"](); return
+                nav["move_up"]()
+                return
             if norm == "arrowdown":
-                nav["move_down"](); return
+                nav["move_down"]()
+                return
             # 左右越界：光标已 collapsed 在边界时才跨段，否则让 TextField 自行移动
             if norm == "arrowleft":
                 if nav["extent"] == 0 and nav["base"] == 0:
-                    nav["move_left"](); return
+                    nav["move_left"]()
+                    return
             if norm == "arrowright":
-                if nav["extent"] == nav["draft_len"] and nav["base"] == nav["draft_len"]:
-                    nav["move_right"](); return
+                if (
+                    nav["extent"] == nav["draft_len"]
+                    and nav["base"] == nav["draft_len"]
+                ):
+                    nav["move_right"]()
+                    return
 
         if not ctrl:
             return

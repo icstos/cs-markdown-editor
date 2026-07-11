@@ -27,6 +27,8 @@ C_LINK = "#1677FF"
 C_CODE_BG = "#F2F3F5"
 C_CODE_FG = "#C7254E"
 C_STRIKE = "#8A919E"
+C_MATH_FG = "#C41E7A"  # 公式文字（深粉）
+C_MATH_BG = "#FAF0F5"  # 公式背景（浅粉）
 C_QUOTE_FG = "#595959"
 C_QUOTE_BAR = "#D9D9D9"
 C_CODE_BLOCK_BG = "#F6F8FA"
@@ -62,6 +64,14 @@ def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
     if t == SegType.STRIKE:
         return ft.TextStyle(
             size=base_size, color=C_STRIKE, decoration=ft.TextDecoration.LINE_THROUGH
+        )
+    if t == SegType.INLINE_MATH:
+        return ft.TextStyle(
+            size=base_size - 1,
+            color=C_MATH_FG,
+            bgcolor=C_MATH_BG,
+            font_family=FONT_MONO,
+            italic=True,
         )
     if t == SegType.CODESPAN:
         return ft.TextStyle(
@@ -125,7 +135,11 @@ def _get_font(font_family: str, size: int) -> _PILImageFont.FreeTypeFont:
     if f is None:
         path = _FONT_FILES.get(font_family)
         try:
-            f = _PILImageFont.truetype(path, size) if path else _PILImageFont.load_default()
+            f = (
+                _PILImageFont.truetype(path, size)
+                if path
+                else _PILImageFont.load_default()
+            )
         except OSError:
             f = _PILImageFont.load_default()
         _font_cache[key] = f

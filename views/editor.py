@@ -36,6 +36,8 @@ def _inline_content(line: Line) -> str:
         return line.segments[0].text if line.segments else ""
     if line.block_type == BlockType.HR:
         return ""
+    if line.block_type == BlockType.MATH:
+        return line.segments[0].text if line.segments else ""
     return "".join(
         s.raw
         for s in line.segments
@@ -108,6 +110,10 @@ def MarkdownEditor(
             lang = line.lang
             full = f"```{lang}\n{code}\n```" if code else f"```{lang}\n```"
             parser.reparse_line(line, full)
+        elif line.block_type == BlockType.MATH:
+            formula = raw.strip()
+            full = f"$${formula}$$" if formula else "$$$$"
+            parser.reparse_line(line, full)
         elif line.block_type == BlockType.HR:
             parser.reparse_line(line, raw if raw.strip() else "---")
         else:
@@ -149,7 +155,7 @@ def MarkdownEditor(
             return
         line = document.lines[li]
         # 代码块/分隔线：左右在块内移动，不跨段
-        if line.block_type in (BlockType.CODE, BlockType.HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
             return
         if si > 0:
             _goto(li, si - 1)
@@ -164,7 +170,7 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
             return
         if si < len(line.segments) - 1:
             _goto(li, si + 1)
@@ -179,7 +185,7 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
             return
         _goto(li, 0)
 
@@ -191,7 +197,7 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
             return
         _goto(li, max(0, len(line.segments) - 1))
 
@@ -364,6 +370,10 @@ def MarkdownEditor(
             lang = line.lang
             full = f"```{lang}\n{draft_val}\n```" if draft_val else f"```{lang}\n```"
             parser.reparse_line(line, full)
+        elif line.block_type == BlockType.MATH:
+            formula = draft_val.strip()
+            full = f"$${formula}$$" if formula else "$$$$"
+            parser.reparse_line(line, full)
         elif line.block_type != BlockType.HR:
             if si < len(line.segments):
                 line.segments[si].raw = draft_val
@@ -379,7 +389,7 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
             return
         if si >= len(line.segments):
             return
@@ -407,7 +417,7 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
             return
         if si >= len(line.segments):
             return
@@ -484,7 +494,9 @@ def MarkdownEditor(
                 on_toggle_raw=toggle_raw,
                 raw_mode=raw_mode,
             ),
-            _raw_editor() if raw_mode else ft.Container(
+            _raw_editor()
+            if raw_mode
+            else ft.Container(
                 content=ft.ListView(
                     controls=line_controls,
                     expand=True,

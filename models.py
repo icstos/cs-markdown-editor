@@ -27,6 +27,7 @@ class SegType(StrEnum):
     LINK = "link"  # [文本](url)
     IMAGE = "image"  # ![alt](url)
     STRIKE = "strikethrough"  # ~~删除线~~
+    INLINE_MATH = "inline_math"  # $...$ 行内公式
 
     # 块级前缀段（也作为 Segment，统一参与"点击即编辑"）
     HEADING_PREFIX = "heading_prefix"  # "# " ~ "###### "
@@ -35,6 +36,8 @@ class SegType(StrEnum):
 
     # 代码块整段（一个代码块作为一个编辑单元）
     CODE = "code"
+    # 行间公式整段（$$...$$ 作为一个编辑单元）
+    MATH = "math"
 
 
 class BlockType(StrEnum):
@@ -47,6 +50,7 @@ class BlockType(StrEnum):
     QUOTE = "quote"
     CODE = "code_block"
     HR = "hr"
+    MATH = "math"  # $$...$$ 行间公式
     BLANK = "blank"
 
 

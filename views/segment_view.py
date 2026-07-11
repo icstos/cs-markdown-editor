@@ -24,7 +24,11 @@ from styles import (
 
 def _display_text(seg: Segment) -> str:
     """渲染态展示文本。"""
-    if seg.seg_type in (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX):
+    if seg.seg_type in (
+        SegType.HEADING_PREFIX,
+        SegType.LIST_PREFIX,
+        SegType.QUOTE_PREFIX,
+    ):
         return seg.raw
     if seg.seg_type == SegType.IMAGE:
         return seg.text or "🖼"
@@ -40,7 +44,11 @@ def segment_to_span(
     base_size: int,
 ) -> ft.TextSpan:
     """渲染态：段 -> TextSpan（可点击激活）。"""
-    if seg.seg_type in (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX):
+    if seg.seg_type in (
+        SegType.HEADING_PREFIX,
+        SegType.LIST_PREFIX,
+        SegType.QUOTE_PREFIX,
+    ):
         style = prefix_style(seg, base_size)
     else:
         style = segment_style(seg, base_size)
@@ -78,9 +86,14 @@ def active_text_field(
     - ignore_up_down_keys：单行段置 True，让上下键冒泡到外层做跨行；
       多行代码块保持 False，让上下键在块内移动光标。
     """
-    is_code = seg.seg_type in (SegType.CODESPAN, SegType.CODE)
-    font_family = FONT_MONO if is_code else FONT_MAIN
-    text_size = base_size if not is_code else max(base_size - 1, 12)
+    is_mono = seg.seg_type in (
+        SegType.CODESPAN,
+        SegType.CODE,
+        SegType.INLINE_MATH,
+        SegType.MATH,
+    )
+    font_family = FONT_MONO if is_mono else FONT_MAIN
+    text_size = base_size if not is_mono else max(base_size - 1, 12)
 
     sel = (
         ft.TextSelection(base_offset=initial_cursor, extent_offset=initial_cursor)

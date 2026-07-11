@@ -33,17 +33,37 @@ _RE_QUOTE = re.compile(r"^>\s?(.*)$")
 _RE_HR = re.compile(r"^(\s*)([-*_])\2\2+\s*$")  # --- ** ___ 等
 _RE_CODE_FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([\w+-]*)\s*$")
 _RE_TASK = re.compile(r"^(\s*)([-*+])\s+\[( |x|X)\]\s+(.*)$")
+_RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)  # $$...$$ 行间公式
+_RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")  # $...$ 行内公式
 
 
 # ---------------------------------------------------------------------------
 # 行内解析
 # ---------------------------------------------------------------------------
+def _split_inline_math(text: str) -> list[Segment]:
+    """把文本中的 $...$ 提取为行内公式段，其余保留为纯文本段。"""
+    parts: list[Segment] = []
+    last = 0
+    for m in _RE_INLINE_MATH.finditer(text):
+        start, end = m.span()
+        if start > last:
+            parts.append(Segment(SegType.TEXT, text[last:start], text[last:start]))
+        formula = m.group(1)
+        parts.append(Segment(SegType.INLINE_MATH, f"${formula}$", formula))
+        last = end
+    if last < len(text):
+        parts.append(Segment(SegType.TEXT, text[last:], text[last:]))
+    return parts if parts else [Segment(SegType.TEXT, text, text)]
+
+
 def _token_to_segments(tok: dict) -> list[Segment]:
     """把一个行内 AST 节点转成 Segment 列表。"""
     t = tok.get("type")
     if t == SegType.TEXT.value:
         raw = tok.get("raw", "")
-        return [Segment(SegType.TEXT, raw, raw)] if raw else []
+        if not raw:
+            return []
+        return _split_inline_math(raw)
     if t == "softbreak":
         return [Segment(SegType.TEXT, "\n", "\n")]
     if t == "linebreak":
@@ -124,7 +144,10 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
 
     m = _RE_HEADING.match(raw)
     if m:
-        return BlockType.HEADING, {"level": len(m.group(1)), "content": m.group(2).strip()}
+        return BlockType.HEADING, {
+            "level": len(m.group(1)),
+            "content": m.group(2).strip(),
+        }
 
     m = _RE_TASK.match(raw)
     if m:
@@ -159,6 +182,10 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     m = _RE_HR.match(raw)
     if m:
         return BlockType.HR, {}
+
+    m = _RE_MATH_BLOCK.match(raw)
+    if m:
+        return BlockType.MATH, {"content": m.group(1).strip()}
 
     return BlockType.PARAGRAPH, {"content": raw}
 
@@ -205,6 +232,11 @@ def _build_line(raw: str) -> Line:
 
     if bt == BlockType.HR:
         line.segments = [Segment(SegType.TEXT, "---", "---")]
+        return line
+
+    if bt == BlockType.MATH:
+        content = info["content"]
+        line.segments = [Segment(SegType.MATH, content, content)]
         return line
 
     # paragraph
@@ -287,6 +319,15 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
 
     if line.block_type == BlockType.HR:
         line.segments = [Segment(SegType.TEXT, raw, raw)]
+        return
+
+    if line.block_type == BlockType.MATH:
+        m = _RE_MATH_BLOCK.match(raw)
+        if m:
+            content = m.group(1).strip()
+            line.segments = [Segment(SegType.MATH, content, content)]
+        else:
+            line.segments = [Segment(SegType.MATH, raw, raw)]
         return
 
     rebuilt = _build_line(raw)

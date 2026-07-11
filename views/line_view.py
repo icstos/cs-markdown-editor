@@ -15,6 +15,7 @@ from models import BlockType, Line, SegType
 from styles import (
     C_CODE_BLOCK_BG,
     C_CODE_BLOCK_FG,
+    C_MATH_BG,
     C_MUTED,
     C_QUOTE_BAR,
     C_TEXT,
@@ -83,7 +84,12 @@ def LineView(
     if line.block_type == BlockType.BLANK or not _has_visible_text(line):
         if active_seg is not None:
             field = active_text_field(
-                line.segments[0], draft, on_change_draft, on_submit, on_blur, base,
+                line.segments[0],
+                draft,
+                on_change_draft,
+                on_submit,
+                on_blur,
+                base,
                 on_selection_change=on_selection_change,
                 initial_cursor=initial_cursor,
                 nav_seq=nav_seq,
@@ -109,7 +115,12 @@ def LineView(
     if line.block_type == BlockType.HR:
         if active_seg is not None:
             field = active_text_field(
-                line.segments[0], draft, on_change_draft, on_submit, on_blur, base,
+                line.segments[0],
+                draft,
+                on_change_draft,
+                on_submit,
+                on_blur,
+                base,
                 on_selection_change=on_selection_change,
                 initial_cursor=initial_cursor,
                 nav_seq=nav_seq,
@@ -180,6 +191,46 @@ def LineView(
             )
         return _wrap_block(content, line, base)
 
+    # ---- 行间公式：$$...$$ 用 ft.Markdown 渲染 LaTeX ----
+    if line.block_type == BlockType.MATH:
+        if active_seg == 0:
+            field = active_text_field(
+                line.segments[0],
+                draft,
+                on_change_draft,
+                on_submit,
+                on_blur,
+                base_size=16,
+                on_selection_change=on_selection_change,
+                initial_cursor=initial_cursor,
+                nav_seq=nav_seq,
+            )
+            content = ft.Container(
+                content=field,
+                bgcolor=C_MATH_BG,
+                border_radius=6,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+            )
+        else:
+            formula = line.segments[0].text if line.segments else ""
+            md = ft.Markdown(
+                value=f"$${formula}$$",
+                selectable=True,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+            )
+            content = ft.GestureDetector(
+                content=ft.Container(
+                    content=md,
+                    bgcolor=C_MATH_BG,
+                    border_radius=6,
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                    alignment=ft.alignment.center,
+                ),
+                on_tap=lambda: on_activate(line_idx, 0),
+                mouse_cursor=ft.MouseCursor.TEXT,
+            )
+        return _wrap_block(content, line, base)
+
     # ---- 普通块（段落 / 标题 / 列表 / 引用）----
     if active_seg is None:
         spans = _spans_for(line, 0, len(line.segments), activate, base)
@@ -209,7 +260,12 @@ def LineView(
         controls.append(ft.Text(spans=before_spans, style=line_style))
     controls.append(
         active_text_field(
-            active_seg_obj, draft, on_change_draft, on_submit, on_blur, base,
+            active_seg_obj,
+            draft,
+            on_change_draft,
+            on_submit,
+            on_blur,
+            base,
             on_selection_change=on_selection_change,
             initial_cursor=initial_cursor,
             nav_seq=nav_seq,

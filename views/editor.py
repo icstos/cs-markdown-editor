@@ -11,61 +11,42 @@ on_blur/on_submit 提交（reparse 该行）-> 重新渲染。结构变更通过
 `document.lines = 新列表` 触发 observable 通知。
 """
 
-from __future__ import annotations
-
 import re
-from typing import Callable, Optional
+from typing import Callable
 
 import flet as ft
 
-from models import (
-    BLOCK_CODE,
-    BLOCK_HR,
-    BLOCK_HEADING,
-    BLOCK_LIST_O,
-    BLOCK_LIST_UO,
-    BLOCK_PARAGRAPH,
-    BLOCK_QUOTE,
-    Document,
-    SEG_CODESPAN,
-    SEG_EMPHASIS,
-    SEG_HEADING_PREFIX,
-    SEG_LINK,
-    SEG_LIST_PREFIX,
-    SEG_QUOTE_PREFIX,
-    SEG_STRONG,
-    SEG_STRIKE,
-    SEG_TEXT,
-)
+from models import BlockType, Document, Line, SegType
 import parser
 from styles import C_BORDER, C_MUTED, C_TEXT, FONT_MAIN, only_border
 from views.line_view import LineView
 from views.toolbar import Toolbar
 
-_WRAP_MAP = {
-    SEG_STRONG: "**",
-    SEG_EMPHASIS: "*",
-    SEG_CODESPAN: "`",
-    SEG_STRIKE: "~~",
+_WRAP_MAP: dict[SegType, str] = {
+    SegType.STRONG: "**",
+    SegType.EMPHASIS: "*",
+    SegType.CODESPAN: "`",
+    SegType.STRIKE: "~~",
 }
 
 
-def _inline_content(line) -> str:
-    """取一行的“行内内容”源码（去掉块级前缀），用于块类型切换。"""
-    if line.block_type == BLOCK_CODE:
+def _inline_content(line: Line) -> str:
+    """取一行的"行内内容"源码（去掉块级前缀），用于块类型切换。"""
+    if line.block_type == BlockType.CODE:
         return line.segments[0].text if line.segments else ""
-    if line.block_type == BLOCK_HR:
+    if line.block_type == BlockType.HR:
         return ""
     return "".join(
         s.raw
         for s in line.segments
-        if s.seg_type not in (SEG_HEADING_PREFIX, SEG_LIST_PREFIX, SEG_QUOTE_PREFIX)
+        if s.seg_type
+        not in (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
     )
 
 
-def _next_line_raw(line) -> str:
+def _next_line_raw(line: Line) -> str:
     """回车续行：列表续列表（含任务/有序递增），否则空段落。"""
-    if line.block_type in (BLOCK_LIST_UO, BLOCK_LIST_O):
+    if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
         prefix = line.segments[0].raw if line.segments else "- "
         m = re.match(r"^([-*+])\s+\[[ xX]\]\s+", prefix)
         if m:
@@ -77,7 +58,7 @@ def _next_line_raw(line) -> str:
         if m:
             return f"{int(m.group(1)) + 1}. "
         return "- "
-    if line.block_type == BLOCK_QUOTE:
+    if line.block_type == BlockType.QUOTE:
         return "> "
     return ""
 
@@ -85,8 +66,8 @@ def _next_line_raw(line) -> str:
 @ft.component
 def MarkdownEditor(
     document: Document,
-    on_dirty_change: Optional[Callable[[bool], None]] = None,
-    nav_ref: Optional[object] = None,
+    on_dirty_change: Callable[[bool], None] | None = None,
+    nav_ref: ft.Ref | None = None,
 ):
     active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
     draft, set_draft = ft.use_state("")  # 当前编辑段文本
@@ -110,7 +91,7 @@ def MarkdownEditor(
         return ""
 
     # ---- 提交当前激活段 ----
-    def commit_active(new_raw: Optional[str] = None):
+    def commit_active(new_raw: str | None = None):
         if active is None:
             return
         li, si = active
@@ -119,12 +100,12 @@ def MarkdownEditor(
         line = document.lines[li]
         raw = new_raw if new_raw is not None else draft
 
-        if line.block_type == BLOCK_CODE:
+        if line.block_type == BlockType.CODE:
             code = raw
             lang = line.lang
             full = f"```{lang}\n{code}\n```" if code else f"```{lang}\n```"
             parser.reparse_line(line, full)
-        elif line.block_type == BLOCK_HR:
+        elif line.block_type == BlockType.HR:
             parser.reparse_line(line, raw if raw.strip() else "---")
         else:
             if si < len(line.segments):
@@ -165,7 +146,7 @@ def MarkdownEditor(
             return
         line = document.lines[li]
         # 代码块/分隔线：左右在块内移动，不跨段
-        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR):
             return
         if si > 0:
             _goto(li, si - 1)
@@ -180,7 +161,7 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR):
             return
         if si < len(line.segments) - 1:
             _goto(li, si + 1)
@@ -195,7 +176,7 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR):
             return
         _goto(li, 0)
 
@@ -207,11 +188,11 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR):
             return
         _goto(li, max(0, len(line.segments) - 1))
 
-    def _logical_offset(line, seg_idx: int, extent: int) -> int:
+    def _logical_offset(line: Line, seg_idx: int, extent: int) -> int:
         """行内逻辑字符偏移 = 前序段 raw 长度累加 + 段内偏移。"""
         off = 0
         for i in range(seg_idx):
@@ -219,7 +200,7 @@ def MarkdownEditor(
                 off += len(line.segments[i].raw)
         return off + extent
 
-    def _locate_seg_by_offset(line, target_off: int):
+    def _locate_seg_by_offset(line: Line, target_off: int) -> tuple[int, int]:
         """在行内找包含逻辑偏移 target_off 的 (段索引, 段内偏移)。"""
         acc = 0
         for i, seg in enumerate(line.segments):
@@ -279,7 +260,7 @@ def MarkdownEditor(
             return
         line = document.lines[li]
         # 代码块内回车：仅更新 draft（多行输入）
-        if line.block_type == BLOCK_CODE:
+        if line.block_type == BlockType.CODE:
             set_draft(new_raw)
             return
         commit_active(new_raw)
@@ -306,7 +287,7 @@ def MarkdownEditor(
         set_nav_seq(nav_seq + 1)
 
     # ---- 工具栏：块类型切换 ----
-    def set_block(block_type: str, level: int = 0):
+    def set_block(block_type: BlockType, level: int = 0):
         li = active[0] if active is not None else cursor_line
         if not (0 <= li < len(document.lines)):
             return
@@ -316,17 +297,17 @@ def MarkdownEditor(
             _commit_for_block(line, active, draft)
             set_active(None)
         content = _inline_content(line)
-        if block_type == BLOCK_HEADING:
+        if block_type == BlockType.HEADING:
             new_raw = "#" * level + " " + content
-        elif block_type == BLOCK_LIST_UO:
+        elif block_type == BlockType.LIST_UO:
             new_raw = "- " + content
-        elif block_type == BLOCK_LIST_O:
+        elif block_type == BlockType.LIST_O:
             new_raw = "1. " + content
-        elif block_type == BLOCK_QUOTE:
+        elif block_type == BlockType.QUOTE:
             new_raw = "> " + content
-        elif block_type == BLOCK_CODE:
+        elif block_type == BlockType.CODE:
             new_raw = "```\n" + content + "\n```"
-        elif block_type == BLOCK_HR:
+        elif block_type == BlockType.HR:
             new_raw = "---"
         else:
             new_raw = content
@@ -340,13 +321,13 @@ def MarkdownEditor(
         set_cursor_base(len(new_draft))
         set_nav_seq(nav_seq + 1)
 
-    def _commit_for_block(line, active_pair, draft_val):
+    def _commit_for_block(line: Line, active_pair: tuple[int, int], draft_val: str):
         li, si = active_pair
-        if line.block_type == BLOCK_CODE:
+        if line.block_type == BlockType.CODE:
             lang = line.lang
             full = f"```{lang}\n{draft_val}\n```" if draft_val else f"```{lang}\n```"
             parser.reparse_line(line, full)
-        elif line.block_type != BLOCK_HR:
+        elif line.block_type != BlockType.HR:
             if si < len(line.segments):
                 line.segments[si].raw = draft_val
             full = "".join(s.raw for s in line.segments)
@@ -354,14 +335,14 @@ def MarkdownEditor(
         mark_dirty()
 
     # ---- 工具栏：行内格式切换 ----
-    def toggle_inline(seg_type: str):
+    def toggle_inline(seg_type: SegType):
         if active is None:
             return
         li, si = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR):
             return
         if si >= len(line.segments):
             return
@@ -370,9 +351,9 @@ def MarkdownEditor(
         if wrap is None:
             return
         if seg.seg_type == seg_type:
-            seg.seg_type = SEG_TEXT
+            seg.seg_type = SegType.TEXT
             seg.raw = seg.text
-        elif seg.seg_type == SEG_TEXT:
+        elif seg.seg_type == SegType.TEXT:
             seg.seg_type = seg_type
             seg.raw = wrap + seg.text + wrap
         else:
@@ -389,17 +370,17 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+        if line.block_type in (BlockType.CODE, BlockType.HR):
             return
         if si >= len(line.segments):
             return
         seg = line.segments[si]
-        if seg.seg_type == SEG_LINK:
-            seg.seg_type = SEG_TEXT
+        if seg.seg_type == SegType.LINK:
+            seg.seg_type = SegType.TEXT
             seg.raw = seg.text
             seg.url = ""
-        elif seg.seg_type == SEG_TEXT:
-            seg.seg_type = SEG_LINK
+        elif seg.seg_type == SegType.TEXT:
+            seg.seg_type = SegType.LINK
             seg.url = "url"
             seg.raw = f"[{seg.text}]({seg.url})"
         else:
@@ -450,19 +431,19 @@ def MarkdownEditor(
     return ft.Column(
         controls=[
             Toolbar(
-                on_h1=lambda: set_block(BLOCK_HEADING, 1),
-                on_h2=lambda: set_block(BLOCK_HEADING, 2),
-                on_h3=lambda: set_block(BLOCK_HEADING, 3),
-                on_paragraph=lambda: set_block(BLOCK_PARAGRAPH),
-                on_list=lambda: set_block(BLOCK_LIST_UO),
-                on_quote=lambda: set_block(BLOCK_QUOTE),
-                on_code_block=lambda: set_block(BLOCK_CODE),
-                on_hr=lambda: set_block(BLOCK_HR),
-                on_bold=lambda: toggle_inline(SEG_STRONG),
-                on_italic=lambda: toggle_inline(SEG_EMPHASIS),
-                on_code=lambda: toggle_inline(SEG_CODESPAN),
+                on_h1=lambda: set_block(BlockType.HEADING, 1),
+                on_h2=lambda: set_block(BlockType.HEADING, 2),
+                on_h3=lambda: set_block(BlockType.HEADING, 3),
+                on_paragraph=lambda: set_block(BlockType.PARAGRAPH),
+                on_list=lambda: set_block(BlockType.LIST_UO),
+                on_quote=lambda: set_block(BlockType.QUOTE),
+                on_code_block=lambda: set_block(BlockType.CODE),
+                on_hr=lambda: set_block(BlockType.HR),
+                on_bold=lambda: toggle_inline(SegType.STRONG),
+                on_italic=lambda: toggle_inline(SegType.EMPHASIS),
+                on_code=lambda: toggle_inline(SegType.CODESPAN),
                 on_link=toggle_link,
-                on_strike=lambda: toggle_inline(SEG_STRIKE),
+                on_strike=lambda: toggle_inline(SegType.STRIKE),
             ),
             ft.Container(
                 content=ft.ListView(
@@ -481,7 +462,7 @@ def MarkdownEditor(
     )
 
 
-def _status_bar(document) -> ft.Control:
+def _status_bar(document: Document) -> ft.Control:
     return ft.Container(
         bgcolor=ft.Colors.with_opacity(0.02, C_TEXT),
         border=only_border(top=ft.BorderSide(1, C_BORDER)),

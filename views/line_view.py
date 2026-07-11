@@ -7,21 +7,11 @@
 特殊块（代码块 / 分隔线 / 空行）单独处理。
 """
 
-from __future__ import annotations
-
-from typing import Callable, Optional
+from typing import Callable
 
 import flet as ft
 
-from models import (
-    BLOCK_BLANK,
-    BLOCK_CODE,
-    BLOCK_HR,
-    BLOCK_LIST_O,
-    BLOCK_LIST_UO,
-    BLOCK_QUOTE,
-    Line,
-)
+from models import BlockType, Line, SegType
 from styles import (
     C_CODE_BLOCK_BG,
     C_CODE_BLOCK_FG,
@@ -43,7 +33,7 @@ def _spans_for(
     seg_to_excl: int,
     on_activate: Callable[[int], None],
     base_size: int,
-):
+) -> list[ft.TextSpan]:
     out = []
     for i in range(seg_from, seg_to_excl):
         if i < len(line.segments):
@@ -56,9 +46,9 @@ def _has_visible_text(line: Line) -> bool:
         if s.text or s.raw:
             # 前缀段 raw 非空也算可见
             if s.text or s.seg_type in (
-                "heading_prefix",
-                "list_prefix",
-                "quote_prefix",
+                SegType.HEADING_PREFIX,
+                SegType.LIST_PREFIX,
+                SegType.QUOTE_PREFIX,
             ):
                 return True
     return False
@@ -68,7 +58,7 @@ def _has_visible_text(line: Line) -> bool:
 def LineView(
     line: Line,
     line_idx: int,
-    active_seg: Optional[int],
+    active_seg: int | None,
     draft: str,
     on_activate: Callable[[int, int], None],
     on_change_draft: Callable[[str], None],
@@ -76,7 +66,7 @@ def LineView(
     on_submit: Callable[[str], None],
     on_blur: Callable[[], None],
     on_new_line_after: Callable[[int], None],
-    on_selection_change: Optional[Callable] = None,
+    on_selection_change: Callable | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
 ):
@@ -90,7 +80,7 @@ def LineView(
         on_activate(line_idx, seg_idx)
 
     # ---- 空行：可点击的空白区域 ----
-    if line.block_type == BLOCK_BLANK or not _has_visible_text(line):
+    if line.block_type == BlockType.BLANK or not _has_visible_text(line):
         content = ft.GestureDetector(
             content=ft.Container(
                 content=ft.Text(" ", size=base, height=1.6),
@@ -104,7 +94,7 @@ def LineView(
         return _wrap_block(content, line, base)
 
     # ---- 分隔线 ----
-    if line.block_type == BLOCK_HR:
+    if line.block_type == BlockType.HR:
         if active_seg is not None:
             field = active_text_field(
                 line.segments[0], draft, on_change_draft, on_submit, on_blur, base,
@@ -127,7 +117,7 @@ def LineView(
         return _wrap_block(content, line, base)
 
     # ---- 代码块：整段作为一个多行 TextField ----
-    if line.block_type == BLOCK_CODE:
+    if line.block_type == BlockType.CODE:
         if active_seg == 0:
             inner = active_text_field(
                 line.segments[0],
@@ -233,9 +223,9 @@ def _wrap_block(content: ft.Control, line: Line, base: int) -> ft.Control:
     border = None
     bgcolor = None
 
-    if line.block_type in (BLOCK_LIST_UO, BLOCK_LIST_O):
+    if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
         pad_left = line.level * 20
-    elif line.block_type == BLOCK_QUOTE:
+    elif line.block_type == BlockType.QUOTE:
         pad_left = 12
         border = only_border(left=ft.BorderSide(3, C_QUOTE_BAR))
         # 引用文本用更柔和的颜色：通过覆盖 content 实现（此处仅容器层面留边框）

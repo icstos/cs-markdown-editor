@@ -3,28 +3,14 @@
 集中管理颜色与排版，保证视图层声明式、无散落的魔法数字。
 """
 
-from __future__ import annotations
-
 import os
 
 import flet as ft
 from PIL import ImageFont as _PILImageFont
 
 from models import (
-    BLOCK_CODE,
-    BLOCK_HEADING,
-    BLOCK_HR,
-    BLOCK_LIST_O,
-    BLOCK_LIST_UO,
-    BLOCK_PARAGRAPH,
-    BLOCK_QUOTE,
-    SEG_CODESPAN,
-    SEG_EMPHASIS,
-    SEG_IMAGE,
-    SEG_LINK,
-    SEG_STRONG,
-    SEG_STRIKE,
-    SEG_TEXT,
+    BlockType,
+    SegType,
     Segment,
 )
 
@@ -51,17 +37,17 @@ C_TOOLBAR_BG = "#FAFBFC"
 C_BORDER = "#E5E6EB"
 
 
-def block_text_size(block_type: str, level: int = 0) -> int:
+def block_text_size(block_type: BlockType, level: int = 0) -> int:
     """块级正文基础字号。"""
-    if block_type == BLOCK_HEADING:
+    if block_type == BlockType.HEADING:
         return {1: 30, 2: 24, 3: 20, 4: 18, 5: 16, 6: 16}.get(level, 16)
-    if block_type == BLOCK_CODE:
+    if block_type == BlockType.CODE:
         return 14
     return 16
 
 
-def block_weight(block_type: str, level: int = 0) -> ft.FontWeight:
-    if block_type == BLOCK_HEADING:
+def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
+    if block_type == BlockType.HEADING:
         return ft.FontWeight.BOLD
     return ft.FontWeight.NORMAL
 
@@ -69,26 +55,26 @@ def block_weight(block_type: str, level: int = 0) -> ft.FontWeight:
 def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
     """把段类型映射为 TextStyle（渲染态）。"""
     t = seg.seg_type
-    if t == SEG_STRONG:
+    if t == SegType.STRONG:
         return ft.TextStyle(size=base_size, weight=ft.FontWeight.BOLD, color=C_TEXT)
-    if t == SEG_EMPHASIS:
+    if t == SegType.EMPHASIS:
         return ft.TextStyle(size=base_size, italic=True, color=C_TEXT)
-    if t == SEG_STRIKE:
+    if t == SegType.STRIKE:
         return ft.TextStyle(
             size=base_size, color=C_STRIKE, decoration=ft.TextDecoration.LINE_THROUGH
         )
-    if t == SEG_CODESPAN:
+    if t == SegType.CODESPAN:
         return ft.TextStyle(
             size=base_size - 1,
             color=C_CODE_FG,
             bgcolor=C_CODE_BG,
             font_family=FONT_MONO,
         )
-    if t == SEG_LINK:
+    if t == SegType.LINK:
         return ft.TextStyle(
             size=base_size, color=C_LINK, decoration=ft.TextDecoration.UNDERLINE
         )
-    if t == SEG_IMAGE:
+    if t == SegType.IMAGE:
         return ft.TextStyle(size=base_size, color=C_LINK, italic=True)
     return ft.TextStyle(size=base_size, color=C_TEXT)
 
@@ -101,7 +87,13 @@ def prefix_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
 _NO_BORDER = ft.BorderSide.none()
 
 
-def only_border(*, top=None, bottom=None, left=None, right=None) -> ft.Border:
+def only_border(
+    *,
+    top: ft.BorderSide | None = None,
+    bottom: ft.BorderSide | None = None,
+    left: ft.BorderSide | None = None,
+    right: ft.BorderSide | None = None,
+) -> ft.Border:
     """便捷构造单边 Border。"""
     return ft.Border(
         top=top or _NO_BORDER,
@@ -114,7 +106,7 @@ def only_border(*, top=None, bottom=None, left=None, right=None) -> ft.Border:
 # ---------------------------------------------------------------------------
 # 文本宽度测量：基于本地字体精确计算像素宽度，用于编辑块宽度自适应。
 # 用 Pillow 的 FreeType 渲染器加载 .otf/.ttf，getlength 返回文本 advance 宽度，
-# 精度远高于“字符数 × 平均字宽”估算，能贴合 Flet 渲染逻辑像素。
+# 精度远高于"字符数 × 平均字宽"估算，能贴合 Flet 渲染逻辑像素。
 # ---------------------------------------------------------------------------
 
 _FONT_FILES = {

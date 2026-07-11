@@ -2,26 +2,15 @@
 
 设计原则：
 - 渲染态用 TextSpan 参与 Text 的整体排版（自动换行，符合阅读习惯）。
-- 编辑态用一个“无框、同字号”的 TextField 内嵌进行内，仅当前段显示原生 Markdown，
-  其余段仍为渲染样式——这就是 Typora 式“最小语法”段级编辑。
+- 编辑态用一个"无框、同字号"的 TextField 内嵌进行内，仅当前段显示原生 Markdown，
+  其余段仍为渲染样式——这就是 Typora 式"最小语法"段级编辑。
 """
 
-from __future__ import annotations
-
-from typing import Callable, Optional
+from typing import Callable
 
 import flet as ft
 
-from models import (
-    SEG_CODE,
-    SEG_CODESPAN,
-    SEG_HEADING_PREFIX,
-    SEG_IMAGE,
-    SEG_LINK,
-    SEG_LIST_PREFIX,
-    SEG_QUOTE_PREFIX,
-    Segment,
-)
+from models import SegType, Segment
 from styles import (
     C_ACTIVE_BG,
     C_TEXT,
@@ -35,11 +24,11 @@ from styles import (
 
 def _display_text(seg: Segment) -> str:
     """渲染态展示文本。"""
-    if seg.seg_type in (SEG_HEADING_PREFIX, SEG_LIST_PREFIX, SEG_QUOTE_PREFIX):
+    if seg.seg_type in (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX):
         return seg.raw
-    if seg.seg_type == SEG_IMAGE:
+    if seg.seg_type == SegType.IMAGE:
         return seg.text or "🖼"
-    if seg.seg_type == SEG_LINK:
+    if seg.seg_type == SegType.LINK:
         return seg.text or seg.url or "链接"
     return seg.text
 
@@ -51,7 +40,7 @@ def segment_to_span(
     base_size: int,
 ) -> ft.TextSpan:
     """渲染态：段 -> TextSpan（可点击激活）。"""
-    if seg.seg_type in (SEG_HEADING_PREFIX, SEG_LIST_PREFIX, SEG_QUOTE_PREFIX):
+    if seg.seg_type in (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX):
         style = prefix_style(seg, base_size)
     else:
         style = segment_style(seg, base_size)
@@ -71,7 +60,7 @@ def active_text_field(
     on_blur: Callable[[], None],
     base_size: int,
     multiline: bool = False,
-    on_selection_change: Optional[Callable] = None,
+    on_selection_change: Callable | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
 ) -> ft.TextField:
@@ -89,7 +78,7 @@ def active_text_field(
     - ignore_up_down_keys：单行段置 True，让上下键冒泡到外层做跨行；
       多行代码块保持 False，让上下键在块内移动光标。
     """
-    is_code = seg.seg_type in (SEG_CODESPAN, SEG_CODE)
+    is_code = seg.seg_type in (SegType.CODESPAN, SegType.CODE)
     font_family = FONT_MONO if is_code else FONT_MAIN
     text_size = base_size if not is_code else max(base_size - 1, 12)
 

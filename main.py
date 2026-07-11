@@ -6,11 +6,8 @@
 - 段级编辑、Typora 式实时渲染由 views/editor 负责
 """
 
-from __future__ import annotations
-
 import json
 import os
-from typing import Optional
 
 import flet as ft
 
@@ -53,7 +50,7 @@ def _write_file(path: str, text: str) -> None:
         f.write(text)
 
 
-def _file_name(path: Optional[str]) -> str:
+def _file_name(path: str | None) -> str:
     return os.path.basename(path) if path else "未命名.md"
 
 

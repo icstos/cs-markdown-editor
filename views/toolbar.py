@@ -7,8 +7,6 @@
 操作通过回调上抛到编辑器，工具栏本身无状态，符合单向数据流。
 """
 
-from __future__ import annotations
-
 from typing import Callable
 
 import flet as ft

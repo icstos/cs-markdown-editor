@@ -11,7 +11,6 @@ on_blur/on_submit 提交（reparse 该行）-> 重新渲染。结构变更通过
 `document.lines = 新列表` 触发 observable 通知。
 """
 
-import asyncio
 import re
 from typing import Callable
 
@@ -83,6 +82,8 @@ def MarkdownEditor(
     # 原文模式：切换到原始 Markdown 文本编辑
     raw_mode, set_raw_mode = ft.use_state(False)
     raw_draft, set_raw_draft = ft.use_state("")
+    # ListView ref 用于 TOC 点击跳转滚动
+    list_view_ref = ft.use_ref(None)
 
     def mark_dirty():
         document.dirty = True
@@ -155,8 +156,13 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        # 代码块/分隔线：左右在块内移动，不跨段
-        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
+        # 代码块/分隔线/数学公式/目录：左右在块内移动，不跨段
+        if line.block_type in (
+            BlockType.CODE,
+            BlockType.HR,
+            BlockType.MATH,
+            BlockType.TOC,
+        ):
             return
         if si > 0:
             _goto(li, si - 1)
@@ -171,7 +177,12 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
+        if line.block_type in (
+            BlockType.CODE,
+            BlockType.HR,
+            BlockType.MATH,
+            BlockType.TOC,
+        ):
             return
         if si < len(line.segments) - 1:
             _goto(li, si + 1)
@@ -186,7 +197,12 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
+        if line.block_type in (
+            BlockType.CODE,
+            BlockType.HR,
+            BlockType.MATH,
+            BlockType.TOC,
+        ):
             return
         _goto(li, 0)
 
@@ -198,7 +214,12 @@ def MarkdownEditor(
         if li >= len(document.lines):
             return
         line = document.lines[li]
-        if line.block_type in (BlockType.CODE, BlockType.HR, BlockType.MATH):
+        if line.block_type in (
+            BlockType.CODE,
+            BlockType.HR,
+            BlockType.MATH,
+            BlockType.TOC,
+        ):
             return
         _goto(li, max(0, len(line.segments) - 1))
 
@@ -452,16 +473,14 @@ def MarkdownEditor(
         parser.reparse_line(line)
         mark_dirty()
 
-    # ---- 目录跳转：滚动 ListView 到对应标题行 ----
-    list_ref = ft.use_ref()
-
-    def jump_to_heading(li: int):
-        lv = list_ref.current
-        if lv is None:
+    # ---- TOC 跳转 ----
+    def jump_to(li: int):
+        if not (0 <= li < len(document.lines)):
             return
-        asyncio.ensure_future(
-            lv.scroll_to(scroll_key=f"line-{li}", duration=300)
-        )
+        lv = list_view_ref.current
+        if lv is not None:
+            lv.scroll_to(scroll_key=f"line-{li}")
+        _goto(li, 0)
 
     # ---- 同步导航接口给外层 on_key（nav_ref）----
     if nav_ref is not None:
@@ -478,17 +497,17 @@ def MarkdownEditor(
             "move_down": move_down,
         }
 
+    # ---- 预计算 TOC 条目（所有标题）----
+    toc_entries = []
+    for i, line in enumerate(document.lines):
+        if line.block_type == BlockType.HEADING:
+            heading_text = "".join(
+                s.text for s in line.segments if s.seg_type != SegType.HEADING_PREFIX
+            ).strip()
+            if heading_text:
+                toc_entries.append((i, line.level, heading_text))
+
     # ---- 行视图列表 ----
-    # 预计算文档标题列表，供 [toc] 目录渲染与跳转
-    headings: list[tuple[int, int, str]] = [
-        (
-            li,
-            line.level,
-            "".join(s.text for s in line.segments[1:]).strip(),
-        )
-        for li, line in enumerate(document.lines)
-        if line.block_type == BlockType.HEADING
-    ]
     line_controls = []
     for i, line in enumerate(document.lines):
         a_seg = active[1] if (active is not None and active[0] == i) else None
@@ -507,8 +526,8 @@ def MarkdownEditor(
                 on_new_line_after=lambda idx: None,
                 on_selection_change=on_selection_change if a_seg is not None else None,
                 on_toggle_task=toggle_task,
-                on_jump_to_heading=jump_to_heading,
-                headings=headings,
+                toc_entries=toc_entries,
+                on_jump_to=jump_to,
                 initial_cursor=-1,
                 nav_seq=nav_seq if a_seg is not None else 0,
             )
@@ -537,7 +556,7 @@ def MarkdownEditor(
             if raw_mode
             else ft.Container(
                 content=ft.ListView(
-                    ref=list_ref,
+                    ref=list_view_ref,
                     controls=line_controls,
                     expand=True,
                     spacing=2,

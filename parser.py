@@ -35,7 +35,7 @@ _RE_CODE_FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([\w+-]*)\s*$")
 _RE_TASK = re.compile(r"^(\s*)([-*+])\s+\[( |x|X)\]\s+(.*)$")
 _RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)  # $$...$$ 行间公式
 _RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")  # $...$ 行内公式
-_RE_TOC = re.compile(r"^\s*\[toc\]\s*$", re.IGNORECASE)  # [toc] 目录
+_RE_TOC = re.compile(r"^\[toc\]\s*$", re.IGNORECASE)  # [toc] 目录
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +143,10 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     if not raw.strip():
         return BlockType.BLANK, {}
 
+    m = _RE_TOC.match(raw)
+    if m:
+        return BlockType.TOC, {}
+
     m = _RE_HEADING.match(raw)
     if m:
         return BlockType.HEADING, {
@@ -183,9 +187,6 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     m = _RE_HR.match(raw)
     if m:
         return BlockType.HR, {}
-
-    if _RE_TOC.match(raw):
-        return BlockType.TOC, {}
 
     m = _RE_MATH_BLOCK.match(raw)
     if m:
@@ -240,13 +241,13 @@ def _build_line(raw: str) -> Line:
         line.segments = [Segment(SegType.TEXT, "---", "---")]
         return line
 
-    if bt == BlockType.TOC:
-        line.segments = [Segment(SegType.TEXT, "[toc]", "[toc]")]
-        return line
-
     if bt == BlockType.MATH:
         content = info["content"]
         line.segments = [Segment(SegType.MATH, content, content)]
+        return line
+
+    if bt == BlockType.TOC:
+        line.segments = [Segment(SegType.TEXT, "[toc]", "[toc]")]
         return line
 
     # paragraph

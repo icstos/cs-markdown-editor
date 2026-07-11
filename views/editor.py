@@ -18,7 +18,7 @@ import flet as ft
 
 from models import BlockType, Document, Line, SegType
 import parser
-from styles import C_BORDER, C_MUTED, C_TEXT, FONT_MAIN, only_border
+from styles import C_BORDER, C_MUTED, C_TEXT, FONT_MAIN, FONT_MONO, only_border
 from views.line_view import LineView
 from views.toolbar import Toolbar
 
@@ -77,6 +77,9 @@ def MarkdownEditor(
     cursor_base, set_cursor_base = ft.use_state(0)
     # nav_seq：每次跨段/激活递增，触发 TextField key 重建以重新 autofocus
     nav_seq, set_nav_seq = ft.use_state(0)
+    # 原文模式：切换到原始 Markdown 文本编辑
+    raw_mode, set_raw_mode = ft.use_state(False)
+    raw_draft, set_raw_draft = ft.use_state("")
 
     def mark_dirty():
         document.dirty = True
@@ -247,6 +250,40 @@ def MarkdownEditor(
 
     def on_change_draft(value: str):
         set_draft(value)
+
+    def toggle_raw():
+        """在 WYSIWYG 编辑与原始 Markdown 文本间切换。
+
+        进入原文模式：序列化当前文档为 raw_draft；
+        返回编辑模式：重新解析 raw_draft 为行列表，替换 document.lines。
+        """
+        if not raw_mode:
+            set_raw_draft(parser.serialize(document))
+            set_active(None)
+            set_raw_mode(True)
+        else:
+            new_doc = parser.parse_markdown(raw_draft)
+            document.lines = new_doc.lines
+            mark_dirty()
+            set_raw_mode(False)
+
+    def _raw_editor() -> ft.Control:
+        """原文模式编辑器：多行 TextField 直接编辑 Markdown 源码。"""
+        return ft.Container(
+            content=ft.TextField(
+                value=raw_draft,
+                multiline=True,
+                min_lines=10,
+                expand=True,
+                border=ft.InputBorder.NONE,
+                text_size=14,
+                text_style=ft.TextStyle(font_family=FONT_MONO, color=C_TEXT),
+                content_padding=ft.Padding.symmetric(horizontal=24, vertical=16),
+                on_change=lambda e: set_raw_draft(e.control.value),
+            ),
+            expand=True,
+            bgcolor=ft.Colors.WHITE,
+        )
 
     def on_blur():
         commit_active(draft)
@@ -444,8 +481,10 @@ def MarkdownEditor(
                 on_code=lambda: toggle_inline(SegType.CODESPAN),
                 on_link=toggle_link,
                 on_strike=lambda: toggle_inline(SegType.STRIKE),
+                on_toggle_raw=toggle_raw,
+                raw_mode=raw_mode,
             ),
-            ft.Container(
+            _raw_editor() if raw_mode else ft.Container(
                 content=ft.ListView(
                     controls=line_controls,
                     expand=True,

@@ -81,16 +81,28 @@ def LineView(
 
     # ---- 空行：可点击的空白区域 ----
     if line.block_type == BlockType.BLANK or not _has_visible_text(line):
-        content = ft.GestureDetector(
-            content=ft.Container(
-                content=ft.Text(" ", size=base, height=1.6),
-                height=max(base * 1.6, 24),
+        if active_seg is not None:
+            field = active_text_field(
+                line.segments[0], draft, on_change_draft, on_submit, on_blur, base,
+                on_selection_change=on_selection_change,
+                initial_cursor=initial_cursor,
+                nav_seq=nav_seq,
+            )
+            content = ft.Container(
+                content=field,
                 padding=ft.Padding.symmetric(horizontal=2),
-                ink=True,
-            ),
-            on_tap=lambda: on_activate(line_idx, 0),
-            mouse_cursor=ft.MouseCursor.TEXT,
-        )
+            )
+        else:
+            content = ft.GestureDetector(
+                content=ft.Container(
+                    content=ft.Text(" ", size=base, height=1.6),
+                    height=max(base * 1.6, 24),
+                    padding=ft.Padding.symmetric(horizontal=2),
+                    ink=True,
+                ),
+                on_tap=lambda: on_activate(line_idx, 0),
+                mouse_cursor=ft.MouseCursor.TEXT,
+            )
         return _wrap_block(content, line, base)
 
     # ---- 分隔线 ----

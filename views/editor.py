@@ -86,10 +86,16 @@ def _next_line_raw(line) -> str:
 def MarkdownEditor(
     document: Document,
     on_dirty_change: Optional[Callable[[bool], None]] = None,
+    nav_ref: Optional[object] = None,
 ):
     active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
     draft, set_draft = ft.use_state("")  # 当前编辑段文本
     cursor_line, set_cursor_line = ft.use_state(0)
+    # 光标跟踪：供外层 on_key 判断左右越界、上下跨行目标偏移
+    cursor_extent, set_cursor_extent = ft.use_state(0)
+    cursor_base, set_cursor_base = ft.use_state(0)
+    # nav_seq：每次跨段/激活递增，触发 TextField key 重建以重新 autofocus
+    nav_seq, set_nav_seq = ft.use_state(0)
 
     def mark_dirty():
         document.dirty = True
@@ -128,12 +134,135 @@ def MarkdownEditor(
         mark_dirty()
 
     # ---- 激活段 ----
-    def activate(li: int, si: int):
+    def _goto(li: int, si: int):
+        """跨段/激活目标段：先提交当前段，再切换 draft+active，递增 nav_seq
+        触发 TextField key 重建以重新 autofocus。第一版光标落于段尾
+        （autofocus 默认），cursor_extent 同步为段长，供后续越界判断。"""
         if active is not None and active != (li, si):
             commit_active(draft)
-        set_draft(_draft_for(li, si))
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if not (0 <= si < len(line.segments)):
+            return
+        new_draft = _draft_for(li, si)
+        set_draft(new_draft)
         set_active((li, si))
         set_cursor_line(li)
+        set_cursor_extent(len(new_draft))
+        set_cursor_base(len(new_draft))
+        set_nav_seq(nav_seq + 1)
+
+    def activate(li: int, si: int):
+        _goto(li, si)
+
+    # ---- 段间/行间光标导航（由外层 on_key 经 nav_ref 调用）----
+    def move_left_cross():
+        if active is None:
+            return
+        li, si = active
+        if li >= len(document.lines):
+            return
+        line = document.lines[li]
+        # 代码块/分隔线：左右在块内移动，不跨段
+        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+            return
+        if si > 0:
+            _goto(li, si - 1)
+        elif li > 0:
+            prev = document.lines[li - 1]
+            _goto(li - 1, max(0, len(prev.segments) - 1))
+
+    def move_right_cross():
+        if active is None:
+            return
+        li, si = active
+        if li >= len(document.lines):
+            return
+        line = document.lines[li]
+        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+            return
+        if si < len(line.segments) - 1:
+            _goto(li, si + 1)
+        elif li < len(document.lines) - 1:
+            _goto(li + 1, 0)
+
+    def move_home():
+        """Home：跳到当前行第一个段的起点。代码块 Home 在块内由 TextField 处理。"""
+        if active is None:
+            return
+        li, _ = active
+        if li >= len(document.lines):
+            return
+        line = document.lines[li]
+        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+            return
+        _goto(li, 0)
+
+    def move_end():
+        """End：跳到当前行最后一个段（段尾由 autofocus 落点）。代码块同上。"""
+        if active is None:
+            return
+        li, _ = active
+        if li >= len(document.lines):
+            return
+        line = document.lines[li]
+        if line.block_type in (BLOCK_CODE, BLOCK_HR):
+            return
+        _goto(li, max(0, len(line.segments) - 1))
+
+    def _logical_offset(line, seg_idx: int, extent: int) -> int:
+        """行内逻辑字符偏移 = 前序段 raw 长度累加 + 段内偏移。"""
+        off = 0
+        for i in range(seg_idx):
+            if i < len(line.segments):
+                off += len(line.segments[i].raw)
+        return off + extent
+
+    def _locate_seg_by_offset(line, target_off: int):
+        """在行内找包含逻辑偏移 target_off 的 (段索引, 段内偏移)。"""
+        acc = 0
+        for i, seg in enumerate(line.segments):
+            n = len(seg.raw)
+            if acc + n >= target_off:
+                return i, max(0, min(target_off - acc, n))
+            acc += n
+        last = len(line.segments) - 1
+        return max(0, last), (len(line.segments[last].raw) if last >= 0 else 0)
+
+    def move_up():
+        """上键：按行内逻辑偏移跨到上一行对应段。"""
+        if active is None:
+            return
+        li, si = active
+        if li <= 0:
+            return
+        cur = document.lines[li]
+        target = _logical_offset(cur, si, cursor_extent)
+        up_line = document.lines[li - 1]
+        nsi, _ = _locate_seg_by_offset(up_line, target)
+        _goto(li - 1, nsi)
+
+    def move_down():
+        """下键：按行内逻辑偏移跨到下一行对应段。"""
+        if active is None:
+            return
+        li, si = active
+        if li >= len(document.lines) - 1:
+            return
+        cur = document.lines[li]
+        target = _logical_offset(cur, si, cursor_extent)
+        dn_line = document.lines[li + 1]
+        nsi, _ = _locate_seg_by_offset(dn_line, target)
+        _goto(li + 1, nsi)
+
+    def on_selection_change(e):
+        """跟踪光标位置（extent/base），供 on_key 判断左右越界。"""
+        sel = e.selection
+        if sel is None:
+            return
+        set_cursor_base(sel.base_offset)
+        set_cursor_extent(sel.extent_offset)
 
     def on_change_draft(value: str):
         set_draft(value)
@@ -168,9 +297,13 @@ def MarkdownEditor(
         )
         mark_dirty()
         target_si = max(0, len(new_line.segments) - 1)
-        set_draft(_draft_for(li + 1, target_si))
+        new_draft = _draft_for(li + 1, target_si)
+        set_draft(new_draft)
         set_active((li + 1, target_si))
         set_cursor_line(li + 1)
+        set_cursor_extent(len(new_draft))
+        set_cursor_base(len(new_draft))
+        set_nav_seq(nav_seq + 1)
 
     # ---- 工具栏：块类型切换 ----
     def set_block(block_type: str, level: int = 0):
@@ -200,8 +333,12 @@ def MarkdownEditor(
         parser.reparse_line(line, new_raw)
         mark_dirty()
         target_si = max(0, len(line.segments) - 1)
-        set_draft(_draft_for(li, target_si))
+        new_draft = _draft_for(li, target_si)
+        set_draft(new_draft)
         set_active((li, target_si))
+        set_cursor_extent(len(new_draft))
+        set_cursor_base(len(new_draft))
+        set_nav_seq(nav_seq + 1)
 
     def _commit_for_block(line, active_pair, draft_val):
         li, si = active_pair
@@ -242,6 +379,8 @@ def MarkdownEditor(
             return
         mark_dirty()
         set_draft(seg.raw)
+        set_cursor_extent(len(seg.raw))
+        set_cursor_base(len(seg.raw))
 
     def toggle_link():
         if active is None:
@@ -267,6 +406,23 @@ def MarkdownEditor(
             return
         mark_dirty()
         set_draft(seg.raw)
+        set_cursor_extent(len(seg.raw))
+        set_cursor_base(len(seg.raw))
+
+    # ---- 同步导航接口给外层 on_key（nav_ref）----
+    if nav_ref is not None:
+        nav_ref.current = {
+            "active": active,
+            "extent": cursor_extent,
+            "base": cursor_base,
+            "draft_len": len(draft),
+            "move_left": move_left_cross,
+            "move_right": move_right_cross,
+            "move_home": move_home,
+            "move_end": move_end,
+            "move_up": move_up,
+            "move_down": move_down,
+        }
 
     # ---- 行视图列表 ----
     line_controls = []
@@ -285,6 +441,9 @@ def MarkdownEditor(
                 on_submit=on_submit,
                 on_blur=on_blur,
                 on_new_line_after=lambda idx: None,
+                on_selection_change=on_selection_change if a_seg is not None else None,
+                initial_cursor=-1,
+                nav_seq=nav_seq if a_seg is not None else 0,
             )
         )
 

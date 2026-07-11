@@ -63,6 +63,8 @@ def App():
     file_path, set_file_path = ft.use_state(None)
     dirty, set_dirty = ft.use_state(False)
     session, set_session = ft.use_state(0)  # 切换文档时自增，强制编辑器重置内部状态
+    # 导航接口：editor 把光标状态与导航函数写入此 ref，App 的 on_key 据此分发
+    nav_ref = ft.use_ref(None)
 
     # FilePicker：挂到 page.overlay 才能弹出系统对话框
     picker_holder = ft.use_ref()
@@ -138,23 +140,45 @@ def App():
         set_file_path(path)
         set_dirty(False)
 
-    # ---- 快捷键 ----
+    # ---- 快捷键 + 光标导航 ----
     def on_key(e):
         # e.data 形如 JSON: {"key":"S","modifiers":{"control":true,...}}
         try:
             d = json.loads(e.data) if e.data else {}
         except Exception:
             d = {}
-        key = (d.get("key") or e.key or "").upper()
+        key = d.get("key") or e.key or ""
         mods = d.get("modifiers") or {}
         ctrl = mods.get("control") or mods.get("meta")
+        norm = key.replace(" ", "").lower()
+
+        # 导航键：仅在编辑态有激活段时由 editor 暴露的接口处理
+        nav = nav_ref.current
+        if nav and nav.get("active") is not None:
+            if norm == "home":
+                nav["move_home"](); return
+            if norm == "end":
+                nav["move_end"](); return
+            if norm == "arrowup":
+                nav["move_up"](); return
+            if norm == "arrowdown":
+                nav["move_down"](); return
+            # 左右越界：光标已 collapsed 在边界时才跨段，否则让 TextField 自行移动
+            if norm == "arrowleft":
+                if nav["extent"] == 0 and nav["base"] == 0:
+                    nav["move_left"](); return
+            if norm == "arrowright":
+                if nav["extent"] == nav["draft_len"] and nav["base"] == nav["draft_len"]:
+                    nav["move_right"](); return
+
         if not ctrl:
             return
-        if key == "S":
+        k = key.upper()
+        if k == "S":
             save_doc()
-        elif key == "N":
+        elif k == "N":
             new_doc()
-        elif key == "O":
+        elif k == "O":
             open_doc()
 
     def _app_bar():
@@ -209,6 +233,7 @@ def App():
                         key=str(session),
                         document=document,
                         on_dirty_change=on_dirty_change,
+                        nav_ref=nav_ref,
                     ),
                     expand=True,
                     bgcolor=ft.Colors.WHITE,

@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
 import flet as ft
 
@@ -71,18 +71,36 @@ def active_text_field(
     on_blur: Callable[[], None],
     base_size: int,
     multiline: bool = False,
+    on_selection_change: Optional[Callable] = None,
+    initial_cursor: int = -1,
+    nav_seq: int = 0,
 ) -> ft.TextField:
     """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。
 
     单行段：依据本地字体测量文本宽度，让 TextField 恰好包裹文本内容
     （Typora 式最小编辑块），避免撑满整行破坏阅读节奏。
     多行代码块：保持块级宽度，由父容器决定。
+
+    光标导航：
+    - on_selection_change：上报光标位置变化（供外层跟踪 extent/base）
+    - initial_cursor + nav_seq：跨段时通过 nav_seq 变化触发 key 重建，
+      使 selection 精确落到段首/段尾/对应偏移；输入时 nav_seq 不变、
+      selection 值不变，光标不被重置。
+    - ignore_up_down_keys：单行段置 True，让上下键冒泡到外层做跨行；
+      多行代码块保持 False，让上下键在块内移动光标。
     """
     is_code = seg.seg_type in (SEG_CODESPAN, SEG_CODE)
     font_family = FONT_MONO if is_code else FONT_MAIN
     text_size = base_size if not is_code else max(base_size - 1, 12)
 
+    sel = (
+        ft.TextSelection(base_offset=initial_cursor, extent_offset=initial_cursor)
+        if initial_cursor >= 0
+        else None
+    )
+
     kwargs: dict = dict(
+        key=f"field-{nav_seq}",
         value=draft,
         autofocus=True,
         multiline=multiline,
@@ -101,10 +119,15 @@ def active_text_field(
         cursor_color=C_TEXT,
         cursor_width=1.5,
         shift_enter=multiline,
+        # 单行段让上下键冒泡到外层做跨行；代码块保留块内移动
+        ignore_up_down_keys=not multiline,
+        selection=sel,
         on_change=lambda e: on_change(e.control.value),
         on_submit=lambda e: on_submit(e.control.value),
         on_blur=lambda e: on_blur(),
     )
+    if on_selection_change is not None:
+        kwargs["on_selection_change"] = on_selection_change
 
     if not multiline:
         # 文本像素宽 + 内边距(左右各4) + 光标/子像素余量；空文本给最小宽避免坍缩

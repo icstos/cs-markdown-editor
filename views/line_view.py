@@ -76,6 +76,9 @@ def LineView(
     on_submit: Callable[[str], None],
     on_blur: Callable[[], None],
     on_new_line_after: Callable[[int], None],
+    on_selection_change: Optional[Callable] = None,
+    initial_cursor: int = -1,
+    nav_seq: int = 0,
 ):
     base = block_text_size(line.block_type, line.level)
     weight = block_weight(line.block_type, line.level)
@@ -104,7 +107,10 @@ def LineView(
     if line.block_type == BLOCK_HR:
         if active_seg is not None:
             field = active_text_field(
-                line.segments[0], draft, on_change_draft, on_submit, on_blur, base
+                line.segments[0], draft, on_change_draft, on_submit, on_blur, base,
+                on_selection_change=on_selection_change,
+                initial_cursor=initial_cursor,
+                nav_seq=nav_seq,
             )
             content = ft.Container(
                 padding=ft.Padding.symmetric(vertical=6), content=field
@@ -131,6 +137,9 @@ def LineView(
                 on_blur,
                 base_size=14,
                 multiline=True,
+                on_selection_change=on_selection_change,
+                initial_cursor=initial_cursor,
+                nav_seq=nav_seq,
             )
             content = ft.Container(
                 content=inner,
@@ -198,7 +207,10 @@ def LineView(
         controls.append(ft.Text(spans=before_spans, style=line_style))
     controls.append(
         active_text_field(
-            active_seg_obj, draft, on_change_draft, on_submit, on_blur, base
+            active_seg_obj, draft, on_change_draft, on_submit, on_blur, base,
+            on_selection_change=on_selection_change,
+            initial_cursor=initial_cursor,
+            nav_seq=nav_seq,
         )
     )
     if after_spans:

@@ -15,6 +15,7 @@ from models import BlockType, Line, SegType
 from styles import (
     C_CODE_BLOCK_BG,
     C_CODE_BLOCK_FG,
+    C_LINK,
     C_MATH_BG,
     C_MUTED,
     C_QUOTE_BAR,
@@ -87,6 +88,8 @@ def LineView(
     on_new_line_after: Callable[[int], None],
     on_selection_change: Callable | None = None,
     on_toggle_task: Callable[[int], None] | None = None,
+    on_jump_to_heading: Callable[[int], None] | None = None,
+    headings: list[tuple[int, int, str]] | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
 ):
@@ -248,6 +251,77 @@ def LineView(
                 on_tap=lambda: on_activate(line_idx, 0),
                 mouse_cursor=ft.MouseCursor.TEXT,
             )
+        return _wrap_block(content, line, base)
+
+    # ---- 目录 [toc]：渲染文档标题列表 ----
+    if line.block_type == BlockType.TOC:
+        if active_seg is not None:
+            field = active_text_field(
+                line.segments[0],
+                draft,
+                on_change_draft,
+                on_submit,
+                on_blur,
+                base,
+                on_selection_change=on_selection_change,
+                initial_cursor=initial_cursor,
+                nav_seq=nav_seq,
+            )
+            return _wrap_block(
+                ft.Container(content=field, padding=ft.Padding.symmetric(horizontal=2)),
+                line,
+                base,
+            )
+        # 非编辑态：渲染目录
+        toc_items: list[ft.Control] = [
+            ft.GestureDetector(
+                content=ft.Container(
+                    content=ft.Text(
+                        value="目录",
+                        size=base - 2,
+                        color=C_MUTED,
+                        weight=ft.FontWeight.W_500,
+                        font_family=FONT_MAIN,
+                    ),
+                    padding=ft.Padding.only(left=8, top=2, bottom=4, right=8),
+                ),
+                on_tap=lambda: on_activate(line_idx, 0),
+                mouse_cursor=ft.MouseCursor.TEXT,
+            )
+        ]
+        hs = headings or []
+        if not hs:
+            toc_items.append(
+                ft.Text(
+                    value="（暂无标题）",
+                    size=base - 1,
+                    color=C_MUTED,
+                    font_family=FONT_MAIN,
+                )
+            )
+        else:
+            for h_li, h_level, h_text in hs:
+                indent = max(0, h_level - 1) * 16
+                toc_items.append(
+                    ft.GestureDetector(
+                        content=ft.Container(
+                            content=ft.Text(
+                                value=h_text or "(无标题)",
+                                size=base - 1,
+                                color=C_LINK,
+                                font_family=FONT_MAIN,
+                            ),
+                            padding=ft.Padding.only(
+                                left=indent + 8, top=2, bottom=2, right=8
+                            ),
+                        ),
+                        on_tap=lambda e, li=h_li: on_jump_to_heading(li)
+                        if on_jump_to_heading
+                        else None,
+                        mouse_cursor=ft.MouseCursor.CLICK,
+                    )
+                )
+        content = ft.Column(controls=toc_items, spacing=0)
         return _wrap_block(content, line, base)
 
     # ---- 任务列表项（非编辑态）：复选框 + 内容 ----

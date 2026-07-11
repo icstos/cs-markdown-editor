@@ -51,6 +51,7 @@ class BlockType(StrEnum):
     CODE = "code_block"
     HR = "hr"
     MATH = "math"  # $$...$$ 行间公式
+    TOC = "toc"  # [toc] 目录
     BLANK = "blank"
 
 

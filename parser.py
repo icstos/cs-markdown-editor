@@ -35,6 +35,7 @@ _RE_CODE_FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([\w+-]*)\s*$")
 _RE_TASK = re.compile(r"^(\s*)([-*+])\s+\[( |x|X)\]\s+(.*)$")
 _RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)  # $$...$$ 行间公式
 _RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")  # $...$ 行内公式
+_RE_TOC = re.compile(r"^\s*\[toc\]\s*$", re.IGNORECASE)  # [toc] 目录
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +184,9 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     if m:
         return BlockType.HR, {}
 
+    if _RE_TOC.match(raw):
+        return BlockType.TOC, {}
+
     m = _RE_MATH_BLOCK.match(raw)
     if m:
         return BlockType.MATH, {"content": m.group(1).strip()}
@@ -234,6 +238,10 @@ def _build_line(raw: str) -> Line:
 
     if bt == BlockType.HR:
         line.segments = [Segment(SegType.TEXT, "---", "---")]
+        return line
+
+    if bt == BlockType.TOC:
+        line.segments = [Segment(SegType.TEXT, "[toc]", "[toc]")]
         return line
 
     if bt == BlockType.MATH:

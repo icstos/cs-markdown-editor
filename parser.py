@@ -211,6 +211,8 @@ def _build_line(raw: str) -> Line:
         line.level = info.get("indent", 0)
         marker = info["marker"]
         if info.get("task"):
+            line.task = True
+            line.checked = info["checked"]
             prefix = f"{marker} [{'x' if info['checked'] else ' '}] "
         else:
             prefix = f"{marker} "
@@ -334,6 +336,8 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
     line.block_type = rebuilt.block_type
     line.level = rebuilt.level
     line.lang = ""
+    line.task = rebuilt.task
+    line.checked = rebuilt.checked
     line.segments = rebuilt.segments
 
 

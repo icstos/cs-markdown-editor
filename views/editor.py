@@ -437,6 +437,20 @@ def MarkdownEditor(
         set_cursor_extent(len(seg.raw))
         set_cursor_base(len(seg.raw))
 
+    # ---- 任务列表项：切换勾选状态 ----
+    def toggle_task(li: int):
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if not line.task:
+            return
+        if line.checked:
+            line.raw = re.sub(r"\[[xX]\]", "[ ]", line.raw, count=1)
+        else:
+            line.raw = re.sub(r"\[ \]", "[x]", line.raw, count=1)
+        parser.reparse_line(line)
+        mark_dirty()
+
     # ---- 同步导航接口给外层 on_key（nav_ref）----
     if nav_ref is not None:
         nav_ref.current = {
@@ -470,6 +484,7 @@ def MarkdownEditor(
                 on_blur=on_blur,
                 on_new_line_after=lambda idx: None,
                 on_selection_change=on_selection_change if a_seg is not None else None,
+                on_toggle_task=toggle_task,
                 initial_cursor=-1,
                 nav_seq=nav_seq if a_seg is not None else 0,
             )

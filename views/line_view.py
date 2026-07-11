@@ -68,6 +68,7 @@ def LineView(
     on_blur: Callable[[], None],
     on_new_line_after: Callable[[int], None],
     on_selection_change: Callable | None = None,
+    on_toggle_task: Callable[[int], None] | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
 ):
@@ -229,6 +230,34 @@ def LineView(
                 on_tap=lambda: on_activate(line_idx, 0),
                 mouse_cursor=ft.MouseCursor.TEXT,
             )
+        return _wrap_block(content, line, base)
+
+    # ---- 任务列表项（非编辑态）：复选框 + 内容 ----
+    if line.task and active_seg is None:
+        content_spans = _spans_for(line, 1, len(line.segments), activate, base)
+        if not content_spans:
+            content_spans = [ft.TextSpan(" ", line_style)]
+        content_target_si = 1 if len(line.segments) > 1 else 0
+        content = ft.Row(
+            controls=[
+                ft.Checkbox(
+                    value=line.checked,
+                    on_change=lambda e: on_toggle_task(line_idx)
+                    if on_toggle_task
+                    else None,
+                ),
+                ft.Text(
+                    spans=content_spans,
+                    style=line_style,
+                    selectable=False,
+                    on_tap=lambda: on_activate(line_idx, content_target_si),
+                ),
+            ],
+            wrap=True,
+            spacing=4,
+            run_spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
         return _wrap_block(content, line, base)
 
     # ---- 普通块（段落 / 标题 / 列表 / 引用）----

@@ -81,6 +81,8 @@ class Line:
     level: int = 0  # heading 级别 / 列表缩进
     lang: str = ""  # 代码块语言标识
     ordered: bool = False  # 有序列表标记
+    task: bool = False  # 是否为任务列表项（- [ ] / - [x]）
+    checked: bool = False  # 任务是否已勾选
 
     @property
     def is_blank(self) -> bool:

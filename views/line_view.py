@@ -23,6 +23,7 @@ from styles import (
     FONT_MONO,
     block_text_size,
     block_weight,
+    image_fit_size,
     only_border,
 )
 from views.segment_view import active_text_field, segment_to_span
@@ -53,6 +54,23 @@ def _has_visible_text(line: Line) -> bool:
             ):
                 return True
     return False
+
+
+def _image_seg_indices(line: Line) -> list[int]:
+    """返回行内 IMAGE 段索引。
+
+    若行内含 IMAGE 以外的非空文本段（混合行），返回空列表——此类行
+    仍按普通文本渲染，避免图片与文字混排时布局错乱。
+    """
+    idxs: list[int] = []
+    for i, s in enumerate(line.segments):
+        if s.seg_type == SegType.IMAGE:
+            idxs.append(i)
+        elif s.seg_type == SegType.TEXT and not s.text.strip():
+            continue  # 忽略空白文本段
+        else:
+            return []
+    return idxs
 
 
 @ft.component
@@ -225,7 +243,7 @@ def LineView(
                     bgcolor=C_MATH_BG,
                     border_radius=6,
                     padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,
                 ),
                 on_tap=lambda: on_activate(line_idx, 0),
                 mouse_cursor=ft.MouseCursor.TEXT,
@@ -257,6 +275,59 @@ def LineView(
             spacing=4,
             run_spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        return _wrap_block(content, line, base)
+
+    # ---- 图片行：用 ft.Image 渲染（非编辑态）----
+    img_idxs = _image_seg_indices(line)
+    if img_idxs and active_seg is None:
+        img_controls: list[ft.Control] = []
+        for seg_idx in img_idxs:
+            seg = line.segments[seg_idx]
+            w, h = image_fit_size(seg.url)
+            kw: dict = dict(
+                src=seg.url,
+                fit=ft.BoxFit.CONTAIN,
+                tooltip=seg.text,
+                error_content=ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(
+                                ft.Icons.IMAGE_NOT_SUPPORTED_OUTLINED,
+                                color=C_MUTED,
+                                size=20,
+                            ),
+                            ft.Text(
+                                value=seg.text or seg.url or "图片",
+                                color=C_MUTED,
+                                size=base - 1,
+                                font_family=FONT_MAIN,
+                            ),
+                        ],
+                        spacing=8,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                    ),
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+                    bgcolor=C_CODE_BLOCK_BG,
+                    border_radius=6,
+                    alignment=ft.Alignment.CENTER,
+                ),
+            )
+            if w is not None:
+                kw["width"] = w
+            if h is not None:
+                kw["height"] = h
+            img_controls.append(
+                ft.GestureDetector(
+                    content=ft.Image(**kw),
+                    on_tap=lambda e, si=seg_idx: on_activate(line_idx, si),
+                    mouse_cursor=ft.MouseCursor.TEXT,
+                )
+            )
+        content = ft.Column(
+            controls=img_controls,
+            spacing=4,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
         return _wrap_block(content, line, base)
 

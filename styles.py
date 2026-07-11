@@ -3,9 +3,12 @@
 集中管理颜色与排版，保证视图层声明式、无散落的魔法数字。
 """
 
+import io
 import os
+import urllib.request
 
 import flet as ft
+from PIL import Image as _PILImage
 from PIL import ImageFont as _PILImageFont
 
 from models import (
@@ -155,3 +158,49 @@ def measure_text_width(text: str, font_family: str, size: int) -> float:
         return 0.0
     # Pillow getlength 逐字形累加 advance，最接近实际渲染宽度
     return _get_font(font_family, size).getlength(text)
+
+
+# ---------------------------------------------------------------------------
+# 图片尺寸读取与缩放：用 Pillow 读取图片真实像素尺寸，按最大边等比例缩放。
+# - 大图（宽或高 > max_size）：缩放到最大边 = max_size
+# - 小图：返回实际尺寸
+# - 无法读取：返回 (None, None)，交由 ft.Image 自适应
+# 结果按 src 缓存，避免每次渲染重复 IO / 网络请求。
+# ---------------------------------------------------------------------------
+
+_IMG_MAX = 500  # 图片最大边长（像素）
+_img_size_cache: dict[str, tuple[int, int] | None] = {}
+
+
+def _read_image_size(src: str) -> tuple[int, int] | None:
+    """读取图片真实 (width, height)。本地路径直接打开；URL 下载后解析。"""
+    try:
+        if src.startswith(("http://", "https://")):
+            with urllib.request.urlopen(src, timeout=5) as resp:
+                data = resp.read()
+            img = _PILImage.open(io.BytesIO(data))
+        else:
+            img = _PILImage.open(src)
+        return img.size
+    except Exception:
+        return None
+
+
+def image_fit_size(src: str, max_size: int = _IMG_MAX) -> tuple[int | None, int | None]:
+    """返回图片在 UI 中应使用的 (width, height)。
+
+    大图等比例缩放到最大边 = max_size；小图保持原尺寸；读取失败返回 (None, None)。
+    """
+    if src not in _img_size_cache:
+        _img_size_cache[src] = _read_image_size(src)
+    size = _img_size_cache[src]
+    if size is None:
+        return None, None
+    w, h = size
+    if w <= max_size and h <= max_size:
+        return w, h
+    if w >= h:
+        ratio = max_size / w
+        return max_size, round(h * ratio)
+    ratio = max_size / h
+    return round(w * ratio), max_size

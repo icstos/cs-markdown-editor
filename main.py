@@ -16,7 +16,7 @@ from models import Document
 from styles import C_BORDER, C_MUTED, C_TEXT, FONT_MAIN, only_border
 from views.editor import MarkdownEditor
 
-_SAMPLE = """# Markdown 编辑器
+_SAMPLE = r"""# Markdown 编辑器
 
 基于 Flet 0.85.3 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
 
@@ -26,8 +26,13 @@ _SAMPLE = """# Markdown 编辑器
 # 测试
 ### 行内元素
 - **加粗**、*斜体*、`行内代码`、~~删除线~~、[链接](https://flet.dev)、$a=b+c$
+测试，**加粗**，*斜==体==*，***加粗且斜体***,~~删除文本~~ ==高亮==
+测试，**加粗**，*斜体*，***加粗且斜体***
+行内代码: `import os`
+
 - ==高亮==
-- 上标：x^2
+- 上标：x^2^
+- 下标：x~3~
 
 ### 标题
 # 一级标题
@@ -42,13 +47,27 @@ _SAMPLE = """# Markdown 编辑器
 - 支持 `代码块`、列表、引用、分隔线
 - 水平分割线
 
+链接：[百度](http://www.baidu.com)
+
+$$
+x = \dfrac{-b \pm \sqrt{b^2 - 4ac}}{2a} 
+$$
+
+
 #### 列表
 
-- 无序列表项一
-- 无序列表项二
+- 无序**列表1**
+- 无序*列表2*
+    - 无序列表3
+    - 无序列表4
+        - 无序列表**5**
 
-1. 有序列表项一
-2. 有序列表项二
+
+1. 第一步
+2. 第二步
+   1. 子步骤1
+   2. 子步骤2
+3. 第三步
 
 嵌套列表
 > 这是一段引用文字，左侧有边框、文字柔和。
@@ -57,17 +76,35 @@ _SAMPLE = """# Markdown 编辑器
 > > 双层引用（嵌套引用）
 
 
+
+> 引用 **加粗**
+> > 双层引用，**加粗**
+
+
+
 ### 复选框
 - [x] 已完成事项
 - [ ] 待办事项 1
 - [ ] 待办事项 2
+- [ ] 复选框1
+- [ ] 复选框2
+    - [x] 复选框*2-1*
+
 #### 图片
 
-#### 代码块
+![百度](https://www.baidu.com/img/PCtm_d9c8750bed0b3c7d089fa7d55720d6cf.png)
+
+### 代码块
 
 ```python
 def greet(name: str) -> str:
     return f"hello, {name}"
+```
+
+### 无语言标记的代码块
+```
+这是没有语言标记的代码块
+可以包含任意内容
 ```
 
 #### 表格
@@ -81,9 +118,16 @@ def greet(name: str) -> str:
 
 ### 目录
 [toc]
+
+### 水平分割线
+
 ---
 
 点击任意位置开始编辑。
+
+## 英文
+This is a **bold** text and this is *italic*. Here's some `inline code`.
+
 """
 
 

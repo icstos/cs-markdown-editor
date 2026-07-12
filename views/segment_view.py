@@ -21,14 +21,13 @@ from styles import (
     segment_style,
 )
 
+_PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
+_MONO_SEGTYPES = (SegType.CODESPAN, SegType.CODE, SegType.INLINE_MATH, SegType.MATH)
+
 
 def _display_text(seg: Segment) -> str:
     """渲染态展示文本。"""
-    if seg.seg_type in (
-        SegType.HEADING_PREFIX,
-        SegType.LIST_PREFIX,
-        SegType.QUOTE_PREFIX,
-    ):
+    if seg.seg_type in _PREFIX_SEGTYPES:
         return seg.raw
     if seg.seg_type == SegType.IMAGE:
         return seg.text or "🖼"
@@ -44,20 +43,8 @@ def segment_to_span(
     base_size: int,
 ) -> ft.TextSpan:
     """渲染态：段 -> TextSpan（可点击激活）。"""
-    if seg.seg_type in (
-        SegType.HEADING_PREFIX,
-        SegType.LIST_PREFIX,
-        SegType.QUOTE_PREFIX,
-    ):
-        style = prefix_style(seg, base_size)
-    else:
-        style = segment_style(seg, base_size)
-
-    return ft.TextSpan(
-        text=_display_text(seg),
-        style=style,
-        on_click=lambda e: on_activate(seg_idx),
-    )
+    style = prefix_style(seg, base_size) if seg.seg_type in _PREFIX_SEGTYPES else segment_style(seg, base_size)
+    return ft.TextSpan(text=_display_text(seg), style=style, on_click=lambda e: on_activate(seg_idx))
 
 
 def active_text_field(
@@ -86,12 +73,7 @@ def active_text_field(
     - ignore_up_down_keys：单行段置 True，让上下键冒泡到外层做跨行；
       多行代码块保持 False，让上下键在块内移动光标。
     """
-    is_mono = seg.seg_type in (
-        SegType.CODESPAN,
-        SegType.CODE,
-        SegType.INLINE_MATH,
-        SegType.MATH,
-    )
+    is_mono = seg.seg_type in _MONO_SEGTYPES
     font_family = FONT_MONO if is_mono else FONT_MAIN
     text_size = base_size if not is_mono else max(base_size - 1, 12)
 
@@ -101,40 +83,35 @@ def active_text_field(
         else None
     )
 
-    kwargs: dict = dict(
-        key=f"field-{nav_seq}",
-        value=draft,
-        autofocus=True,
-        multiline=multiline,
-        min_lines=1,
-        max_lines=None if multiline else 1,
-        border=ft.InputBorder.NONE,
-        border_radius=4,
-        filled=True,
-        fill_color=C_ACTIVE_BG,
-        content_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
-        text_size=text_size,
-        text_style=ft.TextStyle(
-            font_family=font_family,
-            color=C_TEXT,
-        ),
-        cursor_color=C_TEXT,
-        cursor_width=1.5,
-        shift_enter=multiline,
-        # 单行段让上下键冒泡到外层做跨行；代码块保留块内移动
-        ignore_up_down_keys=not multiline,
-        selection=sel,
-        on_change=lambda e: on_change(e.control.value),
-        on_submit=lambda e: on_submit(e.control.value),
-        on_blur=lambda e: on_blur(),
-    )
+    kwargs: dict = {
+        "key": f"field-{nav_seq}",
+        "value": draft,
+        "autofocus": True,
+        "multiline": multiline,
+        "min_lines": 1,
+        "max_lines": None if multiline else 1,
+        "border": ft.InputBorder.NONE,
+        "border_radius": 4,
+        "filled": True,
+        "fill_color": C_ACTIVE_BG,
+        "content_padding": ft.Padding.symmetric(horizontal=4, vertical=0),
+        "text_size": text_size,
+        "text_style": ft.TextStyle(font_family=font_family, color=C_TEXT),
+        "cursor_color": C_TEXT,
+        "cursor_width": 1.5,
+        "shift_enter": multiline,
+        "ignore_up_down_keys": not multiline,  # 单行段让上下键冒泡到外层跨行
+        "selection": sel,
+        "on_change": lambda e: on_change(e.control.value),
+        "on_submit": lambda e: on_submit(e.control.value),
+        "on_blur": lambda e: on_blur(),
+    }
     if on_selection_change is not None:
         kwargs["on_selection_change"] = on_selection_change
 
     if not multiline:
         # 文本像素宽 + 内边距(左右各4) + 光标/子像素余量；空文本给最小宽避免坍缩
         text_w = measure_text_width(draft or "", font_family, text_size)
-        field_w = max(text_w + 8 + 6, 24)
-        kwargs["width"] = field_w
+        kwargs["width"] = max(text_w + 14, 24)
 
     return ft.TextField(**kwargs)

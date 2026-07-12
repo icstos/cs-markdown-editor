@@ -14,15 +14,9 @@ import re
 
 import mistune
 
-from models import (
-    BlockType,
-    Document,
-    Line,
-    SegType,
-    Segment,
-)
+from models import BlockType, Document, Line, SegType, Segment
 
-# 行内解析器：启用删除线与任务列表插件以获得更丰富的段类型
+# 行内解析器：启用删除线插件以获得更丰富的段类型
 _md = mistune.create_markdown(renderer="ast", plugins=["strikethrough"])
 
 # ---- 正则：块级前缀识别 ----
@@ -33,9 +27,12 @@ _RE_QUOTE = re.compile(r"^>\s?(.*)$")
 _RE_HR = re.compile(r"^(\s*)([-*_])\2\2+\s*$")  # --- ** ___ 等
 _RE_CODE_FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([\w+-]*)\s*$")
 _RE_TASK = re.compile(r"^(\s*)([-*+])\s+\[( |x|X)\]\s+(.*)$")
-_RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)  # $$...$$ 行间公式
-_RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")  # $...$ 行内公式
-_RE_TOC = re.compile(r"^\[toc\]\s*$", re.IGNORECASE)  # [toc] 目录
+_RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)
+_RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")
+_RE_TOC = re.compile(r"^\[toc\]\s*$", re.IGNORECASE)
+
+# ---- 块级前缀段类型 ----
+_PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
 
 
 # ---------------------------------------------------------------------------
@@ -54,52 +51,7 @@ def _split_inline_math(text: str) -> list[Segment]:
         last = end
     if last < len(text):
         parts.append(Segment(SegType.TEXT, text[last:], text[last:]))
-    return parts if parts else [Segment(SegType.TEXT, text, text)]
-
-
-def _token_to_segments(tok: dict) -> list[Segment]:
-    """把一个行内 AST 节点转成 Segment 列表。"""
-    t = tok.get("type")
-    if t == SegType.TEXT.value:
-        raw = tok.get("raw", "")
-        if not raw:
-            return []
-        return _split_inline_math(raw)
-    if t == "softbreak":
-        return [Segment(SegType.TEXT, "\n", "\n")]
-    if t == "linebreak":
-        return [Segment(SegType.TEXT, "\n", "\n")]
-    if t == SegType.STRONG.value:
-        inner = "".join(
-            c.get("raw", "") for c in tok.get("children", []) if c.get("type") == "text"
-        )
-        # 递归收集子节点文本（简化：仅取纯文本展示）
-        text = _flatten_text(tok.get("children", []))
-        return [Segment(SegType.STRONG, f"**{text}**", text)]
-    if t == SegType.EMPHASIS.value:
-        text = _flatten_text(tok.get("children", []))
-        return [Segment(SegType.EMPHASIS, f"*{text}*", text)]
-    if t == SegType.STRIKE.value:
-        text = _flatten_text(tok.get("children", []))
-        return [Segment(SegType.STRIKE, f"~~{text}~~", text)]
-    if t == SegType.CODESPAN.value:
-        raw = tok.get("raw", "")
-        # codespan 的 raw 形如 "code"（不含反引号）
-        return [Segment(SegType.CODESPAN, f"`{raw}`", raw)]
-    if t == SegType.LINK.value:
-        text = _flatten_text(tok.get("children", []))
-        url = tok.get("attrs", {}).get("url", "")
-        return [Segment(SegType.LINK, f"[{text}]({url})", text, url=url)]
-    if t == SegType.IMAGE.value:
-        alt = _flatten_text(tok.get("children", []))
-        url = tok.get("attrs", {}).get("url", "")
-        return [Segment(SegType.IMAGE, f"![{alt}]({url})", alt, url=url)]
-    if t == "inline_html":
-        raw = tok.get("raw", "")
-        return [Segment(SegType.TEXT, raw, raw)]
-    # 其它未识别节点退化为纯文本
-    text = _flatten_text(tok.get("children", [])) or tok.get("raw", "")
-    return [Segment(SegType.TEXT, text, text)] if text else []
+    return parts or [Segment(SegType.TEXT, text, text)]
 
 
 def _flatten_text(children: list[dict]) -> str:
@@ -112,6 +64,58 @@ def _flatten_text(children: list[dict]) -> str:
         else:
             out.append(_flatten_text(c.get("children", [])))
     return "".join(out)
+
+
+# 行内 AST 节点类型 -> (SegType, 包裹器) 映射；codespan/link/image 单独处理
+_INLINE_WRAPPERS: dict[str, tuple[SegType, str]] = {
+    "strong": (SegType.STRONG, "**"),
+    "emphasis": (SegType.EMPHASIS, "*"),
+    "strikethrough": (SegType.STRIKE, "~~"),
+}
+
+
+def _token_to_segments(tok: dict) -> list[Segment]:
+    """把一个行内 AST 节点转成 Segment 列表。"""
+    t = tok.get("type")
+
+    # 普通文本：提取 $...$ 行内公式
+    if t == "text":
+        raw = tok.get("raw", "")
+        return _split_inline_math(raw) if raw else []
+
+    # 软换行 / 硬换行
+    if t in ("softbreak", "linebreak"):
+        return [Segment(SegType.TEXT, "\n", "\n")]
+
+    # 包裹型节点（加粗 / 斜体 / 删除线）
+    if t in _INLINE_WRAPPERS:
+        seg_type, wrap = _INLINE_WRAPPERS[t]
+        text = _flatten_text(tok.get("children", []))
+        return [Segment(seg_type, f"{wrap}{text}{wrap}", text)]
+
+    # 行内代码：raw 不含反引号
+    if t == "codespan":
+        raw = tok.get("raw", "")
+        return [Segment(SegType.CODESPAN, f"`{raw}`", raw)]
+
+    # 链接 / 图片
+    if t == "link":
+        text = _flatten_text(tok.get("children", []))
+        url = tok.get("attrs", {}).get("url", "")
+        return [Segment(SegType.LINK, f"[{text}]({url})", text, url=url)]
+    if t == "image":
+        alt = _flatten_text(tok.get("children", []))
+        url = tok.get("attrs", {}).get("url", "")
+        return [Segment(SegType.IMAGE, f"![{alt}]({url})", alt, url=url)]
+
+    # 内联 HTML
+    if t == "inline_html":
+        raw = tok.get("raw", "")
+        return [Segment(SegType.TEXT, raw, raw)]
+
+    # 未识别节点退化为纯文本
+    text = _flatten_text(tok.get("children", [])) or tok.get("raw", "")
+    return [Segment(SegType.TEXT, text, text)] if text else []
 
 
 def parse_inline(content: str) -> list[Segment]:
@@ -128,10 +132,7 @@ def parse_inline(content: str) -> list[Segment]:
             segs: list[Segment] = []
             for tok in node.get("children", []):
                 segs.extend(_token_to_segments(tok))
-            if segs:
-                return segs
-            return [Segment(SegType.TEXT, content, content)]
-    # 解析失败时回退为纯文本
+            return segs or [Segment(SegType.TEXT, content, content)]
     return [Segment(SegType.TEXT, content, content)]
 
 
@@ -143,16 +144,14 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     if not raw.strip():
         return BlockType.BLANK, {}
 
+    # 顺序敏感：TOC / TASK / HR 需先于普通列表识别
     m = _RE_TOC.match(raw)
     if m:
         return BlockType.TOC, {}
 
     m = _RE_HEADING.match(raw)
     if m:
-        return BlockType.HEADING, {
-            "level": len(m.group(1)),
-            "content": m.group(2).strip(),
-        }
+        return BlockType.HEADING, {"level": len(m.group(1)), "content": m.group(2).strip()}
 
     m = _RE_TASK.match(raw)
     if m:
@@ -184,8 +183,7 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     if m:
         return BlockType.QUOTE, {"content": m.group(1)}
 
-    m = _RE_HR.match(raw)
-    if m:
+    if _RE_HR.match(raw):
         return BlockType.HR, {}
 
     m = _RE_MATH_BLOCK.match(raw)
@@ -195,6 +193,28 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     return BlockType.PARAGRAPH, {"content": raw}
 
 
+def _make_prefix_segment(block_type: BlockType, info: dict, line: Line) -> Segment:
+    """构造块级前缀段。"""
+    if block_type == BlockType.HEADING:
+        lvl = info["level"]
+        line.level = lvl
+        return Segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl)
+    if block_type == BlockType.LIST_UO:
+        line.level = info.get("indent", 0)
+        marker = info["marker"]
+        if info.get("task"):
+            line.task = True
+            line.checked = info["checked"]
+            return Segment(SegType.LIST_PREFIX, f"{marker} [{'x' if info['checked'] else ' '}] ", "", level=line.level)
+        return Segment(SegType.LIST_PREFIX, f"{marker} ", "", level=line.level)
+    if block_type == BlockType.LIST_O:
+        line.level = info.get("indent", 0)
+        return Segment(SegType.LIST_PREFIX, f"{info['num']}. ", "", level=line.level)
+    if block_type == BlockType.QUOTE:
+        return Segment(SegType.QUOTE_PREFIX, "> ", "")
+    return Segment(SegType.TEXT, "", "")
+
+
 def _build_line(raw: str) -> Line:
     """把一行源码解析为 Line（非代码块行）。"""
     bt, info = _detect_block(raw)
@@ -202,39 +222,6 @@ def _build_line(raw: str) -> Line:
 
     if bt == BlockType.BLANK:
         line.segments = [Segment(SegType.TEXT, "", "")]
-        return line
-
-    if bt == BlockType.HEADING:
-        lvl = info["level"]
-        line.level = lvl
-        prefix = "#" * lvl + " "
-        line.segments = [Segment(SegType.HEADING_PREFIX, prefix, "", level=lvl)]
-        line.segments.extend(parse_inline(info["content"]))
-        return line
-
-    if bt == BlockType.LIST_UO:
-        line.level = info.get("indent", 0)
-        marker = info["marker"]
-        if info.get("task"):
-            line.task = True
-            line.checked = info["checked"]
-            prefix = f"{marker} [{'x' if info['checked'] else ' '}] "
-        else:
-            prefix = f"{marker} "
-        line.segments = [Segment(SegType.LIST_PREFIX, prefix, "", level=line.level)]
-        line.segments.extend(parse_inline(info["content"]))
-        return line
-
-    if bt == BlockType.LIST_O:
-        line.level = info.get("indent", 0)
-        prefix = f"{info['num']}. "
-        line.segments = [Segment(SegType.LIST_PREFIX, prefix, "", level=line.level)]
-        line.segments.extend(parse_inline(info["content"]))
-        return line
-
-    if bt == BlockType.QUOTE:
-        line.segments = [Segment(SegType.QUOTE_PREFIX, "> ", "")]
-        line.segments.extend(parse_inline(info["content"]))
         return line
 
     if bt == BlockType.HR:
@@ -250,6 +237,12 @@ def _build_line(raw: str) -> Line:
         line.segments = [Segment(SegType.TEXT, "[toc]", "[toc]")]
         return line
 
+    # 带前缀的块（heading / list / quote）
+    if bt in (BlockType.HEADING, BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
+        prefix_seg = _make_prefix_segment(bt, info, line)
+        line.segments = [prefix_seg, *parse_inline(info["content"])]
+        return line
+
     # paragraph
     line.segments = parse_inline(raw)
     return line
@@ -258,34 +251,48 @@ def _build_line(raw: str) -> Line:
 # ---------------------------------------------------------------------------
 # 文档级解析（含代码块合并）
 # ---------------------------------------------------------------------------
+def _split_code_block(raw: str) -> tuple[str, str]:
+    """从代码块 raw 中提取 (lang, body)。
+
+    raw 形如 ```lang\\n...\\n```。围栏首行单独匹配，避免多行内容
+    导致 `$` 锚点失效（曾引发"双重围栏"bug）。
+    """
+    first_line = raw.split("\n", 1)[0] if "\n" in raw else raw
+    m = _RE_CODE_FENCE.match(first_line)
+    if not m:
+        return "", raw
+
+    fence = m.group(2)
+    lang = m.group(3)
+    body = raw.split("\n", 1)[1] if "\n" in raw else ""
+    # 去掉末行围栏
+    tail = "\n" + fence[0] * len(fence)
+    if body.endswith(tail):
+        body = body[: -len(tail)]
+    return lang, body
+
+
 def parse_markdown(text: str) -> Document:
     """把 Markdown 文本解析为 Document。代码块作为一个编辑单元合并。"""
     lines_src = text.split("\n")
     doc = Document()
-    i = 0
-    n = len(lines_src)
+    i, n = 0, len(lines_src)
     while i < n:
         raw = lines_src[i]
         m = _RE_CODE_FENCE.match(raw)
         if m:
-            indent = m.group(1)
-            fence = m.group(2)
-            lang = m.group(3)
+            indent, fence, lang = m.group(1), m.group(2), m.group(3)
             inner: list[str] = []
             j = i + 1
-            while j < n:
-                if _RE_CODE_FENCE.match(lines_src[j]) and lines_src[
-                    j
-                ].lstrip().startswith(fence[0] * len(fence)):
-                    break
+            while j < n and not (
+                _RE_CODE_FENCE.match(lines_src[j])
+                and lines_src[j].lstrip().startswith(fence[0] * len(fence))
+            ):
                 inner.append(lines_src[j])
                 j += 1
             code = "\n".join(inner)
-            full = (
-                raw
-                + ("\n" + code if inner else "")
-                + ("\n" + lines_src[j] if j < n else "")
-            )
+            closing = lines_src[j] if j < n else fence
+            full = f"{raw}\n" + (code + "\n" if inner else "") + closing
             line = Line(block_type=BlockType.CODE, raw=full, lang=lang)
             line.segments = [Segment(SegType.CODE, code, code)]
             doc.lines.append(line)
@@ -293,6 +300,7 @@ def parse_markdown(text: str) -> Document:
             continue
         doc.lines.append(_build_line(raw))
         i += 1
+
     if not doc.lines:
         doc.lines = [_build_line("")]
     return doc
@@ -304,30 +312,16 @@ def parse_markdown(text: str) -> Document:
 def reparse_line(line: Line, new_raw: str | None = None) -> None:
     """用新的整行源码重新解析该行（就地更新 block_type/level/segments）。
 
-    保留代码块与 HR 的特殊结构（它们以整行为单位编辑，不拆段）。
+    保留代码块 / HR / MATH 的特殊结构（整行为单位编辑，不拆段）。
     """
     if new_raw is not None:
         line.raw = new_raw
-
     raw = line.raw
 
-    # 代码块 / HR：整行编辑，不拆段
     if line.block_type == BlockType.CODE:
-        # raw 形如 ```lang\n...\n```；更新内部 code 段
-        # 正则只匹配首行（围栏行），避免多行内容导致 $ 匹配失败
-        first_line = raw.split("\n", 1)[0] if "\n" in raw else raw
-        m = _RE_CODE_FENCE.match(first_line)
-        if m:
-            fence = m.group(2)
-            lang = m.group(3)
-            line.lang = lang
-            # 提取围栏内文本：去掉首行围栏与末行围栏
-            body = raw.split("\n", 1)[1] if "\n" in raw else ""
-            if body.endswith("\n" + fence[0] * len(fence)):
-                body = body[: -(len(fence) + 1)]
-            line.segments = [Segment(SegType.CODE, body, body)]
-        else:
-            line.segments = [Segment(SegType.CODE, raw, raw)]
+        lang, body = _split_code_block(raw)
+        line.lang = lang
+        line.segments = [Segment(SegType.CODE, body, body)]
         return
 
     if line.block_type == BlockType.HR:
@@ -336,13 +330,11 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
 
     if line.block_type == BlockType.MATH:
         m = _RE_MATH_BLOCK.match(raw)
-        if m:
-            content = m.group(1).strip()
-            line.segments = [Segment(SegType.MATH, content, content)]
-        else:
-            line.segments = [Segment(SegType.MATH, raw, raw)]
+        content = m.group(1).strip() if m else raw
+        line.segments = [Segment(SegType.MATH, content, content)]
         return
 
+    # 普通块：完整重建
     rebuilt = _build_line(raw)
     line.block_type = rebuilt.block_type
     line.level = rebuilt.level

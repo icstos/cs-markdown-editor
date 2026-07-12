@@ -73,9 +73,9 @@ def MarkdownEditor(
     active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
     draft, set_draft = ft.use_state("")  # 当前编辑段文本
     cursor_line, set_cursor_line = ft.use_state(0)
-    # 光标跟踪：供外层 on_key 判断左右越界、上下跨行目标偏移
-    cursor_extent, set_cursor_extent = ft.use_state(0)
-    cursor_base, set_cursor_base = ft.use_state(0)
+    # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
+    # 仅在跨段导航/块切换时通过 _sync_cursor 重置；on_key 经 nav_ref 读取
+    cursor_ref = ft.use_ref({"base": 0, "extent": 0, "draft_len": 0})
     # nav_seq：每次跨段/激活递增，触发 TextField key 重建以重新 autofocus
     nav_seq, set_nav_seq = ft.use_state(0)
     # 原文模式：切换到原始 Markdown 文本编辑
@@ -99,8 +99,9 @@ def MarkdownEditor(
     def _sync_cursor(text: str):
         """同步光标状态到段尾（autofocus 默认落点）。"""
         n = len(text)
-        set_cursor_extent(n)
-        set_cursor_base(n)
+        cursor_ref.current["base"] = n
+        cursor_ref.current["extent"] = n
+        cursor_ref.current["draft_len"] = n
 
     # ---- 提交当前激活段 ----
     def commit_active(new_raw: str | None = None):
@@ -222,7 +223,7 @@ def MarkdownEditor(
         li, si = active
         if li <= 0:
             return
-        target = _logical_offset(document.lines[li], si, cursor_extent)
+        target = _logical_offset(document.lines[li], si, cursor_ref.current["extent"])
         nsi = _locate_seg_by_offset(document.lines[li - 1], target)
         _goto(li - 1, nsi)
 
@@ -233,15 +234,24 @@ def MarkdownEditor(
         li, si = active
         if li >= len(document.lines) - 1:
             return
-        target = _logical_offset(document.lines[li], si, cursor_extent)
+        target = _logical_offset(document.lines[li], si, cursor_ref.current["extent"])
         nsi = _locate_seg_by_offset(document.lines[li + 1], target)
         _goto(li + 1, nsi)
 
     def on_selection_change(e):
-        """跟踪光标位置（extent/base），供 on_key 判断左右越界。"""
+        """跟踪光标位置（extent/base），供 on_key 判断左右越界。
+
+        使用 ref 而非 set_state，避免输入时触发重渲染导致光标跳动。
+        同时直接更新 nav_ref.current，确保 on_key 读到最新值。
+        """
         if (sel := e.selection) is not None:
-            set_cursor_base(sel.base_offset)
-            set_cursor_extent(sel.extent_offset)
+            cursor_ref.current["base"] = sel.base_offset
+            cursor_ref.current["extent"] = sel.extent_offset
+            cursor_ref.current["draft_len"] = len(e.control.value)
+            if nav_ref is not None and nav_ref.current is not None:
+                nav_ref.current["base"] = sel.base_offset
+                nav_ref.current["extent"] = sel.extent_offset
+                nav_ref.current["draft_len"] = len(e.control.value)
 
     def on_change_draft(value: str):
         set_draft(value)
@@ -441,9 +451,9 @@ def MarkdownEditor(
     if nav_ref is not None:
         nav_ref.current = {
             "active": active,
-            "extent": cursor_extent,
-            "base": cursor_base,
-            "draft_len": len(draft),
+            "extent": cursor_ref.current["extent"],
+            "base": cursor_ref.current["base"],
+            "draft_len": cursor_ref.current["draft_len"],
             "move_left": move_left_cross,
             "move_right": move_right_cross,
             "move_home": move_home,

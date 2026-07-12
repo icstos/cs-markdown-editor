@@ -101,11 +101,14 @@ def active_text_field(
         "cursor_width": 1.5,
         "shift_enter": multiline,
         "ignore_up_down_keys": not multiline,  # 单行段让上下键冒泡到外层跨行
-        "selection": sel,
         "on_change": lambda e: on_change(e.control.value),
         "on_submit": lambda e: on_submit(e.control.value),
         "on_blur": lambda e: on_blur(),
     }
+    # 仅在跨段导航时传 selection（强制光标落点）；
+    # 输入时不传 selection，避免 Flet 重置光标到段尾
+    if sel is not None:
+        kwargs["selection"] = sel
     if on_selection_change is not None:
         kwargs["on_selection_change"] = on_selection_change
 

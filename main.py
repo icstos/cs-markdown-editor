@@ -261,6 +261,13 @@ def App():
         if nav is None or not nav.get("compute_markdown_from_text"):
             return
         md = nav["compute_markdown_from_text"](plain)
+        # 临时调试日志
+        with open("debug.log", "a", encoding="utf-8") as f:
+            f.write(f"plain={plain!r}\n")
+            f.write(f"md={md!r}\n")
+            f.write(f"md==plain={md == plain}\n")
+            f.write(f"has_newline={'\\n' in plain}\n")
+            f.write("---\n")
         if md and md != plain:
             await clip.set(md)
 

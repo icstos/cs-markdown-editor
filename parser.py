@@ -522,4 +522,14 @@ def match_text_to_selections(
 def compute_markdown_from_text(lines: list[Line], plain_text: str) -> str:
     """从 SelectionArea 复制的纯文本计算 Markdown 源码。"""
     selections = match_text_to_selections(lines, plain_text)
+    # 临时调试日志
+    with open("debug.log", "a", encoding="utf-8") as f:
+        f.write(f"selections={selections}\n")
+        line_texts = [
+            "".join(_seg_display_text(seg) for seg in line.segments)
+            for line in lines
+        ]
+        f.write(f"line_count={len(lines)}\n")
+        for i, lt in enumerate(line_texts[:15]):
+            f.write(f"  line[{i}]={lt!r}\n")
     return compute_markdown_from_selections(lines, selections)

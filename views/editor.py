@@ -525,17 +525,19 @@ def MarkdownEditor(
             ),
             _raw_editor()
             if raw_mode
-            else ft.Container(
-                content=ft.ListView(
-                    ref=list_view_ref,
-                    controls=line_controls,
+            else ft.SelectionArea(
+                content=ft.Container(
+                    content=ft.Column(
+                        ref=list_view_ref,
+                        controls=line_controls,
+                        expand=True,
+                        spacing=2,
+                        scroll=ft.ScrollMode.AUTO,
+                    ),
                     expand=True,
-                    spacing=2,
+                    bgcolor=ft.Colors.WHITE,
                     padding=ft.Padding.symmetric(horizontal=24, vertical=16),
-                    auto_scroll=False,
                 ),
-                expand=True,
-                bgcolor=ft.Colors.WHITE,
             ),
             _status_bar(document),
         ],

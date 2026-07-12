@@ -357,3 +357,99 @@ def line_to_raw(line: Line) -> str:
 def serialize(doc: Document) -> str:
     """文档序列化为 Markdown 文本。"""
     return "\n".join(line.raw for line in doc.lines)
+
+
+# ---------------------------------------------------------------------------
+# 选区 → Markdown 源码
+# ---------------------------------------------------------------------------
+_PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
+
+# 行内格式包裹语法
+_WRAP_SYNTAX: dict[SegType, tuple[str, str]] = {
+    SegType.STRONG: ("**", "**"),
+    SegType.EMPHASIS: ("*", "*"),
+    SegType.CODESPAN: ("`", "`"),
+    SegType.STRIKE: ("~~", "~~"),
+}
+
+
+def _seg_display_text(seg: Segment) -> str:
+    """段的显示文本（与 segment_view._display_text 一致）。"""
+    if seg.seg_type in _PREFIX_SEGTYPES:
+        return seg.raw
+    if seg.seg_type == SegType.IMAGE:
+        return seg.text or "🖼"
+    if seg.seg_type == SegType.LINK:
+        return seg.text or seg.url or "链接"
+    return seg.text
+
+
+def _wrap_partial(seg: Segment, selected_text: str) -> str:
+    """对部分选中的段应用语法包裹，返回 Markdown 源码。"""
+    if not selected_text:
+        return ""
+    st = seg.seg_type
+    # 带包裹器的行内格式（加粗/斜体/行内代码/删除线）
+    if st in _WRAP_SYNTAX:
+        pre, post = _WRAP_SYNTAX[st]
+        return f"{pre}{selected_text}{post}"
+    # 链接 / 图片 / 行内公式
+    if st == SegType.LINK:
+        return f"[{selected_text}]({seg.url})"
+    if st == SegType.IMAGE:
+        return f"![{selected_text}]({seg.url})"
+    if st == SegType.INLINE_MATH:
+        return f"${selected_text}$"
+    # 纯文本 / 前缀段：直接返回选中文本
+    return selected_text
+
+
+def compute_markdown_from_selections(
+    lines: list[Line], selections: dict[int, tuple[int, int]]
+) -> str:
+    """根据选区计算对应的 Markdown 源码。
+
+    selections: {line_idx: (base_offset, extent_offset)}
+    偏移相对于该行 ft.Text 的显示文本（所有段 display_text 拼接）。
+    全段选中 → 用 seg.raw（含完整语法）；
+    部分选中 → 用 _wrap_partial 包裹选中文本。
+    """
+    if not selections:
+        return ""
+
+    sorted_lines = sorted(selections.keys())
+    parts: list[str] = []
+
+    for li in sorted_lines:
+        if li >= len(lines):
+            continue
+        line = lines[li]
+        base, extent = selections[li]
+        start, end = min(base, extent), max(base, extent)
+        if start == end:
+            continue  # 空选区
+
+        # 构建段偏移表，逐段计算选区
+        offset = 0
+        for seg in line.segments:
+            text = _seg_display_text(seg)
+            seg_start, seg_end = offset, offset + len(text)
+            offset = seg_end
+
+            if seg_end <= start or seg_start >= end:
+                continue  # 不重叠
+
+            sel_start = max(0, start - seg_start)
+            sel_end = min(len(text), end - seg_start)
+            selected = text[sel_start:sel_end]
+
+            # 全段选中 → 用 raw（含完整语法）；部分选中 → 包裹语法
+            if sel_start == 0 and sel_end == len(text):
+                parts.append(seg.raw)
+            else:
+                parts.append(_wrap_partial(seg, selected))
+
+        if li != sorted_lines[-1]:
+            parts.append("\n")
+
+    return "".join(parts)

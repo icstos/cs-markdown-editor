@@ -105,7 +105,7 @@ def _block_gesture(
     *,
     cursor: ft.MouseCursor = ft.MouseCursor.TEXT,
 ) -> ft.GestureDetector:
-    """构造可点击激活的 GestureDetector（统一入口）。"""
+    """构造可点击激活的 GestureDetector（on_tap 仅触发于点击，不拦截拖拽选区）。"""
     return ft.GestureDetector(
         content=inner,
         on_tap=lambda: on_activate(line_idx, seg_idx),
@@ -272,6 +272,7 @@ def LineView(
     if line.task and active_seg is None:
         content_spans = _spans_for(line, 1, len(line.segments), activate, base) or [ft.TextSpan(" ", line_style)]
         content_target_si = 1 if len(line.segments) > 1 else 0
+
         content = ft.Row(
             controls=[
                 ft.Checkbox(
@@ -279,13 +280,14 @@ def LineView(
                     on_change=lambda e: on_toggle_task(line_idx) if on_toggle_task else None,
                 ),
                 ft.Text(
-                    spans=content_spans, style=line_style, selectable=False,
+                    spans=content_spans, style=line_style,
                     on_tap=lambda: on_activate(line_idx, content_target_si),
                 ),
             ],
             wrap=True, spacing=4, run_spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+        content = _block_gesture(content, on_activate, line_idx)
         return _wrap_block(content, line, base, line_idx)
 
     # ============ 图片行（非编辑态）============
@@ -330,9 +332,9 @@ def LineView(
     # ============ 普通块（段落 / 标题 / 列表 / 引用）============
     if active_seg is None:
         spans = _spans_for(line, 0, len(line.segments), activate, base)
-        content = ft.Text(
-            spans=spans, style=line_style, selectable=False,
-            on_tap=lambda: on_activate(line_idx, 0),
+        content = _block_gesture(
+            ft.Text(spans=spans, style=line_style),
+            on_activate, line_idx,
         )
         return _wrap_block(content, line, base, line_idx)
 
@@ -368,9 +370,9 @@ def LineView(
 
 
 def _wrap_block(
-    content: ft.Control, line: Line, base: int, line_idx: int | None = None
+    content: ft.Control, line: Line, base: int, line_idx: int | None = None,
 ) -> ft.Control:
-    """包一层块级容器：缩进、引用边框、悬停反馈。"""
+    """包一层块级容器：缩进、引用边框。"""
     pad_left = 0
     border = None
 

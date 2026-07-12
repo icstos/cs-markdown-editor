@@ -460,6 +460,9 @@ def MarkdownEditor(
             "move_end": move_end,
             "move_up": move_up,
             "move_down": move_down,
+            "compute_markdown_from_text": lambda text: parser.compute_markdown_from_text(
+                document.lines, text
+            ),
         }
 
     # ---- 预计算 TOC 条目（所有标题）----

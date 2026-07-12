@@ -6,7 +6,7 @@
 - 段级编辑、Typora 式实时渲染由 views/editor 负责
 """
 
-import json
+import asyncio
 import os
 
 import flet as ft
@@ -161,13 +161,24 @@ def App():
 
     # FilePicker：挂到 page.overlay 才能弹出系统对话框
     picker_holder = ft.use_ref()
+    # Clipboard：Ctrl+C 时先让 SelectionArea 原生复制纯文本，再异步读取→匹配→替换为 Markdown
+    clipboard_holder = ft.use_ref()
+    # page 引用：事件回调中 ft.context.page 可能不可用，提前缓存
+    page_ref = ft.use_ref()
 
     def _mount_picker():
         page = ft.context.page
+        page_ref.current = page
         picker = ft.FilePicker()
         picker_holder.current = picker
         page.overlay.append(picker)
-        return lambda: page.overlay.remove(picker)
+        clip = ft.Clipboard()
+        clipboard_holder.current = clip
+        page.overlay.append(clip)
+        return lambda: (
+            page.overlay.remove(picker),
+            page.overlay.remove(clip),
+        )
 
     ft.use_effect(_mount_picker, [])
 
@@ -234,16 +245,33 @@ def App():
         set_dirty(False)
 
     # ---- 快捷键 + 光标导航 ----
+    # KeyDownEvent 只有 key 属性，无修饰键信息，需手动跟踪 Ctrl 按下/释放
+    ctrl_held = ft.use_ref(False)
+
+    async def _do_copy():
+        """Ctrl+C 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown。"""
+        await asyncio.sleep(0.2)
+        clip = clipboard_holder.current
+        if clip is None:
+            return
+        plain = await clip.get()
+        if not plain:
+            return
+        nav = nav_ref.current
+        if nav is None or not nav.get("compute_markdown_from_text"):
+            return
+        md = nav["compute_markdown_from_text"](plain)
+        if md and md != plain:
+            await clip.set(md)
+
     def on_key(e):
-        # e.data 形如 JSON: {"key":"S","modifiers":{"control":true,...}}
-        try:
-            d = json.loads(e.data) if e.data else {}
-        except Exception:
-            d = {}
-        key = d.get("key") or e.key or ""
-        mods = d.get("modifiers") or {}
-        ctrl = mods.get("control") or mods.get("meta")
+        key = e.key or ""
         norm = key.replace(" ", "").lower()
+
+        # 跟踪 Ctrl/Meta 修饰键状态
+        if norm.startswith("control") or norm.startswith("meta"):
+            ctrl_held.current = True
+            return
 
         # 导航键：仅在编辑态有激活段时由 editor 暴露的接口处理
         nav = nav_ref.current
@@ -260,7 +288,6 @@ def App():
             if norm == "arrowdown":
                 nav["move_down"]()
                 return
-            # 左右越界：光标已 collapsed 在边界时才跨段，否则让 TextField 自行移动
             if norm == "arrowleft":
                 if nav["extent"] == 0 and nav["base"] == 0:
                     nav["move_left"]()
@@ -273,7 +300,7 @@ def App():
                     nav["move_right"]()
                     return
 
-        if not ctrl:
+        if not ctrl_held.current:
             return
         k = key.upper()
         if k == "S":
@@ -282,6 +309,19 @@ def App():
             new_doc()
         elif k == "O":
             open_doc()
+        elif k == "C":
+            # 非编辑态：让 SelectionArea 原生复制后异步替换为 Markdown 源码
+            nav = nav_ref.current
+            if nav and nav.get("active") is None:
+                page = page_ref.current
+                if page is not None:
+                    page.run_task(_do_copy)
+
+    def on_key_up(e):
+        key = e.key or ""
+        norm = key.replace(" ", "").lower()
+        if norm.startswith("control") or norm.startswith("meta"):
+            ctrl_held.current = False
 
     def _app_bar():
         return ft.Container(
@@ -344,6 +384,7 @@ def App():
             expand=True,
         ),
         on_key_down=on_key,
+        on_key_up=on_key_up,
         expand=True,
     )
 

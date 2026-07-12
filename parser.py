@@ -413,43 +413,113 @@ def compute_markdown_from_selections(
     偏移相对于该行 ft.Text 的显示文本（所有段 display_text 拼接）。
     全段选中 → 用 seg.raw（含完整语法）；
     部分选中 → 用 _wrap_partial 包裹选中文本。
+    遍历首尾行之间的所有行（含空行），确保换行符数量正确。
     """
     if not selections:
         return ""
 
     sorted_lines = sorted(selections.keys())
+    first_li, last_li = sorted_lines[0], sorted_lines[-1]
     parts: list[str] = []
 
-    for li in sorted_lines:
-        if li >= len(lines):
-            continue
-        line = lines[li]
-        base, extent = selections[li]
-        start, end = min(base, extent), max(base, extent)
-        if start == end:
-            continue  # 空选区
+    for li in range(first_li, last_li + 1):
+        if li < len(lines) and li in selections:
+            line = lines[li]
+            base, extent = selections[li]
+            start, end = min(base, extent), max(base, extent)
+            if start != end:
+                # 构建段偏移表，逐段计算选区
+                offset = 0
+                for seg in line.segments:
+                    text = _seg_display_text(seg)
+                    seg_start, seg_end = offset, offset + len(text)
+                    offset = seg_end
 
-        # 构建段偏移表，逐段计算选区
-        offset = 0
-        for seg in line.segments:
-            text = _seg_display_text(seg)
-            seg_start, seg_end = offset, offset + len(text)
-            offset = seg_end
+                    if seg_end <= start or seg_start >= end:
+                        continue  # 不重叠
 
-            if seg_end <= start or seg_start >= end:
-                continue  # 不重叠
+                    sel_start = max(0, start - seg_start)
+                    sel_end = min(len(text), end - seg_start)
+                    selected = text[sel_start:sel_end]
 
-            sel_start = max(0, start - seg_start)
-            sel_end = min(len(text), end - seg_start)
-            selected = text[sel_start:sel_end]
+                    # 全段选中 → 用 raw（含完整语法）；部分选中 → 包裹语法
+                    if sel_start == 0 and sel_end == len(text):
+                        parts.append(seg.raw)
+                    else:
+                        parts.append(_wrap_partial(seg, selected))
 
-            # 全段选中 → 用 raw（含完整语法）；部分选中 → 包裹语法
-            if sel_start == 0 and sel_end == len(text):
-                parts.append(seg.raw)
-            else:
-                parts.append(_wrap_partial(seg, selected))
-
-        if li != sorted_lines[-1]:
+        if li < last_li:
             parts.append("\n")
 
     return "".join(parts)
+
+
+def match_text_to_selections(
+    lines: list[Line], plain_text: str
+) -> dict[int, tuple[int, int]]:
+    """将 SelectionArea 复制的纯文本匹配回文档行，返回选区字典。
+
+    SelectionArea 跨行复制时不插入换行符，多行文本被直接拼接。
+    因此分两种策略：
+    1. 若剪贴板含 \\n → 按行逐段匹配
+    2. 若无 \\n → 在全部行显示文本的拼接中查找，再映射回各行偏移
+    """
+    if not plain_text:
+        return {}
+
+    text = plain_text.replace("\r\n", "\n").replace("\r", "\n")
+
+    line_texts = [
+        "".join(_seg_display_text(seg) for seg in line.segments)
+        for line in lines
+    ]
+
+    # 情况1：剪贴板含换行符 → 按行匹配
+    if "\n" in text:
+        selections: dict[int, tuple[int, int]] = {}
+        search_from = 0
+        for clip in text.split("\n"):
+            if not clip:
+                search_from += 1
+                continue
+            for li in range(search_from, len(line_texts)):
+                pos = line_texts[li].find(clip)
+                if pos != -1:
+                    selections[li] = (pos, pos + len(clip))
+                    search_from = li + 1
+                    break
+        return selections
+
+    # 情况2：无换行符 → 在全部行文本拼接中查找，再映射回各行
+    full_concat = "".join(line_texts)
+    pos = full_concat.find(text)
+    if pos == -1:
+        # 回退：单行匹配
+        selections = {}
+        for li, lt in enumerate(line_texts):
+            p = lt.find(text)
+            if p != -1:
+                selections[li] = (p, p + len(text))
+                break
+        return selections
+
+    # 将拼接位置映射回各行偏移
+    end_pos = pos + len(text)
+    selections = {}
+    offset = 0
+    for li, lt in enumerate(line_texts):
+        lt_start = offset
+        lt_end = offset + len(lt)
+        offset = lt_end
+        sel_start = max(0, pos - lt_start)
+        sel_end = min(len(lt), end_pos - lt_start)
+        if sel_start < sel_end:
+            selections[li] = (sel_start, sel_end)
+
+    return selections
+
+
+def compute_markdown_from_text(lines: list[Line], plain_text: str) -> str:
+    """从 SelectionArea 复制的纯文本计算 Markdown 源码。"""
+    selections = match_text_to_selections(lines, plain_text)
+    return compute_markdown_from_selections(lines, selections)

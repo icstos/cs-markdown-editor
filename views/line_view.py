@@ -14,7 +14,6 @@ import flet as ft
 from models import BlockType, Line, SegType
 from styles import (
     C_CODE_BLOCK_BG,
-    C_CODE_BLOCK_FG,
     C_MATH_BG,
     C_MUTED,
     C_QUOTE_BAR,
@@ -183,26 +182,27 @@ def LineView(
             )
         else:
             code = line.segments[0].text if line.segments else ""
-            txt = ft.Text(
-                value=code or " ",
-                style=ft.TextStyle(
-                    size=14, color=C_CODE_BLOCK_FG, font_family=FONT_MONO, height=1.5
-                ),
+            lang = line.lang or ""
+            # 用 ft.Markdown + GITHUB_WEB 扩展实现语法高亮（highlight.js）
+            md = ft.Markdown(
+                value=f"```{lang}\n{code}\n```",
                 selectable=True,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                code_theme=ft.MarkdownCodeTheme.A11Y_LIGHT,
             )
             lang_tag = (
                 ft.Text(
-                    value=line.lang or "code",
+                    value=lang,
                     size=11,
                     color=C_MUTED,
                     font_family=FONT_MONO,
                 )
-                if line.lang
+                if lang
                 else ft.Text(" ")
             )
             content = ft.GestureDetector(
                 content=ft.Container(
-                    content=ft.Column([lang_tag, txt], spacing=6),
+                    content=ft.Column([lang_tag, md], spacing=6),
                     bgcolor=C_CODE_BLOCK_BG,
                     border_radius=6,
                     padding=12,
@@ -285,9 +285,9 @@ def LineView(
                             padding=ft.Padding.only(left=(lvl - 1) * 16),
                             ink=True,
                         ),
-                        on_tap=lambda e, target_li=li: on_jump_to(target_li)
-                        if on_jump_to
-                        else None,
+                        on_tap=lambda e, target_li=li: (
+                            on_jump_to(target_li) if on_jump_to else None
+                        ),
                         mouse_cursor=ft.MouseCursor.CLICK,
                     )
                 )
@@ -312,9 +312,9 @@ def LineView(
             controls=[
                 ft.Checkbox(
                     value=line.checked,
-                    on_change=lambda e: on_toggle_task(line_idx)
-                    if on_toggle_task
-                    else None,
+                    on_change=lambda e: (
+                        on_toggle_task(line_idx) if on_toggle_task else None
+                    ),
                 ),
                 ft.Text(
                     spans=content_spans,
@@ -436,7 +436,9 @@ def LineView(
     return _wrap_block(content, line, base, line_idx)
 
 
-def _wrap_block(content: ft.Control, line: Line, base: int, line_idx: int | None = None) -> ft.Control:
+def _wrap_block(
+    content: ft.Control, line: Line, base: int, line_idx: int | None = None
+) -> ft.Control:
     """包一层块级容器：缩进、引用边框、悬停反馈。"""
     pad_left = 0
     pad_right = 0

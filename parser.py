@@ -314,12 +314,14 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
     # 代码块 / HR：整行编辑，不拆段
     if line.block_type == BlockType.CODE:
         # raw 形如 ```lang\n...\n```；更新内部 code 段
-        m = _RE_CODE_FENCE.match(raw)
+        # 正则只匹配首行（围栏行），避免多行内容导致 $ 匹配失败
+        first_line = raw.split("\n", 1)[0] if "\n" in raw else raw
+        m = _RE_CODE_FENCE.match(first_line)
         if m:
             fence = m.group(2)
             lang = m.group(3)
             line.lang = lang
-            # 提取围栏内文本
+            # 提取围栏内文本：去掉首行围栏与末行围栏
             body = raw.split("\n", 1)[1] if "\n" in raw else ""
             if body.endswith("\n" + fence[0] * len(fence)):
                 body = body[: -(len(fence) + 1)]

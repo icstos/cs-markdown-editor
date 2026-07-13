@@ -247,6 +247,8 @@ def App():
     # ---- 快捷键 + 光标导航 ----
     # KeyDownEvent 只有 key 属性，无修饰键信息，需手动跟踪 Ctrl 按下/释放
     ctrl_held = ft.use_ref(False)
+    # 粘贴前的 draft 快照（供 handle_paste 做 diff 定位粘贴位置）
+    paste_old_draft = ft.use_ref("")
 
     async def _do_copy():
         """Ctrl+C 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown。"""
@@ -261,15 +263,22 @@ def App():
         if nav is None or not nav.get("compute_markdown_from_text"):
             return
         md = nav["compute_markdown_from_text"](plain)
-        # 临时调试日志
-        with open("debug.log", "a", encoding="utf-8") as f:
-            f.write(f"plain={plain!r}\n")
-            f.write(f"md={md!r}\n")
-            f.write(f"md==plain={md == plain}\n")
-            f.write(f"has_newline={'\\n' in plain}\n")
-            f.write("---\n")
         if md and md != plain:
             await clip.set(md)
+
+    async def _do_paste_check():
+        """Ctrl+V 后异步检查剪贴板是否含多行内容，若是则拆分为多行插入。"""
+        await asyncio.sleep(0.05)
+        clip = clipboard_holder.current
+        if clip is None:
+            return
+        text = await clip.get()
+        if not text or "\n" not in text:
+            return
+        nav = nav_ref.current
+        if nav is None or not nav.get("handle_paste"):
+            return
+        nav["handle_paste"](text, paste_old_draft.current)
 
     def on_key(e):
         key = e.key or ""
@@ -323,6 +332,14 @@ def App():
                 page = page_ref.current
                 if page is not None:
                     page.run_task(_do_copy)
+        elif k == "V":
+            # 编辑态：保存粘贴前 draft，再异步检查剪贴板是否含多行
+            nav = nav_ref.current
+            if nav and nav.get("active") is not None:
+                paste_old_draft.current = nav.get("draft", "")
+                page = page_ref.current
+                if page is not None:
+                    page.run_task(_do_paste_check)
 
     def on_key_up(e):
         key = e.key or ""

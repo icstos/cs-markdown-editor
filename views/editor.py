@@ -78,6 +78,9 @@ def MarkdownEditor(
     cursor_ref = ft.use_ref({"base": 0, "extent": 0, "draft_len": 0})
     # nav_seq：每次跨段/激活递增，触发 TextField key 重建以重新 autofocus
     nav_seq, set_nav_seq = ft.use_state(0)
+    # 粘贴时抑制 on_blur：handle_paste 修改 document.lines 触发重渲染，
+    # 旧 TextField 卸载导致 on_blur 覆盖 set_active，需跳过这一次 blur
+    suppress_blur = ft.use_ref(False)
     # 原文模式：切换到原始 Markdown 文本编辑
     raw_mode, set_raw_mode = ft.use_state(False)
     raw_draft, set_raw_draft = ft.use_state("")
@@ -291,8 +294,87 @@ def MarkdownEditor(
         )
 
     def on_blur():
+        if suppress_blur.current:
+            suppress_blur.current = False
+            return
         commit_active(draft)
         set_active(None)
+
+    def handle_paste(clip_text: str, old_draft: str = ""):
+        """处理多行粘贴：用 diff 定位粘贴位置，第一行留当前段，后续行插入为新行。
+
+        单行 TextField（max_lines=1）会剥离换行符，导致粘贴的多行内容变为一行。
+        本函数通过对比粘贴前后的 draft 定位粘贴文本，再用剪贴板原始多行文本重建。
+        """
+        if active is None or not clip_text or "\n" not in clip_text:
+            return
+        li, si = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        # 代码块/数学/HR 本身多行编辑，不处理
+        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR):
+            return
+
+        new_draft = draft  # 粘贴后（换行符已剥离）
+
+        # diff：找 old/new 的公共前缀和后缀，定位粘贴区域
+        pre = 0
+        while (
+            pre < len(old_draft)
+            and pre < len(new_draft)
+            and old_draft[pre] == new_draft[pre]
+        ):
+            pre += 1
+        suf = 0
+        while (
+            suf < len(old_draft) - pre
+            and suf < len(new_draft) - pre
+            and old_draft[len(old_draft) - 1 - suf] == new_draft[len(new_draft) - 1 - suf]
+        ):
+            suf += 1
+
+        parts = clip_text.split("\n")
+        first = parts[0]
+        rest = parts[1:]
+
+        # 重建当前段 raw：旧前缀 + 第一行 + 旧后缀
+        new_raw = old_draft[:pre] + first
+        if suf > 0:
+            new_raw += old_draft[len(old_draft) - suf:]
+
+        if si < len(line.segments):
+            line.segments[si].raw = new_raw
+        full = "".join(s.raw for s in line.segments)
+        parser.reparse_line(line, full)
+        mark_dirty()
+
+        if rest:
+            new_lines = [parser.parse_markdown(p).lines[0] for p in rest]
+            document.lines = (
+                document.lines[: li + 1] + new_lines + document.lines[li + 1:]
+            )
+            # 抑制重渲染导致的 on_blur（旧 TextField 卸载）
+            suppress_blur.current = True
+            # 激活最后一行最后一段
+            last_li = li + len(new_lines)
+            last_line = document.lines[last_li]
+            target_si = max(0, len(last_line.segments) - 1)
+            new_draft_val = (
+                last_line.segments[target_si].raw
+                if target_si < len(last_line.segments)
+                else ""
+            )
+            set_draft(new_draft_val)
+            set_active((last_li, target_si))
+            set_cursor_line(last_li)
+            _sync_cursor(new_draft_val)
+            set_nav_seq(nav_seq + 1)
+        else:
+            suppress_blur.current = True
+            set_draft(new_raw)
+            _sync_cursor(new_raw)
+            set_nav_seq(nav_seq + 1)
 
     def on_submit(new_raw: str):
         if active is None:
@@ -454,6 +536,7 @@ def MarkdownEditor(
             "extent": cursor_ref.current["extent"],
             "base": cursor_ref.current["base"],
             "draft_len": cursor_ref.current["draft_len"],
+            "draft": draft,
             "move_left": move_left_cross,
             "move_right": move_right_cross,
             "move_home": move_home,
@@ -463,6 +546,7 @@ def MarkdownEditor(
             "compute_markdown_from_text": lambda text: parser.compute_markdown_from_text(
                 document.lines, text
             ),
+            "handle_paste": handle_paste,
         }
 
     # ---- 预计算 TOC 条目（所有标题）----

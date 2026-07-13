@@ -43,8 +43,14 @@ def segment_to_span(
     base_size: int,
 ) -> ft.TextSpan:
     """渲染态：段 -> TextSpan（可点击激活）。"""
-    style = prefix_style(seg, base_size) if seg.seg_type in _PREFIX_SEGTYPES else segment_style(seg, base_size)
-    return ft.TextSpan(text=_display_text(seg), style=style, on_click=lambda e: on_activate(seg_idx))
+    style = (
+        prefix_style(seg, base_size)
+        if seg.seg_type in _PREFIX_SEGTYPES
+        else segment_style(seg, base_size)
+    )
+    return ft.TextSpan(
+        text=_display_text(seg), style=style, on_click=lambda e: on_activate(seg_idx)
+    )
 
 
 def active_text_field(
@@ -67,9 +73,9 @@ def active_text_field(
 
     光标导航：
     - on_selection_change：上报光标位置变化（供外层跟踪 extent/base）
-    - initial_cursor + nav_seq：跨段时通过 nav_seq 变化触发 key 重建，
-      使 selection 精确落到段首/段尾/对应偏移；输入时 nav_seq 不变、
-      selection 值不变，光标不被重置。
+    - initial_cursor + on_focus：跨段时通过 nav_seq 变化触发 key 重建，
+      autofocus 聚焦后 on_focus 强制把光标设到 initial_cursor（段首/段尾）。
+      cursor_applied 标志确保仅应用一次，后续聚焦不覆盖用户光标位置。
     - ignore_up_down_keys：单行段置 True，让上下键冒泡到外层做跨行；
       多行代码块保持 False，让上下键在块内移动光标。
     """
@@ -77,11 +83,26 @@ def active_text_field(
     font_family = FONT_MONO if is_mono else FONT_MAIN
     text_size = base_size if not is_mono else max(base_size - 1, 12)
 
-    sel = (
-        ft.TextSelection(base_offset=initial_cursor, extent_offset=initial_cursor)
-        if initial_cursor >= 0
-        else None
-    )
+    # autofocus 默认把光标放段尾，覆盖了 selection 属性（selection 需先聚焦才生效）。
+    # 用 on_focus 在聚焦后强制设置光标到 initial_cursor 位置，仅应用一次。
+    # 声明式模式下控件被冻结（_frozen），需临时解冻才能命令式设置 selection 并 update。
+    cursor_applied = [False]
+
+    def _on_focus(e):
+        if not cursor_applied[0] and initial_cursor >= 0:
+            cursor_applied[0] = True
+            ctrl = e.control
+            frozen = getattr(ctrl, "_frozen", None)
+            if frozen is not None:
+                del ctrl._frozen
+            try:
+                ctrl.selection = ft.TextSelection(
+                    base_offset=initial_cursor, extent_offset=initial_cursor
+                )
+                ctrl.update()
+            finally:
+                if frozen is not None:
+                    ctrl._frozen = frozen
 
     kwargs: dict = {
         "key": f"field-{nav_seq}",
@@ -101,14 +122,11 @@ def active_text_field(
         "cursor_width": 1.5,
         "shift_enter": multiline,
         "ignore_up_down_keys": not multiline,  # 单行段让上下键冒泡到外层跨行
+        "on_focus": _on_focus,
         "on_change": lambda e: on_change(e.control.value),
         "on_submit": lambda e: on_submit(e.control.value),
         "on_blur": lambda e: on_blur(),
     }
-    # 仅在跨段导航时传 selection（强制光标落点）；
-    # 输入时不传 selection，避免 Flet 重置光标到段尾
-    if sel is not None:
-        kwargs["selection"] = sel
     if on_selection_change is not None:
         kwargs["on_selection_change"] = on_selection_change
 

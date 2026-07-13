@@ -78,6 +78,8 @@ def MarkdownEditor(
     cursor_ref = ft.use_ref({"base": 0, "extent": 0, "draft_len": 0})
     # nav_seq：每次跨段/激活递增，触发 TextField key 重建以重新 autofocus
     nav_seq, set_nav_seq = ft.use_state(0)
+    # 跨段导航时的光标落点：-1=段尾(autofocus), 0=段首
+    cursor_pos, set_cursor_pos = ft.use_state(-1)
     # 粘贴时抑制 on_blur：handle_paste 修改 document.lines 触发重渲染，
     # 旧 TextField 卸载导致 on_blur 覆盖 set_active，需跳过这一次 blur
     suppress_blur = ft.use_ref(False)
@@ -99,11 +101,12 @@ def MarkdownEditor(
                 return line.segments[si].raw
         return ""
 
-    def _sync_cursor(text: str):
-        """同步光标状态到段尾（autofocus 默认落点）。"""
+    def _sync_cursor(text: str, cursor_at: int = -1):
+        """同步光标状态。cursor_at=-1: 段尾; 0: 段首; >0: 指定偏移。"""
         n = len(text)
-        cursor_ref.current["base"] = n
-        cursor_ref.current["extent"] = n
+        pos = cursor_at if cursor_at >= 0 else n
+        cursor_ref.current["base"] = pos
+        cursor_ref.current["extent"] = pos
         cursor_ref.current["draft_len"] = n
 
     # ---- 提交当前激活段 ----
@@ -134,9 +137,9 @@ def MarkdownEditor(
         mark_dirty()
 
     # ---- 激活段（统一的状态切换入口）----
-    def _goto(li: int, si: int):
+    def _goto(li: int, si: int, cursor_at: int = -1):
         """跨段/激活目标段：先提交当前段，再切换 draft+active，递增 nav_seq
-        触发 TextField key 重建以重新 autofocus。"""
+        触发 TextField key 重建以重新 autofocus。cursor_at: -1=段尾, 0=段首。"""
         if active is not None and active != (li, si):
             commit_active(draft)
         if not (0 <= li < len(document.lines)):
@@ -148,7 +151,8 @@ def MarkdownEditor(
         set_draft(new_draft)
         set_active((li, si))
         set_cursor_line(li)
-        _sync_cursor(new_draft)
+        set_cursor_pos(cursor_at)
+        _sync_cursor(new_draft, cursor_at)
         set_nav_seq(nav_seq + 1)
 
     def activate(li: int, si: int):
@@ -183,9 +187,9 @@ def MarkdownEditor(
         if _nav_blocked(line):
             return
         if si < len(line.segments) - 1:
-            _goto(li, si + 1)
+            _goto(li, si + 1, cursor_at=0)
         elif li < len(document.lines) - 1:
-            _goto(li + 1, 0)
+            _goto(li + 1, 0, cursor_at=0)
 
     def move_home():
         """Home：跳到当前行第一个段的起点。"""
@@ -368,11 +372,13 @@ def MarkdownEditor(
             set_draft(new_draft_val)
             set_active((last_li, target_si))
             set_cursor_line(last_li)
+            set_cursor_pos(-1)
             _sync_cursor(new_draft_val)
             set_nav_seq(nav_seq + 1)
         else:
             suppress_blur.current = True
             set_draft(new_raw)
+            set_cursor_pos(-1)
             _sync_cursor(new_raw)
             set_nav_seq(nav_seq + 1)
 
@@ -585,7 +591,7 @@ def MarkdownEditor(
             on_toggle_task=toggle_task,
             toc_entries=toc_entries,
             on_jump_to=jump_to,
-            initial_cursor=-1,
+            initial_cursor=cursor_pos if active is not None and active[0] == i else -1,
             nav_seq=nav_seq if active is not None and active[0] == i else 0,
         )
         for i, line in enumerate(document.lines)

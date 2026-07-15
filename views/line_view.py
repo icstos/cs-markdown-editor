@@ -90,8 +90,9 @@ def _spans_for(
     base_size: int,
 ) -> list[ft.TextSpan]:
     """构造 [seg_from, seg_to_excl) 范围的 TextSpan 列表。"""
+    heading_level = line.level if line.block_type == BlockType.HEADING else 0
     return [
-        segment_to_span(line.segments[i], i, on_activate, base_size)
+        segment_to_span(line.segments[i], i, on_activate, base_size, heading_level)
         for i in range(seg_from, seg_to_excl)
         if i < len(line.segments)
     ]

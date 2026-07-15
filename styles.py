@@ -41,6 +41,16 @@ C_ACTIVE_BG = "#FFFBEA"  # 正在编辑的段淡黄底，呼应 Typora
 C_TOOLBAR_BG = "#FAFBFC"
 C_BORDER = "#E5E6EB"
 
+# 标题颜色：1-6 级对应红橙绿青蓝紫（Material 700 色阶，保证可读性）
+HEADING_COLORS: dict[int, str] = {
+    1: "#D32F2F",  # 红 Red 700
+    2: "#E65100",  # 橙 Deep Orange 800
+    3: "#388E3C",  # 绿 Green 700
+    4: "#0097A7",  # 青 Cyan 700
+    5: "#1976D2",  # 蓝 Blue 700
+    6: "#7B1FA2",  # 紫 Purple 700
+}
+
 
 def block_text_size(block_type: BlockType, level: int = 0) -> int:
     """块级正文基础字号。"""

@@ -16,6 +16,7 @@ from styles import (
     C_TEXT,
     FONT_MAIN,
     FONT_MONO,
+    HEADING_COLORS,
     measure_text_width,
     prefix_style,
     segment_style,
@@ -27,6 +28,8 @@ _MONO_SEGTYPES = (SegType.CODESPAN, SegType.CODE, SegType.INLINE_MATH, SegType.M
 
 def _display_text(seg: Segment) -> str:
     """渲染态展示文本。"""
+    if seg.seg_type == SegType.HEADING_PREFIX:
+        return ""  # 渲染态不显示 # 前缀，用颜色区分标题级别
     if seg.seg_type in _PREFIX_SEGTYPES:
         return seg.raw
     if seg.seg_type == SegType.IMAGE:
@@ -41,13 +44,27 @@ def segment_to_span(
     seg_idx: int,
     on_activate: Callable[[int], None] | None,
     base_size: int,
+    heading_level: int = 0,
 ) -> ft.TextSpan:
-    """渲染态：段 -> TextSpan（可点击激活）。on_activate=None 时不绑定 on_click。"""
+    """渲染态：段 -> TextSpan（可点击激活）。on_activate=None 时不绑定 on_click。
+
+    heading_level > 0 时覆盖文字颜色为标题级别色（红橙绿青蓝紫）。
+    """
     style = (
         prefix_style(seg, base_size)
         if seg.seg_type in _PREFIX_SEGTYPES
         else segment_style(seg, base_size)
     )
+    if heading_level > 0:
+        style = ft.TextStyle(
+            size=style.size,
+            weight=style.weight,
+            color=HEADING_COLORS.get(heading_level, C_TEXT),
+            italic=style.italic,
+            font_family=style.font_family,
+            decoration=style.decoration,
+            bgcolor=style.bgcolor,
+        )
     kwargs: dict = {"text": _display_text(seg), "style": style}
     if on_activate is not None:
         kwargs["on_click"] = lambda e: on_activate(seg_idx)

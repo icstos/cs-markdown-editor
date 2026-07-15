@@ -308,6 +308,20 @@ def App():
         if md and md != plain:
             await page.clipboard.set(md)
 
+    async def _do_cut():
+        """Ctrl+X 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown→删除选中内容。"""
+        await asyncio.sleep(0.2)
+        page = page_ref.current
+        if page is None:
+            return
+        plain = await page.clipboard.get()
+        if not plain:
+            return
+        nav = nav_ref.current
+        if nav is None or not nav.get("handle_cut"):
+            return
+        await nav["handle_cut"](plain)
+
     async def _do_paste_check():
         """Ctrl+V 后异步检查剪贴板是否含多行内容，若是则拆分为多行插入。"""
         await asyncio.sleep(0.05)
@@ -369,6 +383,13 @@ def App():
                 page = page_ref.current
                 if page is not None:
                     page.run_task(_do_copy)
+        elif k == "X":
+            # 非编辑态：让 SelectionArea 原生复制后异步剪切（复制 Markdown + 删除选中内容）
+            nav = nav_ref.current
+            if nav and nav.get("active") is None:
+                page = page_ref.current
+                if page is not None:
+                    page.run_task(_do_cut)
         elif k == "V":
             # 编辑态：保存粘贴前 draft，再异步检查剪贴板是否含多行
             nav = nav_ref.current

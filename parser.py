@@ -653,3 +653,186 @@ def compute_markdown_from_text(lines: list[Line], plain_text: str) -> str:
     """从 SelectionArea 复制的纯文本计算 Markdown 源码。"""
     selections = match_text_to_selections(lines, plain_text)
     return compute_markdown_from_selections(lines, selections)
+
+
+def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]]) -> tuple[list[Line], int, int, int]:
+    """删除选中内容，返回 (新行列表, 光标行索引, 光标段索引, 段内偏移)。
+
+    selections: {line_idx: (base_offset, extent_offset)}
+    偏移相对于该行 ft.Text 的显示文本（所有段 display_text 拼接）。
+    光标定位到剪切位置（即选中内容的起点）。
+
+    删除策略：
+    - 单行部分选中 → 重构该行段结构，删除选中部分
+    - 多行完整选中（首尾行均整行选中）→ 删除所有选中行
+    - 多行部分选中 → 首行选中尾部+中间完整行+尾行选中头部合并为一行
+    """
+    if not selections:
+        return lines, 0, 0, 0
+
+    sorted_lines = sorted(selections.keys())
+    first_li, last_li = sorted_lines[0], sorted_lines[-1]
+
+    # 检查是否为完整行选中（所有选中行都选中了整行内容）
+    is_full_line = True
+    for li in sorted_lines:
+        line = lines[li]
+        total_len = sum(len(_seg_display_text(seg)) for seg in line.segments)
+        base, extent = selections[li]
+        if min(base, extent) != 0 or max(base, extent) != total_len:
+            is_full_line = False
+            break
+
+    if is_full_line:
+        # 删除完整行，光标定位到删除位置后的行（如有）的段首
+        new_lines = lines[:first_li] + lines[last_li + 1:]
+        cursor_li = max(0, min(first_li, len(new_lines) - 1)) if new_lines else 0
+        if new_lines:
+            # 找到第一个非前缀段作为光标段，偏移为段首（剪切位置）
+            cursor_si = 0
+            for i, seg in enumerate(new_lines[cursor_li].segments):
+                if seg.seg_type not in _PREFIX_SEGTYPES:
+                    cursor_si = i
+                    break
+            cursor_offset = 0
+        else:
+            cursor_si, cursor_offset = 0, 0
+        return new_lines, cursor_li, cursor_si, cursor_offset
+
+    # 单行部分选中：重构该行段结构
+    if first_li == last_li:
+        li = first_li
+        line = lines[li]
+        base, extent = selections[li]
+        start, end = min(base, extent), max(base, extent)
+
+        new_segments: list[Segment] = []
+        cursor_si = 0
+        cursor_offset = 0
+        offset = 0
+        for seg in line.segments:
+            text = _seg_display_text(seg)
+            seg_start, seg_end = offset, offset + len(text)
+            offset = seg_end
+
+            if seg_end <= start:
+                new_segments.append(seg)
+            elif seg_start >= end:
+                new_segments.append(seg)
+            else:
+                sel_start = max(0, start - seg_start)
+                sel_end = min(len(text), end - seg_start)
+
+                if sel_start > 0:
+                    prefix_raw = _wrap_partial(seg, text[:sel_start])
+                    new_segments.append(Segment(SegType.TEXT, prefix_raw, text[:sel_start]))
+                    # 光标定位到剪切位置：前缀段的末尾
+                    cursor_si = len(new_segments) - 1
+                    cursor_offset = len(prefix_raw)
+
+                if sel_end < len(text):
+                    suffix_raw = _wrap_partial(seg, text[sel_end:])
+                    new_segments.append(Segment(SegType.TEXT, suffix_raw, text[sel_end:]))
+                    # 若无前缀段，光标定位到后缀段首
+                    if sel_start == 0:
+                        cursor_si = len(new_segments) - 1
+                        cursor_offset = 0
+
+        line.segments = new_segments
+        if not line.segments:
+            line.segments = [Segment(SegType.TEXT, "", "")]
+            cursor_si, cursor_offset = 0, 0
+        return lines, li, cursor_si, cursor_offset
+
+    # 跨行部分选中：首行选中尾部 + 尾行选中头部合并为一行，中间行删除
+    first_line = lines[first_li]
+    last_line = lines[last_li]
+    first_base, first_extent = selections[first_li]
+    last_base, last_extent = selections[last_li]
+    first_start = min(first_base, first_extent)
+    last_end = max(last_base, last_extent)
+
+    # 收集首行选中之前的剩余段
+    head_segments: list[Segment] = []
+    offset = 0
+    for seg in first_line.segments:
+        text = _seg_display_text(seg)
+        seg_start, seg_end = offset, offset + len(text)
+        offset = seg_end
+        if seg_end <= first_start:
+            head_segments.append(seg)
+        elif seg_start < first_start:
+            sel_start = max(0, first_start - seg_start)
+            if sel_start > 0:
+                prefix_raw = _wrap_partial(seg, text[:sel_start])
+                head_segments.append(Segment(SegType.TEXT, prefix_raw, text[:sel_start]))
+
+    # 收集尾行选中之后的剩余段
+    tail_segments: list[Segment] = []
+    offset = 0
+    for seg in last_line.segments:
+        text = _seg_display_text(seg)
+        seg_start, seg_end = offset, offset + len(text)
+        offset = seg_end
+        if seg_start >= last_end:
+            tail_segments.append(seg)
+        elif seg_end > last_end:
+            sel_end = min(len(text), last_end - seg_start)
+            if sel_end < len(text):
+                suffix_raw = _wrap_partial(seg, text[sel_end:])
+                tail_segments.append(Segment(SegType.TEXT, suffix_raw, text[sel_end:]))
+
+    # 光标定位到剪切位置：head_segments 的末尾（即原选中起点）
+    # 若 head 为空，光标定位到 tail 首段开头
+    if head_segments:
+        cursor_si = len(head_segments) - 1
+        cursor_offset = len(head_segments[cursor_si].raw)
+    elif tail_segments:
+        cursor_si = 0
+        cursor_offset = 0
+    else:
+        cursor_si, cursor_offset = 0, 0
+
+    # 合并首行头部 + 尾行尾部，保留首行的块级前缀
+    merged_segments = head_segments + tail_segments
+    if not merged_segments:
+        merged_segments = [Segment(SegType.TEXT, "", "")]
+
+    # 保留首行的块级前缀段（HEADING_PREFIX / LIST_PREFIX / QUOTE_PREFIX）
+    prefix_seg = None
+    for seg in first_line.segments:
+        if seg.seg_type in _PREFIX_SEGTYPES:
+            prefix_seg = seg
+            break
+    if prefix_seg is not None and not any(s.seg_type in _PREFIX_SEGTYPES for s in merged_segments):
+        merged_segments = [prefix_seg] + merged_segments
+        # 前缀段插入到头部，光标段索引+1
+        cursor_si += 1
+
+    # 用首行作为合并行（保留 block_type/level/task/checked/lang 等属性）
+    first_line.segments = merged_segments
+    # 重新解析首行，确保段结构一致
+    full_raw = "".join(s.raw for s in merged_segments)
+    reparse_line(first_line, full_raw)
+
+    # 重新解析后段结构可能变化，通过累积 raw 长度找到原光标位置对应的新段
+    # 目标偏移 = 原 head_segments 各段 raw 长度之和（剪切起点）
+    target_raw_offset = sum(len(s.raw) for s in head_segments)
+    cursor_si = 0
+    cursor_offset = 0
+    acc = 0
+    for i, seg in enumerate(first_line.segments):
+        seg_raw_len = len(seg.raw)
+        if acc + seg_raw_len >= target_raw_offset:
+            cursor_si = i
+            cursor_offset = max(0, target_raw_offset - acc)
+            break
+        acc += seg_raw_len
+    else:
+        # 未找到，定位到末段尾
+        cursor_si = max(0, len(first_line.segments) - 1)
+        cursor_offset = len(first_line.segments[cursor_si].raw)
+
+    # 删除中间行和尾行
+    new_lines = lines[:first_li + 1] + lines[last_li + 1:]
+    return new_lines, first_li, cursor_si, cursor_offset

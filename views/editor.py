@@ -655,6 +655,26 @@ def MarkdownEditor(
         """点击编辑行右侧空白时设置 suppress_blur，防止 TextField blur 退出编辑态。"""
         suppress_blur.current = True
 
+    async def handle_cut(plain_text: str):
+        """处理 Ctrl+X 剪切：复制选中内容为 Markdown 到剪贴板，并删除文档中选中内容。"""
+        if not plain_text:
+            return
+        selections = parser.match_text_to_selections(document.lines, plain_text)
+        if not selections:
+            return
+        md = parser.compute_markdown_from_selections(document.lines, selections)
+        if md:
+            page = ft.context.page
+            if page is not None:
+                await page.clipboard.set(md)
+        new_lines, cursor_li, cursor_si, cursor_offset = parser.delete_selections(document.lines, selections)
+        document.lines = new_lines
+        mark_dirty()
+        set_active(None)
+        if 0 <= cursor_li < len(document.lines):
+            # 激活光标段，cursor_at 为段内偏移（精确到剪切位置）
+            _goto(cursor_li, cursor_si, cursor_at=cursor_offset)
+
     # ---- TOC 跳转 ----
     def jump_to(li: int):
         if not (0 <= li < len(document.lines)):
@@ -682,6 +702,7 @@ def MarkdownEditor(
                 parser.compute_markdown_from_text(document.lines, text)
             ),
             "handle_paste": handle_paste,
+            "handle_cut": handle_cut,
         }
 
     # ---- 预计算 TOC 条目（所有标题）----

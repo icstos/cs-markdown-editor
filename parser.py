@@ -215,21 +215,29 @@ def _make_prefix_segment(block_type: BlockType, info: dict, line: Line) -> Segme
         line.level = lvl
         return Segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl)
     if block_type == BlockType.LIST_UO:
-        line.level = info.get("indent", 0)
+        indent = info.get("indent", 0)
+        line.level = indent
         marker = info["marker"]
+        # 前缀段 raw 含缩进空格，保证 "".join(segments) 重建行源码时
+        # 不丢失级别（编辑提交 / 续行 / 块切换均依赖此不变量）
+        indent_sp = " " * indent
         if info.get("task"):
             line.task = True
             line.checked = info["checked"]
             return Segment(
                 SegType.LIST_PREFIX,
-                f"{marker} [{'x' if info['checked'] else ' '}] ",
+                f"{indent_sp}{marker} [{'x' if info['checked'] else ' '}] ",
                 "",
-                level=line.level,
+                level=indent,
             )
-        return Segment(SegType.LIST_PREFIX, f"{marker} ", "", level=line.level)
+        return Segment(SegType.LIST_PREFIX, f"{indent_sp}{marker} ", "", level=indent)
     if block_type == BlockType.LIST_O:
-        line.level = info.get("indent", 0)
-        return Segment(SegType.LIST_PREFIX, f"{info['num']}. ", "", level=line.level)
+        indent = info.get("indent", 0)
+        line.level = indent
+        indent_sp = " " * indent
+        return Segment(
+            SegType.LIST_PREFIX, f"{indent_sp}{info['num']}. ", "", level=indent
+        )
     if block_type == BlockType.QUOTE:
         lvl = info.get("level", 1)
         line.level = lvl
@@ -408,7 +416,8 @@ def _seg_display_text(seg: Segment) -> str:
         return ""  # 渲染态不显示 > 前缀，引用由左边框区分
     if seg.seg_type == SegType.LIST_PREFIX:
         # 无序列表标记渲染为圆点；有序列表保留 "N. " 形式
-        raw = seg.raw
+        # raw 可能含缩进空格，先 lstrip 再判断 marker
+        raw = seg.raw.lstrip()
         if raw and raw[0] in "-*+":
             return "•  "
         return raw

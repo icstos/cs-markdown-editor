@@ -32,7 +32,8 @@ def _display_text(seg: Segment) -> str:
         return ""  # 渲染态不显示 > 前缀，引用由左边框区分
     if seg.seg_type == SegType.LIST_PREFIX:
         # 无序列表标记渲染为圆点；有序列表保留 "N. " 形式
-        raw = seg.raw
+        # raw 可能含缩进空格，先 lstrip 再判断 marker
+        raw = seg.raw.lstrip()
         if raw and raw[0] in "-*+":
             return "•  "
         return raw

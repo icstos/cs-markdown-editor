@@ -61,16 +61,22 @@ def _inline_content(line: Line) -> str:
 
 
 def _next_line_raw(line: Line) -> str:
-    """回车续行：列表续列表（含任务/有序递增），否则空段落。"""
+    """回车续行：列表续列表（含任务/有序递增），否则空段落。
+
+    列表前缀段 raw 含缩进空格，匹配 marker 前先 lstrip，返回时补回
+    line.level 个空格以保持级别（否则二级列表回车续行会塌回一级）。
+    """
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
+        indent_sp = " " * (line.level or 0)
         prefix = line.segments[0].raw if line.segments else "- "
-        if m := re.match(r"^([-*+])\s+\[[ xX]\]\s+", prefix):
-            return f"{m.group(1)} [ ] "
-        if m := re.match(r"^([-*+])\s+", prefix):
-            return f"{m.group(1)} "
-        if m := re.match(r"^(\d+)\.\s+", prefix):
-            return f"{int(m.group(1)) + 1}. "
-        return "- "
+        body = prefix.lstrip()  # 去掉缩进再匹配 marker
+        if m := re.match(r"^([-*+])\s+\[[ xX]\]\s+", body):
+            return f"{indent_sp}{m.group(1)} [ ] "
+        if m := re.match(r"^([-*+])\s+", body):
+            return f"{indent_sp}{m.group(1)} "
+        if m := re.match(r"^(\d+)\.\s+", body):
+            return f"{indent_sp}{int(m.group(1)) + 1}. "
+        return f"{indent_sp}- "
     if line.block_type == BlockType.QUOTE:
         return "> " * (line.level or 1)
     return ""
@@ -506,9 +512,20 @@ def MarkdownEditor(
         if block_type == BlockType.HEADING:
             new_raw = "#" * level + " " + content
         elif block_type == BlockType.LIST_UO:
-            new_raw = "- " + content
+            # 源行已是列表时保留缩进级别，避免工具栏切换列表类型时塌回一级
+            indent_sp = (
+                " " * line.level
+                if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O)
+                else ""
+            )
+            new_raw = f"{indent_sp}- " + content
         elif block_type == BlockType.LIST_O:
-            new_raw = "1. " + content
+            indent_sp = (
+                " " * line.level
+                if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O)
+                else ""
+            )
+            new_raw = f"{indent_sp}1. " + content
         elif block_type == BlockType.QUOTE:
             new_raw = "> " + content
         elif block_type == BlockType.CODE:

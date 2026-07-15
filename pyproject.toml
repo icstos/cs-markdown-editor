@@ -1,0 +1,29 @@
+[project]
+name = "cs-markdown-editor"
+version = "0.1.0"
+description = "Typora 式段级所见即所得 Markdown 编辑器，基于 Flet 0.86.0 声明式组件与 mistune 实时渲染"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "CSTOS" }]
+keywords = ["markdown", "editor", "flet", "wysiwyg", "typora"]
+
+dependencies = [
+    "flet>=0.86.0",
+    "mistune>=3.0",
+    "pillow>=10.0",
+]
+
+[project.scripts]
+cs-markdown-editor = "main:main_sync"
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]

@@ -433,5 +433,10 @@ async def main(page: ft.Page):
     page.render(App)
 
 
+def main_sync():
+    """同步入口，供 console_scripts 调用。"""
+    ft.run(main)
+
+
 if __name__ == "__main__":
     ft.run(main)

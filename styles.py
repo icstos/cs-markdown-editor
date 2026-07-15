@@ -1,11 +1,14 @@
 """共享样式常量与段→TextStyle 映射。
 
 集中管理颜色与排版，保证视图层声明式、无散落的魔法数字。
+支持亮/暗双主题：get_colors(mode) 返回对应 Colors，_current_colors() 读取
+当前 page.theme_mode 自动取色，供渲染态函数与视图层使用。
 """
 
 import io
 import os
 import urllib.request
+from dataclasses import dataclass, field
 
 import flet as ft
 from PIL import Image as _PILImage
@@ -21,35 +24,112 @@ from models import (
 FONT_MAIN = "Alibaba"
 FONT_MONO = "Consolas"  # 代码块的等宽回退，提升可读性
 
-# 颜色
-C_BG = ft.Colors.WHITE
-C_SURFACE = "#FFFFFF"
-C_TEXT = "#1F2329"
-C_MUTED = "#8A919E"
-C_LINK = "#1677FF"
-C_CODE_BG = "#F2F3F5"
-C_CODE_FG = "#C7254E"
-C_STRIKE = "#8A919E"
-C_MATH_FG = "#C41E7A"  # 公式文字（深粉）
-C_MATH_BG = "#FAF0F5"  # 公式背景（浅粉）
-C_QUOTE_FG = "#595959"
-C_QUOTE_BAR = "#D9D9D9"
-C_CODE_BLOCK_BG = "#F6F8FA"
-C_CODE_BLOCK_FG = "#1F2329"
-C_HOVER = "#F0F7FF"
-C_ACTIVE_BG = "#FFFBEA"  # 正在编辑的段淡黄底，呼应 Typora
-C_TOOLBAR_BG = "#FAFBFC"
-C_BORDER = "#E5E6EB"
 
-# 标题颜色：1-6 级对应红橙绿青蓝紫（Material 700 色阶，保证可读性）
-HEADING_COLORS: dict[int, str] = {
-    1: "#D32F2F",  # 红 Red 700
-    2: "#E65100",  # 橙 Deep Orange 800
-    3: "#388E3C",  # 绿 Green 700
-    4: "#0097A7",  # 青 Cyan 700
-    5: "#1976D2",  # 蓝 Blue 700
-    6: "#7B1FA2",  # 紫 Purple 700
-}
+# ---------------------------------------------------------------------------
+# 主题配色：亮/暗两套，科学、有序、清爽、科技、专业
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Colors:
+    """主题颜色集合。"""
+
+    bg: str
+    surface: str
+    text: str
+    muted: str
+    link: str
+    code_bg: str  # 行内代码背景
+    code_fg: str  # 行内代码文字
+    strike: str
+    math_fg: str
+    math_bg: str
+    quote_fg: str
+    quote_bar: str
+    code_block_bg: str
+    code_block_fg: str
+    hover: str
+    active_bg: str  # 正在编辑的段淡黄底
+    toolbar_bg: str
+    border: str
+    heading_colors: dict[int, str] = field(default_factory=dict)
+
+
+# 亮色：清爽白底，Material 700 标题色阶
+_LIGHT = Colors(
+    bg="#FFFFFF",
+    surface="#FFFFFF",
+    text="#1F2329",
+    muted="#8A919E",
+    link="#1677FF",
+    code_bg="#F2F3F5",
+    code_fg="#C7254E",
+    strike="#8A919E",
+    math_fg="#C41E7A",
+    math_bg="#FAF0F5",
+    quote_fg="#595959",
+    quote_bar="#D9D9D9",
+    code_block_bg="#F6F8FA",
+    code_block_fg="#1F2329",
+    hover="#F0F7FF",
+    active_bg="#FFFBEA",
+    toolbar_bg="#FAFBFC",
+    border="#E5E6EB",
+    heading_colors={
+        1: "#D32F2F",  # 红
+        2: "#E65100",  # 橙
+        3: "#388E3C",  # 绿
+        4: "#0097A7",  # 青
+        5: "#1976D2",  # 蓝
+        6: "#7B1FA2",  # 紫
+    },
+)
+
+# 暗色：GitHub Dark 基底，科技深邃，标题色提亮保证对比度
+_DARK = Colors(
+    bg="#0D1117",
+    surface="#161B22",
+    text="#E6EDF3",
+    muted="#7D8590",
+    link="#58A6FF",
+    code_bg="#21262D",
+    code_fg="#FF7B72",
+    strike="#7D8590",
+    math_fg="#FF7EB6",
+    math_bg="#2D1B2E",
+    quote_fg="#B0B8C1",
+    quote_bar="#30363D",
+    code_block_bg="#161B22",
+    code_block_fg="#E6EDF3",
+    hover="#1C2128",
+    active_bg="#3A2F1A",  # 暗琥珀
+    toolbar_bg="#161B22",
+    border="#30363D",
+    heading_colors={
+        1: "#FF6B6B",  # 亮红
+        2: "#FFA94D",  # 亮橙
+        3: "#51CF66",  # 亮绿
+        4: "#22D3EE",  # 亮青
+        5: "#5C9CFF",  # 亮蓝
+        6: "#C77DFF",  # 亮紫
+    },
+)
+
+
+def get_colors(mode: ft.ThemeMode | str | None) -> Colors:
+    """根据主题模式返回颜色集合。"""
+    if mode == ft.ThemeMode.DARK:
+        return _DARK
+    return _LIGHT
+
+
+def _current_colors() -> Colors:
+    """读取当前 page.theme_mode 取色；非渲染上下文回退亮色。"""
+    try:
+        page = ft.context.page
+        if page is not None:
+            return get_colors(page.theme_mode)
+    except Exception:
+        pass
+    return _LIGHT
 
 
 def block_text_size(block_type: BlockType, level: int = 0) -> int:
@@ -69,42 +149,45 @@ def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
 
 def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
     """把段类型映射为 TextStyle（渲染态）。"""
+    c = _current_colors()
     t = seg.seg_type
     if t == SegType.STRONG:
-        return ft.TextStyle(size=base_size, weight=ft.FontWeight.BOLD, color=C_TEXT)
+        return ft.TextStyle(size=base_size, weight=ft.FontWeight.BOLD, color=c.text)
     if t == SegType.EMPHASIS:
-        return ft.TextStyle(size=base_size, italic=True, color=C_TEXT)
+        return ft.TextStyle(size=base_size, italic=True, color=c.text)
     if t == SegType.STRIKE:
         return ft.TextStyle(
-            size=base_size, color=C_STRIKE, decoration=ft.TextDecoration.LINE_THROUGH
+            size=base_size, color=c.strike, decoration=ft.TextDecoration.LINE_THROUGH
         )
     if t == SegType.INLINE_MATH:
         return ft.TextStyle(
             size=base_size - 1,
-            color=C_MATH_FG,
-            bgcolor=C_MATH_BG,
+            color=c.math_fg,
+            bgcolor=c.math_bg,
             font_family=FONT_MONO,
             italic=True,
         )
     if t == SegType.CODESPAN:
         return ft.TextStyle(
             size=base_size - 1,
-            color=C_CODE_FG,
-            bgcolor=C_CODE_BG,
+            color=c.code_fg,
+            bgcolor=c.code_bg,
             font_family=FONT_MONO,
         )
     if t == SegType.LINK:
         return ft.TextStyle(
-            size=base_size, color=C_LINK, decoration=ft.TextDecoration.UNDERLINE
+            size=base_size, color=c.link, decoration=ft.TextDecoration.UNDERLINE
         )
     if t == SegType.IMAGE:
-        return ft.TextStyle(size=base_size, color=C_LINK, italic=True)
-    return ft.TextStyle(size=base_size, color=C_TEXT)
+        return ft.TextStyle(size=base_size, color=c.link, italic=True)
+    return ft.TextStyle(size=base_size, color=c.text)
 
 
 def prefix_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
     """块级前缀段（# - >）的样式：弱化显示。"""
-    return ft.TextStyle(size=base_size, color=C_MUTED, weight=ft.FontWeight.BOLD)
+    return ft.TextStyle(
+        size=base_size, color=_current_colors().muted, weight=ft.FontWeight.BOLD
+    )
 
 
 _NO_BORDER = ft.BorderSide.none()

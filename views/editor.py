@@ -20,12 +20,9 @@ import flet as ft
 from models import BlockType, Document, Line, SegType
 import parser
 from styles import (
-    C_BORDER,
-    C_MUTED,
-    C_TEXT,
-    C_TOOLBAR_BG,
     FONT_MAIN,
     FONT_MONO,
+    _current_colors,
     only_border,
 )
 from views.line_view import LineView
@@ -89,7 +86,10 @@ def MarkdownEditor(
     on_export: Callable[[], None] | None = None,
     on_dirty_change: Callable[[bool], None] | None = None,
     nav_ref: ft.Ref | None = None,
+    theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
+    on_toggle_theme: Callable[[], None] | None = None,
 ):
+    c = _current_colors()  # 当前主题颜色（亮/暗）
     active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
     draft, set_draft = ft.use_state("")  # 当前编辑段文本
     cursor_line, set_cursor_line = ft.use_state(0)
@@ -324,12 +324,12 @@ def MarkdownEditor(
                 expand=True,
                 border=ft.InputBorder.NONE,
                 text_size=14,
-                text_style=ft.TextStyle(font_family=FONT_MONO, color=C_TEXT),
+                text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
                 content_padding=ft.Padding.symmetric(horizontal=24, vertical=16),
                 on_change=lambda e: set_raw_draft(e.control.value),
             ),
             expand=True,
-            bgcolor=ft.Colors.WHITE,
+            bgcolor=c.bg,
         )
 
     def on_blur():
@@ -718,8 +718,8 @@ def MarkdownEditor(
             ft.PopupMenuItem(content="设置", on_click=lambda e: None),
         ]
         return ft.Container(
-            bgcolor=C_TOOLBAR_BG,
-            border=only_border(bottom=ft.BorderSide(1, C_BORDER)),
+            bgcolor=c.toolbar_bg,
+            border=only_border(bottom=ft.BorderSide(1, c.border)),
             padding=ft.Padding.symmetric(horizontal=8, vertical=4),
             content=ft.Row(
                 controls=[
@@ -759,6 +759,13 @@ def MarkdownEditor(
                         "导出 HTML",
                         on_export or _noop,
                     ),
+                    _btn(
+                        ft.Icons.DARK_MODE
+                        if theme_mode == ft.ThemeMode.LIGHT
+                        else ft.Icons.LIGHT_MODE,
+                        "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
+                        on_toggle_theme or _noop,
+                    ),
                 ],
                 spacing=2,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -782,29 +789,29 @@ def MarkdownEditor(
         char_count = len(parser.serialize(document))
         fname = os.path.basename(file_path) if file_path else "未命名.md"
         return ft.Container(
-            bgcolor=ft.Colors.with_opacity(0.02, C_TEXT),
-            border=only_border(top=ft.BorderSide(1, C_BORDER)),
+            bgcolor=ft.Colors.with_opacity(0.02, c.text),
+            border=only_border(top=ft.BorderSide(1, c.border)),
             padding=ft.Padding.symmetric(horizontal=16, vertical=6),
             content=ft.Row(
                 controls=[
                     ft.Text(
                         value=("● " if document.dirty else "") + fname,
                         size=12,
-                        color=C_MUTED,
+                        color=c.muted,
                         font_family=FONT_MAIN,
                     ),
                     ft.Container(expand=True),
                     ft.Text(
                         value=f"行 {row}  列 {col}",
                         size=12,
-                        color=C_MUTED,
+                        color=c.muted,
                         font_family=FONT_MAIN,
                     ),
                     ft.Container(width=16),
                     ft.Text(
                         value=f"{char_count} 字符",
                         size=12,
-                        color=C_MUTED,
+                        color=c.muted,
                         font_family=FONT_MAIN,
                     ),
                 ],
@@ -827,7 +834,7 @@ def MarkdownEditor(
                         scroll=ft.ScrollMode.AUTO,
                     ),
                     expand=True,
-                    bgcolor=ft.Colors.WHITE,
+                    bgcolor=c.bg,
                     padding=ft.Padding.symmetric(horizontal=24, vertical=16),
                 ),
             ),

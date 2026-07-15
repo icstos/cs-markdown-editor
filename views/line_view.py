@@ -13,13 +13,9 @@ import flet as ft
 
 from models import BlockType, Line, Segment, SegType
 from styles import (
-    C_CODE_BLOCK_BG,
-    C_MATH_BG,
-    C_MUTED,
-    C_QUOTE_BAR,
-    C_TEXT,
     FONT_MAIN,
     FONT_MONO,
+    _current_colors,
     block_text_size,
     block_weight,
     image_fit_size,
@@ -209,10 +205,11 @@ def LineView(
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
 ):
+    c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
     weight = block_weight(line.block_type, line.level)
     line_style = ft.TextStyle(
-        size=base, weight=weight, color=C_TEXT, font_family=FONT_MAIN, height=1.6
+        size=base, weight=weight, color=c.text, font_family=FONT_MAIN, height=1.6
     )
 
     def activate(seg_idx: int, cursor_at: int = -1):
@@ -254,7 +251,7 @@ def LineView(
             content = ft.Container(padding=ft.Padding.symmetric(vertical=6), content=field)
         else:
             content = ft.Container(
-                content=ft.Divider(height=1, thickness=1, color=C_QUOTE_BAR),
+                content=ft.Divider(height=1, thickness=1, color=c.quote_bar),
                 padding=ft.Padding.symmetric(vertical=8),
                 on_click=lambda e: on_activate(line_idx, 0),
                 ink=True,
@@ -276,7 +273,7 @@ def LineView(
                 width=160,
                 border=ft.InputBorder.NONE,
                 text_size=12,
-                text_style=ft.TextStyle(color=C_MUTED, font_family=FONT_MONO),
+                text_style=ft.TextStyle(color=c.muted, font_family=FONT_MONO),
                 content_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
                 on_focus=lambda e: on_lang_focus() if on_lang_focus else None,
                 on_change=lambda e: on_change_lang(e.control.value) if on_change_lang else None,
@@ -289,7 +286,7 @@ def LineView(
                     ],
                     spacing=4,
                 ),
-                bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12,
+                bgcolor=c.code_block_bg, border_radius=6, padding=12,
             )
         else:
             code = line.segments[0].text if line.segments else ""
@@ -303,7 +300,7 @@ def LineView(
                 code_theme=ft.MarkdownCodeTheme.A11Y_LIGHT,
             )
             lang_tag = (
-                ft.Text(value=lang, size=11, color=C_MUTED, font_family=FONT_MONO)
+                ft.Text(value=lang, size=11, color=c.muted, font_family=FONT_MONO)
                 if lang else ft.Text(" ")
             )
 
@@ -318,7 +315,7 @@ def LineView(
             content = ft.GestureDetector(
                 content=ft.Container(
                     content=ft.Column([lang_tag, md], spacing=6),
-                    bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12,
+                    bgcolor=c.code_block_bg, border_radius=6, padding=12,
                     ink=True,
                 ),
                 on_tap=_on_tap,
@@ -334,7 +331,7 @@ def LineView(
                 base_size=16,
             )
             content = ft.Container(
-                content=field, bgcolor=C_MATH_BG, border_radius=6,
+                content=field, bgcolor=c.math_bg, border_radius=6,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
             )
         else:
@@ -345,7 +342,7 @@ def LineView(
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
             )
             content = ft.Container(
-                content=md, bgcolor=C_MATH_BG, border_radius=6,
+                content=md, bgcolor=c.math_bg, border_radius=6,
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                 alignment=ft.Alignment.CENTER,
                 on_click=lambda e: on_activate(line_idx, 0),
@@ -364,7 +361,7 @@ def LineView(
         else:
             toc_items: list[ft.Control] = [
                 ft.Container(
-                    content=ft.Text(value=text, size=base - 1, color=C_TEXT, font_family=FONT_MAIN),
+                    content=ft.Text(value=text, size=base - 1, color=c.text, font_family=FONT_MAIN),
                     padding=ft.Padding.only(left=(lvl - 1) * 16),
                     on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
                     ink=True,
@@ -374,7 +371,7 @@ def LineView(
             content = ft.Container(
                 content=ft.Column(controls=toc_items, spacing=2),
                 padding=ft.Padding.symmetric(vertical=8),
-                bgcolor=C_CODE_BLOCK_BG, border_radius=6,
+                bgcolor=c.code_block_bg, border_radius=6,
             )
         return _wrap_block(content, line, base, line_idx)
 
@@ -411,13 +408,13 @@ def LineView(
                 "error_content": ft.Container(
                     content=ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.IMAGE_NOT_SUPPORTED_OUTLINED, color=C_MUTED, size=20),
-                            ft.Text(value=seg.text or seg.url or "图片", color=C_MUTED, size=base - 1, font_family=FONT_MAIN),
+                            ft.Icon(ft.Icons.IMAGE_NOT_SUPPORTED_OUTLINED, color=c.muted, size=20),
+                            ft.Text(value=seg.text or seg.url or "图片", color=c.muted, size=base - 1, font_family=FONT_MAIN),
                         ],
                         spacing=8, alignment=ft.MainAxisAlignment.CENTER,
                     ),
                     padding=ft.Padding.symmetric(horizontal=16, vertical=12),
-                    bgcolor=C_CODE_BLOCK_BG, border_radius=6,
+                    bgcolor=c.code_block_bg, border_radius=6,
                     alignment=ft.Alignment.CENTER,
                 ),
             }
@@ -502,6 +499,7 @@ def _wrap_block(
     嵌套引用：根据 line.level 包多层带左边框的 Container，每多一层嵌套
     行首多一个灰色竖线占位（Typora 式嵌套引用视觉）。
     """
+    c = _current_colors()  # 当前主题颜色（亮/暗）
     pad_left = 0
     border = None
 
@@ -514,7 +512,7 @@ def _wrap_block(
             content = ft.Container(
                 content=content,
                 padding=ft.Padding.only(left=12),
-                border=only_border(left=ft.BorderSide(3, C_QUOTE_BAR)),
+                border=only_border(left=ft.BorderSide(3, c.quote_bar)),
             )
         pad_left = 0
         border = None

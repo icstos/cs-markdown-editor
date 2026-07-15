@@ -12,19 +12,20 @@ from typing import Callable
 
 import flet as ft
 
-from styles import C_BORDER, C_MUTED
+from styles import _current_colors
 
 
 def _btn(
     icon: str, tooltip: str, on_click: Callable[[], None], toggle_on: bool = False
 ) -> ft.Control:
+    c = _current_colors()  # 当前主题颜色（亮/暗）
     return ft.IconButton(
         icon=icon,
         tooltip=tooltip,
         on_click=lambda e: on_click(),
         icon_size=18,
         style=ft.ButtonStyle(
-            color=ft.Colors.with_opacity(1.0, "#1677FF") if toggle_on else C_MUTED,
+            color=c.link if toggle_on else c.muted,
             bgcolor=ft.Colors.with_opacity(0.0, ft.Colors.TRANSPARENT),
             padding=4,
         ),
@@ -32,8 +33,9 @@ def _btn(
 
 
 def _divider() -> ft.Control:
+    c = _current_colors()  # 当前主题颜色（亮/暗）
     return ft.Container(
-        width=1, height=20, bgcolor=C_BORDER, margin=ft.Margin.symmetric(horizontal=4)
+        width=1, height=20, bgcolor=c.border, margin=ft.Margin.symmetric(horizontal=4)
     )
 
 

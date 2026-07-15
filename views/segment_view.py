@@ -12,11 +12,9 @@ import flet as ft
 
 from models import SegType, Segment
 from styles import (
-    C_ACTIVE_BG,
-    C_TEXT,
     FONT_MAIN,
     FONT_MONO,
-    HEADING_COLORS,
+    _current_colors,
     measure_text_width,
     prefix_style,
     segment_style,
@@ -58,6 +56,7 @@ def segment_to_span(
 
     heading_level > 0 时覆盖文字颜色为标题级别色（红橙绿青蓝紫）。
     """
+    c = _current_colors()  # 当前主题颜色（亮/暗）
     style = (
         prefix_style(seg, base_size)
         if seg.seg_type in _PREFIX_SEGTYPES
@@ -67,7 +66,7 @@ def segment_to_span(
         style = ft.TextStyle(
             size=style.size,
             weight=style.weight,
-            color=HEADING_COLORS.get(heading_level, C_TEXT),
+            color=c.heading_colors.get(heading_level, c.text),
             italic=style.italic,
             font_family=style.font_family,
             decoration=style.decoration,
@@ -106,6 +105,7 @@ def active_text_field(
     - ignore_up_down_keys：单行段置 True，让上下键冒泡到外层做跨行；
       多行代码块保持 False，让上下键在块内移动光标。
     """
+    c = _current_colors()  # 当前主题颜色（亮/暗）
     is_mono = seg.seg_type in _MONO_SEGTYPES
     font_family = FONT_MONO if is_mono else FONT_MAIN
     text_size = base_size if not is_mono else max(base_size - 1, 12)
@@ -142,11 +142,11 @@ def active_text_field(
         "border": ft.InputBorder.NONE,
         "border_radius": 4,
         "filled": True,
-        "fill_color": C_ACTIVE_BG,
+        "fill_color": c.active_bg,
         "content_padding": ft.Padding.symmetric(horizontal=4, vertical=0),
         "text_size": text_size,
-        "text_style": ft.TextStyle(font_family=font_family, color=C_TEXT),
-        "cursor_color": C_TEXT,
+        "text_style": ft.TextStyle(font_family=font_family, color=c.text),
+        "cursor_color": c.text,
         "cursor_width": 1.5,
         "shift_enter": multiline,
         "ignore_up_down_keys": not multiline,  # 单行段让上下键冒泡到外层跨行

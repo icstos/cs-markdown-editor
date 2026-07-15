@@ -13,6 +13,7 @@ import flet as ft
 
 import parser
 from models import Document
+from styles import get_colors
 from views.editor import MarkdownEditor
 
 _SAMPLE = r"""# Markdown 编辑器
@@ -155,6 +156,8 @@ def App():
     file_path, set_file_path = ft.use_state(None)
     dirty, set_dirty = ft.use_state(False)
     session, set_session = ft.use_state(0)  # 切换文档时自增，强制编辑器重置内部状态
+    # 亮/暗主题模式
+    theme_mode, set_theme_mode = ft.use_state(ft.ThemeMode.LIGHT)
     # 导航接口：editor 把光标状态与导航函数写入此 ref，App 的 on_key 据此分发
     nav_ref = ft.use_ref(None)
 
@@ -163,6 +166,15 @@ def App():
     # page 引用：事件回调中 ft.context.page 可能不可用，提前缓存
     page_ref = ft.use_ref()
 
+    # 同步设置 page.theme_mode：use_effect 在渲染之后执行，本次渲染期间
+    # 子组件（MarkdownEditor→LineView 等）调用 _current_colors() 读到的
+    # 还是旧 page.theme_mode，导致切换主题后内容颜色不实时刷新。
+    # 在渲染期间同步写入，保证子组件取色正确。
+    _page_now = ft.context.page
+    if _page_now is not None:
+        _page_now.theme_mode = theme_mode
+        _page_now.bgcolor = get_colors(theme_mode).bg
+
     def _mount_picker():
         page = ft.context.page
         page_ref.current = page
@@ -170,6 +182,22 @@ def App():
         picker_holder.current = ft.FilePicker()
 
     ft.use_effect(_mount_picker, [])
+
+    def _apply_theme():
+        # 推送 page 级属性（theme_mode / bgcolor / 原生 chrome）到 UI
+        page = ft.context.page
+        page.theme_mode = theme_mode
+        page.bgcolor = get_colors(theme_mode).bg
+        page.update()
+
+    ft.use_effect(_apply_theme, [theme_mode])
+
+    def toggle_theme():
+        set_theme_mode(
+            ft.ThemeMode.DARK
+            if theme_mode == ft.ThemeMode.LIGHT
+            else ft.ThemeMode.LIGHT
+        )
 
     def on_dirty_change(d: bool):
         set_dirty(d)
@@ -378,6 +406,8 @@ def App():
                 on_export=lambda: page_ref.current.run_task(export_doc),
                 on_dirty_change=on_dirty_change,
                 nav_ref=nav_ref,
+                theme_mode=theme_mode,
+                on_toggle_theme=toggle_theme,
             ),
         ],
         expand=True,
@@ -387,14 +417,25 @@ def App():
 async def main(page: ft.Page):
     page.title = "Markdown 编辑器"
     page.fonts = {"Alibaba": "assets/fonts/AlibabaPuHuiTi-3-55-Regular.otf"}
+    # 亮/暗两套主题，由 App 的 theme_mode state 切换
+    # 背景色由 App._apply_theme 通过 page.bgcolor 单独设置，不放在 ColorScheme
     page.theme = ft.Theme(
         font_family="Alibaba",
-        color_scheme_seed=ft.Colors.BLUE,
         color_scheme=ft.ColorScheme(
-            surface=ft.Colors.WHITE,
+            surface="#FFFFFF",
+            on_surface="#1F2329",
+            primary="#1677FF",
         ),
     )
-    page.bgcolor = ft.Colors.WHITE
+    page.dark_theme = ft.Theme(
+        font_family="Alibaba",
+        color_scheme=ft.ColorScheme(
+            surface="#161B22",
+            on_surface="#E6EDF3",
+            primary="#58A6FF",
+        ),
+    )
+    page.theme_mode = ft.ThemeMode.LIGHT
     page.window.width = 960
     page.window.height = 720
     page.window.min_width = 640

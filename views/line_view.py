@@ -309,13 +309,17 @@ def LineView(
         else:
             code = line.segments[0].text if line.segments else ""
             lang = line.lang or ""
+            # 亮暗模式适配不同代码高亮主题：亮色用 GitHub 风格，暗色用 One Dark
+            page = ft.context.page
+            is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
+            code_theme = ft.MarkdownCodeTheme.ATOM_ONE_DARK if is_dark else ft.MarkdownCodeTheme.GITHUB
             # ft.Markdown + GITHUB_WEB + code_theme 实现代码高亮
             # selectable 留 False：外层 SelectionArea 已提供选择能力，
             # 且 Markdown 自带 selectable 会消费 tap 导致 GestureDetector 失效
             md = ft.Markdown(
                 value=f"```{lang}\n{code}\n```",
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-                code_theme=ft.MarkdownCodeTheme.A11Y_LIGHT,
+                code_theme=code_theme,
             )
             lang_tag = (
                 ft.Text(value=lang, size=11, color=c.muted, font_family=FONT_MONO)

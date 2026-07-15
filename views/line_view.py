@@ -187,20 +187,20 @@ def LineView(
             )
             content = ft.Container(content=field, padding=ft.Padding.symmetric(horizontal=2))
         else:
-            # 用 TextSpan.on_click 而非 GestureDetector.on_tap：
-            # GestureDetector 的 tap 处理会干扰新 TextField 的 autofocus，
-            # 导致空行点击后编辑块出现但光标不显示。TextSpan.on_click 是文本级
-            # 事件，与 SelectionArea 兼容且不影响焦点系统。
+            # Container.on_click 处理整行点击（含右侧空白），Text 占满宽度。
+            # autofocus 由 editor.py 的 use_effect 显式调用 focus() 兜底。
             content = ft.Container(
                 content=ft.Text(
                     spans=[
-                        ft.TextSpan(" ", style=line_style, on_click=lambda e: activate(0))
+                        ft.TextSpan(" ", style=line_style)
                     ],
                     style=line_style,
+                    width=float("inf"),
                 ),
                 height=max(base * 1.6, 24),
                 padding=ft.Padding.symmetric(horizontal=2),
                 ink=True,
+                on_click=lambda e: activate(0),
             )
         return _wrap_block(content, line, base, line_idx)
 
@@ -383,7 +383,7 @@ def LineView(
 
         content = ft.Container(
             content=ft.GestureDetector(
-                content=ft.Text(spans=spans, style=line_style),
+                content=ft.Text(spans=spans, style=line_style, width=float("inf")),
                 on_tap=_on_tap,
             ),
             ink=True,

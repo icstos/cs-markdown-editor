@@ -612,6 +612,28 @@ def MarkdownEditor(
         parser.reparse_line(line)
         mark_dirty()
 
+    # ---- 代码块语言修改 ----
+    def change_lang(new_lang: str):
+        """代码块编辑态：修改语言类型，同步更新围栏首行。"""
+        if active is None:
+            return
+        li = active[0]
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type != BlockType.CODE:
+            return
+        # 优先用当前编辑草稿（未提交的代码），否则用已解析内容
+        code = draft if active[0] == li else (line.segments[0].text if line.segments else "")
+        line.lang = new_lang
+        full = f"```{new_lang}\n{code}\n```" if code else f"```{new_lang}\n```"
+        parser.reparse_line(line, full)
+        mark_dirty()
+
+    def suppress_blur_for_lang():
+        """语言输入框聚焦时设置 suppress_blur，防止代码框 blur 退出编辑态。"""
+        suppress_blur.current = True
+
     # ---- TOC 跳转 ----
     def jump_to(li: int):
         if not (0 <= li < len(document.lines)):
@@ -675,6 +697,8 @@ def MarkdownEditor(
             on_toggle_task=toggle_task,
             toc_entries=toc_entries,
             on_jump_to=jump_to,
+            on_change_lang=change_lang,
+            on_lang_focus=suppress_blur_for_lang,
             initial_cursor=cursor_pos if is_act else -1,
             nav_seq=nav_seq if is_act else 0,
             field_ref=active_field_ref if is_act else None,

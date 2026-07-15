@@ -82,6 +82,43 @@ def _hit_test_tap(line: Line, x: float, y: float, base: int) -> tuple[int, int]:
     return (-1, -1)
 
 
+def _hit_test_code(code: str, x: float, y: float, base: int) -> int:
+    """代码块点击命中测试：根据坐标估算字符偏移。
+
+    几何基于 Flet Markdown(GITHUB_WEB) 代码块的近似渲染参数
+    （Container padding + lang_tag + spacing + 代码块内边距 + 行高），
+    可能存在小偏差，用户可用方向键微调。
+    """
+    # 估算代码区域起始位置（Container padding=12, lang_tag≈16, spacing=6, md 代码块内边距≈16）
+    code_start_y = 12 + 16 + 6 + 16
+    code_start_x = 12 + 16  # Container padding + md 代码块内边距
+    line_h = max(base * 1.5, 20)  # 代码行高（字号 14 * 1.5）
+
+    if not code:
+        return 0
+    if y < code_start_y:
+        return 0
+    if x < code_start_x:
+        x = code_start_x
+
+    lines = code.split("\n")
+    row = int((y - code_start_y) // line_h)
+    row = max(0, min(row, len(lines) - 1))
+
+    # 用 measure_text_width 逐字逼近列号
+    line_text = lines[row]
+    local_x = x - code_start_x
+    col = len(line_text)
+    for j in range(1, len(line_text) + 1):
+        if measure_text_width(line_text[:j], FONT_MONO, base) >= local_x:
+            col = j
+            break
+
+    # 偏移 = 前面行的长度（含换行符）+ 当前列
+    offset = sum(len(lines[i]) + 1 for i in range(row)) + col
+    return min(max(offset, 0), len(code))
+
+
 def _spans_for(
     line: Line,
     seg_from: int,
@@ -166,6 +203,8 @@ def LineView(
     on_toggle_task: Callable[[int], None] | None = None,
     toc_entries: list[tuple[int, int, str]] | None = None,
     on_jump_to: Callable[[int], None] | None = None,
+    on_change_lang: Callable[[str], None] | None = None,
+    on_lang_focus: Callable[[], None] | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
@@ -230,14 +269,36 @@ def LineView(
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
                 base_size=14, multiline=True,
             )
-            content = ft.Container(content=inner, bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12)
+            # 语言类型输入框：on_focus 设 suppress_blur 防止代码框 blur 退出
+            lang_field = ft.TextField(
+                value=line.lang,
+                hint_text="lang",
+                width=160,
+                border=ft.InputBorder.NONE,
+                text_size=12,
+                text_style=ft.TextStyle(color=C_MUTED, font_family=FONT_MONO),
+                content_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
+                on_focus=lambda e: on_lang_focus() if on_lang_focus else None,
+                on_change=lambda e: on_change_lang(e.control.value) if on_change_lang else None,
+            )
+            content = ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Container(content=lang_field, padding=ft.Padding.only(left=4, top=2)),
+                        inner,
+                    ],
+                    spacing=4,
+                ),
+                bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12,
+            )
         else:
             code = line.segments[0].text if line.segments else ""
             lang = line.lang or ""
             # ft.Markdown + GITHUB_WEB + code_theme 实现代码高亮
+            # selectable 留 False：外层 SelectionArea 已提供选择能力，
+            # 且 Markdown 自带 selectable 会消费 tap 导致 GestureDetector 失效
             md = ft.Markdown(
                 value=f"```{lang}\n{code}\n```",
-                selectable=True,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
                 code_theme=ft.MarkdownCodeTheme.A11Y_LIGHT,
             )
@@ -245,11 +306,22 @@ def LineView(
                 ft.Text(value=lang, size=11, color=C_MUTED, font_family=FONT_MONO)
                 if lang else ft.Text(" ")
             )
-            content = ft.Container(
-                content=ft.Column([lang_tag, md], spacing=6),
-                bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12,
-                on_click=lambda e: on_activate(line_idx, 0),
-                ink=True,
+
+            def _on_tap(e: ft.TapEvent):
+                pos = e.local_position
+                if pos is not None:
+                    offset = _hit_test_code(code, pos.x, pos.y, 14)
+                    activate(0, offset)
+                    return
+                activate(0)
+
+            content = ft.GestureDetector(
+                content=ft.Container(
+                    content=ft.Column([lang_tag, md], spacing=6),
+                    bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12,
+                    ink=True,
+                ),
+                on_tap=_on_tap,
             )
         return _wrap_block(content, line, base, line_idx)
 

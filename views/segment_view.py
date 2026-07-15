@@ -32,6 +32,12 @@ def _display_text(seg: Segment) -> str:
         return ""  # 渲染态不显示 # 前缀，用颜色区分标题级别
     if seg.seg_type == SegType.QUOTE_PREFIX:
         return ""  # 渲染态不显示 > 前缀，引用由左边框区分
+    if seg.seg_type == SegType.LIST_PREFIX:
+        # 无序列表标记渲染为圆点；有序列表保留 "N. " 形式
+        raw = seg.raw
+        if raw and raw[0] in "-*+":
+            return "•  "
+        return raw
     if seg.seg_type in _PREFIX_SEGTYPES:
         return seg.raw
     if seg.seg_type == SegType.IMAGE:

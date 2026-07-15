@@ -30,6 +30,8 @@ def _display_text(seg: Segment) -> str:
     """渲染态展示文本。"""
     if seg.seg_type == SegType.HEADING_PREFIX:
         return ""  # 渲染态不显示 # 前缀，用颜色区分标题级别
+    if seg.seg_type == SegType.QUOTE_PREFIX:
+        return ""  # 渲染态不显示 > 前缀，引用由左边框区分
     if seg.seg_type in _PREFIX_SEGTYPES:
         return seg.raw
     if seg.seg_type == SegType.IMAGE:

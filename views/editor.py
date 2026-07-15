@@ -409,6 +409,8 @@ def MarkdownEditor(
             set_draft(new_raw)
             return
         commit_active(new_raw)
+        # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖 _goto 设置的 active
+        suppress_blur.current = True
         set_active(None)
         new_line_after(li)
 
@@ -432,6 +434,8 @@ def MarkdownEditor(
         line = document.lines[li]
         if active is not None:
             _commit_for_block(line, active, draft)
+            # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖 _goto 设置的 active
+            suppress_blur.current = True
             set_active(None)
         content = _inline_content(line)
         if block_type == BlockType.HEADING:

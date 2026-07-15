@@ -165,5 +165,8 @@ def active_text_field(
         # 文本像素宽 + 内边距(左右各4) + 光标/子像素余量；空文本给最小宽避免坍缩
         text_w = measure_text_width(draft or "", font_family, text_size)
         kwargs["width"] = max(text_w + 14, 24)
+    else:
+        # 多行代码块：撑满整行宽度
+        kwargs["expand"] = True
 
     return ft.TextField(**kwargs)

@@ -651,6 +651,10 @@ def MarkdownEditor(
         """语言输入框聚焦时设置 suppress_blur，防止代码框 blur 退出编辑态。"""
         suppress_blur.current = True
 
+    def suppress_blur_for_click():
+        """点击编辑行右侧空白时设置 suppress_blur，防止 TextField blur 退出编辑态。"""
+        suppress_blur.current = True
+
     # ---- TOC 跳转 ----
     def jump_to(li: int):
         if not (0 <= li < len(document.lines)):
@@ -716,6 +720,7 @@ def MarkdownEditor(
             on_jump_to=jump_to,
             on_change_lang=change_lang,
             on_lang_focus=suppress_blur_for_lang,
+            on_suppress_blur=suppress_blur_for_click,
             initial_cursor=cursor_pos if is_act else -1,
             nav_seq=nav_seq if is_act else 0,
             field_ref=active_field_ref if is_act else None,
@@ -847,7 +852,7 @@ def MarkdownEditor(
                         ref=list_view_ref,
                         controls=line_controls,
                         expand=True,
-                        spacing=2,
+                        spacing=0,  # 行间无间距：避免行间空白死区导致点击无效
                         scroll=ft.ScrollMode.AUTO,
                     ),
                     expand=True,

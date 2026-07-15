@@ -201,6 +201,7 @@ def LineView(
     on_jump_to: Callable[[int], None] | None = None,
     on_change_lang: Callable[[str], None] | None = None,
     on_lang_focus: Callable[[], None] | None = None,
+    on_suppress_blur: Callable[[], None] | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
@@ -215,6 +216,11 @@ def LineView(
     def activate(seg_idx: int, cursor_at: int = -1):
         on_activate(line_idx, seg_idx, cursor_at)
 
+    # 行间空白死区点击兜底：激活最后一个段（与 _on_tap 回退策略一致）。
+    # 内层 GestureDetector 会消费其覆盖区域的 tap，此回调仅在 padding 死区触发。
+    def _fallback_activate(e):
+        activate(max(0, len(line.segments) - 1))
+
     # ============ 空行 ============
     if line.block_type == BlockType.BLANK or not _has_visible_text(line):
         if active_seg is not None:
@@ -222,7 +228,19 @@ def LineView(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
             )
-            content = ft.Container(content=field, padding=ft.Padding.symmetric(horizontal=2))
+            # 编辑态：设置 width=float("inf") 占满整行，点击右侧空白时抑制 blur 并激活最后段
+            def _blank_edit_on_click(e):
+                if on_suppress_blur:
+                    on_suppress_blur()
+                activate(max(0, len(line.segments) - 1), cursor_at=-1)
+
+            content = ft.Container(
+                content=field,
+                padding=ft.Padding.symmetric(horizontal=2),
+                width=float("inf"),
+                on_click=_blank_edit_on_click,
+                ink=True,
+            )
         else:
             # Container.on_click 处理整行点击（含右侧空白），Text 占满宽度。
             # autofocus 由 editor.py 的 use_effect 显式调用 focus() 兜底。
@@ -239,7 +257,7 @@ def LineView(
                 ink=True,
                 on_click=lambda e: activate(0),
             )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # ============ 分隔线 ============
     if line.block_type == BlockType.HR:
@@ -256,7 +274,7 @@ def LineView(
                 on_click=lambda e: on_activate(line_idx, 0),
                 ink=True,
             )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # ============ 代码块 ============
     if line.block_type == BlockType.CODE:
@@ -320,7 +338,7 @@ def LineView(
                 ),
                 on_tap=_on_tap,
             )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # ============ 行间公式 ============
     if line.block_type == BlockType.MATH:
@@ -348,7 +366,7 @@ def LineView(
                 on_click=lambda e: on_activate(line_idx, 0),
                 ink=True,
             )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # ============ 目录 [toc] ============
     if line.block_type == BlockType.TOC:
@@ -373,7 +391,7 @@ def LineView(
                 padding=ft.Padding.symmetric(vertical=8),
                 bgcolor=c.code_block_bg, border_radius=6,
             )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # ============ 任务列表项（非编辑态）============
     if line.task and active_seg is None:
@@ -393,7 +411,7 @@ def LineView(
             wrap=True, spacing=4, run_spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # ============ 图片行（非编辑态）============
     if (img_idxs := _image_seg_indices(line)) and active_seg is None:
@@ -433,7 +451,7 @@ def LineView(
             controls=img_controls, spacing=4,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # ============ 普通块（段落 / 标题 / 列表 / 引用）============
     if active_seg is None:
@@ -458,7 +476,7 @@ def LineView(
             ),
             ink=True,
         )
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     # 编辑态：前段 Text + 激活段 TextField + 后段 Text
     before_spans = _spans_for(line, 0, active_seg, activate, base)
@@ -469,7 +487,7 @@ def LineView(
         # 段索引越界，退回非编辑态
         spans = _spans_for(line, 0, len(line.segments), activate, base)
         content = ft.Text(spans=spans, style=line_style)
-        return _wrap_block(content, line, base, line_idx)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     controls: list[ft.Control] = []
     if before_spans:
@@ -484,20 +502,39 @@ def LineView(
     if after_spans:
         controls.append(ft.Text(spans=after_spans, style=line_style))
 
-    content = ft.Row(
+    # 编辑态：Row 外包裹 Container，设置 width=float("inf") 占满整行，
+    # 防止点击右侧空白触发外层 _fallback_activate。同时添加 on_click：
+    # 点击右侧空白时激活最后一个段（行尾），保持编辑状态。
+    def _edit_on_click(e):
+        if on_suppress_blur:
+            on_suppress_blur()
+        activate(max(0, len(line.segments) - 1), cursor_at=-1)
+
+    row = ft.Row(
         controls=controls, wrap=True, spacing=0, run_spacing=0,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
-    return _wrap_block(content, line, base, line_idx)
+    content = ft.Container(
+        content=row,
+        width=float("inf"),
+        on_click=_edit_on_click,
+        ink=True,
+    )
+    return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
 
 def _wrap_block(
     content: ft.Control, line: Line, base: int, line_idx: int | None = None,
+    on_click: Callable | None = None,
 ) -> ft.Control:
     """包一层块级容器：缩进、引用边框。
 
     嵌套引用：根据 line.level 包多层带左边框的 Container，每多一层嵌套
     行首多一个灰色竖线占位（Typora 式嵌套引用视觉）。
+
+    on_click：挂到最外层 Container 的点击回调。内层 GestureDetector 会消费
+    其覆盖区域的 tap 事件，因此 on_click 仅在内层未覆盖的区域（如 top/bottom
+    padding 死区）触发，作为"点击行间空白也能进入编辑"的兜底。
     """
     c = _current_colors()  # 当前主题颜色（亮/暗）
     pad_left = 0
@@ -517,12 +554,14 @@ def _wrap_block(
         pad_left = 0
         border = None
 
-    container = ft.Container(
-        key=f"line-{line_idx}" if line_idx is not None else None,
-        content=content,
-        padding=ft.Padding.only(left=pad_left, top=2, bottom=2),
-        margin=ft.Margin.all(0),
-        border=border,
-        ink=False,
-    )
-    return container
+    kwargs: dict = {
+        "key": f"line-{line_idx}" if line_idx is not None else None,
+        "content": content,
+        "padding": ft.Padding.only(left=pad_left, top=2, bottom=2),
+        "margin": ft.Margin.all(0),
+        "border": border,
+        "ink": False,
+    }
+    if on_click is not None:
+        kwargs["on_click"] = on_click
+    return ft.Container(**kwargs)

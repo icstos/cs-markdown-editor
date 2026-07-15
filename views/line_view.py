@@ -11,7 +11,7 @@ from typing import Callable
 
 import flet as ft
 
-from models import BlockType, Line, SegType
+from models import BlockType, Line, Segment, SegType
 from styles import (
     C_CODE_BLOCK_BG,
     C_MATH_BG,
@@ -23,11 +23,63 @@ from styles import (
     block_text_size,
     block_weight,
     image_fit_size,
+    measure_text_width,
     only_border,
 )
-from views.segment_view import active_text_field, segment_to_span
+from views.segment_view import _display_text, _MONO_SEGTYPES, active_text_field, segment_to_span
 
 _PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
+
+
+def _seg_font_size(seg: Segment, base: int) -> tuple[str, int]:
+    """获取段的字体和字号（与 segment_view 的渲染样式一致）。"""
+    is_mono = seg.seg_type in _MONO_SEGTYPES
+    return (FONT_MONO if is_mono else FONT_MAIN,
+            max(base - 1, 12) if is_mono else base)
+
+
+def _display_to_raw_offset(seg: Segment, display_offset: int) -> int:
+    """将展示文本偏移映射到原始 Markdown 偏移。
+
+    对于 **bold** / `code` 等含语法的段，display text 是去除外壳后的内容，
+    需要加上语法前缀长度才能得到 raw 中的偏移。
+    """
+    display = _display_text(seg)
+    raw = seg.raw
+    if not display or display_offset <= 0:
+        return 0
+    if display_offset >= len(display):
+        return len(raw)
+    if display in raw:
+        prefix_len = raw.index(display)
+        return min(prefix_len + display_offset, len(raw))
+    return len(raw)
+
+
+def _hit_test_tap(line: Line, x: float, y: float, base: int) -> tuple[int, int]:
+    """根据点击位置计算 (seg_idx, raw_cursor_offset)。
+
+    通过累加各段展示文本宽度做命中测试，再用 measure_text_width
+    逐字逼近找到字符偏移。多行文本（y 超过行高）回退到 (-1, -1)。
+    """
+    if y > base * 1.6:
+        return (-1, -1)
+    acc = 0.0
+    for i, seg in enumerate(line.segments):
+        display = _display_text(seg)
+        font, size = _seg_font_size(seg, base)
+        w = measure_text_width(display, font, size)
+        if x < acc + w or i == len(line.segments) - 1:
+            local_x = x - acc
+            # 逐字逼近：找到宽度 >= local_x 的最小前缀
+            disp_off = len(display)
+            for j in range(1, len(display) + 1):
+                if measure_text_width(display[:j], font, size) >= local_x:
+                    disp_off = j
+                    break
+            return (i, _display_to_raw_offset(seg, disp_off))
+        acc += w
+    return (-1, -1)
 
 
 def _spans_for(
@@ -105,7 +157,7 @@ def LineView(
     line_idx: int,
     active_seg: int | None,
     draft: str,
-    on_activate: Callable[[int, int], None],
+    on_activate: Callable[[int, int, int], None],
     on_change_draft: Callable[[str], None],
     on_submit: Callable[[str], None],
     on_blur: Callable[[], None],
@@ -123,8 +175,8 @@ def LineView(
         size=base, weight=weight, color=C_TEXT, font_family=FONT_MAIN, height=1.6
     )
 
-    def activate(seg_idx: int):
-        on_activate(line_idx, seg_idx)
+    def activate(seg_idx: int, cursor_at: int = -1):
+        on_activate(line_idx, seg_idx, cursor_at)
 
     # ============ 空行 ============
     if line.block_type == BlockType.BLANK or not _has_visible_text(line):
@@ -315,11 +367,25 @@ def LineView(
 
     # ============ 普通块（段落 / 标题 / 列表 / 引用）============
     if active_seg is None:
-        spans = _spans_for(line, 0, len(line.segments), activate, base)
-        # 不用 GestureDetector 包装：其 on_tap 会干扰 TextField.autofocus，
-        # 导致点击文本 span 进入编辑态后光标不显示。TextSpan.on_click 已处理段级激活。
+        # spans 不绑定 on_click：GestureDetector 统一处理点击，获取精确坐标
+        # 做命中测试，把光标定位到点击的字符位置（而非段尾）。
+        spans = _spans_for(line, 0, len(line.segments), None, base)
+
+        def _on_tap(e: ft.TapEvent):
+            pos = e.local_position
+            if pos is not None:
+                si, offset = _hit_test_tap(line, pos.x, pos.y, base)
+                if si >= 0:
+                    activate(si, offset)
+                    return
+            # 回退：点击多行区域或无法定位时，激活最后一个段
+            activate(max(0, len(line.segments) - 1))
+
         content = ft.Container(
-            content=ft.Text(spans=spans, style=line_style),
+            content=ft.GestureDetector(
+                content=ft.Text(spans=spans, style=line_style),
+                on_tap=_on_tap,
+            ),
             ink=True,
         )
         return _wrap_block(content, line, base, line_idx)

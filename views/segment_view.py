@@ -39,18 +39,19 @@ def _display_text(seg: Segment) -> str:
 def segment_to_span(
     seg: Segment,
     seg_idx: int,
-    on_activate: Callable[[int], None],
+    on_activate: Callable[[int], None] | None,
     base_size: int,
 ) -> ft.TextSpan:
-    """渲染态：段 -> TextSpan（可点击激活）。"""
+    """渲染态：段 -> TextSpan（可点击激活）。on_activate=None 时不绑定 on_click。"""
     style = (
         prefix_style(seg, base_size)
         if seg.seg_type in _PREFIX_SEGTYPES
         else segment_style(seg, base_size)
     )
-    return ft.TextSpan(
-        text=_display_text(seg), style=style, on_click=lambda e: on_activate(seg_idx)
-    )
+    kwargs: dict = {"text": _display_text(seg), "style": style}
+    if on_activate is not None:
+        kwargs["on_click"] = lambda e: on_activate(seg_idx)
+    return ft.TextSpan(**kwargs)
 
 
 def active_text_field(

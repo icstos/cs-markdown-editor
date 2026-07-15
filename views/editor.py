@@ -170,8 +170,8 @@ def MarkdownEditor(
         _sync_cursor(new_draft, cursor_at)
         set_nav_seq(nav_seq + 1)
 
-    def activate(li: int, si: int):
-        _goto(li, si)
+    def activate(li: int, si: int, cursor_at: int = -1):
+        _goto(li, si, cursor_at=cursor_at)
 
     # ---- 段间/行间光标导航（由外层 on_key 经 nav_ref 调用）----
     def _nav_blocked(line: Line) -> bool:

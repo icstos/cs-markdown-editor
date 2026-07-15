@@ -13,7 +13,6 @@ import flet as ft
 
 import parser
 from models import Document
-from styles import C_BORDER, C_MUTED, C_TEXT, FONT_MAIN, only_border
 from views.editor import MarkdownEditor
 
 _SAMPLE = r"""# Markdown 编辑器
@@ -161,24 +160,14 @@ def App():
 
     # FilePicker：挂到 page.overlay 才能弹出系统对话框
     picker_holder = ft.use_ref()
-    # Clipboard：Ctrl+C 时先让 SelectionArea 原生复制纯文本，再异步读取→匹配→替换为 Markdown
-    clipboard_holder = ft.use_ref()
     # page 引用：事件回调中 ft.context.page 可能不可用，提前缓存
     page_ref = ft.use_ref()
 
     def _mount_picker():
         page = ft.context.page
         page_ref.current = page
-        picker = ft.FilePicker()
-        picker_holder.current = picker
-        page.overlay.append(picker)
-        clip = ft.Clipboard()
-        clipboard_holder.current = clip
-        page.overlay.append(clip)
-        return lambda: (
-            page.overlay.remove(picker),
-            page.overlay.remove(clip),
-        )
+        # FilePicker 是 service，不需要添加到 page.overlay
+        picker_holder.current = ft.FilePicker()
 
     ft.use_effect(_mount_picker, [])
 
@@ -244,19 +233,44 @@ def App():
         set_file_path(path)
         set_dirty(False)
 
+    async def export_doc():
+        """导出为 HTML 文件。"""
+        md_text = parser.serialize(document)
+        html = parser.to_html(md_text)
+        picker = picker_holder.current
+        if picker is None:
+            return
+        path = await picker.save_file(
+            dialog_title="导出 HTML",
+            file_name=_file_name(file_path).replace(".md", ".html"),
+            allowed_extensions=["html"],
+            file_type=ft.FilePickerFileType.CUSTOM,
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".html"):
+            path += ".html"
+        try:
+            _write_file(path, html)
+        except Exception as e:
+            page_ref.current.open(ft.SnackBar(ft.Text(f"导出失败：{e}")))
+            return
+        page_ref.current.open(ft.SnackBar(ft.Text("导出成功")))
+
     # ---- 快捷键 + 光标导航 ----
-    # KeyDownEvent 只有 key 属性，无修饰键信息，需手动跟踪 Ctrl 按下/释放
-    ctrl_held = ft.use_ref(False)
+    # page.on_keyboard_event 的 KeyboardEvent 直接提供 ctrl/meta 修饰键状态
     # 粘贴前的 draft 快照（供 handle_paste 做 diff 定位粘贴位置）
     paste_old_draft = ft.use_ref("")
+    # on_key 闭包引用随渲染变化的状态，用 ref 保持最新版本供事件回调调用
+    on_key_ref = ft.use_ref(None)
 
     async def _do_copy():
         """Ctrl+C 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown。"""
         await asyncio.sleep(0.2)
-        clip = clipboard_holder.current
-        if clip is None:
+        page = page_ref.current
+        if page is None:
             return
-        plain = await clip.get()
+        plain = await page.clipboard.get()
         if not plain:
             return
         nav = nav_ref.current
@@ -264,15 +278,15 @@ def App():
             return
         md = nav["compute_markdown_from_text"](plain)
         if md and md != plain:
-            await clip.set(md)
+            await page.clipboard.set(md)
 
     async def _do_paste_check():
         """Ctrl+V 后异步检查剪贴板是否含多行内容，若是则拆分为多行插入。"""
         await asyncio.sleep(0.05)
-        clip = clipboard_holder.current
-        if clip is None:
+        page = page_ref.current
+        if page is None:
             return
-        text = await clip.get()
+        text = await page.clipboard.get()
         if not text or "\n" not in text:
             return
         nav = nav_ref.current
@@ -283,11 +297,6 @@ def App():
     def on_key(e):
         key = e.key or ""
         norm = key.replace(" ", "").lower()
-
-        # 跟踪 Ctrl/Meta 修饰键状态
-        if norm.startswith("control") or norm.startswith("meta"):
-            ctrl_held.current = True
-            return
 
         # 导航键：仅在编辑态有激活段时由 editor 暴露的接口处理
         nav = nav_ref.current
@@ -316,7 +325,7 @@ def App():
                     nav["move_right"]()
                     return
 
-        if not ctrl_held.current:
+        if not (e.ctrl or e.meta):
             return
         k = key.upper()
         if k == "S":
@@ -341,74 +350,36 @@ def App():
                 if page is not None:
                     page.run_task(_do_paste_check)
 
-    def on_key_up(e):
-        key = e.key or ""
-        norm = key.replace(" ", "").lower()
-        if norm.startswith("control") or norm.startswith("meta"):
-            ctrl_held.current = False
+    # 每次渲染更新 on_key_ref，使 page.on_keyboard_event 总能调用最新闭包
+    on_key_ref.current = on_key
 
-    def _app_bar():
-        return ft.Container(
-            bgcolor=ft.Colors.WHITE,
-            border=only_border(bottom=ft.BorderSide(1, C_BORDER)),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-            content=ft.Row(
-                controls=[
-                    ft.Row(
-                        controls=[
-                            ft.IconButton(
-                                icon=ft.Icons.NOTE_ADD,
-                                tooltip="新建  Ctrl+N",
-                                on_click=lambda e: new_doc(),
-                                icon_size=20,
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.FILE_OPEN,
-                                tooltip="打开  Ctrl+O",
-                                on_click=lambda e: page_ref.current.run_task(open_doc),
-                                icon_size=20,
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.SAVE,
-                                tooltip="保存  Ctrl+S",
-                                on_click=lambda e: page_ref.current.run_task(save_doc),
-                                icon_size=20,
-                            ),
-                        ],
-                        spacing=2,
-                    ),
-                    ft.Container(width=8),
-                    ft.Text(
-                        value=("● " if dirty else "") + _file_name(file_path),
-                        size=14,
-                        color=C_TEXT,
-                        weight=ft.FontWeight.W_500,
-                        font_family=FONT_MAIN,
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.START,
+    def _bind_keyboard():
+        page = ft.context.page
+        page_ref.current = page
+
+        def _handler(e):
+            if on_key_ref.current is not None:
+                on_key_ref.current(e)
+
+        page.on_keyboard_event = _handler
+        return lambda: setattr(page, "on_keyboard_event", None)
+
+    ft.use_effect(_bind_keyboard, [])
+
+    return ft.Column(
+        controls=[
+            MarkdownEditor(
+                key=str(session),
+                document=document,
+                file_path=file_path,
+                on_new=new_doc,
+                on_open=lambda: page_ref.current.run_task(open_doc),
+                on_save=lambda: page_ref.current.run_task(save_doc),
+                on_export=lambda: page_ref.current.run_task(export_doc),
+                on_dirty_change=on_dirty_change,
+                nav_ref=nav_ref,
             ),
-        )
-
-    return ft.KeyboardListener(
-        content=ft.Column(
-            controls=[
-                _app_bar(),
-                ft.Container(
-                    content=MarkdownEditor(
-                        key=str(session),
-                        document=document,
-                        on_dirty_change=on_dirty_change,
-                        nav_ref=nav_ref,
-                    ),
-                    expand=True,
-                    bgcolor=ft.Colors.WHITE,
-                ),
-            ],
-            expand=True,
-        ),
-        on_key_down=on_key,
-        on_key_up=on_key_up,
+        ],
         expand=True,
     )
 
@@ -423,7 +394,6 @@ async def main(page: ft.Page):
             surface=ft.Colors.WHITE,
         ),
     )
-    page.scroll = ft.ScrollMode.AUTO
     page.bgcolor = ft.Colors.WHITE
     page.window.width = 960
     page.window.height = 720

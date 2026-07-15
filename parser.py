@@ -18,6 +18,9 @@ from models import BlockType, Document, Line, SegType, Segment
 
 # 行内解析器：启用删除线插件以获得更丰富的段类型
 _md = mistune.create_markdown(renderer="ast", plugins=["strikethrough"])
+_html_md = mistune.create_markdown(
+    renderer="html", plugins=["strikethrough", "table", "footnotes", "task_lists"]
+)
 
 # ---- 正则：块级前缀识别 ----
 _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -151,7 +154,10 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
 
     m = _RE_HEADING.match(raw)
     if m:
-        return BlockType.HEADING, {"level": len(m.group(1)), "content": m.group(2).strip()}
+        return BlockType.HEADING, {
+            "level": len(m.group(1)),
+            "content": m.group(2).strip(),
+        }
 
     m = _RE_TASK.match(raw)
     if m:
@@ -205,7 +211,12 @@ def _make_prefix_segment(block_type: BlockType, info: dict, line: Line) -> Segme
         if info.get("task"):
             line.task = True
             line.checked = info["checked"]
-            return Segment(SegType.LIST_PREFIX, f"{marker} [{'x' if info['checked'] else ' '}] ", "", level=line.level)
+            return Segment(
+                SegType.LIST_PREFIX,
+                f"{marker} [{'x' if info['checked'] else ' '}] ",
+                "",
+                level=line.level,
+            )
         return Segment(SegType.LIST_PREFIX, f"{marker} ", "", level=line.level)
     if block_type == BlockType.LIST_O:
         line.level = info.get("indent", 0)
@@ -359,6 +370,11 @@ def serialize(doc: Document) -> str:
     return "\n".join(line.raw for line in doc.lines)
 
 
+def to_html(text: str) -> str:
+    """Markdown 文本转 HTML（用于导出）。"""
+    return _html_md(text)
+
+
 # ---------------------------------------------------------------------------
 # 选区 → Markdown 源码
 # ---------------------------------------------------------------------------
@@ -470,8 +486,7 @@ def match_text_to_selections(
     text = plain_text.replace("\r\n", "\n").replace("\r", "\n")
 
     line_texts = [
-        "".join(_seg_display_text(seg) for seg in line.segments)
-        for line in lines
+        "".join(_seg_display_text(seg) for seg in line.segments) for line in lines
     ]
 
     # 情况1：剪贴板含换行符 → 按行匹配

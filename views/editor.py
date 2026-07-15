@@ -11,6 +11,7 @@ on_blur/on_submit 提交（reparse 该行）-> 重新渲染。结构变更通过
 `document.lines = 新列表` 触发 observable 通知。
 """
 
+import os
 import re
 from typing import Callable
 
@@ -18,9 +19,23 @@ import flet as ft
 
 from models import BlockType, Document, Line, SegType
 import parser
-from styles import C_BORDER, C_MUTED, C_TEXT, FONT_MAIN, FONT_MONO, only_border
+from styles import (
+    C_BORDER,
+    C_MUTED,
+    C_TEXT,
+    C_TOOLBAR_BG,
+    FONT_MAIN,
+    FONT_MONO,
+    only_border,
+)
 from views.line_view import LineView
-from views.toolbar import Toolbar
+from views.toolbar import Toolbar, _btn, _divider as _tb_divider
+
+
+# 空操作回调（on_new/on_export 等为 None 时回退）
+def _noop():
+    pass
+
 
 # 行内格式包裹语法
 _WRAP_MAP: dict[SegType, str] = {
@@ -67,6 +82,11 @@ def _next_line_raw(line: Line) -> str:
 @ft.component
 def MarkdownEditor(
     document: Document,
+    file_path: str | None = None,
+    on_new: Callable[[], None] | None = None,
+    on_open: Callable[[], None] | None = None,
+    on_save: Callable[[], None] | None = None,
+    on_export: Callable[[], None] | None = None,
     on_dirty_change: Callable[[bool], None] | None = None,
     nav_ref: ft.Ref | None = None,
 ):
@@ -662,28 +682,118 @@ def MarkdownEditor(
         for i, line in enumerate(document.lines)
     ]
 
+    # ---- 工具区：菜单 | 工具栏 | 原文切换 + 导出 ----
+    def _tool_area():
+        menu_items = [
+            ft.PopupMenuItem(content="新建", on_click=lambda e: (on_new or _noop)()),
+            ft.PopupMenuItem(
+                content="打开...", on_click=lambda e: (on_open or _noop)()
+            ),
+            ft.PopupMenuItem(content="保存", on_click=lambda e: (on_save or _noop)()),
+            ft.PopupMenuItem(),
+            ft.PopupMenuItem(content="设置", on_click=lambda e: None),
+        ]
+        return ft.Container(
+            bgcolor=C_TOOLBAR_BG,
+            border=only_border(bottom=ft.BorderSide(1, C_BORDER)),
+            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+            content=ft.Row(
+                controls=[
+                    ft.PopupMenuButton(
+                        icon=ft.Icons.MENU,
+                        tooltip="文件菜单",
+                        items=menu_items,
+                    ),
+                    _tb_divider(),
+                    ft.Container(
+                        content=Toolbar(
+                            on_h1=lambda: set_block(BlockType.HEADING, 1),
+                            on_h2=lambda: set_block(BlockType.HEADING, 2),
+                            on_h3=lambda: set_block(BlockType.HEADING, 3),
+                            on_paragraph=lambda: set_block(BlockType.PARAGRAPH),
+                            on_list=lambda: set_block(BlockType.LIST_UO),
+                            on_quote=lambda: set_block(BlockType.QUOTE),
+                            on_code_block=lambda: set_block(BlockType.CODE),
+                            on_hr=lambda: set_block(BlockType.HR),
+                            on_bold=lambda: toggle_inline(SegType.STRONG),
+                            on_italic=lambda: toggle_inline(SegType.EMPHASIS),
+                            on_code=lambda: toggle_inline(SegType.CODESPAN),
+                            on_link=toggle_link,
+                            on_strike=lambda: toggle_inline(SegType.STRIKE),
+                        ),
+                        expand=True,
+                        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                    ),
+                    _btn(
+                        ft.Icons.VISIBILITY if not raw_mode else ft.Icons.EDIT,
+                        "原文模式" if not raw_mode else "返回编辑",
+                        toggle_raw,
+                        toggle_on=raw_mode,
+                    ),
+                    _btn(
+                        ft.Icons.FILE_DOWNLOAD,
+                        "导出 HTML",
+                        on_export or _noop,
+                    ),
+                ],
+                spacing=2,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        )
+
+    # ---- 页脚：文件名 | 光标行列 + 字符数 ----
+    def _footer():
+        if active is not None and 0 <= active[0] < len(document.lines):
+            li, si = active
+            line = document.lines[li]
+            col = (
+                _logical_offset(line, si, cursor_ref.current["extent"]) + 1
+                if 0 <= si < len(line.segments)
+                else 1
+            )
+            row = li + 1
+        else:
+            row = cursor_line + 1
+            col = 1
+        char_count = len(parser.serialize(document))
+        fname = os.path.basename(file_path) if file_path else "未命名.md"
+        return ft.Container(
+            bgcolor=ft.Colors.with_opacity(0.02, C_TEXT),
+            border=only_border(top=ft.BorderSide(1, C_BORDER)),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
+            content=ft.Row(
+                controls=[
+                    ft.Text(
+                        value=("● " if document.dirty else "") + fname,
+                        size=12,
+                        color=C_MUTED,
+                        font_family=FONT_MAIN,
+                    ),
+                    ft.Container(expand=True),
+                    ft.Text(
+                        value=f"行 {row}  列 {col}",
+                        size=12,
+                        color=C_MUTED,
+                        font_family=FONT_MAIN,
+                    ),
+                    ft.Container(width=16),
+                    ft.Text(
+                        value=f"{char_count} 字符",
+                        size=12,
+                        color=C_MUTED,
+                        font_family=FONT_MAIN,
+                    ),
+                ],
+            ),
+        )
+
     return ft.Column(
         controls=[
-            Toolbar(
-                on_h1=lambda: set_block(BlockType.HEADING, 1),
-                on_h2=lambda: set_block(BlockType.HEADING, 2),
-                on_h3=lambda: set_block(BlockType.HEADING, 3),
-                on_paragraph=lambda: set_block(BlockType.PARAGRAPH),
-                on_list=lambda: set_block(BlockType.LIST_UO),
-                on_quote=lambda: set_block(BlockType.QUOTE),
-                on_code_block=lambda: set_block(BlockType.CODE),
-                on_hr=lambda: set_block(BlockType.HR),
-                on_bold=lambda: toggle_inline(SegType.STRONG),
-                on_italic=lambda: toggle_inline(SegType.EMPHASIS),
-                on_code=lambda: toggle_inline(SegType.CODESPAN),
-                on_link=toggle_link,
-                on_strike=lambda: toggle_inline(SegType.STRIKE),
-                on_toggle_raw=toggle_raw,
-                raw_mode=raw_mode,
-            ),
+            _tool_area(),
             _raw_editor()
             if raw_mode
             else ft.SelectionArea(
+                expand=True,
                 content=ft.Container(
                     content=ft.Column(
                         ref=list_view_ref,
@@ -697,33 +807,7 @@ def MarkdownEditor(
                     padding=ft.Padding.symmetric(horizontal=24, vertical=16),
                 ),
             ),
-            _status_bar(document),
+            _footer(),
         ],
         expand=True,
-    )
-
-
-def _status_bar(document: Document) -> ft.Control:
-    return ft.Container(
-        bgcolor=ft.Colors.with_opacity(0.02, C_TEXT),
-        border=only_border(top=ft.BorderSide(1, C_BORDER)),
-        padding=ft.Padding.symmetric(horizontal=16, vertical=6),
-        content=ft.Row(
-            controls=[
-                ft.Text(
-                    value=("● " if document.dirty else "")
-                    + (document.file_path or "未命名.md"),
-                    size=12,
-                    color=C_MUTED,
-                    font_family=FONT_MAIN,
-                ),
-                ft.Text(
-                    value=f"{len(document.lines)} 行",
-                    size=12,
-                    color=C_MUTED,
-                    font_family=FONT_MAIN,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-        ),
     )

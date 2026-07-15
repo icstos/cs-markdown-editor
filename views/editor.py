@@ -401,18 +401,63 @@ def MarkdownEditor(
     def on_submit(new_raw: str):
         if active is None:
             return
-        li, _ = active
+        li, si = active
         if not (0 <= li < len(document.lines)):
             return
+        line = document.lines[li]
         # 代码块内回车：仅更新 draft（多行输入）
-        if document.lines[li].block_type == BlockType.CODE:
+        if line.block_type == BlockType.CODE:
             set_draft(new_raw)
             return
-        commit_active(new_raw)
-        # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖 _goto 设置的 active
+        # 特殊块（公式 / 分隔线 / 目录）：提交后创建空行
+        if line.block_type in (BlockType.MATH, BlockType.HR, BlockType.TOC):
+            commit_active(new_raw)
+            # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖 _goto 设置的 active
+            suppress_blur.current = True
+            set_active(None)
+            new_line_after(li)
+            return
+        # 普通块（段落 / 标题 / 列表 / 引用）：在光标位置拆分当前行
+        cursor_pos = min(cursor_ref.current["extent"], len(new_raw))
+        before = new_raw[:cursor_pos]
+        after = new_raw[cursor_pos:]
+        cont_prefix = _next_line_raw(line)
+        remaining = "".join(s.raw for s in line.segments[si + 1 :])
+        # 当前行：保留光标之前的内容（前序段 + 当前段光标前部分）
+        current_full = "".join(s.raw for s in line.segments[:si]) + before
+        parser.reparse_line(line, current_full)
+        # 新行：续行前缀 + 光标之后的内容 + 后续段
+        new_line = parser.parse_markdown(cont_prefix + after + remaining).lines[0]
+        document.lines = (
+            document.lines[: li + 1] + [new_line] + document.lines[li + 1 :]
+        )
+        mark_dirty()
+        # 激活新行中第一个非前缀段（光标置于段首）
+        target_si = 0
+        if new_line.segments:
+            for i, s in enumerate(new_line.segments):
+                if s.seg_type not in (
+                    SegType.HEADING_PREFIX,
+                    SegType.LIST_PREFIX,
+                    SegType.QUOTE_PREFIX,
+                ):
+                    target_si = i
+                    break
+            else:
+                target_si = max(0, len(new_line.segments) - 1)
+        new_draft = (
+            new_line.segments[target_si].raw
+            if target_si < len(new_line.segments)
+            else ""
+        )
+        # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖新设置的 active
         suppress_blur.current = True
-        set_active(None)
-        new_line_after(li)
+        set_draft(new_draft)
+        set_active((li + 1, target_si))
+        set_cursor_line(li + 1)
+        set_cursor_pos(0)
+        _sync_cursor(new_draft, 0)
+        set_nav_seq(nav_seq + 1)
 
     def new_line_after(li: int):
         if not (0 <= li < len(document.lines)):
@@ -598,7 +643,9 @@ def MarkdownEditor(
             key=f"line-{i}",
             line=line,
             line_idx=i,
-            active_seg=active[1] if (is_act := active is not None and active[0] == i) else None,
+            active_seg=active[1]
+            if (is_act := active is not None and active[0] == i)
+            else None,
             draft=draft,
             on_activate=activate,
             on_change_draft=on_change_draft,

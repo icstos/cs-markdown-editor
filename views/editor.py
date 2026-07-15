@@ -83,11 +83,26 @@ def MarkdownEditor(
     # 粘贴时抑制 on_blur：handle_paste 修改 document.lines 触发重渲染，
     # 旧 TextField 卸载导致 on_blur 覆盖 set_active，需跳过这一次 blur
     suppress_blur = ft.use_ref(False)
+    # 激活段 TextField 的 ref：use_effect 在渲染后显式调用 focus()，
+    # 绕过 SelectionArea 内 autofocus 因手势竞争不可靠的问题
+    active_field_ref = ft.use_ref(None)
     # 原文模式：切换到原始 Markdown 文本编辑
     raw_mode, set_raw_mode = ft.use_state(False)
     raw_draft, set_raw_draft = ft.use_state("")
     # ListView ref 用于 TOC 点击跳转滚动
     list_view_ref = ft.use_ref(None)
+
+    # 渲染后显式聚焦激活段 TextField：SelectionArea 内点击 span 触发的
+    # autofocus 因手势竞争不可靠，用 use_effect 在渲染提交后调用 focus() 确保聚焦。
+    # focus() 是 async 方法，需用 async def + await。
+    async def _focus_active_field():
+        if active is not None and active_field_ref.current is not None:
+            try:
+                await active_field_ref.current.focus()
+            except Exception:
+                pass
+
+    ft.use_effect(_focus_active_field, [active, nav_seq])
 
     def mark_dirty():
         document.dirty = True
@@ -334,7 +349,8 @@ def MarkdownEditor(
         while (
             suf < len(old_draft) - pre
             and suf < len(new_draft) - pre
-            and old_draft[len(old_draft) - 1 - suf] == new_draft[len(new_draft) - 1 - suf]
+            and old_draft[len(old_draft) - 1 - suf]
+            == new_draft[len(new_draft) - 1 - suf]
         ):
             suf += 1
 
@@ -345,7 +361,7 @@ def MarkdownEditor(
         # 重建当前段 raw：旧前缀 + 第一行 + 旧后缀
         new_raw = old_draft[:pre] + first
         if suf > 0:
-            new_raw += old_draft[len(old_draft) - suf:]
+            new_raw += old_draft[len(old_draft) - suf :]
 
         if si < len(line.segments):
             line.segments[si].raw = new_raw
@@ -356,7 +372,7 @@ def MarkdownEditor(
         if rest:
             new_lines = [parser.parse_markdown(p).lines[0] for p in rest]
             document.lines = (
-                document.lines[: li + 1] + new_lines + document.lines[li + 1:]
+                document.lines[: li + 1] + new_lines + document.lines[li + 1 :]
             )
             # 抑制重渲染导致的 on_blur（旧 TextField 卸载）
             suppress_blur.current = True
@@ -531,8 +547,9 @@ def MarkdownEditor(
     def jump_to(li: int):
         if not (0 <= li < len(document.lines)):
             return
+        # scroll_to 是 async 方法，通过 run_task 调度执行
         if (lv := list_view_ref.current) is not None:
-            lv.scroll_to(scroll_key=f"line-{li}")
+            ft.context.page.run_task(lv.scroll_to, scroll_key=f"line-{li}")
         _goto(li, 0)
 
     # ---- 同步导航接口给外层 on_key（nav_ref）----
@@ -549,8 +566,8 @@ def MarkdownEditor(
             "move_end": move_end,
             "move_up": move_up,
             "move_down": move_down,
-            "compute_markdown_from_text": lambda text: parser.compute_markdown_from_text(
-                document.lines, text
+            "compute_markdown_from_text": lambda text: (
+                parser.compute_markdown_from_text(document.lines, text)
             ),
             "handle_paste": handle_paste,
         }
@@ -577,22 +594,19 @@ def MarkdownEditor(
             key=f"line-{i}",
             line=line,
             line_idx=i,
-            active_seg=active[1] if (active is not None and active[0] == i) else None,
+            active_seg=active[1] if (is_act := active is not None and active[0] == i) else None,
             draft=draft,
             on_activate=activate,
             on_change_draft=on_change_draft,
-            on_commit=lambda r: None,
             on_submit=on_submit,
             on_blur=on_blur,
-            on_new_line_after=lambda idx: None,
-            on_selection_change=on_selection_change
-            if active is not None and active[0] == i
-            else None,
+            on_selection_change=on_selection_change if is_act else None,
             on_toggle_task=toggle_task,
             toc_entries=toc_entries,
             on_jump_to=jump_to,
-            initial_cursor=cursor_pos if active is not None and active[0] == i else -1,
-            nav_seq=nav_seq if active is not None and active[0] == i else 0,
+            initial_cursor=cursor_pos if is_act else -1,
+            nav_seq=nav_seq if is_act else 0,
+            field_ref=active_field_ref if is_act else None,
         )
         for i, line in enumerate(document.lines)
     ]

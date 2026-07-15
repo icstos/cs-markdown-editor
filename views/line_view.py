@@ -81,6 +81,7 @@ def _active_field(
     nav_seq: int,
     base_size: int | None = None,
     multiline: bool = False,
+    field_ref: ft.Ref | None = None,
 ) -> ft.TextField:
     """构造激活态 TextField（统一入口，消除重复调用）。"""
     return active_text_field(
@@ -94,22 +95,7 @@ def _active_field(
         on_selection_change=on_selection_change,
         initial_cursor=initial_cursor,
         nav_seq=nav_seq,
-    )
-
-
-def _block_gesture(
-    inner: ft.Control,
-    on_activate: Callable[[int, int], None],
-    line_idx: int,
-    seg_idx: int = 0,
-    *,
-    cursor: ft.MouseCursor = ft.MouseCursor.TEXT,
-) -> ft.GestureDetector:
-    """构造可点击激活的 GestureDetector（on_tap 仅触发于点击，不拦截拖拽选区）。"""
-    return ft.GestureDetector(
-        content=inner,
-        on_tap=lambda: on_activate(line_idx, seg_idx),
-        mouse_cursor=cursor,
+        field_ref=field_ref,
     )
 
 
@@ -121,16 +107,15 @@ def LineView(
     draft: str,
     on_activate: Callable[[int, int], None],
     on_change_draft: Callable[[str], None],
-    on_commit: Callable[[str], None],
     on_submit: Callable[[str], None],
     on_blur: Callable[[], None],
-    on_new_line_after: Callable[[int], None],
     on_selection_change: Callable | None = None,
     on_toggle_task: Callable[[int], None] | None = None,
     toc_entries: list[tuple[int, int, str]] | None = None,
     on_jump_to: Callable[[int], None] | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
+    field_ref: ft.Ref | None = None,
 ):
     base = block_text_size(line.block_type, line.level)
     weight = block_weight(line.block_type, line.level)
@@ -146,18 +131,24 @@ def LineView(
         if active_seg is not None:
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq,
+                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
             )
             content = ft.Container(content=field, padding=ft.Padding.symmetric(horizontal=2))
         else:
-            content = _block_gesture(
-                ft.Container(
-                    content=ft.Text(" ", size=base, height=1.6),
-                    height=max(base * 1.6, 24),
-                    padding=ft.Padding.symmetric(horizontal=2),
-                    ink=True,
+            # 用 TextSpan.on_click 而非 GestureDetector.on_tap：
+            # GestureDetector 的 tap 处理会干扰新 TextField 的 autofocus，
+            # 导致空行点击后编辑块出现但光标不显示。TextSpan.on_click 是文本级
+            # 事件，与 SelectionArea 兼容且不影响焦点系统。
+            content = ft.Container(
+                content=ft.Text(
+                    spans=[
+                        ft.TextSpan(" ", style=line_style, on_click=lambda e: activate(0))
+                    ],
+                    style=line_style,
                 ),
-                on_activate, line_idx,
+                height=max(base * 1.6, 24),
+                padding=ft.Padding.symmetric(horizontal=2),
+                ink=True,
             )
         return _wrap_block(content, line, base, line_idx)
 
@@ -166,16 +157,15 @@ def LineView(
         if active_seg is not None:
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq,
+                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
             )
             content = ft.Container(padding=ft.Padding.symmetric(vertical=6), content=field)
         else:
-            content = _block_gesture(
-                ft.Container(
-                    content=ft.Divider(height=1, thickness=1, color=C_QUOTE_BAR),
-                    padding=ft.Padding.symmetric(vertical=8),
-                ),
-                on_activate, line_idx,
+            content = ft.Container(
+                content=ft.Divider(height=1, thickness=1, color=C_QUOTE_BAR),
+                padding=ft.Padding.symmetric(vertical=8),
+                on_click=lambda e: on_activate(line_idx, 0),
+                ink=True,
             )
         return _wrap_block(content, line, base, line_idx)
 
@@ -184,7 +174,7 @@ def LineView(
         if active_seg == 0:
             inner = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq,
+                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
                 base_size=14, multiline=True,
             )
             content = ft.Container(content=inner, bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12)
@@ -202,12 +192,11 @@ def LineView(
                 ft.Text(value=lang, size=11, color=C_MUTED, font_family=FONT_MONO)
                 if lang else ft.Text(" ")
             )
-            content = _block_gesture(
-                ft.Container(
-                    content=ft.Column([lang_tag, md], spacing=6),
-                    bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12,
-                ),
-                on_activate, line_idx,
+            content = ft.Container(
+                content=ft.Column([lang_tag, md], spacing=6),
+                bgcolor=C_CODE_BLOCK_BG, border_radius=6, padding=12,
+                on_click=lambda e: on_activate(line_idx, 0),
+                ink=True,
             )
         return _wrap_block(content, line, base, line_idx)
 
@@ -216,7 +205,7 @@ def LineView(
         if active_seg == 0:
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq,
+                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
                 base_size=16,
             )
             content = ft.Container(
@@ -230,13 +219,12 @@ def LineView(
                 selectable=True,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
             )
-            content = _block_gesture(
-                ft.Container(
-                    content=md, bgcolor=C_MATH_BG, border_radius=6,
-                    padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-                    alignment=ft.Alignment.CENTER,
-                ),
-                on_activate, line_idx,
+            content = ft.Container(
+                content=md, bgcolor=C_MATH_BG, border_radius=6,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                alignment=ft.Alignment.CENTER,
+                on_click=lambda e: on_activate(line_idx, 0),
+                ink=True,
             )
         return _wrap_block(content, line, base, line_idx)
 
@@ -245,19 +233,16 @@ def LineView(
         if active_seg is not None:
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq,
+                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
             )
             content = ft.Container(content=field, padding=ft.Padding.symmetric(horizontal=2))
         else:
             toc_items: list[ft.Control] = [
-                ft.GestureDetector(
-                    content=ft.Container(
-                        content=ft.Text(value=text, size=base - 1, color=C_TEXT, font_family=FONT_MAIN),
-                        padding=ft.Padding.only(left=(lvl - 1) * 16),
-                        ink=True,
-                    ),
-                    on_tap=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
-                    mouse_cursor=ft.MouseCursor.CLICK,
+                ft.Container(
+                    content=ft.Text(value=text, size=base - 1, color=C_TEXT, font_family=FONT_MAIN),
+                    padding=ft.Padding.only(left=(lvl - 1) * 16),
+                    on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
+                    ink=True,
                 )
                 for li, lvl, text in (toc_entries or [])
             ]
@@ -270,8 +255,10 @@ def LineView(
 
     # ============ 任务列表项（非编辑态）============
     if line.task and active_seg is None:
-        content_spans = _spans_for(line, 1, len(line.segments), activate, base) or [ft.TextSpan(" ", line_style)]
         content_target_si = 1 if len(line.segments) > 1 else 0
+        content_spans = _spans_for(line, 1, len(line.segments), activate, base) or [
+            ft.TextSpan(" ", style=line_style, on_click=lambda e: activate(content_target_si))
+        ]
 
         content = ft.Row(
             controls=[
@@ -279,15 +266,11 @@ def LineView(
                     value=line.checked,
                     on_change=lambda e: on_toggle_task(line_idx) if on_toggle_task else None,
                 ),
-                ft.Text(
-                    spans=content_spans, style=line_style,
-                    on_tap=lambda: on_activate(line_idx, content_target_si),
-                ),
+                ft.Text(spans=content_spans, style=line_style),
             ],
             wrap=True, spacing=4, run_spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        content = _block_gesture(content, on_activate, line_idx)
         return _wrap_block(content, line, base, line_idx)
 
     # ============ 图片行（非编辑态）============
@@ -318,9 +301,10 @@ def LineView(
             if h is not None:
                 kw["height"] = h
             img_controls.append(
-                _block_gesture(
-                    ft.Image(**kw),
-                    on_activate, line_idx, seg_idx=seg_idx,
+                ft.Container(
+                    content=ft.Image(**kw),
+                    on_click=lambda e, si=seg_idx: on_activate(line_idx, si),
+                    ink=True,
                 )
             )
         content = ft.Column(
@@ -332,9 +316,11 @@ def LineView(
     # ============ 普通块（段落 / 标题 / 列表 / 引用）============
     if active_seg is None:
         spans = _spans_for(line, 0, len(line.segments), activate, base)
-        content = _block_gesture(
-            ft.Text(spans=spans, style=line_style),
-            on_activate, line_idx,
+        # 不用 GestureDetector 包装：其 on_tap 会干扰 TextField.autofocus，
+        # 导致点击文本 span 进入编辑态后光标不显示。TextSpan.on_click 已处理段级激活。
+        content = ft.Container(
+            content=ft.Text(spans=spans, style=line_style),
+            ink=True,
         )
         return _wrap_block(content, line, base, line_idx)
 
@@ -356,7 +342,7 @@ def LineView(
         active_text_field(
             active_seg_obj, draft, on_change_draft, on_submit, on_blur, base,
             on_selection_change=on_selection_change,
-            initial_cursor=initial_cursor, nav_seq=nav_seq,
+            initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
         )
     )
     if after_spans:
@@ -383,12 +369,11 @@ def _wrap_block(
         border = only_border(left=ft.BorderSide(3, C_QUOTE_BAR))
 
     container = ft.Container(
+        key=f"line-{line_idx}" if line_idx is not None else None,
         content=content,
         padding=ft.Padding.only(left=pad_left, top=2, bottom=2),
         margin=ft.Margin.all(0),
         border=border,
         ink=False,
     )
-    if line_idx is not None:
-        container.scroll_key = f"line-{line_idx}"
     return container

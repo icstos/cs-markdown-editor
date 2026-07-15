@@ -18,7 +18,7 @@ from views.editor import MarkdownEditor
 
 _SAMPLE = r"""# Markdown 编辑器
 
-基于 Flet 0.85.3 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
+基于 Flet 0.86.0 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
 
 ## 特性
 - 所见即所得
@@ -193,11 +193,11 @@ def App():
         set_dirty(False)
         set_session(session + 1)
 
-    def open_doc():
+    async def open_doc():
         picker = picker_holder.current
         if picker is None:
             return
-        files = picker.pick_files(
+        files = await picker.pick_files(
             dialog_title="打开 Markdown",
             allowed_extensions=["md", "markdown", "txt"],
             file_type=ft.FilePickerFileType.CUSTOM,
@@ -208,7 +208,7 @@ def App():
         try:
             text = _read_file(path)
         except Exception as e:
-            ft.context.page.open(ft.SnackBar(ft.Text(f"打开失败：{e}")))
+            page_ref.current.open(ft.SnackBar(ft.Text(f"打开失败：{e}")))
             return
         doc = parser.parse_markdown(text)
         doc.file_path = path
@@ -217,14 +217,14 @@ def App():
         set_dirty(False)
         set_session(session + 1)
 
-    def save_doc():
+    async def save_doc():
         text = parser.serialize(document)
         path = file_path
         if not path:
             picker = picker_holder.current
             if picker is None:
                 return
-            path = picker.save_file(
+            path = await picker.save_file(
                 dialog_title="保存 Markdown",
                 file_name="未命名.md",
                 allowed_extensions=["md"],
@@ -237,7 +237,7 @@ def App():
         try:
             _write_file(path, text)
         except Exception as e:
-            ft.context.page.open(ft.SnackBar(ft.Text(f"保存失败：{e}")))
+            page_ref.current.open(ft.SnackBar(ft.Text(f"保存失败：{e}")))
             return
         document.file_path = path
         document.dirty = False
@@ -320,11 +320,11 @@ def App():
             return
         k = key.upper()
         if k == "S":
-            save_doc()
+            page_ref.current.run_task(save_doc)
         elif k == "N":
             new_doc()
         elif k == "O":
-            open_doc()
+            page_ref.current.run_task(open_doc)
         elif k == "C":
             # 非编辑态：让 SelectionArea 原生复制后异步替换为 Markdown 源码
             nav = nav_ref.current
@@ -365,13 +365,13 @@ def App():
                             ft.IconButton(
                                 icon=ft.Icons.FILE_OPEN,
                                 tooltip="打开  Ctrl+O",
-                                on_click=lambda e: open_doc(),
+                                on_click=lambda e: page_ref.current.run_task(open_doc),
                                 icon_size=20,
                             ),
                             ft.IconButton(
                                 icon=ft.Icons.SAVE,
                                 tooltip="保存  Ctrl+S",
-                                on_click=lambda e: save_doc(),
+                                on_click=lambda e: page_ref.current.run_task(save_doc),
                                 icon_size=20,
                             ),
                         ],

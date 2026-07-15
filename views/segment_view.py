@@ -57,13 +57,14 @@ def active_text_field(
     seg: Segment,
     draft: str,
     on_change: Callable[[str], None],
-    on_submit: Callable[[str], None],
+    on_submit: Callable[[str, str | None], None],
     on_blur: Callable[[], None],
     base_size: int,
     multiline: bool = False,
     on_selection_change: Callable | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
+    field_ref: ft.Ref | None = None,
 ) -> ft.TextField:
     """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。
 
@@ -83,22 +84,23 @@ def active_text_field(
     font_family = FONT_MONO if is_mono else FONT_MAIN
     text_size = base_size if not is_mono else max(base_size - 1, 12)
 
-    # autofocus 默认把光标放段尾，覆盖了 selection 属性（selection 需先聚焦才生效）。
-    # 用 on_focus 在聚焦后强制设置光标到 initial_cursor 位置，仅应用一次。
+    # autofocus 在 SelectionArea 内点击 span 时不可靠（手势竞争导致不触发 focus）。
+    # 用 on_focus 在聚焦后强制设置光标位置，仅应用一次：
+    #   initial_cursor >= 0 → 指定位置（跨段导航）
+    #   initial_cursor < 0  → 段尾（直接点击 span 激活）
     # 声明式模式下控件被冻结（_frozen），需临时解冻才能命令式设置 selection 并 update。
     cursor_applied = [False]
 
     def _on_focus(e):
-        if not cursor_applied[0] and initial_cursor >= 0:
+        if not cursor_applied[0]:
             cursor_applied[0] = True
+            pos = initial_cursor if initial_cursor >= 0 else len(draft)
             ctrl = e.control
             frozen = getattr(ctrl, "_frozen", None)
             if frozen is not None:
                 del ctrl._frozen
             try:
-                ctrl.selection = ft.TextSelection(
-                    base_offset=initial_cursor, extent_offset=initial_cursor
-                )
+                ctrl.selection = ft.TextSelection(base_offset=pos, extent_offset=pos)
                 ctrl.update()
             finally:
                 if frozen is not None:
@@ -129,6 +131,9 @@ def active_text_field(
     }
     if on_selection_change is not None:
         kwargs["on_selection_change"] = on_selection_change
+
+    if field_ref is not None:
+        kwargs["ref"] = field_ref
 
     if not multiline:
         # 文本像素宽 + 内边距(左右各4) + 光标/子像素余量；空文本给最小宽避免坍缩

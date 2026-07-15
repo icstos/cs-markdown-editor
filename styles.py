@@ -50,6 +50,8 @@ class Colors:
     active_bg: str  # 正在编辑的段淡黄底
     toolbar_bg: str
     border: str
+    highlight_bg: str = "#FFF3BF"  # ==高亮== 背景
+    supsub_fg: str = "#8A919E"  # 上下标文字色
     heading_colors: dict[int, str] = field(default_factory=dict)
 
 
@@ -103,6 +105,8 @@ _DARK = Colors(
     active_bg="#3A2F1A",  # 暗琥珀
     toolbar_bg="#161B22",
     border="#30363D",
+    highlight_bg="#4D3E00",  # 暗琥珀高亮
+    supsub_fg="#B0B8C1",
     heading_colors={
         1: "#FF6B6B",  # 亮红
         2: "#FFA94D",  # 亮橙
@@ -148,17 +152,15 @@ def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
 
 
 def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
-    """把段类型映射为 TextStyle（渲染态）。"""
+    """把段类型映射为 TextStyle（渲染态）。
+
+    支持组合格式：seg.marks 记录作用于整段的所有包裹器（如 (EMPHASIS, STRONG)
+    对应 ***加粗斜体***），按 marks 累加效果。单一类型沿用原样式。
+    """
     c = _current_colors()
     t = seg.seg_type
-    if t == SegType.STRONG:
-        return ft.TextStyle(size=base_size, weight=ft.FontWeight.BOLD, color=c.text)
-    if t == SegType.EMPHASIS:
-        return ft.TextStyle(size=base_size, italic=True, color=c.text)
-    if t == SegType.STRIKE:
-        return ft.TextStyle(
-            size=base_size, color=c.strike, decoration=ft.TextDecoration.LINE_THROUGH
-        )
+
+    # 原子类型（不参与组合）
     if t == SegType.INLINE_MATH:
         return ft.TextStyle(
             size=base_size - 1,
@@ -180,7 +182,55 @@ def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
         )
     if t == SegType.IMAGE:
         return ft.TextStyle(size=base_size, color=c.link, italic=True)
-    return ft.TextStyle(size=base_size, color=c.text)
+
+    # 包裹器类型：单一沿用原样式，组合按 marks 累加
+    marks = seg.marks
+    if not marks or len(marks) == 1:
+        single = marks[0] if marks else t
+        if single == SegType.STRONG:
+            return ft.TextStyle(size=base_size, weight=ft.FontWeight.BOLD, color=c.text)
+        if single == SegType.EMPHASIS:
+            return ft.TextStyle(size=base_size, italic=True, color=c.text)
+        if single == SegType.STRIKE:
+            return ft.TextStyle(
+                size=base_size, color=c.strike, decoration=ft.TextDecoration.LINE_THROUGH
+            )
+        if single == SegType.HIGHLIGHT:
+            return ft.TextStyle(size=base_size, color=c.text, bgcolor=c.highlight_bg)
+        if single == SegType.SUPERSCRIPT:
+            return ft.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
+        if single == SegType.SUBSCRIPT:
+            return ft.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
+        # TEXT / 其它
+        return ft.TextStyle(size=base_size, color=c.text)
+
+    # 组合格式：累加各 mark 效果
+    weight = ft.FontWeight.NORMAL
+    italic = False
+    decoration = ft.TextDecoration.NONE
+    color = c.text
+    bgcolor = None
+    size = base_size
+    for m in marks:
+        if m == SegType.STRONG:
+            weight = ft.FontWeight.BOLD
+        elif m == SegType.EMPHASIS:
+            italic = True
+        elif m == SegType.STRIKE:
+            decoration = ft.TextDecoration.LINE_THROUGH
+            color = c.strike
+        elif m == SegType.HIGHLIGHT:
+            bgcolor = c.highlight_bg
+        elif m in (SegType.SUPERSCRIPT, SegType.SUBSCRIPT):
+            size = max(base_size - 4, 10)
+    kwargs: dict = {"size": size, "weight": weight, "color": color}
+    if italic:
+        kwargs["italic"] = True
+    if decoration != ft.TextDecoration.NONE:
+        kwargs["decoration"] = decoration
+    if bgcolor is not None:
+        kwargs["bgcolor"] = bgcolor
+    return ft.TextStyle(**kwargs)
 
 
 def prefix_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:

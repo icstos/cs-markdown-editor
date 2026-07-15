@@ -16,10 +16,12 @@ import mistune
 
 from models import BlockType, Document, Line, SegType, Segment
 
-# 行内解析器：启用删除线插件以获得更丰富的段类型
-_md = mistune.create_markdown(renderer="ast", plugins=["strikethrough"])
+# 行内解析器：启用删除线/高亮/上下标插件，支持组合语法 ***加粗斜体*** 等
+_INLINE_PLUGINS = ["strikethrough", "mark", "superscript", "subscript"]
+_md = mistune.create_markdown(renderer="ast", plugins=_INLINE_PLUGINS)
 _html_md = mistune.create_markdown(
-    renderer="html", plugins=["strikethrough", "table", "footnotes", "task_lists"]
+    renderer="html",
+    plugins=_INLINE_PLUGINS + ["table", "footnotes", "task_lists"],
 )
 
 # ---- 正则：块级前缀识别 ----
@@ -70,11 +72,80 @@ def _flatten_text(children: list[dict]) -> str:
 
 
 # 行内 AST 节点类型 -> (SegType, 包裹器) 映射；codespan/link/image 单独处理
+# 这些包裹器可任意嵌套组合（如 ***加粗斜体*** = emphasis→strong→text）
 _INLINE_WRAPPERS: dict[str, tuple[SegType, str]] = {
     "strong": (SegType.STRONG, "**"),
     "emphasis": (SegType.EMPHASIS, "*"),
     "strikethrough": (SegType.STRIKE, "~~"),
+    "mark": (SegType.HIGHLIGHT, "=="),
+    "superscript": (SegType.SUPERSCRIPT, "^"),
+    "subscript": (SegType.SUBSCRIPT, "~"),
 }
+
+
+def _node_raw_text(tok: dict) -> tuple[str, str]:
+    """任意 AST 节点的 (raw, text)。raw 保留完整 Markdown 语法，text 为纯展示文本。
+
+    递归重建嵌套包裹器语法，保证 "".join(segments raw) 能还原行源码。
+    """
+    t = tok.get("type")
+    if t == "text":
+        r = tok.get("raw", "")
+        return r, r
+    if t in ("softbreak", "linebreak"):
+        return "\n", "\n"
+    if t in _INLINE_WRAPPERS:
+        _, wrap = _INLINE_WRAPPERS[t]
+        parts_r: list[str] = []
+        parts_t: list[str] = []
+        for c in tok.get("children", []):
+            r, tx = _node_raw_text(c)
+            parts_r.append(r)
+            parts_t.append(tx)
+        inner_r = "".join(parts_r)
+        inner_t = "".join(parts_t)
+        return f"{wrap}{inner_r}{wrap}", inner_t
+    if t == "codespan":
+        r = tok.get("raw", "")
+        return f"`{r}`", r
+    if t == "link":
+        tx = _flatten_text(tok.get("children", []))
+        url = tok.get("attrs", {}).get("url", "")
+        return f"[{tx}]({url})", tx
+    if t == "image":
+        alt = _flatten_text(tok.get("children", []))
+        url = tok.get("attrs", {}).get("url", "")
+        return f"![{alt}]({url})", alt
+    if t == "inline_html":
+        r = tok.get("raw", "")
+        return r, r
+    # 未识别节点退化为纯文本
+    tx = _flatten_text(tok.get("children", [])) or tok.get("raw", "")
+    return tx, tx
+
+
+def _collect_marks(tok: dict) -> list[SegType]:
+    """沿单子节点包裹器链向下收集所有包裹 SegType（外→内顺序）。
+
+    顶层包裹器始终计入 marks（外层格式作用于整段）。仅当包裹器只有一个
+    子节点且该子节点也是包裹器时才继续下钻；多子节点（如 *斜==体==* ：
+    emphasis 含 text + mark）时停止，内层语法仅作用于部分文本，不加入
+    marks（但 _node_raw_text 仍会重建其语法，保证 raw 完整）。
+    """
+    marks: list[SegType] = []
+    cur = tok
+    if cur.get("type") not in _INLINE_WRAPPERS:
+        return marks
+    while True:
+        seg_type, _ = _INLINE_WRAPPERS[cur["type"]]
+        marks.append(seg_type)
+        children = cur.get("children", [])
+        if len(children) != 1:
+            break
+        cur = children[0]
+        if cur.get("type") not in _INLINE_WRAPPERS:
+            break
+    return marks
 
 
 def _token_to_segments(tok: dict) -> list[Segment]:
@@ -90,11 +161,12 @@ def _token_to_segments(tok: dict) -> list[Segment]:
     if t in ("softbreak", "linebreak"):
         return [Segment(SegType.TEXT, "\n", "\n")]
 
-    # 包裹型节点（加粗 / 斜体 / 删除线）
+    # 包裹型节点（加粗 / 斜体 / 删除线 / 高亮 / 上下标，含任意嵌套组合）
     if t in _INLINE_WRAPPERS:
-        seg_type, wrap = _INLINE_WRAPPERS[t]
-        text = _flatten_text(tok.get("children", []))
-        return [Segment(seg_type, f"{wrap}{text}{wrap}", text)]
+        raw, text = _node_raw_text(tok)
+        marks = _collect_marks(tok)
+        seg_type = marks[0] if marks else SegType.TEXT
+        return [Segment(seg_type, raw, text, marks=tuple(marks))]
 
     # 行内代码：raw 不含反引号
     if t == "codespan":
@@ -405,6 +477,9 @@ _WRAP_SYNTAX: dict[SegType, tuple[str, str]] = {
     SegType.EMPHASIS: ("*", "*"),
     SegType.CODESPAN: ("`", "`"),
     SegType.STRIKE: ("~~", "~~"),
+    SegType.HIGHLIGHT: ("==", "=="),
+    SegType.SUPERSCRIPT: ("^", "^"),
+    SegType.SUBSCRIPT: ("~", "~"),
 }
 
 
@@ -431,11 +506,21 @@ def _seg_display_text(seg: Segment) -> str:
 
 
 def _wrap_partial(seg: Segment, selected_text: str) -> str:
-    """对部分选中的段应用语法包裹，返回 Markdown 源码。"""
+    """对部分选中的段应用语法包裹，返回 Markdown 源码。
+
+    组合格式（如 ***加粗斜体***）按 marks 外→内顺序嵌套包裹，保证语法完整。
+    """
     if not selected_text:
         return ""
     st = seg.seg_type
-    # 带包裹器的行内格式（加粗/斜体/行内代码/删除线）
+    # 组合格式：marks 多于一项时按外→内嵌套
+    if seg.marks and len(seg.marks) > 1:
+        pre = "".join(_WRAP_SYNTAX[m][0] for m in seg.marks if m in _WRAP_SYNTAX)
+        post = "".join(
+            _WRAP_SYNTAX[m][1] for m in reversed(seg.marks) if m in _WRAP_SYNTAX
+        )
+        return f"{pre}{selected_text}{post}"
+    # 单一包裹器行内格式
     if st in _WRAP_SYNTAX:
         pre, post = _WRAP_SYNTAX[st]
         return f"{pre}{selected_text}{post}"

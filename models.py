@@ -27,6 +27,9 @@ class SegType(StrEnum):
     LINK = "link"  # [文本](url)
     IMAGE = "image"  # ![alt](url)
     STRIKE = "strikethrough"  # ~~删除线~~
+    HIGHLIGHT = "highlight"  # ==高亮==
+    SUPERSCRIPT = "superscript"  # ^上标^
+    SUBSCRIPT = "subscript"  # ~下标~
     INLINE_MATH = "inline_math"  # $...$ 行内公式
 
     # 块级前缀段（也作为 Segment，统一参与"点击即编辑"）
@@ -65,6 +68,7 @@ class Segment:
     text: str = ""  # 渲染显示文本，如 "world"
     url: str = ""  # 链接/图片地址
     level: int = 0  # heading 级别 / 列表缩进
+    marks: tuple = ()  # 组合格式标记（SegType 元组），如 (EMPHASIS, STRONG) 表示 ***加粗斜体***
 
     @staticmethod
     def text_seg(text: str) -> "Segment":

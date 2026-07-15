@@ -425,15 +425,27 @@ def LineView(
 def _wrap_block(
     content: ft.Control, line: Line, base: int, line_idx: int | None = None,
 ) -> ft.Control:
-    """包一层块级容器：缩进、引用边框。"""
+    """包一层块级容器：缩进、引用边框。
+
+    嵌套引用：根据 line.level 包多层带左边框的 Container，每多一层嵌套
+    行首多一个灰色竖线占位（Typora 式嵌套引用视觉）。
+    """
     pad_left = 0
     border = None
 
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
         pad_left = line.level * 20
     elif line.block_type == BlockType.QUOTE:
-        pad_left = 12
-        border = only_border(left=ft.BorderSide(3, C_QUOTE_BAR))
+        # 嵌套引用：每层一个带左边框的 Container，层级由 line.level 决定
+        lvl = line.level or 1
+        for _ in range(lvl):
+            content = ft.Container(
+                content=content,
+                padding=ft.Padding.only(left=12),
+                border=only_border(left=ft.BorderSide(3, C_QUOTE_BAR)),
+            )
+        pad_left = 0
+        border = None
 
     container = ft.Container(
         key=f"line-{line_idx}" if line_idx is not None else None,

@@ -75,7 +75,7 @@ def _next_line_raw(line: Line) -> str:
             return f"{int(m.group(1)) + 1}. "
         return "- "
     if line.block_type == BlockType.QUOTE:
-        return "> "
+        return "> " * (line.level or 1)
     return ""
 
 

@@ -187,7 +187,16 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
 
     m = _RE_QUOTE.match(raw)
     if m:
-        return BlockType.QUOTE, {"content": m.group(1)}
+        # 嵌套引用：循环剥离 > 前缀，计算嵌套深度
+        level = 1
+        content = m.group(1)
+        while True:
+            m2 = _RE_QUOTE.match(content)
+            if not m2:
+                break
+            level += 1
+            content = m2.group(1)
+        return BlockType.QUOTE, {"level": level, "content": content}
 
     if _RE_HR.match(raw):
         return BlockType.HR, {}
@@ -222,7 +231,9 @@ def _make_prefix_segment(block_type: BlockType, info: dict, line: Line) -> Segme
         line.level = info.get("indent", 0)
         return Segment(SegType.LIST_PREFIX, f"{info['num']}. ", "", level=line.level)
     if block_type == BlockType.QUOTE:
-        return Segment(SegType.QUOTE_PREFIX, "> ", "")
+        lvl = info.get("level", 1)
+        line.level = lvl
+        return Segment(SegType.QUOTE_PREFIX, "> " * lvl, "", level=lvl)
     return Segment(SegType.TEXT, "", "")
 
 
@@ -391,6 +402,10 @@ _WRAP_SYNTAX: dict[SegType, tuple[str, str]] = {
 
 def _seg_display_text(seg: Segment) -> str:
     """段的显示文本（与 segment_view._display_text 一致）。"""
+    if seg.seg_type == SegType.HEADING_PREFIX:
+        return ""  # 渲染态不显示 # 前缀
+    if seg.seg_type == SegType.QUOTE_PREFIX:
+        return ""  # 渲染态不显示 > 前缀，引用由左边框区分
     if seg.seg_type in _PREFIX_SEGTYPES:
         return seg.raw
     if seg.seg_type == SegType.IMAGE:

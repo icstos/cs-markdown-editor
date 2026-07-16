@@ -22,7 +22,13 @@ from styles import (
     measure_text_width,
     only_border,
 )
-from views.segment_view import _display_text, _MONO_SEGTYPES, active_text_field, segment_to_span
+from views.segment_view import (
+    _MONO_SEGTYPES,
+    _display_text,
+    _open_link_url,
+    active_text_field,
+    segment_to_span,
+)
 
 _PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
 
@@ -468,6 +474,10 @@ def LineView(
             if pos is not None:
                 si, offset = _hit_test_tap(line, pos.x, pos.y, base)
                 if si >= 0:
+                    seg = line.segments[si]
+                    if seg.seg_type == SegType.LINK and seg.url:
+                        _open_link_url(seg.url)
+                        return
                     activate(si, offset)
                     return
             # 回退：点击多行区域或无法定位时，激活最后一个段

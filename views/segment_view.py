@@ -24,6 +24,21 @@ _PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_P
 _MONO_SEGTYPES = (SegType.CODESPAN, SegType.CODE, SegType.INLINE_MATH, SegType.MATH)
 
 
+def _open_link_url(url: str) -> None:
+    """在系统浏览器中打开链接，不进入段级编辑。"""
+    target = (url or "").strip()
+    if not target:
+        return
+    page = ft.context.page
+    if page is None:
+        return
+
+    async def _launch():
+        await page.launch_url(target, web_popup_window_name=ft.UrlTarget.BLANK)
+
+    page.run_task(_launch)
+
+
 def _display_text(seg: Segment) -> str:
     """渲染态展示文本。"""
     if seg.seg_type == SegType.HEADING_PREFIX:
@@ -74,7 +89,9 @@ def segment_to_span(
             bgcolor=style.bgcolor,
         )
     kwargs: dict = {"text": _display_text(seg), "style": style}
-    if on_activate is not None:
+    if seg.seg_type == SegType.LINK and seg.url:
+        kwargs["on_click"] = lambda e, u=seg.url: _open_link_url(u)
+    elif on_activate is not None:
         kwargs["on_click"] = lambda e: on_activate(seg_idx)
     return ft.TextSpan(**kwargs)
 

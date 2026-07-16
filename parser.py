@@ -469,8 +469,6 @@ def to_html(text: str) -> str:
 # ---------------------------------------------------------------------------
 # 选区 → Markdown 源码
 # ---------------------------------------------------------------------------
-_PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
-
 # 行内格式包裹语法
 _WRAP_SYNTAX: dict[SegType, tuple[str, str]] = {
     SegType.STRONG: ("**", "**"),

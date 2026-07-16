@@ -503,6 +503,8 @@ def LineView(
                 on_tap=_on_tap,
             ),
             ink=True,
+            border_radius=6,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         )
         return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
@@ -587,7 +589,6 @@ def _wrap_block(
     """
     c = _current_colors()  # 当前主题颜色（亮/暗）
     pad_left = 0
-    border = None
 
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
         pad_left = line.level * 20
@@ -600,15 +601,12 @@ def _wrap_block(
                 padding=ft.Padding.only(left=12),
                 border=only_border(left=ft.BorderSide(3, c.quote_bar)),
             )
-        pad_left = 0
-        border = None
 
     kwargs: dict = {
         "key": f"line-{line_idx}" if line_idx is not None else None,
         "content": content,
         "padding": ft.Padding.only(left=pad_left, top=2, bottom=2),
         "margin": ft.Margin.all(0),
-        "border": border,
         "ink": False,
     }
     if on_click is not None:

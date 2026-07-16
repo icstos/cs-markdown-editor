@@ -1,0 +1,16 @@
+{
+  "content_max_width": 920,
+  "content_padding": 36,
+  "content_padding_top": 24,
+  "show_footer": true,
+  "body_font_size": 14,
+  "line_height": 1.6,
+  "font_family": "Alibaba",
+  "auto_save": false,
+  "remember_focus_mode": false,
+  "show_toolbar": true,
+  "show_line_numbers": false,
+  "code_theme_dark": "ATOM_ONE_DARK",
+  "code_theme_light": "GITHUB",
+  "export_format": "html"
+}

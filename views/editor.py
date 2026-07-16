@@ -91,6 +91,28 @@ def _next_line_raw(line: Line) -> str:
     return ""
 
 
+def _file_name(path: str | None) -> str:
+    return os.path.basename(path) if path else "未命名.md"
+
+
+def _list_body(raw: str) -> tuple[str, str]:
+    m = re.match(r"^(\s*)([-*+]|\d+\.)\s+(.*)$", raw)
+    if not m:
+        return "", raw
+    return m.group(1), m.group(3)
+
+
+def _quote_body(raw: str) -> tuple[str, str]:
+    m = re.match(r"^(\s*(?:>\s*)+)(.*)$", raw)
+    if not m:
+        return "", raw
+    return m.group(1), m.group(2)
+
+
+def _heading_prefix(level: int) -> str:
+    return f"{'#' * max(level, 1)} "
+
+
 @ft.component
 def MarkdownEditor(
     document: Document,
@@ -103,8 +125,18 @@ def MarkdownEditor(
     nav_ref: ft.Ref | None = None,
     theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
     on_toggle_theme: Callable[[], None] | None = None,
+    settings: dict | None = None,
+    on_open_settings: Callable[[], None] | None = None,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
+    settings = settings or {}
+    content_max_width = settings.get("content_max_width", 920)
+    content_padding = settings.get("content_padding", 36)
+    content_padding_top = settings.get("content_padding_top", 24)
+    show_footer = settings.get("show_footer", True)
+    body_font_size = settings.get("body_font_size", 16)
+    line_height = settings.get("line_height", 1.6)
+    show_toolbar = settings.get("show_toolbar", True)
     active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
     draft, set_draft = ft.use_state("")  # 当前编辑段文本
     cursor_line, set_cursor_line = ft.use_state(0)
@@ -334,6 +366,121 @@ def MarkdownEditor(
         nsi = _locate_seg_by_offset(document.lines[li + 1], target)
         _goto(li + 1, nsi)
 
+    def move_line_start():
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if _nav_blocked(line):
+            return
+        _goto(li, 0, cursor_at=0)
+
+    def move_line_end():
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if _nav_blocked(line):
+            return
+        _goto(li, max(0, len(line.segments) - 1), cursor_at=-1)
+
+    def _first_content_index(line: Line) -> int:
+        for i, s in enumerate(line.segments):
+            if s.seg_type not in (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX):
+                return i
+        return max(0, len(line.segments) - 1)
+
+    def _indent_list_line(line: Line, delta: int):
+        raw = _line_raw(line)
+        if line.block_type not in (BlockType.LIST_UO, BlockType.LIST_O):
+            return
+        if delta > 0:
+            parser.reparse_line(line, "  " + raw)
+        else:
+            body = raw[2:] if raw.startswith("  ") else raw.lstrip()
+            parser.reparse_line(line, body)
+        mark_dirty()
+
+    def _toggle_quote_level(line: Line, delta: int):
+        raw = _line_raw(line)
+        if delta > 0:
+            parser.reparse_line(line, "> " + raw)
+        else:
+            body = raw[2:] if raw.startswith("> ") else raw.lstrip()
+            parser.reparse_line(line, body)
+        mark_dirty()
+
+    def indent_or_outdent(delta: int):
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
+            _indent_list_line(line, delta)
+            _goto(li, _first_content_index(line), cursor_at=0)
+        elif line.block_type == BlockType.QUOTE:
+            _toggle_quote_level(line, delta)
+            _goto(li, _first_content_index(line), cursor_at=0)
+
+    def backspace_core():
+        if active is None:
+            return
+        li, si = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type == BlockType.CODE:
+            return
+        if cursor_ref.current["extent"] > 0:
+            return
+        if _heading_edit(line):
+            if line.level > 1:
+                raw = _line_raw(line)
+                prefix = f"{'#' * line.level} "
+                body = raw[len(prefix):] if raw.startswith(prefix) else _inline_content(line)
+                parser.reparse_line(line, f"{'#' * (line.level - 1)} {body}".lstrip())
+                mark_dirty()
+                _goto(li, 0, cursor_at=0)
+                return
+            parser.reparse_line(line, _inline_content(line))
+            mark_dirty()
+            _goto(li, 0, cursor_at=0)
+            return
+        if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
+            raw = _line_raw(line)
+            body = raw.lstrip()
+            if body.startswith(('- ', '* ', '+ ')):
+                body = body[2:]
+            elif re.match(r'^\d+\.\s+', body):
+                body = re.sub(r'^\d+\.\s+', '', body, count=1)
+            parser.reparse_line(line, body)
+            mark_dirty()
+            _goto(li, 0, cursor_at=0)
+            return
+        if line.block_type == BlockType.QUOTE:
+            raw = _line_raw(line)
+            body = raw.lstrip()
+            if body.startswith('> '):
+                body = body[2:]
+            parser.reparse_line(line, body)
+            mark_dirty()
+            _goto(li, 0, cursor_at=0)
+            return
+        if line.block_type == BlockType.PARAGRAPH and si == 0 and li > 0:
+            prev = document.lines[li - 1]
+            if prev.block_type == BlockType.PARAGRAPH:
+                merged = _line_raw(prev) + _line_raw(line)
+                parser.reparse_line(prev, merged)
+                document.lines = document.lines[:li] + document.lines[li + 1:]
+                mark_dirty()
+                _goto(li - 1, max(0, len(prev.segments) - 1), cursor_at=len(_line_raw(prev)))
+
     def on_selection_change(e):
         """跟踪光标位置（extent/base），供 on_key 判断左右越界。
 
@@ -368,6 +515,16 @@ def MarkdownEditor(
             mark_dirty()
             set_raw_mode(False)
 
+    def toggle_focus_mode():
+        page = ft.context.page
+        if page is None:
+            return
+        try:
+            page.window.full_screen = not bool(page.window.full_screen)
+            page.update()
+        except Exception:
+            pass
+
     def _raw_editor() -> ft.Control:
         """原文模式编辑器：多行 TextField 直接编辑 Markdown 源码。"""
         return ft.Container(
@@ -390,8 +547,10 @@ def MarkdownEditor(
         if suppress_blur.current:
             suppress_blur.current = False
             return
-        commit_active(draft)
-        set_active(None)
+        try:
+            commit_active(draft)
+        finally:
+            set_active(None)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
         """处理多行粘贴：用 diff 定位粘贴位置，第一行留当前段，后续行插入为新行。
@@ -499,16 +658,19 @@ def MarkdownEditor(
         # 特殊块（公式 / 分隔线 / 目录）：提交后创建空行
         if line.block_type in (BlockType.MATH, BlockType.HR, BlockType.TOC):
             commit_active(new_raw)
-            # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖 _goto 设置的 active
             suppress_blur.current = True
             set_active(None)
             new_line_after(li)
             return
-        # 普通块（段落 / 列表 / 引用）：在光标位置拆分当前行
-        cursor_pos = min(cursor_ref.current["extent"], len(new_raw))
-        before = new_raw[:cursor_pos]
-        after = new_raw[cursor_pos:]
+        split_pos = min(cursor_ref.current["extent"], len(new_raw))
+        before = new_raw[:split_pos]
+        after = new_raw[split_pos:]
         if _heading_edit(line):
+            if not before.strip():
+                parser.reparse_line(line, after.lstrip())
+                mark_dirty()
+                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                return
             parser.reparse_line(line, before)
             new_line = parser.parse_markdown(after).lines[0]
             document.lines = (
@@ -530,18 +692,34 @@ def MarkdownEditor(
             suppress_blur.current = True
             _goto(li + 1, target_si, cursor_at=0)
             return
+        if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
+            if not before.strip():
+                stripped = after.lstrip()
+                if line.block_type == BlockType.QUOTE:
+                    stripped = stripped.lstrip("> ")
+                parser.reparse_line(line, stripped)
+                mark_dirty()
+                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                return
+            if line.block_type == BlockType.LIST_UO and before.rstrip() in ("-", "*", "+"):
+                parser.reparse_line(line, after.lstrip())
+                mark_dirty()
+                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                return
+            if line.block_type == BlockType.LIST_O and re.match(r'^\d+\.$', before.rstrip()):
+                parser.reparse_line(line, after.lstrip())
+                mark_dirty()
+                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                return
         cont_prefix = _next_line_raw(line)
         remaining = "".join(s.raw for s in line.segments[si + 1 :])
-        # 当前行：保留光标之前的内容（前序段 + 当前段光标前部分）
         current_full = "".join(s.raw for s in line.segments[:si]) + before
         parser.reparse_line(line, current_full)
-        # 新行：续行前缀 + 光标之后的内容 + 后续段
         new_line = parser.parse_markdown(cont_prefix + after + remaining).lines[0]
         document.lines = (
             document.lines[: li + 1] + [new_line] + document.lines[li + 1 :]
         )
         mark_dirty()
-        # 激活新行中第一个非前缀段（光标置于段首）
         target_si = 0
         if new_line.segments:
             for i, s in enumerate(new_line.segments):
@@ -559,7 +737,6 @@ def MarkdownEditor(
             if target_si < len(new_line.segments)
             else ""
         )
-        # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖新设置的 active
         suppress_blur.current = True
         set_draft(new_draft)
         set_active((li + 1, target_si))
@@ -728,11 +905,14 @@ def MarkdownEditor(
         line = document.lines[li]
         if line.block_type != BlockType.CODE:
             return
-        # 优先用当前编辑草稿（未提交的代码），否则用已解析内容
-        code = draft if active[0] == li else (line.segments[0].text if line.segments else "")
+        # li == active[0]，draft 即当前编辑草稿；保持与原逻辑一致
+        code = draft
         line.lang = new_lang
         full = f"```{new_lang}\n{code}\n```" if code else f"```{new_lang}\n```"
-        parser.reparse_line(line, full)
+        try:
+            parser.reparse_line(line, full)
+        except Exception:
+            return
         mark_dirty()
 
     def suppress_blur_for_lang():
@@ -747,15 +927,21 @@ def MarkdownEditor(
         """处理 Ctrl+X 剪切：复制选中内容为 Markdown 到剪贴板，并删除文档中选中内容。"""
         if not plain_text:
             return
-        selections = parser.match_text_to_selections(document.lines, plain_text)
+        try:
+            selections = parser.match_text_to_selections(document.lines, plain_text)
+        except Exception:
+            return
         if not selections:
             return
-        md = parser.compute_markdown_from_selections(document.lines, selections)
-        if md:
-            page = ft.context.page
-            if page is not None:
-                await page.clipboard.set(md)
-        new_lines, cursor_li, cursor_si, cursor_offset = parser.delete_selections(document.lines, selections)
+        try:
+            md = parser.compute_markdown_from_selections(document.lines, selections)
+            if md:
+                page = ft.context.page
+                if page is not None:
+                    await page.clipboard.set(md)
+            new_lines, cursor_li, cursor_si, cursor_offset = parser.delete_selections(document.lines, selections)
+        except Exception:
+            return
         document.lines = new_lines
         mark_dirty()
         set_active(None)
@@ -768,8 +954,9 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         # scroll_to 是 async 方法，通过 run_task 调度执行
-        if (lv := list_view_ref.current) is not None:
-            ft.context.page.run_task(lv.scroll_to, scroll_key=f"line-{li}")
+        page = ft.context.page
+        if page is not None and (lv := list_view_ref.current) is not None:
+            page.run_task(lv.scroll_to, scroll_key=f"line-{li}")
         _goto(li, 0)
 
     # ---- 同步导航接口给外层 on_key（nav_ref）----
@@ -780,10 +967,15 @@ def MarkdownEditor(
             "base": cursor_ref.current["base"],
             "draft_len": cursor_ref.current["draft_len"],
             "draft": draft,
+            "active_line": document.lines[active[0]] if active is not None and 0 <= active[0] < len(document.lines) else None,
             "move_left": move_left_cross,
             "move_right": move_right_cross,
             "move_home": move_home,
             "move_end": move_end,
+            "move_line_start": move_line_start,
+            "move_line_end": move_line_end,
+            "backspace_core": backspace_core,
+            "indent_or_outdent": indent_or_outdent,
             "move_up": move_up,
             "move_down": move_down,
             "compute_markdown_from_text": lambda text: (
@@ -846,20 +1038,91 @@ def MarkdownEditor(
             ),
             ft.PopupMenuItem(content="保存", on_click=lambda e: (on_save or _noop)()),
             ft.PopupMenuItem(),
-            ft.PopupMenuItem(content="设置", on_click=lambda e: None),
+            ft.PopupMenuItem(content="设置", on_click=lambda e: (on_open_settings or _noop)()),
         ]
+        title = _file_name(file_path)
+        state_text = "已修改" if document.dirty else "已保存"
+        if not show_toolbar:
+            return ft.Container(height=0)
         return ft.Container(
             bgcolor=c.toolbar_bg,
             border=only_border(bottom=ft.BorderSide(1, c.border)),
-            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-            content=ft.Row(
+            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+            content=ft.Column(
                 controls=[
-                    ft.PopupMenuButton(
-                        icon=ft.Icons.MENU,
-                        tooltip="文件菜单",
-                        items=menu_items,
+                    ft.Row(
+                        controls=[
+                            ft.PopupMenuButton(
+                                icon=ft.Icons.MENU,
+                                tooltip="文件菜单",
+                                items=menu_items,
+                            ),
+                            ft.Container(width=4),
+                            ft.Column(
+                                controls=[
+                                    ft.Text(
+                                        value=title,
+                                        size=14,
+                                        weight=ft.FontWeight.W_600,
+                                        color=c.text,
+                                        font_family=FONT_MAIN,
+                                    ),
+                                    ft.Row(
+                                        controls=[
+                                            ft.Text(
+                                                value=state_text,
+                                                size=11,
+                                                color=c.muted,
+                                                font_family=FONT_MAIN,
+                                            ),
+                                            ft.Container(
+                                                width=6,
+                                                height=6,
+                                                border_radius=99,
+                                                bgcolor="#35C759" if not document.dirty else "#FF9F0A",
+                                            ),
+                                            ft.Text(
+                                                value="Ctrl+S 保存 · Ctrl+K 链接 · Ctrl+/ 原文",
+                                                size=11,
+                                                color=c.muted,
+                                                font_family=FONT_MAIN,
+                                            ),
+                                        ],
+                                        spacing=6,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    ),
+                                ],
+                                spacing=0,
+                            ),
+                            ft.Container(expand=True),
+                            _btn(
+                                ft.Icons.VISIBILITY if not raw_mode else ft.Icons.EDIT,
+                                "原文模式" if not raw_mode else "返回编辑",
+                                toggle_raw,
+                                toggle_on=raw_mode,
+                            ),
+                            _btn(
+                                ft.Icons.FILE_DOWNLOAD,
+                                "导出 HTML",
+                                on_export or _noop,
+                            ),
+                            _btn(
+                                ft.Icons.CENTER_FOCUS_STRONG,
+                                "聚焦模式",
+                                toggle_focus_mode,
+                            ),
+                            _btn(
+                                ft.Icons.DARK_MODE
+                                if theme_mode == ft.ThemeMode.LIGHT
+                                else ft.Icons.LIGHT_MODE,
+                                "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
+                                on_toggle_theme or _noop,
+                            ),
+                        ],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    _tb_divider(),
+                    ft.Container(height=8),
                     ft.Container(
                         content=Toolbar(
                             on_h1=lambda: set_block(BlockType.HEADING, 1),
@@ -876,30 +1139,10 @@ def MarkdownEditor(
                             on_link=toggle_link,
                             on_strike=lambda: toggle_inline(SegType.STRIKE),
                         ),
-                        expand=True,
                         clip_behavior=ft.ClipBehavior.HARD_EDGE,
                     ),
-                    _btn(
-                        ft.Icons.VISIBILITY if not raw_mode else ft.Icons.EDIT,
-                        "原文模式" if not raw_mode else "返回编辑",
-                        toggle_raw,
-                        toggle_on=raw_mode,
-                    ),
-                    _btn(
-                        ft.Icons.FILE_DOWNLOAD,
-                        "导出 HTML",
-                        on_export or _noop,
-                    ),
-                    _btn(
-                        ft.Icons.DARK_MODE
-                        if theme_mode == ft.ThemeMode.LIGHT
-                        else ft.Icons.LIGHT_MODE,
-                        "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
-                        on_toggle_theme or _noop,
-                    ),
                 ],
-                spacing=2,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=0,
             ),
         )
 
@@ -918,6 +1161,7 @@ def MarkdownEditor(
             row = cursor_line + 1
             col = 1
         char_count = len(parser.serialize(document))
+        word_count = len(re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", parser.serialize(document)))
         fname = os.path.basename(file_path) if file_path else "未命名.md"
         return ft.Container(
             bgcolor=ft.Colors.with_opacity(0.02, c.text),
@@ -940,6 +1184,13 @@ def MarkdownEditor(
                     ),
                     ft.Container(width=16),
                     ft.Text(
+                        value=f"{word_count} 词",
+                        size=12,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
+                    ),
+                    ft.Container(width=12),
+                    ft.Text(
                         value=f"{char_count} 字符",
                         size=12,
                         color=c.muted,
@@ -957,19 +1208,24 @@ def MarkdownEditor(
             else ft.SelectionArea(
                 expand=True,
                 content=ft.Container(
-                    content=ft.Column(
-                        ref=list_view_ref,
-                        controls=line_controls,
-                        expand=True,
-                        spacing=0,  # 行间无间距：避免行间空白死区导致点击无效
-                        scroll=ft.ScrollMode.AUTO,
+                    content=ft.Container(
+                        content=ft.Column(
+                            ref=list_view_ref,
+                            controls=line_controls,
+                            expand=True,
+                            spacing=0,  # 行间无间距：避免行间空白死区导致点击无效
+                            scroll=ft.ScrollMode.AUTO,
+                        ),
+                        width=content_max_width,
+                        alignment=ft.Alignment.TOP_LEFT,
                     ),
                     expand=True,
+                    alignment=ft.Alignment.TOP_CENTER,
                     bgcolor=c.bg,
-                    padding=ft.Padding.symmetric(horizontal=24, vertical=16),
+                    padding=ft.Padding.symmetric(horizontal=content_padding, vertical=content_padding_top),
                 ),
             ),
-            _footer(),
+            _footer() if show_footer else ft.Container(height=0),
         ],
         expand=True,
     )

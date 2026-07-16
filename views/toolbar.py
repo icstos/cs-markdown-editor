@@ -75,5 +75,6 @@ def Toolbar(
             _btn(ft.Icons.FORMAT_STRIKETHROUGH, "删除线", on_strike),
         ],
         spacing=2,
-        scroll=ft.ScrollMode.AUTO,
+        wrap=True,
+        run_spacing=4,
     )

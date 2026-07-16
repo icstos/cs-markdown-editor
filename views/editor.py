@@ -224,10 +224,14 @@ def MarkdownEditor(
         mark_dirty()
 
     # ---- 激活段（统一的状态切换入口）----
-    def _goto(li: int, si: int, cursor_at: int = -1):
+    def _goto(li: int, si: int, cursor_at: int = -1, skip_commit: bool = False):
         """跨段/激活目标段：先提交当前段，再切换 draft+active，递增 nav_seq
-        触发 TextField key 重建以重新 autofocus。cursor_at: -1=段尾, 0=段首。"""
-        if active is not None and active != (li, si):
+        触发 TextField key 重建以重新 autofocus。cursor_at: -1=段尾, 0=段首。
+
+        skip_commit=True 跳过提交当前段——用于当前行即将被删除/移位的场景
+        （如行首 Backspace 合并），避免把草稿提交到移位后的错误行。
+        """
+        if not skip_commit and active is not None and active != (li, si):
             commit_active(draft)
         if not (0 <= li < len(document.lines)):
             return
@@ -436,51 +440,52 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        if line.block_type == BlockType.CODE:
+        # 代码块 / 块级公式 / 分隔线 / 目录：整块编辑，行首 BackSpace 不处理
+        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
             return
+        # 光标不在段首：交由 TextField 自身删除
         if cursor_ref.current["extent"] > 0:
             return
-        if _heading_edit(line):
-            if line.level > 1:
-                raw = _line_raw(line)
-                prefix = f"{'#' * line.level} "
-                body = raw[len(prefix):] if raw.startswith(prefix) else _inline_content(line)
-                parser.reparse_line(line, f"{'#' * (line.level - 1)} {body}".lstrip())
-                mark_dirty()
-                _goto(li, 0, cursor_at=0)
-                return
-            parser.reparse_line(line, _inline_content(line))
-            mark_dirty()
-            _goto(li, 0, cursor_at=0)
+        # 行内段非首段（si > 0）段首 BackSpace：跳到上一段末尾，便于继续删除
+        if si > 0:
+            _goto(li, si - 1, cursor_at=-1)
             return
-        if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
-            raw = _line_raw(line)
-            body = raw.lstrip()
-            if body.startswith(('- ', '* ', '+ ')):
-                body = body[2:]
-            elif re.match(r'^\d+\.\s+', body):
-                body = re.sub(r'^\d+\.\s+', '', body, count=1)
-            parser.reparse_line(line, body)
-            mark_dirty()
-            _goto(li, 0, cursor_at=0)
+        # 行首（si == 0）且非首行：与前一行合并（删除上一行行尾换行符），
+        # 所有块类型（标题/列表/引用/段落）行为一致
+        if li <= 0:
             return
-        if line.block_type == BlockType.QUOTE:
-            raw = _line_raw(line)
-            body = raw.lstrip()
-            if body.startswith('> '):
-                body = body[2:]
-            parser.reparse_line(line, body)
-            mark_dirty()
-            _goto(li, 0, cursor_at=0)
+        # 先提交当前段草稿（此时当前行仍有效），确保合并内容含最新输入
+        commit_active(draft)
+        prev = document.lines[li - 1]
+        # 前一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其末尾
+        if prev.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+            suppress_blur.current = True
+            _goto(li - 1, max(0, len(prev.segments) - 1), cursor_at=-1)
             return
-        if line.block_type == BlockType.PARAGRAPH and si == 0 and li > 0:
-            prev = document.lines[li - 1]
-            if prev.block_type == BlockType.PARAGRAPH:
-                merged = _line_raw(prev) + _line_raw(line)
-                parser.reparse_line(prev, merged)
-                document.lines = document.lines[:li] + document.lines[li + 1:]
-                mark_dirty()
-                _goto(li - 1, max(0, len(prev.segments) - 1), cursor_at=len(_line_raw(prev)))
+        # 前一行含行内内容（段落/标题/列表/引用）：合并当前行内容到前一行末尾
+        prev_raw = _line_raw(prev)
+        junction = len(prev_raw)
+        merged = prev_raw + _line_raw(document.lines[li])
+        parser.reparse_line(prev, merged)
+        document.lines = document.lines[:li] + document.lines[li + 1:]
+        mark_dirty()
+        suppress_blur.current = True
+        # 光标落在合并点：定位包含 junction 偏移的段及段内偏移
+        if _heading_edit(prev):
+            # 标题以整行 raw 为 draft，cursor_at 即整行偏移
+            _goto(li - 1, 0, cursor_at=min(junction, len(_line_raw(prev))), skip_commit=True)
+            return
+        target_si = max(0, len(prev.segments) - 1)
+        seg_off = len(prev.segments[target_si].raw)
+        offset = 0
+        for idx, seg in enumerate(prev.segments):
+            seg_len = len(seg.raw)
+            if offset + seg_len >= junction:
+                target_si = idx
+                seg_off = max(0, junction - offset)
+                break
+            offset += seg_len
+        _goto(li - 1, target_si, cursor_at=seg_off, skip_commit=True)
 
     def on_selection_change(e):
         """跟踪光标位置（extent/base），供 on_key 判断左右越界。

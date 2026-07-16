@@ -145,9 +145,19 @@ def block_text_size(block_type: BlockType, level: int = 0) -> int:
     return 16
 
 
+_HEADING_WEIGHTS: dict[int, ft.FontWeight] = {
+    1: ft.FontWeight.W_800,
+    2: ft.FontWeight.W_700,
+    3: ft.FontWeight.W_600,
+    4: ft.FontWeight.W_500,
+    5: ft.FontWeight.W_500,
+    6: ft.FontWeight.W_500,
+}
+
+
 def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
     if block_type == BlockType.HEADING:
-        return ft.FontWeight.BOLD
+        return _HEADING_WEIGHTS.get(level, ft.FontWeight.NORMAL)
     return ft.FontWeight.NORMAL
 
 

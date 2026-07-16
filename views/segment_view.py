@@ -10,11 +10,12 @@ from typing import Callable
 
 import flet as ft
 
-from models import SegType, Segment
+from models import BlockType, SegType, Segment
 from styles import (
     FONT_MAIN,
     FONT_MONO,
     _current_colors,
+    block_weight,
     measure_text_width,
     prefix_style,
     segment_style,
@@ -79,9 +80,15 @@ def segment_to_span(
         else segment_style(seg, base_size)
     )
     if heading_level > 0:
+        is_strong = seg.seg_type == SegType.STRONG or SegType.STRONG in (seg.marks or ())
+        weight = (
+            ft.FontWeight.BOLD
+            if is_strong
+            else block_weight(BlockType.HEADING, heading_level)
+        )
         style = ft.TextStyle(
             size=style.size,
-            weight=style.weight,
+            weight=weight,
             color=c.heading_colors.get(heading_level, c.text),
             italic=style.italic,
             font_family=style.font_family,

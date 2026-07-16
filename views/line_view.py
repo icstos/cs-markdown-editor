@@ -63,13 +63,13 @@ def _logical_raw_offset(line: Line, seg_idx: int, seg_offset: int) -> int:
     return sum(len(line.segments[i].raw) for i in range(seg_idx)) + seg_offset
 
 
-def _hit_test_tap(line: Line, x: float, y: float, base: int) -> tuple[int, int]:
+def _hit_test_tap(line: Line, x: float, y: float, base: int, line_height: float = 1.6) -> tuple[int, int]:
     """根据点击位置计算 (seg_idx, raw_cursor_offset)。
 
     通过累加各段展示文本宽度做命中测试，再用 measure_text_width
     逐字逼近找到字符偏移。多行文本（y 超过行高）回退到 (-1, -1)。
     """
-    if y > base * 1.6:
+    if y > base * line_height:
         return (-1, -1)
     acc = 0.0
     for i, seg in enumerate(line.segments):
@@ -180,6 +180,7 @@ def _active_field(
     multiline: bool = False,
     field_ref: ft.Ref | None = None,
     max_width: float | None = None,
+    line_height: float = 1.6,
 ) -> ft.TextField:
     """构造激活态 TextField（统一入口，消除重复调用）。"""
     return active_text_field(
@@ -195,6 +196,7 @@ def _active_field(
         nav_seq=nav_seq,
         field_ref=field_ref,
         max_width=max_width,
+        line_height=line_height,
     )
 
 
@@ -219,12 +221,13 @@ def LineView(
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
     content_width: float | None = None,
+    line_height: float = 1.6,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
     weight = block_weight(line.block_type, line.level)
     line_style = ft.TextStyle(
-        size=base, weight=weight, color=c.text, font_family=FONT_MAIN, height=1.6
+        size=base, weight=weight, color=c.text, font_family=FONT_MAIN, height=line_height
     )
 
     # 编辑态 TextField 的最大可用宽度：内容区宽度 - 块级缩进 - 行内边距(8*2)。
@@ -256,7 +259,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width,
+                max_width=avail_width, line_height=line_height,
             )
             # 编辑态：设置 width=float("inf") 占满整行，点击右侧空白时抑制 blur 并激活最后段
             def _blank_edit_on_click(e):
@@ -282,7 +285,7 @@ def LineView(
                     style=line_style,
                     width=float("inf"),
                 ),
-                height=max(base * 1.6, 24),
+                height=max(base * line_height, 24),
                 padding=ft.Padding.symmetric(horizontal=2),
                 ink=True,
                 on_click=lambda e: activate(0),
@@ -295,7 +298,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width,
+                max_width=avail_width, line_height=line_height,
             )
             content = ft.Container(padding=ft.Padding.symmetric(vertical=6), content=field)
         else:
@@ -313,7 +316,7 @@ def LineView(
             inner = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                base_size=14, multiline=True, max_width=avail_width,
+                base_size=14, multiline=True, max_width=avail_width, line_height=line_height,
             )
             # 语言类型输入框：on_focus 设 suppress_blur 防止代码框 blur 退出
             lang_field = ft.TextField(
@@ -382,7 +385,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                base_size=16, multiline=True, max_width=avail_width,
+                base_size=16, multiline=True, max_width=avail_width, line_height=line_height,
             )
             content = ft.Container(
                 content=field, bgcolor=c.math_bg, border_radius=6, width=float("inf"),
@@ -410,7 +413,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width,
+                max_width=avail_width, line_height=line_height,
             )
             content = ft.Container(
                 content=field, width=float("inf"),
@@ -504,7 +507,7 @@ def LineView(
         def _on_tap(e: ft.TapEvent):
             pos = e.local_position
             if pos is not None:
-                si, offset = _hit_test_tap(line, pos.x, pos.y, base)
+                si, offset = _hit_test_tap(line, pos.x, pos.y, base, line_height)
                 if si >= 0:
                     seg = line.segments[si]
                     if seg.seg_type == SegType.LINK and seg.url:
@@ -546,9 +549,10 @@ def LineView(
                 seg0, draft, on_change_draft, on_submit, on_blur, base,
                 on_selection_change=on_selection_change,
                 initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
-                max_width=avail_width,
+                max_width=avail_width, line_height=line_height,
             ),
             width=float("inf"),
+            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
             on_click=_heading_edit_on_click,
             ink=True,
         )
@@ -573,7 +577,7 @@ def LineView(
             active_seg_obj, draft, on_change_draft, on_submit, on_blur, base,
             on_selection_change=on_selection_change,
             initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
-            max_width=avail_width,
+            max_width=avail_width, line_height=line_height,
         )
     )
     if after_spans:
@@ -594,6 +598,7 @@ def LineView(
     content = ft.Container(
         content=row,
         width=float("inf"),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         on_click=_edit_on_click,
         ink=True,
     )

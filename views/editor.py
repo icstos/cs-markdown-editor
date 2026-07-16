@@ -1034,6 +1034,7 @@ def MarkdownEditor(
             nav_seq=nav_seq if is_act else 0,
             field_ref=active_field_ref if is_act else None,
             content_width=content_width,
+            line_height=line_height,
         )
         for i, line in enumerate(document.lines)
     ]

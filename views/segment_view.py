@@ -131,6 +131,7 @@ def active_text_field(
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
     max_width: float | None = None,
+    line_height: float = 1.6,
 ) -> ft.TextField:
     """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。
 
@@ -188,9 +189,14 @@ def active_text_field(
         "border_radius": 4,
         "filled": True,
         "fill_color": c.active_bg,
+        "dense": True,
         "content_padding": ft.Padding.symmetric(horizontal=4, vertical=0),
         "text_size": text_size,
         "text_style": ft.TextStyle(font_family=font_family, color=c.text),
+        "strut_style": ft.StrutStyle(
+            force_strut_height=True, height=line_height, leading=0,
+            size=text_size, font_family=font_family,
+        ),
         "cursor_color": c.text,
         "cursor_width": 1.5,
         "shift_enter": multiline,

@@ -16,6 +16,7 @@ from styles import (
     FONT_MONO,
     _current_colors,
     block_weight,
+    list_color_level,
     measure_text_width,
     prefix_style,
     segment_style,
@@ -72,6 +73,7 @@ def segment_to_span(
     """渲染态：段 -> TextSpan（可点击激活）。on_activate=None 时不绑定 on_click。
 
     heading_level > 0 时覆盖文字颜色为标题级别色（红橙绿青蓝紫）。
+    无序列表前缀圆点按缩进级别复用同一套色阶。
     """
     c = _current_colors()  # 当前主题颜色（亮/暗）
     style = (
@@ -79,6 +81,19 @@ def segment_to_span(
         if seg.seg_type in _PREFIX_SEGTYPES
         else segment_style(seg, base_size)
     )
+    if seg.seg_type == SegType.LIST_PREFIX:
+        raw = seg.raw.lstrip()
+        if raw and raw[0] in "-*+":
+            lvl = list_color_level(seg.level)
+            style = ft.TextStyle(
+                size=style.size,
+                weight=style.weight,
+                color=c.heading_colors.get(lvl, c.muted),
+                italic=style.italic,
+                font_family=style.font_family,
+                decoration=style.decoration,
+                bgcolor=style.bgcolor,
+            )
     if heading_level > 0:
         is_strong = seg.seg_type == SegType.STRONG or SegType.STRONG in (seg.marks or ())
         weight = (

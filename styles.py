@@ -161,6 +161,11 @@ def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
     return ft.FontWeight.NORMAL
 
 
+def list_color_level(indent: int) -> int:
+    """列表缩进（空格数）→ 1..6 色阶，与 heading_colors 共用。"""
+    return min(max(indent // 2 + 1, 1), 6)
+
+
 def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
     """把段类型映射为 TextStyle（渲染态）。
 

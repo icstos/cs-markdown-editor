@@ -208,8 +208,9 @@ def MarkdownEditor(
             full = f"```{lang}\n{raw}\n```" if raw else f"```{lang}\n```"
             parser.reparse_line(line, full)
         elif line.block_type == BlockType.MATH:
+            # 块级公式：多行围栏形式 $$\n...\n$$，保留公式内换行
             formula = raw.strip()
-            full = f"$${formula}$$" if formula else "$$$$"
+            full = f"$$\n{formula}\n$$" if formula else "$$\n$$"
             parser.reparse_line(line, full)
         elif line.block_type == BlockType.HR:
             parser.reparse_line(line, raw if raw.strip() else "---")
@@ -651,12 +652,12 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块内回车：仅更新 draft（多行输入）
-        if line.block_type == BlockType.CODE:
+        # 代码块 / 块级公式内回车：仅更新 draft（多行输入，Shift+Enter 换行）
+        if line.block_type in (BlockType.CODE, BlockType.MATH):
             set_draft(new_raw)
             return
-        # 特殊块（公式 / 分隔线 / 目录）：提交后创建空行
-        if line.block_type in (BlockType.MATH, BlockType.HR, BlockType.TOC):
+        # 特殊块（分隔线 / 目录）：提交后创建空行
+        if line.block_type in (BlockType.HR, BlockType.TOC):
             commit_active(new_raw)
             suppress_blur.current = True
             set_active(None)
@@ -814,7 +815,7 @@ def MarkdownEditor(
             parser.reparse_line(line, full)
         elif line.block_type == BlockType.MATH:
             formula = draft_val.strip()
-            full = f"$${formula}$$" if formula else "$$$$"
+            full = f"$$\n{formula}\n$$" if formula else "$$\n$$"
             parser.reparse_line(line, full)
         elif _heading_edit(line):
             parser.reparse_line(line, draft_val)

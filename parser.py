@@ -33,6 +33,7 @@ _RE_HR = re.compile(r"^(\s*)([-*_])\2\2+\s*$")  # --- ** ___ 等
 _RE_CODE_FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([\w+-]*)\s*$")
 _RE_TASK = re.compile(r"^(\s*)([-*+])\s+\[( |x|X)\]\s+(.*)$")
 _RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)
+_RE_MATH_FENCE = re.compile(r"^\$\$\s*$")  # 块级公式围栏：$$ 独占一行开/闭
 _RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")
 _RE_TOC = re.compile(r"^\[toc\]\s*$", re.IGNORECASE)
 
@@ -397,6 +398,22 @@ def parse_markdown(text: str) -> Document:
             full = f"{raw}\n" + (code + "\n" if inner else "") + closing
             line = Line(block_type=BlockType.CODE, raw=full, lang=lang)
             line.segments = [Segment(SegType.CODE, code, code)]
+            doc.lines.append(line)
+            i = j + 1
+            continue
+        # 块级公式围栏：$$ 独占一行开闭，中间为公式正文（可多行）。
+        # 单行 $$...$$ 仍由 _detect_block -> _RE_MATH_BLOCK 处理。
+        if _RE_MATH_FENCE.match(raw):
+            inner_m: list[str] = []
+            j = i + 1
+            while j < n and not _RE_MATH_FENCE.match(lines_src[j]):
+                inner_m.append(lines_src[j])
+                j += 1
+            formula = "\n".join(inner_m)
+            closing = lines_src[j] if j < n else "$$"
+            full = "$$\n" + (formula + "\n" if inner_m else "") + closing
+            line = Line(block_type=BlockType.MATH, raw=full)
+            line.segments = [Segment(SegType.MATH, formula, formula)]
             doc.lines.append(line)
             i = j + 1
             continue

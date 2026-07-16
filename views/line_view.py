@@ -375,27 +375,28 @@ def LineView(
             )
         return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
-    # ============ 行间公式 ============
+    # ============ 块级公式 ============
     if line.block_type == BlockType.MATH:
         if active_seg == 0:
+            # 多行编辑（同代码块）：Shift+Enter 换行，Enter 触发 on_submit 仅更新 draft
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                base_size=16, max_width=avail_width,
+                base_size=16, multiline=True, max_width=avail_width,
             )
             content = ft.Container(
-                content=field, bgcolor=c.math_bg, border_radius=6,
+                content=field, bgcolor=c.math_bg, border_radius=6, width=float("inf"),
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
             )
         else:
             formula = line.segments[0].text if line.segments else ""
             md = ft.Markdown(
-                value=f"$${formula}$$",
+                value=f"$$\n{formula}\n$$",
                 selectable=True,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
             )
             content = ft.Container(
-                content=md, bgcolor=c.math_bg, border_radius=6,
+                content=md, bgcolor=c.math_bg, border_radius=6, width=float("inf"),
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                 alignment=ft.Alignment.CENTER,
                 on_click=lambda e: on_activate(line_idx, 0),

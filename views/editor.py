@@ -46,6 +46,15 @@ _WRAP_MAP: dict[SegType, str] = {
 _NO_NAV_BLOCKS = (BlockType.CODE, BlockType.HR, BlockType.MATH, BlockType.TOC)
 
 
+def _line_raw(line: Line) -> str:
+    """整行 Markdown 源码（段 raw 拼接，与 line.raw 一致）。"""
+    return line.raw or "".join(s.raw for s in line.segments)
+
+
+def _heading_edit(line: Line) -> bool:
+    return line.block_type == BlockType.HEADING
+
+
 def _inline_content(line: Line) -> str:
     """取一行的"行内内容"源码（去掉块级前缀），用于块类型切换。"""
     if line.block_type in (BlockType.CODE, BlockType.MATH):
@@ -138,6 +147,8 @@ def MarkdownEditor(
     def _draft_for(li: int, si: int) -> str:
         if 0 <= li < len(document.lines):
             line = document.lines[li]
+            if _heading_edit(line):
+                return _line_raw(line)
             if 0 <= si < len(line.segments):
                 return line.segments[si].raw
         return ""
@@ -170,6 +181,8 @@ def MarkdownEditor(
             parser.reparse_line(line, full)
         elif line.block_type == BlockType.HR:
             parser.reparse_line(line, raw if raw.strip() else "---")
+        elif _heading_edit(line):
+            parser.reparse_line(line, raw)
         else:
             if si < len(line.segments):
                 line.segments[si].raw = raw
@@ -187,6 +200,20 @@ def MarkdownEditor(
             return
         line = document.lines[li]
         if not (0 <= si < len(line.segments)):
+            return
+        if _heading_edit(line):
+            new_draft = _line_raw(line)
+            if cursor_at < 0:
+                cursor_at = len(new_draft)
+            elif si > 0:
+                cursor_at = sum(len(line.segments[i].raw) for i in range(si)) + cursor_at
+            cursor_at = min(max(cursor_at, 0), len(new_draft))
+            set_draft(new_draft)
+            set_active((li, 0))
+            set_cursor_line(li)
+            set_cursor_pos(cursor_at)
+            _sync_cursor(new_draft, cursor_at)
+            set_nav_seq(nav_seq + 1)
             return
         new_draft = _draft_for(li, si)
         set_draft(new_draft)
@@ -212,6 +239,13 @@ def MarkdownEditor(
         line = document.lines[li]
         if _nav_blocked(line):
             return
+        if _heading_edit(line):
+            if cursor_ref.current["base"] > 0:
+                return
+            if li > 0:
+                prev = document.lines[li - 1]
+                _goto(li - 1, max(0, len(prev.segments) - 1))
+            return
         if si > 0:
             _goto(li, si - 1)
         elif li > 0:
@@ -227,6 +261,12 @@ def MarkdownEditor(
         line = document.lines[li]
         if _nav_blocked(line):
             return
+        if _heading_edit(line):
+            if cursor_ref.current["extent"] < len(draft):
+                return
+            if li < len(document.lines) - 1:
+                _goto(li + 1, 0, cursor_at=0)
+            return
         if si < len(line.segments) - 1:
             _goto(li, si + 1, cursor_at=0)
         elif li < len(document.lines) - 1:
@@ -239,6 +279,10 @@ def MarkdownEditor(
         li, _ = active
         if li >= len(document.lines) or _nav_blocked(document.lines[li]):
             return
+        line = document.lines[li]
+        if _heading_edit(line):
+            _goto(li, 0, cursor_at=0)
+            return
         _goto(li, 0)
 
     def move_end():
@@ -247,6 +291,10 @@ def MarkdownEditor(
             return
         li, _ = active
         if li >= len(document.lines) or _nav_blocked(document.lines[li]):
+            return
+        line = document.lines[li]
+        if _heading_edit(line):
+            _goto(li, 0, cursor_at=-1)
             return
         _goto(li, max(0, len(document.lines[li].segments) - 1))
 
@@ -389,10 +437,12 @@ def MarkdownEditor(
         if suf > 0:
             new_raw += old_draft[len(old_draft) - suf :]
 
-        if si < len(line.segments):
-            line.segments[si].raw = new_raw
-        full = "".join(s.raw for s in line.segments)
-        parser.reparse_line(line, full)
+        if _heading_edit(line):
+            parser.reparse_line(line, new_raw)
+        else:
+            if si < len(line.segments):
+                line.segments[si].raw = new_raw
+            parser.reparse_line(line, "".join(s.raw for s in line.segments))
         mark_dirty()
 
         if rest:
@@ -405,23 +455,34 @@ def MarkdownEditor(
             # 激活最后一行最后一段
             last_li = li + len(new_lines)
             last_line = document.lines[last_li]
-            target_si = max(0, len(last_line.segments) - 1)
-            new_draft_val = (
-                last_line.segments[target_si].raw
-                if target_si < len(last_line.segments)
-                else ""
-            )
-            set_draft(new_draft_val)
-            set_active((last_li, target_si))
-            set_cursor_line(last_li)
-            set_cursor_pos(-1)
-            _sync_cursor(new_draft_val)
-            set_nav_seq(nav_seq + 1)
+            if _heading_edit(last_line):
+                _goto(last_li, 0, cursor_at=-1)
+            else:
+                target_si = max(0, len(last_line.segments) - 1)
+                new_draft_val = (
+                    last_line.segments[target_si].raw
+                    if target_si < len(last_line.segments)
+                    else ""
+                )
+                set_draft(new_draft_val)
+                set_active((last_li, target_si))
+                set_cursor_line(last_li)
+                set_cursor_pos(-1)
+                _sync_cursor(new_draft_val)
+                set_nav_seq(nav_seq + 1)
         else:
             suppress_blur.current = True
-            set_draft(new_raw)
-            set_cursor_pos(-1)
-            _sync_cursor(new_raw)
+            if _heading_edit(line):
+                new_draft_val = _line_raw(line)
+                set_draft(new_draft_val)
+                set_active((li, 0))
+                set_cursor_line(li)
+                set_cursor_pos(-1)
+                _sync_cursor(new_draft_val)
+            else:
+                set_draft(new_raw)
+                set_cursor_pos(-1)
+                _sync_cursor(new_raw)
             set_nav_seq(nav_seq + 1)
 
     def on_submit(new_raw: str):
@@ -443,10 +504,32 @@ def MarkdownEditor(
             set_active(None)
             new_line_after(li)
             return
-        # 普通块（段落 / 标题 / 列表 / 引用）：在光标位置拆分当前行
+        # 普通块（段落 / 列表 / 引用）：在光标位置拆分当前行
         cursor_pos = min(cursor_ref.current["extent"], len(new_raw))
         before = new_raw[:cursor_pos]
         after = new_raw[cursor_pos:]
+        if _heading_edit(line):
+            parser.reparse_line(line, before)
+            new_line = parser.parse_markdown(after).lines[0]
+            document.lines = (
+                document.lines[: li + 1] + [new_line] + document.lines[li + 1 :]
+            )
+            mark_dirty()
+            target_si = 0
+            if new_line.segments:
+                for i, s in enumerate(new_line.segments):
+                    if s.seg_type not in (
+                        SegType.HEADING_PREFIX,
+                        SegType.LIST_PREFIX,
+                        SegType.QUOTE_PREFIX,
+                    ):
+                        target_si = i
+                        break
+                else:
+                    target_si = max(0, len(new_line.segments) - 1)
+            suppress_blur.current = True
+            _goto(li + 1, target_si, cursor_at=0)
+            return
         cont_prefix = _next_line_raw(line)
         remaining = "".join(s.raw for s in line.segments[si + 1 :])
         # 当前行：保留光标之前的内容（前序段 + 当前段光标前部分）
@@ -536,8 +619,11 @@ def MarkdownEditor(
             new_raw = content
         parser.reparse_line(line, new_raw)
         mark_dirty()
-        target_si = max(0, len(line.segments) - 1)
-        _goto(li, target_si)
+        if line.block_type == BlockType.HEADING:
+            _goto(li, 0)
+        else:
+            target_si = max(0, len(line.segments) - 1)
+            _goto(li, target_si)
 
     def _commit_for_block(line: Line, active_pair: tuple[int, int], draft_val: str):
         """块切换前先提交当前编辑段（避免丢失草稿）。"""
@@ -553,6 +639,8 @@ def MarkdownEditor(
             formula = draft_val.strip()
             full = f"$${formula}$$" if formula else "$$$$"
             parser.reparse_line(line, full)
+        elif _heading_edit(line):
+            parser.reparse_line(line, draft_val)
         elif line.block_type != BlockType.HR:
             if si < len(line.segments):
                 line.segments[si].raw = draft_val

@@ -58,6 +58,11 @@ def _display_to_raw_offset(seg: Segment, display_offset: int) -> int:
     return len(raw)
 
 
+def _logical_raw_offset(line: Line, seg_idx: int, seg_offset: int) -> int:
+    """段内 raw 偏移 → 整行 raw 逻辑偏移。"""
+    return sum(len(line.segments[i].raw) for i in range(seg_idx)) + seg_offset
+
+
 def _hit_test_tap(line: Line, x: float, y: float, base: int) -> tuple[int, int]:
     """根据点击位置计算 (seg_idx, raw_cursor_offset)。
 
@@ -125,7 +130,7 @@ def _spans_for(
     line: Line,
     seg_from: int,
     seg_to_excl: int,
-    on_activate: Callable[[int], None],
+    on_activate: Callable[[int], None] | None,
     base_size: int,
 ) -> list[ft.TextSpan]:
     """构造 [seg_from, seg_to_excl) 范围的 TextSpan 列表。"""
@@ -225,7 +230,10 @@ def LineView(
     # 行间空白死区点击兜底：激活最后一个段（与 _on_tap 回退策略一致）。
     # 内层 GestureDetector 会消费其覆盖区域的 tap，此回调仅在 padding 死区触发。
     def _fallback_activate(e):
-        activate(max(0, len(line.segments) - 1))
+        if line.block_type == BlockType.HEADING:
+            activate(0)
+        else:
+            activate(max(0, len(line.segments) - 1))
 
     # ============ 空行 ============
     if line.block_type == BlockType.BLANK or not _has_visible_text(line):
@@ -478,16 +486,43 @@ def LineView(
                     if seg.seg_type == SegType.LINK and seg.url:
                         _open_link_url(seg.url)
                         return
-                    activate(si, offset)
+                    if line.block_type == BlockType.HEADING:
+                        activate(0, _logical_raw_offset(line, si, offset))
+                    else:
+                        activate(si, offset)
                     return
             # 回退：点击多行区域或无法定位时，激活最后一个段
-            activate(max(0, len(line.segments) - 1))
+            if line.block_type == BlockType.HEADING:
+                activate(0)
+            else:
+                activate(max(0, len(line.segments) - 1))
 
         content = ft.Container(
             content=ft.GestureDetector(
                 content=ft.Text(spans=spans, style=line_style, width=float("inf")),
                 on_tap=_on_tap,
             ),
+            ink=True,
+        )
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+
+    # 标题编辑态：整行原文（含 # 前缀）单字段编辑
+    if line.block_type == BlockType.HEADING and active_seg is not None:
+        seg0 = line.segments[0] if line.segments else Segment(SegType.HEADING_PREFIX, "# ", "")
+
+        def _heading_edit_on_click(e):
+            if on_suppress_blur:
+                on_suppress_blur()
+            activate(0, cursor_at=-1)
+
+        content = ft.Container(
+            content=active_text_field(
+                seg0, draft, on_change_draft, on_submit, on_blur, base,
+                on_selection_change=on_selection_change,
+                initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
+            ),
+            width=float("inf"),
+            on_click=_heading_edit_on_click,
             ink=True,
         )
         return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)

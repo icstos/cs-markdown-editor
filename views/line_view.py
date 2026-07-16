@@ -411,7 +411,10 @@ def LineView(
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
                 max_width=avail_width,
             )
-            content = ft.Container(content=field, padding=ft.Padding.symmetric(horizontal=2))
+            content = ft.Container(
+                content=field, width=float("inf"),
+                padding=ft.Padding.symmetric(horizontal=2),
+            )
         else:
             toc_items: list[ft.Control] = [
                 ft.Container(
@@ -422,10 +425,12 @@ def LineView(
                 )
                 for li, lvl, text in (toc_entries or [])
             ]
+            # 目录块：左右撑满整行，灰色背景，便于与正文区分
             content = ft.Container(
                 content=ft.Column(controls=toc_items, spacing=2),
-                padding=ft.Padding.symmetric(vertical=8),
-                bgcolor=c.code_block_bg, border_radius=6,
+                width=float("inf"),
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                bgcolor=c.code_bg, border_radius=6,
             )
         return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 

@@ -130,6 +130,7 @@ def active_text_field(
     initial_cursor: int = -1,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
+    max_width: float | None = None,
 ) -> ft.TextField:
     """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。
 
@@ -137,13 +138,17 @@ def active_text_field(
     （Typora 式最小编辑块），避免撑满整行破坏阅读节奏。
     多行代码块：保持块级宽度，由父容器决定。
 
+    宽度溢出处理：当单行段原生文本宽度超出可用区域（max_width）时，
+    切换为多行换行编辑（宽度=可用宽度），避免横向溢出破坏布局；
+    此时上下键在段内换行间移动，Enter 仍提交（Shift+Enter 才插入换行）。
+
     光标导航：
     - on_selection_change：上报光标位置变化（供外层跟踪 extent/base）
     - initial_cursor + on_focus：跨段时通过 nav_seq 变化触发 key 重建，
       autofocus 聚焦后 on_focus 强制把光标设到 initial_cursor（段首/段尾）。
       cursor_applied 标志确保仅应用一次，后续聚焦不覆盖用户光标位置。
     - ignore_up_down_keys：单行段置 True，让上下键冒泡到外层做跨行；
-      多行代码块保持 False，让上下键在块内移动光标。
+      多行块（代码块/溢出换行段）保持 False，让上下键在块内移动光标。
     """
     c = _current_colors()  # 当前主题颜色（亮/暗）
     is_mono = seg.seg_type in _MONO_SEGTYPES
@@ -202,9 +207,22 @@ def active_text_field(
         kwargs["ref"] = field_ref
 
     if not multiline:
-        # 文本像素宽 + 内边距(左右各4) + 光标/子像素余量；空文本给最小宽避免坍缩
+        # 文本像素宽 + 余量；空文本给最小宽避免坍缩。
+        # Pillow(FreeType) getlength 略小于 Flutter/Skia 实际渲染宽度
+        # （字形度量/整形差异），按 6% 比例放大吸收差异；
+        # 固定 18px 覆盖 TextField 内边距(8) + 光标(1.5) + 内部留白，避免文本被裁切。
         text_w = measure_text_width(draft or "", font_family, text_size)
-        kwargs["width"] = max(text_w + 14, 24)
+        natural_w = max(text_w * 1.06 + 18, 28)
+        if max_width is not None and natural_w > max_width:
+            # 单段原生文本超出可用宽度：转为多行换行编辑，宽度撑满可用区域，
+            # 上下键在段内换行间移动，Enter 仍提交（Shift+Enter 才插入换行）。
+            kwargs["multiline"] = True
+            kwargs["max_lines"] = None
+            kwargs["shift_enter"] = True
+            kwargs["ignore_up_down_keys"] = False
+            kwargs["width"] = max_width
+        else:
+            kwargs["width"] = natural_w
     else:
         # 多行代码块：撑满整行宽度
         kwargs["expand"] = True

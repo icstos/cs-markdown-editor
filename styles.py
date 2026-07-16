@@ -7,6 +7,7 @@
 
 import io
 import os
+import re
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -288,6 +289,13 @@ _FONT_FILES = {
 }
 _font_cache: dict[tuple[str, int], _PILImageFont.FreeTypeFont] = {}
 
+# CJK 与全角字符范围：当主字体（如 Consolas）不含这些字形时，Pillow getlength 报告
+# 的 advance 严重偏小，而 Flutter/Skia 会回退到系统 CJK 字体（宽度约 1em/字）。
+# 用此正则把文本切分为 CJK 片段与非 CJK 片段分别测量，贴合 Skia 回退行为。
+_CJK_RE = re.compile(
+    r"[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ufeff\uff00-\uffef]"
+)
+
 
 def _get_font(font_family: str, size: int) -> _PILImageFont.FreeTypeFont:
     """按 (字体族, 字号) 缓存加载 ImageFont，避免重复磁盘 IO。"""
@@ -311,11 +319,28 @@ def measure_text_width(text: str, font_family: str, size: int) -> float:
     """测量文本在指定字体/字号下的像素宽度。
 
     返回值约为 Flet 逻辑像素宽度（桌面端 1.0 缩放下与渲染一致）。
+
+    字体回退处理：当请求字体（如 Consolas 等宽体）不含 CJK/全角字形时，
+    Pillow getlength 报告的 advance 严重偏小，而 Flutter/Skia 渲染会回退到
+    系统 CJK 字体（宽度约 1em/字）。此处将文本按 CJK 边界切分，CJK 片段改用
+    主中文字体测量，非 CJK 片段仍用原字体，二者求和贴合 Skia 实际渲染宽度。
     """
     if not text:
         return 0.0
-    # Pillow getlength 逐字形累加 advance，最接近实际渲染宽度
-    return _get_font(font_family, size).getlength(text)
+    # 主中文字体已含 CJK 字形，无需切分；仅对非主字体做回退测量
+    if font_family == FONT_MAIN or not _CJK_RE.search(text):
+        return _get_font(font_family, size).getlength(text)
+
+    total = 0.0
+    pos = 0
+    for m in _CJK_RE.finditer(text):
+        if m.start() > pos:
+            total += _get_font(font_family, size).getlength(text[pos:m.start()])
+        total += _get_font(FONT_MAIN, size).getlength(m.group())
+        pos = m.end()
+    if pos < len(text):
+        total += _get_font(font_family, size).getlength(text[pos:])
+    return total
 
 
 # ---------------------------------------------------------------------------

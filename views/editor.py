@@ -1002,6 +1002,8 @@ def MarkdownEditor(
     ]
 
     # ---- 行视图列表 ----
+    # 内容区可用宽度 = 内容最大宽度 - 左右内边距，传给 LineView 用于编辑态宽度限位
+    content_width = content_max_width - 2 * content_padding
     line_controls = [
         LineView(
             key=f"line-{i}",
@@ -1025,6 +1027,7 @@ def MarkdownEditor(
             initial_cursor=cursor_pos if is_act else -1,
             nav_seq=nav_seq if is_act else 0,
             field_ref=active_field_ref if is_act else None,
+            content_width=content_width,
         )
         for i, line in enumerate(document.lines)
     ]

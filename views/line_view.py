@@ -179,6 +179,7 @@ def _active_field(
     base_size: int | None = None,
     multiline: bool = False,
     field_ref: ft.Ref | None = None,
+    max_width: float | None = None,
 ) -> ft.TextField:
     """构造激活态 TextField（统一入口，消除重复调用）。"""
     return active_text_field(
@@ -193,6 +194,7 @@ def _active_field(
         initial_cursor=initial_cursor,
         nav_seq=nav_seq,
         field_ref=field_ref,
+        max_width=max_width,
     )
 
 
@@ -216,6 +218,7 @@ def LineView(
     initial_cursor: int = -1,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
+    content_width: float | None = None,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
@@ -223,6 +226,18 @@ def LineView(
     line_style = ft.TextStyle(
         size=base, weight=weight, color=c.text, font_family=FONT_MAIN, height=1.6
     )
+
+    # 编辑态 TextField 的最大可用宽度：内容区宽度 - 块级缩进 - 行内边距(8*2)。
+    # 用于在单段文本过长时切换为多行换行编辑，避免横向溢出。
+    if content_width is not None:
+        indent = 0
+        if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
+            indent = line.level * 20
+        elif line.block_type == BlockType.QUOTE:
+            indent = (line.level or 1) * 12
+        avail_width = max(content_width - indent - 16, 80)
+    else:
+        avail_width = None
 
     def activate(seg_idx: int, cursor_at: int = -1):
         on_activate(line_idx, seg_idx, cursor_at)
@@ -241,6 +256,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
+                max_width=avail_width,
             )
             # 编辑态：设置 width=float("inf") 占满整行，点击右侧空白时抑制 blur 并激活最后段
             def _blank_edit_on_click(e):
@@ -279,6 +295,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
+                max_width=avail_width,
             )
             content = ft.Container(padding=ft.Padding.symmetric(vertical=6), content=field)
         else:
@@ -296,7 +313,7 @@ def LineView(
             inner = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                base_size=14, multiline=True,
+                base_size=14, multiline=True, max_width=avail_width,
             )
             # 语言类型输入框：on_focus 设 suppress_blur 防止代码框 blur 退出
             lang_field = ft.TextField(
@@ -364,7 +381,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                base_size=16,
+                base_size=16, max_width=avail_width,
             )
             content = ft.Container(
                 content=field, bgcolor=c.math_bg, border_radius=6,
@@ -392,6 +409,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
+                max_width=avail_width,
             )
             content = ft.Container(content=field, padding=ft.Padding.symmetric(horizontal=2))
         else:
@@ -522,6 +540,7 @@ def LineView(
                 seg0, draft, on_change_draft, on_submit, on_blur, base,
                 on_selection_change=on_selection_change,
                 initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
+                max_width=avail_width,
             ),
             width=float("inf"),
             on_click=_heading_edit_on_click,
@@ -548,6 +567,7 @@ def LineView(
             active_seg_obj, draft, on_change_draft, on_submit, on_blur, base,
             on_selection_change=on_selection_change,
             initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
+            max_width=avail_width,
         )
     )
     if after_spans:

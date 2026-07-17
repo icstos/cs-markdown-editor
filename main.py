@@ -9,13 +9,15 @@
 import asyncio
 import json
 import os
+import re
 
 import flet as ft
 
 import parser
 from models import BlockType, Document
-from styles import get_colors
+from styles import FONT_MAIN, get_colors, only_border
 from views.editor import MarkdownEditor
+from views.sidebar import Sidebar
 
 _SAMPLE = r"""# Markdown 编辑器
 
@@ -168,6 +170,10 @@ _DEFAULT_SETTINGS = {
     "code_theme_dark": "ATOM_ONE_DARK",
     "code_theme_light": "GITHUB",
     "export_format": "html",
+    "sidebar_open": False,
+    "sidebar_panel": "files",
+    "sidebar_width": 256,
+    "recent_files": [],
 }
 
 
@@ -266,6 +272,44 @@ def App():
         set_settings(next_settings)
         _save_settings(next_settings)
 
+    def _push_recent_file(path: str):
+        """把 path 加入最近文件列表头部（去重、截断 10 条）并持久化。"""
+        if not path:
+            return
+        recent = list(settings.get("recent_files", []))
+        if path in recent:
+            recent.remove(path)
+        recent.insert(0, path)
+        recent = recent[:10]
+        update_setting("recent_files", recent)
+
+    def _open_file_by_path(path: str):
+        """从绝对路径打开文件（供侧边栏文件树点击与 open_doc 复用）。"""
+        try:
+            text = _read_file(path)
+        except Exception as e:
+            if page_ref.current is not None:
+                page_ref.current.open(ft.SnackBar(ft.Text(f"打开失败：{e}")))
+            return
+        doc = parser.parse_markdown(text)
+        doc.file_path = path
+        set_document(doc)
+        set_file_path(path)
+        set_dirty(False)
+        set_session(session + 1)
+        _push_recent_file(path)
+
+    def toggle_sidebar():
+        update_setting("sidebar_open", not settings.get("sidebar_open", False))
+
+    def change_sidebar_panel(panel: str):
+        update_setting("sidebar_panel", panel)
+
+    def jump_to_line(li: int):
+        nav = nav_ref.current
+        if nav and nav.get("jump_to_line"):
+            nav["jump_to_line"](li)
+
     def on_dirty_change(d: bool):
         set_dirty(d)
 
@@ -288,18 +332,7 @@ def App():
         )
         if not files:
             return
-        path = files[0].path
-        try:
-            text = _read_file(path)
-        except Exception as e:
-            page_ref.current.open(ft.SnackBar(ft.Text(f"打开失败：{e}")))
-            return
-        doc = parser.parse_markdown(text)
-        doc.file_path = path
-        set_document(doc)
-        set_file_path(path)
-        set_dirty(False)
-        set_session(session + 1)
+        _open_file_by_path(files[0].path)
 
     async def save_doc():
         text = parser.serialize(document)
@@ -327,6 +360,7 @@ def App():
         document.dirty = False
         set_file_path(path)
         set_dirty(False)
+        _push_recent_file(path)
 
     async def export_doc():
         """导出为 HTML 文件。"""
@@ -1043,8 +1077,21 @@ def App():
         ),
     )
 
-    return ft.Stack(
+    sidebar_open = settings.get("sidebar_open", False)
+    body = ft.Row(
         controls=[
+            Sidebar(
+                document=document,
+                file_path=file_path,
+                theme_mode=theme_mode,
+                settings=settings,
+                active_panel=settings.get("sidebar_panel", "files"),
+                on_change_panel=change_sidebar_panel,
+                on_open_file=_open_file_by_path,
+                on_jump_to_line=jump_to_line,
+            )
+            if sidebar_open
+            else ft.Container(width=0),
             MarkdownEditor(
                 key=str(session),
                 document=document,
@@ -1060,7 +1107,98 @@ def App():
                 on_toggle_theme=toggle_theme,
                 settings=settings,
                 on_open_settings=open_settings,
+                sidebar_open=sidebar_open,
+                on_toggle_sidebar=toggle_sidebar,
             ),
+        ],
+        spacing=0,
+        expand=True,
+    )
+
+    # 底部状态栏：贯穿侧边栏 + 编辑区全宽，放在 body 之下
+    def _build_footer():
+        if not settings.get("show_footer", True):
+            return ft.Container(height=0)
+        c = get_colors(theme_mode)
+        nav = nav_ref.current
+        if nav and nav.get("get_cursor_row_col"):
+            row, col = nav["get_cursor_row_col"]()
+        else:
+            row, col = 1, 1
+        char_count = len(parser.serialize(document))
+        word_count = len(
+            re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", parser.serialize(document))
+        )
+        fname = os.path.basename(file_path) if file_path else "未命名.md"
+        return ft.Container(
+            bgcolor=ft.Colors.with_opacity(0.02, c.text),
+            border=only_border(top=ft.BorderSide(1, c.border)),
+            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+            content=ft.Row(
+                controls=[
+                    ft.IconButton(
+                        icon=ft.Icons.VIEW_SIDEBAR
+                        if not sidebar_open
+                        else ft.Icons.MENU_OPEN,
+                        tooltip="切换侧边栏",
+                        on_click=lambda e: toggle_sidebar(),
+                        icon_size=16,
+                        style=ft.ButtonStyle(
+                            color=c.link if sidebar_open else c.muted,
+                            padding=4,
+                        ),
+                    ),
+                    ft.Icon(
+                        icon=ft.Icons.CIRCLE,
+                        size=8,
+                        color="#FF9F0A" if document.dirty else "#35C759",
+                    ),
+                    ft.Text(
+                        value=fname,
+                        size=12,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Container(expand=True),
+                    ft.Text(
+                        value=f"行 {row}  列 {col}",
+                        size=12,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
+                    ),
+                    ft.Container(width=16),
+                    ft.Text(
+                        value=f"{word_count} 词",
+                        size=12,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
+                    ),
+                    ft.Container(width=12),
+                    ft.Text(
+                        value=f"{char_count} 字符",
+                        size=12,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
+                    ),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        )
+
+    main_col = ft.Column(
+        controls=[
+            body,
+            _build_footer(),
+        ],
+        spacing=0,
+        expand=True,
+    )
+
+    return ft.Stack(
+        controls=[
+            main_col,
             settings_view,
         ],
         expand=True,
@@ -1089,9 +1227,9 @@ async def main(page: ft.Page):
         ),
     )
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.window.width = 960
+    page.window.width = 1200
     page.window.height = 720
-    page.window.min_width = 640
+    page.window.min_width = 720
     page.window.min_height = 480
     await page.window.center()
     page.render(App)

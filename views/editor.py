@@ -129,6 +129,8 @@ def MarkdownEditor(
     on_toggle_theme: Callable[[], None] | None = None,
     settings: dict | None = None,
     on_open_settings: Callable[[], None] | None = None,
+    sidebar_open: bool = False,
+    on_toggle_sidebar: Callable[[], None] | None = None,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     settings = settings or {}
@@ -1251,6 +1253,22 @@ def MarkdownEditor(
         _goto(li, 0)
 
     # ---- 同步导航接口给外层 on_key（nav_ref）----
+    def _get_cursor_row_col() -> tuple[int, int]:
+        """返回当前光标 (row, col)，供外层状态栏使用。"""
+        if active is not None and 0 <= active[0] < len(document.lines):
+            li, si = active
+            line = document.lines[li]
+            col = (
+                _logical_offset(line, si, cursor_ref.current["extent"]) + 1
+                if 0 <= si < len(line.segments)
+                else 1
+            )
+            row = li + 1
+        else:
+            row = cursor_line + 1
+            col = 1
+        return row, col
+
     if nav_ref is not None:
         nav_ref.current = {
             "active": active,
@@ -1280,6 +1298,8 @@ def MarkdownEditor(
             "raw_mode": raw_mode,
             "undo": undo,
             "redo": redo,
+            "jump_to_line": jump_to,
+            "get_cursor_row_col": _get_cursor_row_col,
         }
 
     # ---- 预计算 TOC 条目（所有标题）----
@@ -1333,6 +1353,10 @@ def MarkdownEditor(
 
     # ---- 工具区：菜单 | 工具栏 | 原文切换 + 导出 ----
     def _tool_area():
+        """单行工具区：菜单 | 分隔 | Toolbar | 弹性 | 原文/导出/聚焦/主题。
+
+        文件名与状态信息移到底部状态栏（_footer），工具区只保留操作按钮，保持简洁。
+        """
         menu_items = [
             ft.PopupMenuItem(content="新建", on_click=lambda e: (on_new or _noop)()),
             ft.PopupMenuItem(
@@ -1342,165 +1366,66 @@ def MarkdownEditor(
             ft.PopupMenuItem(),
             ft.PopupMenuItem(content="设置", on_click=lambda e: (on_open_settings or _noop)()),
         ]
-        title = _file_name(file_path)
-        state_text = "已修改" if document.dirty else "已保存"
         if not show_toolbar:
             return ft.Container(height=0)
         return ft.Container(
             bgcolor=c.toolbar_bg,
             border=only_border(bottom=ft.BorderSide(1, c.border)),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
-            content=ft.Column(
+            padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+            content=ft.Row(
                 controls=[
-                    ft.Row(
-                        controls=[
-                            ft.PopupMenuButton(
-                                icon=ft.Icons.MENU,
-                                tooltip="文件菜单",
-                                items=menu_items,
-                            ),
-                            ft.Container(width=4),
-                            ft.Column(
-                                controls=[
-                                    ft.Text(
-                                        value=title,
-                                        size=14,
-                                        weight=ft.FontWeight.W_600,
-                                        color=c.text,
-                                        font_family=FONT_MAIN,
-                                    ),
-                                    ft.Row(
-                                        controls=[
-                                            ft.Text(
-                                                value=state_text,
-                                                size=11,
-                                                color=c.muted,
-                                                font_family=FONT_MAIN,
-                                            ),
-                                            ft.Container(
-                                                width=6,
-                                                height=6,
-                                                border_radius=99,
-                                                bgcolor="#35C759" if not document.dirty else "#FF9F0A",
-                                            ),
-                                            ft.Text(
-                                                value="Ctrl+S 保存 · Ctrl+Z 撤销 · Ctrl+/ 原文",
-                                                size=11,
-                                                color=c.muted,
-                                                font_family=FONT_MAIN,
-                                            ),
-                                        ],
-                                        spacing=6,
-                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    ),
-                                ],
-                                spacing=0,
-                            ),
-                            ft.Container(expand=True),
-                            _btn(
-                                ft.Icons.VISIBILITY if not raw_mode else ft.Icons.EDIT,
-                                "原文模式" if not raw_mode else "返回编辑",
-                                toggle_raw,
-                                toggle_on=raw_mode,
-                            ),
-                            _btn(
-                                ft.Icons.FILE_DOWNLOAD,
-                                "导出 HTML",
-                                on_export or _noop,
-                            ),
-                            _btn(
-                                ft.Icons.CENTER_FOCUS_STRONG,
-                                "聚焦模式",
-                                toggle_focus_mode,
-                            ),
-                            _btn(
-                                ft.Icons.DARK_MODE
-                                if theme_mode == ft.ThemeMode.LIGHT
-                                else ft.Icons.LIGHT_MODE,
-                                "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
-                                on_toggle_theme or _noop,
-                            ),
-                        ],
-                        spacing=8,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ft.PopupMenuButton(
+                        icon=ft.Icons.MENU,
+                        tooltip="文件菜单",
+                        items=menu_items,
                     ),
-                    ft.Container(height=8),
-                    ft.Container(
-                        content=Toolbar(
-                            on_h1=lambda: set_block(BlockType.HEADING, 1),
-                            on_h2=lambda: set_block(BlockType.HEADING, 2),
-                            on_h3=lambda: set_block(BlockType.HEADING, 3),
-                            on_paragraph=lambda: set_block(BlockType.PARAGRAPH),
-                            on_list=lambda: set_block(BlockType.LIST_UO),
-                            on_quote=lambda: set_block(BlockType.QUOTE),
-                            on_code_block=lambda: set_block(BlockType.CODE),
-                            on_hr=lambda: set_block(BlockType.HR),
-                            on_bold=lambda: toggle_inline(SegType.STRONG),
-                            on_italic=lambda: toggle_inline(SegType.EMPHASIS),
-                            on_code=lambda: toggle_inline(SegType.CODESPAN),
-                            on_link=toggle_link,
-                            on_strike=lambda: toggle_inline(SegType.STRIKE),
-                        ),
-                        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                    _tb_divider(),
+                    Toolbar(
+                        on_h1=lambda: set_block(BlockType.HEADING, 1),
+                        on_h2=lambda: set_block(BlockType.HEADING, 2),
+                        on_h3=lambda: set_block(BlockType.HEADING, 3),
+                        on_paragraph=lambda: set_block(BlockType.PARAGRAPH),
+                        on_list=lambda: set_block(BlockType.LIST_UO),
+                        on_quote=lambda: set_block(BlockType.QUOTE),
+                        on_code_block=lambda: set_block(BlockType.CODE),
+                        on_hr=lambda: set_block(BlockType.HR),
+                        on_bold=lambda: toggle_inline(SegType.STRONG),
+                        on_italic=lambda: toggle_inline(SegType.EMPHASIS),
+                        on_code=lambda: toggle_inline(SegType.CODESPAN),
+                        on_link=toggle_link,
+                        on_strike=lambda: toggle_inline(SegType.STRIKE),
+                    ),
+                    ft.Container(expand=True),
+                    _btn(
+                        ft.Icons.VISIBILITY if not raw_mode else ft.Icons.EDIT,
+                        "原文模式" if not raw_mode else "返回编辑",
+                        toggle_raw,
+                        toggle_on=raw_mode,
+                    ),
+                    _btn(
+                        ft.Icons.FILE_DOWNLOAD,
+                        "导出 HTML",
+                        on_export or _noop,
+                    ),
+                    _btn(
+                        ft.Icons.CENTER_FOCUS_STRONG,
+                        "聚焦模式",
+                        toggle_focus_mode,
+                    ),
+                    _btn(
+                        ft.Icons.DARK_MODE
+                        if theme_mode == ft.ThemeMode.LIGHT
+                        else ft.Icons.LIGHT_MODE,
+                        "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
+                        on_toggle_theme or _noop,
                     ),
                 ],
-                spacing=0,
+                spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
         )
 
-    # ---- 页脚：文件名 | 光标行列 + 字符数 ----
-    def _footer():
-        if active is not None and 0 <= active[0] < len(document.lines):
-            li, si = active
-            line = document.lines[li]
-            col = (
-                _logical_offset(line, si, cursor_ref.current["extent"]) + 1
-                if 0 <= si < len(line.segments)
-                else 1
-            )
-            row = li + 1
-        else:
-            row = cursor_line + 1
-            col = 1
-        char_count = len(parser.serialize(document))
-        word_count = len(re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", parser.serialize(document)))
-        fname = os.path.basename(file_path) if file_path else "未命名.md"
-        return ft.Container(
-            bgcolor=ft.Colors.with_opacity(0.02, c.text),
-            border=only_border(top=ft.BorderSide(1, c.border)),
-            padding=ft.Padding.symmetric(horizontal=16, vertical=6),
-            content=ft.Row(
-                controls=[
-                    ft.Text(
-                        value=("● " if document.dirty else "") + fname,
-                        size=12,
-                        color=c.muted,
-                        font_family=FONT_MAIN,
-                    ),
-                    ft.Container(expand=True),
-                    ft.Text(
-                        value=f"行 {row}  列 {col}",
-                        size=12,
-                        color=c.muted,
-                        font_family=FONT_MAIN,
-                    ),
-                    ft.Container(width=16),
-                    ft.Text(
-                        value=f"{word_count} 词",
-                        size=12,
-                        color=c.muted,
-                        font_family=FONT_MAIN,
-                    ),
-                    ft.Container(width=12),
-                    ft.Text(
-                        value=f"{char_count} 字符",
-                        size=12,
-                        color=c.muted,
-                        font_family=FONT_MAIN,
-                    ),
-                ],
-            ),
-        )
+    # ---- 页脚已提升到 App 层，贯穿侧边栏 + 编辑区全宽 ----
 
     return ft.Column(
         controls=[
@@ -1528,7 +1453,6 @@ def MarkdownEditor(
                     padding=ft.Padding.symmetric(horizontal=content_padding, vertical=content_padding_top),
                 ),
             ),
-            _footer() if show_footer else ft.Container(height=0),
         ],
         expand=True,
     )

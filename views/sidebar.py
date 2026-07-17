@@ -10,7 +10,7 @@
 """
 
 import os
-from typing import Callable
+from collections.abc import Callable
 
 import flet as ft
 
@@ -18,12 +18,13 @@ from models import BlockType, Document, SegType
 from styles import FONT_MAIN, FONT_MONO, _current_colors, only_border
 
 _MD_EXTS = (".md", ".markdown")
-_MAX_DEPTH = 3       # 文件树扫描最大深度
-_MAX_RESULTS = 200   # 搜索结果上限，防止超长文档卡顿
+_MAX_DEPTH = 3  # 文件树扫描最大深度
+_MAX_RESULTS = 200  # 搜索结果上限，防止超长文档卡顿
 _PREVIEW_RADIUS = 30  # 搜索预览匹配位前后字符数
 
 
 # ---- 数据派生 ----
+
 
 def _compute_toc(document: Document) -> list[tuple[int, int, str]]:
     """复用 editor.toc_entries 的派生逻辑：返回 [(line_idx, level, text), ...]。"""
@@ -32,8 +33,7 @@ def _compute_toc(document: Document) -> list[tuple[int, int, str]]:
         if line.block_type != BlockType.HEADING:
             continue
         text = "".join(
-            s.text for s in line.segments
-            if s.seg_type != SegType.HEADING_PREFIX
+            s.text for s in line.segments if s.seg_type != SegType.HEADING_PREFIX
         ).strip()
         if text:
             result.append((i, line.level, text))
@@ -64,7 +64,9 @@ def _scan_markdown_files(root: str, max_depth: int = _MAX_DEPTH) -> list:
         result: list = []
         for entry in entries:
             if entry.name.startswith(".") or entry.name in (
-                "__pycache__", "node_modules", ".git",
+                "__pycache__",
+                "node_modules",
+                ".git",
             ):
                 continue
             if entry.is_dir():
@@ -137,6 +139,7 @@ def _match_lines(
 
 # ---- 通用控件工厂 ----
 
+
 def _search_box(
     value: str,
     on_change: Callable[[str], None],
@@ -162,7 +165,10 @@ def _empty_hint(text: str, c) -> ft.Control:
         expand=True,
         alignment=ft.Alignment.CENTER,
         content=ft.Text(
-            value=text, size=12, color=c.muted, font_family=FONT_MAIN,
+            value=text,
+            size=12,
+            color=c.muted,
+            font_family=FONT_MAIN,
             text_align=ft.TextAlign.CENTER,
         ),
     )
@@ -185,6 +191,7 @@ def _list_item(
 
 # ---- 面板渲染 ----
 
+
 def _render_files_panel(
     file_path: str | None,
     recent_files: list[str],
@@ -205,10 +212,15 @@ def _render_files_panel(
             _list_item(
                 ft.Row(
                     controls=[
-                        ft.Icon(ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=14, color=c.muted),
+                        ft.Icon(
+                            ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=14, color=c.muted
+                        ),
                         ft.Text(
-                            os.path.basename(p), size=12, color=c.text,
-                            font_family=FONT_MAIN, max_lines=1,
+                            os.path.basename(p),
+                            size=12,
+                            color=c.text,
+                            font_family=FONT_MAIN,
+                            max_lines=1,
                             overflow=ft.TextOverflow.ELLIPSIS,
                         ),
                     ],
@@ -224,13 +236,18 @@ def _render_files_panel(
                 ft.Container(
                     padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                     content=ft.Text(
-                        "最近文件", size=11, color=c.muted, font_family=FONT_MAIN,
+                        "最近文件",
+                        size=11,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
                     ),
                 ),
                 ft.Container(
                     expand=True,
                     content=ft.Column(
-                        controls=items, spacing=0, scroll=ft.ScrollMode.AUTO,
+                        controls=items,
+                        spacing=0,
+                        scroll=ft.ScrollMode.AUTO,
                     ),
                 ),
             ],
@@ -245,7 +262,8 @@ def _render_files_panel(
 
     if not flat:
         body: ft.Control = _empty_hint(
-            "无匹配文件" if file_filter.strip() else "该目录下无 Markdown 文件", c,
+            "无匹配文件" if file_filter.strip() else "该目录下无 Markdown 文件",
+            c,
         )
     else:
         rows = []
@@ -256,10 +274,18 @@ def _render_files_panel(
                     _list_item(
                         ft.Row(
                             controls=[
-                                ft.Icon(ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=13, color=c.muted),
+                                ft.Icon(
+                                    ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+                                    size=13,
+                                    color=c.muted,
+                                ),
                                 ft.Text(
-                                    name, size=12, color=c.text, font_family=FONT_MAIN,
-                                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                                    name,
+                                    size=12,
+                                    color=c.text,
+                                    font_family=FONT_MAIN,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
                                     expand=True,
                                 ),
                             ],
@@ -275,11 +301,18 @@ def _render_files_panel(
                     _list_item(
                         ft.Row(
                             controls=[
-                                ft.Icon(ft.Icons.FOLDER_OUTLINED, size=13, color=c.muted),
+                                ft.Icon(
+                                    ft.Icons.FOLDER_OUTLINED, size=13, color=c.muted
+                                ),
                                 ft.Text(
-                                    name, size=12, color=c.text, font_family=FONT_MAIN,
-                                    weight=ft.FontWeight.W_600, max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                                    name,
+                                    size=12,
+                                    color=c.text,
+                                    font_family=FONT_MAIN,
+                                    weight=ft.FontWeight.W_600,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    expand=True,
                                 ),
                             ],
                             spacing=6,
@@ -317,8 +350,12 @@ def _render_outline_panel(
     items = [
         _list_item(
             ft.Text(
-                value=text, size=12, color=c.text, font_family=FONT_MAIN,
-                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                value=text,
+                size=12,
+                color=c.text,
+                font_family=FONT_MAIN,
+                max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS,
             ),
             c,
             on_click=lambda e, li=li: on_jump_to_line(li),
@@ -345,7 +382,9 @@ def _render_search_panel(
             controls=[
                 ft.Container(
                     padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                    content=_search_box(search_query, set_search_query, "在当前文档中查找…", c),
+                    content=_search_box(
+                        search_query, set_search_query, "在当前文档中查找…", c
+                    ),
                 ),
                 _empty_hint("输入关键词以搜索文档", c),
             ],
@@ -358,7 +397,9 @@ def _render_search_panel(
             controls=[
                 ft.Container(
                     padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                    content=_search_box(search_query, set_search_query, "在当前文档中查找…", c),
+                    content=_search_box(
+                        search_query, set_search_query, "在当前文档中查找…", c
+                    ),
                 ),
                 _empty_hint("无匹配结果", c),
             ],
@@ -371,11 +412,18 @@ def _render_search_panel(
             ft.Column(
                 controls=[
                     ft.Text(
-                        value=f"行 {li + 1}", size=10, color=c.muted, font_family=FONT_MAIN,
+                        value=f"行 {li + 1}",
+                        size=10,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
                     ),
                     ft.Text(
-                        value=preview, size=11, color=c.text, font_family=FONT_MONO,
-                        max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+                        value=preview,
+                        size=11,
+                        color=c.text,
+                        font_family=FONT_MONO,
+                        max_lines=2,
+                        overflow=ft.TextOverflow.ELLIPSIS,
                     ),
                 ],
                 spacing=0,
@@ -389,12 +437,16 @@ def _render_search_panel(
         controls=[
             ft.Container(
                 padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                content=_search_box(search_query, set_search_query, "在当前文档中查找…", c),
+                content=_search_box(
+                    search_query, set_search_query, "在当前文档中查找…", c
+                ),
             ),
             ft.Container(
                 padding=ft.Padding.symmetric(horizontal=12, vertical=4),
                 content=ft.Text(
-                    value=f"{len(search_results)} 个结果", size=11, color=c.muted,
+                    value=f"{len(search_results)} 个结果",
+                    size=11,
+                    color=c.muted,
                     font_family=FONT_MAIN,
                 ),
             ),
@@ -418,10 +470,18 @@ def Sidebar(
     on_change_panel: Callable[[str], None],
     on_open_file: Callable[[str], None],
     on_jump_to_line: Callable[[int], None],
+    on_width_change: Callable[[int], None] | None = None,
 ):
-    """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换。"""
+    """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。"""
     c = _current_colors()
-    width = settings.get("sidebar_width", 256)
+
+    # 宽度：内部 state（拖拽时实时更新），ref 同步避免 stale 闭包
+    _INIT_W = settings.get("sidebar_width", 256)
+    width, set_width = ft.use_state(_INIT_W)
+    width_ref = ft.use_ref(_INIT_W)
+    width_ref.current = width
+
+    _MIN_W, _MAX_W = 180, 600
 
     # 内部状态：文件过滤与文档搜索词
     file_filter, set_file_filter = ft.use_state("")
@@ -431,6 +491,28 @@ def Sidebar(
     recent_files = settings.get("recent_files", [])
     toc_entries = _compute_toc(document)
     search_results = _match_lines(document, search_query)
+
+    # ---- 拖拽调宽 ----
+    def _on_pan_update(e: ft.DragUpdateEvent):
+        new_w = int(max(_MIN_W, min(_MAX_W, width_ref.current + e.local_delta.x)))
+        if new_w != width_ref.current:
+            width_ref.current = new_w
+            set_width(new_w)
+
+    def _on_pan_end(e):
+        if on_width_change is not None:
+            on_width_change(width_ref.current)
+
+    drag_handle = ft.GestureDetector(
+        mouse_cursor=ft.MouseCursor.RESIZE_COLUMN,
+        on_pan_update=_on_pan_update,
+        on_pan_end=_on_pan_end,
+        content=ft.Container(
+            width=2,
+            bgcolor=c.border,
+            expand=True,
+        ),
+    )
 
     # ---- 顶部 Tab 切换 ----
     def _panel_tab(key: str, icon: str, label: str) -> ft.Control:
@@ -468,22 +550,36 @@ def Sidebar(
     # ---- 面板选择 ----
     if active_panel == "files":
         panel: ft.Control = _render_files_panel(
-            file_path, recent_files, file_filter, set_file_filter, on_open_file, c,
+            file_path,
+            recent_files,
+            file_filter,
+            set_file_filter,
+            on_open_file,
+            c,
         )
     elif active_panel == "outline":
         panel = _render_outline_panel(toc_entries, on_jump_to_line, c)
     else:  # search
         panel = _render_search_panel(
-            search_query, set_search_query, search_results, on_jump_to_line, c,
+            search_query,
+            set_search_query,
+            search_results,
+            on_jump_to_line,
+            c,
         )
 
-    return ft.Container(
-        width=width,
-        bgcolor=c.surface,
-        border=only_border(right=ft.BorderSide(1, c.border)),
-        content=ft.Column(
-            controls=[tabs, panel],
-            spacing=0,
-            expand=True,
-        ),
+    return ft.Row(
+        controls=[
+            ft.Container(
+                width=width,
+                bgcolor=c.surface,
+                content=ft.Column(
+                    controls=[tabs, panel],
+                    spacing=0,
+                    expand=True,
+                ),
+            ),
+            drag_handle,
+        ],
+        spacing=0,
     )

@@ -305,6 +305,9 @@ def App():
     def change_sidebar_panel(panel: str):
         update_setting("sidebar_panel", panel)
 
+    def change_sidebar_width(width: int):
+        update_setting("sidebar_width", width)
+
     def jump_to_line(li: int):
         nav = nav_ref.current
         if nav and nav.get("jump_to_line"):
@@ -1089,6 +1092,7 @@ def App():
                 on_change_panel=change_sidebar_panel,
                 on_open_file=_open_file_by_path,
                 on_jump_to_line=jump_to_line,
+                on_width_change=change_sidebar_width,
             )
             if sidebar_open
             else ft.Container(width=0),

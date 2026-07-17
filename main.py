@@ -59,9 +59,9 @@ $$
 
 - 无序**列表1**
 - 无序*列表2*
-    - 无序列表3
-    - 无序列表4
-        - 无序列表**5**
+  - 无序列表3
+  - 无序列表4
+    - 无序列表**5**
 
 
 1. 第一步
@@ -206,8 +206,9 @@ def App():
     # 导航接口：editor 把光标状态与导航函数写入此 ref，App 的 on_key 据此分发
     nav_ref = ft.use_ref(None)
 
-    # FilePicker：挂到 page.overlay 才能弹出系统对话框
+    # FilePicker / Clipboard：service 实例，通过 ref 在事件回调中访问
     picker_holder = ft.use_ref()
+    clipboard_holder = ft.use_ref()
     # page 引用：事件回调中 ft.context.page 可能不可用，提前缓存
     page_ref = ft.use_ref()
 
@@ -223,8 +224,9 @@ def App():
     def _mount_picker():
         page = ft.context.page
         page_ref.current = page
-        # FilePicker 是 service，不需要添加到 page.overlay
+        # FilePicker / Clipboard 是 service，不需要添加到 page.overlay
         picker_holder.current = ft.FilePicker()
+        clipboard_holder.current = ft.Clipboard()
 
     ft.use_effect(_mount_picker, [])
 
@@ -360,11 +362,11 @@ def App():
     async def _do_copy():
         """Ctrl+C 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown。"""
         await asyncio.sleep(0.2)
-        page = page_ref.current
-        if page is None:
+        clipboard = clipboard_holder.current
+        if clipboard is None:
             return
         try:
-            plain = await page.clipboard.get()
+            plain = await clipboard.get()
         except Exception:
             return
         if not plain:
@@ -375,18 +377,18 @@ def App():
         try:
             md = nav["compute_markdown_from_text"](plain)
             if md and md != plain:
-                await page.clipboard.set(md)
+                await clipboard.set(md)
         except Exception:
             return
 
     async def _do_cut():
         """Ctrl+X 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown→删除选中内容。"""
         await asyncio.sleep(0.2)
-        page = page_ref.current
-        if page is None:
+        clipboard = clipboard_holder.current
+        if clipboard is None:
             return
         try:
-            plain = await page.clipboard.get()
+            plain = await clipboard.get()
         except Exception:
             return
         if not plain:
@@ -402,11 +404,11 @@ def App():
     async def _do_paste_check():
         """Ctrl+V 后异步检查剪贴板是否含多行内容，若是则拆分为多行插入。"""
         await asyncio.sleep(0.05)
-        page = page_ref.current
-        if page is None:
+        clipboard = clipboard_holder.current
+        if clipboard is None:
             return
         try:
-            text = await page.clipboard.get()
+            text = await clipboard.get()
         except Exception:
             return
         if not text or "\n" not in text:
@@ -445,7 +447,11 @@ def App():
                 nav["delete_core"]()
                 return
             if norm == "tab":
-                if nav.get("active_line") is not None and getattr(nav["active_line"], "block_type", None) == BlockType.CODE:
+                if (
+                    nav.get("active_line") is not None
+                    and getattr(nav["active_line"], "block_type", None)
+                    == BlockType.CODE
+                ):
                     return
                 if e.shift:
                     if nav.get("indent_or_outdent"):
@@ -552,23 +558,46 @@ def App():
                 controls=[
                     ft.Container(
                         width=250,
-                        bgcolor=ft.Colors.with_opacity(0.18, get_colors(theme_mode).border),
+                        bgcolor=ft.Colors.with_opacity(
+                            0.18, get_colors(theme_mode).border
+                        ),
                         padding=20,
                         content=ft.Column(
                             expand=True,
                             controls=[
                                 ft.Text("设置", size=22, weight=ft.FontWeight.W_700),
-                                ft.Text("Typora 风格的可配置中心", size=12, color=get_colors(theme_mode).muted),
+                                ft.Text(
+                                    "Typora 风格的可配置中心",
+                                    size=12,
+                                    color=get_colors(theme_mode).muted,
+                                ),
                                 ft.Container(height=18),
                                 *[
                                     ft.Container(
                                         border_radius=10,
-                                        bgcolor=ft.Colors.with_opacity(0.12, get_colors(theme_mode).link) if settings_tab == tab else None,
-                                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                                        bgcolor=ft.Colors.with_opacity(
+                                            0.12, get_colors(theme_mode).link
+                                        )
+                                        if settings_tab == tab
+                                        else None,
+                                        padding=ft.Padding.symmetric(
+                                            horizontal=12, vertical=10
+                                        ),
                                         content=ft.Row(
                                             controls=[
-                                                ft.Icon(icon=icon, size=16, color=get_colors(theme_mode).link if settings_tab == tab else get_colors(theme_mode).muted),
-                                                ft.TextButton(label, on_click=lambda e, t=tab: select_settings_tab(t)),
+                                                ft.Icon(
+                                                    icon=icon,
+                                                    size=16,
+                                                    color=get_colors(theme_mode).link
+                                                    if settings_tab == tab
+                                                    else get_colors(theme_mode).muted,
+                                                ),
+                                                ft.TextButton(
+                                                    label,
+                                                    on_click=lambda e, t=tab: (
+                                                        select_settings_tab(t)
+                                                    ),
+                                                ),
                                             ],
                                             spacing=8,
                                         ),
@@ -582,7 +611,9 @@ def App():
                                     ]
                                 ],
                                 ft.Container(expand=True),
-                                ft.TextButton("恢复默认", on_click=lambda e: reset_settings()),
+                                ft.TextButton(
+                                    "恢复默认", on_click=lambda e: reset_settings()
+                                ),
                             ],
                             spacing=8,
                         ),
@@ -597,13 +628,24 @@ def App():
                                     controls=[
                                         ft.Column(
                                             controls=[
-                                                ft.Text(current_title, size=20, weight=ft.FontWeight.W_700),
-                                                ft.Text(current_desc, size=12, color=get_colors(theme_mode).muted),
+                                                ft.Text(
+                                                    current_title,
+                                                    size=20,
+                                                    weight=ft.FontWeight.W_700,
+                                                ),
+                                                ft.Text(
+                                                    current_desc,
+                                                    size=12,
+                                                    color=get_colors(theme_mode).muted,
+                                                ),
                                             ],
                                             spacing=2,
                                         ),
                                         ft.Container(expand=True),
-                                        ft.IconButton(icon=ft.Icons.CLOSE, on_click=lambda e: close_settings()),
+                                        ft.IconButton(
+                                            icon=ft.Icons.CLOSE,
+                                            on_click=lambda e: close_settings(),
+                                        ),
                                     ]
                                 ),
                                 ft.Container(height=8),
@@ -611,11 +653,95 @@ def App():
                                     visible=settings_tab == "edit",
                                     content=ft.Column(
                                         controls=[
-                                            ft.Text("布局", size=14, weight=ft.FontWeight.W_600),
-                                            ft.Row([ft.Text("内容宽度", width=96), ft.Slider(min=680, max=1200, divisions=13, value=settings["content_max_width"], expand=True, on_change=lambda e: update_setting("content_max_width", int(e.control.value))), ft.Text(str(settings["content_max_width"]))]),
-                                            ft.Row([ft.Text("左右边距", width=96), ft.Slider(min=12, max=64, divisions=13, value=settings["content_padding"], expand=True, on_change=lambda e: update_setting("content_padding", int(e.control.value))), ft.Text(str(settings["content_padding"]))]),
-                                            ft.Row([ft.Text("顶部边距", width=96), ft.Slider(min=8, max=48, divisions=10, value=settings["content_padding_top"], expand=True, on_change=lambda e: update_setting("content_padding_top", int(e.control.value))), ft.Text(str(settings["content_padding_top"]))]),
-                                            ft.Switch(label="显示底部状态栏", value=settings["show_footer"], on_change=lambda e: update_setting("show_footer", e.control.value)),
+                                            ft.Text(
+                                                "布局",
+                                                size=14,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("内容宽度", width=96),
+                                                    ft.Slider(
+                                                        min=680,
+                                                        max=1200,
+                                                        divisions=13,
+                                                        value=settings[
+                                                            "content_max_width"
+                                                        ],
+                                                        expand=True,
+                                                        on_change=lambda e: (
+                                                            update_setting(
+                                                                "content_max_width",
+                                                                int(e.control.value),
+                                                            )
+                                                        ),
+                                                    ),
+                                                    ft.Text(
+                                                        str(
+                                                            settings[
+                                                                "content_max_width"
+                                                            ]
+                                                        )
+                                                    ),
+                                                ]
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("左右边距", width=96),
+                                                    ft.Slider(
+                                                        min=12,
+                                                        max=64,
+                                                        divisions=13,
+                                                        value=settings[
+                                                            "content_padding"
+                                                        ],
+                                                        expand=True,
+                                                        on_change=lambda e: (
+                                                            update_setting(
+                                                                "content_padding",
+                                                                int(e.control.value),
+                                                            )
+                                                        ),
+                                                    ),
+                                                    ft.Text(
+                                                        str(settings["content_padding"])
+                                                    ),
+                                                ]
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("顶部边距", width=96),
+                                                    ft.Slider(
+                                                        min=8,
+                                                        max=48,
+                                                        divisions=10,
+                                                        value=settings[
+                                                            "content_padding_top"
+                                                        ],
+                                                        expand=True,
+                                                        on_change=lambda e: (
+                                                            update_setting(
+                                                                "content_padding_top",
+                                                                int(e.control.value),
+                                                            )
+                                                        ),
+                                                    ),
+                                                    ft.Text(
+                                                        str(
+                                                            settings[
+                                                                "content_padding_top"
+                                                            ]
+                                                        )
+                                                    ),
+                                                ]
+                                            ),
+                                            ft.Switch(
+                                                label="显示底部状态栏",
+                                                value=settings["show_footer"],
+                                                on_change=lambda e: update_setting(
+                                                    "show_footer", e.control.value
+                                                ),
+                                            ),
                                         ],
                                         spacing=12,
                                     ),
@@ -624,12 +750,141 @@ def App():
                                     visible=settings_tab == "appearance",
                                     content=ft.Column(
                                         controls=[
-                                            ft.Text("字体与排版", size=14, weight=ft.FontWeight.W_600),
-                                            ft.Row([ft.Text("正文大小", width=96), ft.Slider(min=14, max=20, divisions=6, value=settings["body_font_size"], expand=True, on_change=lambda e: update_setting("body_font_size", int(e.control.value))), ft.Text(str(settings["body_font_size"]))]),
-                                            ft.Row([ft.Text("行高", width=96), ft.Slider(min=1.2, max=2.0, divisions=8, value=settings["line_height"], expand=True, on_change=lambda e: update_setting("line_height", round(float(e.control.value), 1))), ft.Text(str(settings["line_height"]))]),
-                                            ft.Row([ft.Text("字体", width=96), ft.Dropdown(options=[ft.dropdown.Option("Alibaba"), ft.dropdown.Option("Sans"), ft.dropdown.Option("Serif"), ft.dropdown.Option("Monospace")], value=settings["font_family"], expand=True, on_select=lambda e: update_setting("font_family", e.control.value))]),
-                                            ft.Row([ft.Text("代码主题(暗)", width=96), ft.Dropdown(options=[ft.dropdown.Option("ATOM_ONE_DARK"), ft.dropdown.Option("GITHUB"), ft.dropdown.Option("VS2015")], value=settings["code_theme_dark"], expand=True, on_select=lambda e: update_setting("code_theme_dark", e.control.value))]),
-                                            ft.Row([ft.Text("代码主题(亮)", width=96), ft.Dropdown(options=[ft.dropdown.Option("GITHUB"), ft.dropdown.Option("ATOM_ONE_LIGHT"), ft.dropdown.Option("VS2015")], value=settings["code_theme_light"], expand=True, on_select=lambda e: update_setting("code_theme_light", e.control.value))]),
+                                            ft.Text(
+                                                "字体与排版",
+                                                size=14,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("正文大小", width=96),
+                                                    ft.Slider(
+                                                        min=14,
+                                                        max=20,
+                                                        divisions=6,
+                                                        value=settings[
+                                                            "body_font_size"
+                                                        ],
+                                                        expand=True,
+                                                        on_change=lambda e: (
+                                                            update_setting(
+                                                                "body_font_size",
+                                                                int(e.control.value),
+                                                            )
+                                                        ),
+                                                    ),
+                                                    ft.Text(
+                                                        str(settings["body_font_size"])
+                                                    ),
+                                                ]
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("行高", width=96),
+                                                    ft.Slider(
+                                                        min=1.2,
+                                                        max=2.0,
+                                                        divisions=8,
+                                                        value=settings["line_height"],
+                                                        expand=True,
+                                                        on_change=lambda e: (
+                                                            update_setting(
+                                                                "line_height",
+                                                                round(
+                                                                    float(
+                                                                        e.control.value
+                                                                    ),
+                                                                    1,
+                                                                ),
+                                                            )
+                                                        ),
+                                                    ),
+                                                    ft.Text(
+                                                        str(settings["line_height"])
+                                                    ),
+                                                ]
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("字体", width=96),
+                                                    ft.Dropdown(
+                                                        options=[
+                                                            ft.dropdown.Option(
+                                                                "Alibaba"
+                                                            ),
+                                                            ft.dropdown.Option("Sans"),
+                                                            ft.dropdown.Option("Serif"),
+                                                            ft.dropdown.Option(
+                                                                "Monospace"
+                                                            ),
+                                                        ],
+                                                        value=settings["font_family"],
+                                                        expand=True,
+                                                        on_select=lambda e: (
+                                                            update_setting(
+                                                                "font_family",
+                                                                e.control.value,
+                                                            )
+                                                        ),
+                                                    ),
+                                                ]
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("代码主题(暗)", width=96),
+                                                    ft.Dropdown(
+                                                        options=[
+                                                            ft.dropdown.Option(
+                                                                "ATOM_ONE_DARK"
+                                                            ),
+                                                            ft.dropdown.Option(
+                                                                "GITHUB"
+                                                            ),
+                                                            ft.dropdown.Option(
+                                                                "VS2015"
+                                                            ),
+                                                        ],
+                                                        value=settings[
+                                                            "code_theme_dark"
+                                                        ],
+                                                        expand=True,
+                                                        on_select=lambda e: (
+                                                            update_setting(
+                                                                "code_theme_dark",
+                                                                e.control.value,
+                                                            )
+                                                        ),
+                                                    ),
+                                                ]
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("代码主题(亮)", width=96),
+                                                    ft.Dropdown(
+                                                        options=[
+                                                            ft.dropdown.Option(
+                                                                "GITHUB"
+                                                            ),
+                                                            ft.dropdown.Option(
+                                                                "ATOM_ONE_LIGHT"
+                                                            ),
+                                                            ft.dropdown.Option(
+                                                                "VS2015"
+                                                            ),
+                                                        ],
+                                                        value=settings[
+                                                            "code_theme_light"
+                                                        ],
+                                                        expand=True,
+                                                        on_select=lambda e: (
+                                                            update_setting(
+                                                                "code_theme_light",
+                                                                e.control.value,
+                                                            )
+                                                        ),
+                                                    ),
+                                                ]
+                                            ),
                                         ],
                                         spacing=12,
                                     ),
@@ -638,13 +893,76 @@ def App():
                                     visible=settings_tab == "behavior",
                                     content=ft.Column(
                                         controls=[
-                                            ft.Text("行为", size=14, weight=ft.FontWeight.W_600),
-                                            ft.Switch(label="自动保存", value=settings["auto_save"], on_change=lambda e: update_setting("auto_save", e.control.value)),
-                                            ft.Switch(label="记住聚焦模式", value=settings["remember_focus_mode"], on_change=lambda e: update_setting("remember_focus_mode", e.control.value)),
-                                            ft.Switch(label="显示工具栏", value=settings["show_toolbar"], on_change=lambda e: update_setting("show_toolbar", e.control.value)),
-                                            ft.Switch(label="显示行号", value=settings["show_line_numbers"], on_change=lambda e: update_setting("show_line_numbers", e.control.value)),
-                                            ft.Row([ft.Text("自动保存间隔(秒)", width=140), ft.Slider(min=3, max=60, divisions=19, value=10, expand=True, on_change=lambda e: None), ft.Text("10")]),
-                                            ft.Row([ft.Text("导出默认格式", width=140), ft.Dropdown(options=[ft.dropdown.Option("html"), ft.dropdown.Option("pdf"), ft.dropdown.Option("md")], value=settings["export_format"], expand=True, on_select=lambda e: update_setting("export_format", e.control.value))]),
+                                            ft.Text(
+                                                "行为",
+                                                size=14,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
+                                            ft.Switch(
+                                                label="自动保存",
+                                                value=settings["auto_save"],
+                                                on_change=lambda e: update_setting(
+                                                    "auto_save", e.control.value
+                                                ),
+                                            ),
+                                            ft.Switch(
+                                                label="记住聚焦模式",
+                                                value=settings["remember_focus_mode"],
+                                                on_change=lambda e: update_setting(
+                                                    "remember_focus_mode",
+                                                    e.control.value,
+                                                ),
+                                            ),
+                                            ft.Switch(
+                                                label="显示工具栏",
+                                                value=settings["show_toolbar"],
+                                                on_change=lambda e: update_setting(
+                                                    "show_toolbar", e.control.value
+                                                ),
+                                            ),
+                                            ft.Switch(
+                                                label="显示行号",
+                                                value=settings["show_line_numbers"],
+                                                on_change=lambda e: update_setting(
+                                                    "show_line_numbers", e.control.value
+                                                ),
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text(
+                                                        "自动保存间隔(秒)", width=140
+                                                    ),
+                                                    ft.Slider(
+                                                        min=3,
+                                                        max=60,
+                                                        divisions=19,
+                                                        value=10,
+                                                        expand=True,
+                                                        on_change=lambda e: None,
+                                                    ),
+                                                    ft.Text("10"),
+                                                ]
+                                            ),
+                                            ft.Row(
+                                                [
+                                                    ft.Text("导出默认格式", width=140),
+                                                    ft.Dropdown(
+                                                        options=[
+                                                            ft.dropdown.Option("html"),
+                                                            ft.dropdown.Option("pdf"),
+                                                            ft.dropdown.Option("md"),
+                                                        ],
+                                                        value=settings["export_format"],
+                                                        expand=True,
+                                                        on_select=lambda e: (
+                                                            update_setting(
+                                                                "export_format",
+                                                                e.control.value,
+                                                            )
+                                                        ),
+                                                    ),
+                                                ]
+                                            ),
                                         ],
                                         spacing=12,
                                     ),
@@ -653,13 +971,19 @@ def App():
                                     visible=settings_tab == "shortcuts",
                                     content=ft.Column(
                                         controls=[
-                                            ft.Text("常用快捷键", size=14, weight=ft.FontWeight.W_600),
+                                            ft.Text(
+                                                "常用快捷键",
+                                                size=14,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
                                             ft.Text("Ctrl+S 保存", size=12),
                                             ft.Text("Ctrl+O 打开", size=12),
                                             ft.Text("Ctrl+N 新建", size=12),
                                             ft.Text("Ctrl+/ 原文模式", size=12),
                                             ft.Text("Ctrl+K 插入链接", size=12),
-                                            ft.Text("Tab / Shift+Tab 列表缩进", size=12),
+                                            ft.Text(
+                                                "Tab / Shift+Tab 列表缩进", size=12
+                                            ),
                                             ft.Text("Home / End 段首段尾", size=12),
                                             ft.Text("Ctrl+1/2/3 标题", size=12),
                                         ],
@@ -670,8 +994,16 @@ def App():
                                     visible=settings_tab == "advanced",
                                     content=ft.Column(
                                         controls=[
-                                            ft.Text("高级", size=14, weight=ft.FontWeight.W_600),
-                                            ft.Text("代码主题、导出格式、最近文件、自动备份、外部存储等可继续在此扩展。", size=12, color=get_colors(theme_mode).muted),
+                                            ft.Text(
+                                                "高级",
+                                                size=14,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
+                                            ft.Text(
+                                                "代码主题、导出格式、最近文件、自动备份、外部存储等可继续在此扩展。",
+                                                size=12,
+                                                color=get_colors(theme_mode).muted,
+                                            ),
                                         ],
                                         spacing=8,
                                     ),
@@ -697,6 +1029,7 @@ def App():
                 on_export=lambda: page_ref.current.run_task(export_doc),
                 on_dirty_change=on_dirty_change,
                 nav_ref=nav_ref,
+                clipboard_ref=clipboard_holder,
                 theme_mode=theme_mode,
                 on_toggle_theme=toggle_theme,
                 settings=settings,

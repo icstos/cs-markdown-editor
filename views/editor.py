@@ -123,6 +123,7 @@ def MarkdownEditor(
     on_export: Callable[[], None] | None = None,
     on_dirty_change: Callable[[bool], None] | None = None,
     nav_ref: ft.Ref | None = None,
+    clipboard_ref: ft.Ref | None = None,
     theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
     on_toggle_theme: Callable[[], None] | None = None,
     settings: dict | None = None,
@@ -1090,9 +1091,9 @@ def MarkdownEditor(
         try:
             md = parser.compute_markdown_from_selections(document.lines, selections)
             if md:
-                page = ft.context.page
-                if page is not None:
-                    await page.clipboard.set(md)
+                clipboard = clipboard_ref.current if clipboard_ref is not None else None
+                if clipboard is not None:
+                    await clipboard.set(md)
             new_lines, cursor_li, cursor_si, cursor_offset = parser.delete_selections(document.lines, selections)
         except Exception:
             return

@@ -19,6 +19,7 @@ import flet as ft
 
 from models import BlockType, Document, Line, SegType
 import parser
+from services.history import EditHistory, EditorSnapshot
 from styles import (
     FONT_MAIN,
     FONT_MONO,
@@ -167,6 +168,10 @@ def MarkdownEditor(
     raw_draft, set_raw_draft = ft.use_state("")
     # ListView ref 用于 TOC 点击跳转滚动
     list_view_ref = ft.use_ref(None)
+    # 撤销 / 重做栈
+    history_ref = ft.use_ref(EditHistory(max_size=50))
+    restoring = ft.use_ref(False)
+    undo_push_pending = ft.use_ref(True)
 
     # 渲染后显式聚焦激活段 TextField：SelectionArea 内点击 span 触发的
     # autofocus 因手势竞争不可靠，用 use_effect 在渲染提交后调用 focus() 确保聚焦。
@@ -198,6 +203,76 @@ def MarkdownEditor(
         document.dirty = True
         if on_dirty_change:
             on_dirty_change(True)
+
+    def _make_snapshot() -> EditorSnapshot:
+        md = raw_draft if raw_mode else parser.serialize(document)
+        return EditorSnapshot(
+            markdown=md,
+            active=active,
+            draft=draft_ref.current,
+            cursor_base=cursor_ref.current["base"],
+            cursor_extent=cursor_ref.current["extent"],
+            raw_mode=raw_mode,
+            raw_draft=raw_draft,
+        )
+
+    def _push_history():
+        if restoring.current:
+            return
+        history_ref.current.push(_make_snapshot())
+
+    def _restore_snapshot(snap: EditorSnapshot):
+        restoring.current = True
+        suppress_blur.current = True
+        try:
+            set_raw_mode(snap.raw_mode)
+            if snap.raw_mode:
+                set_raw_draft(snap.raw_draft)
+                document.lines = parser.parse_markdown(snap.raw_draft).lines
+                set_active(None)
+                _set_draft("")
+            else:
+                document.lines = parser.parse_markdown(snap.markdown).lines
+                if snap.active is not None:
+                    li, si = snap.active
+                    if 0 <= li < len(document.lines):
+                        line = document.lines[li]
+                        if _heading_edit(line):
+                            target_si = 0
+                        else:
+                            target_si = min(si, max(0, len(line.segments) - 1))
+                        _set_draft(snap.draft)
+                        set_active((li, target_si))
+                        set_cursor_line(li)
+                        cursor_at = snap.cursor_base
+                        set_cursor_pos(cursor_at if cursor_at >= 0 else -1)
+                        _sync_cursor(snap.draft, cursor_at)
+                        set_nav_seq(nav_seq + 1)
+                    else:
+                        set_active(None)
+                        _set_draft("")
+                else:
+                    set_active(None)
+                    _set_draft("")
+            mark_dirty()
+        finally:
+            restoring.current = False
+            undo_push_pending.current = True
+
+    def undo():
+        prev = history_ref.current.pop_undo(_make_snapshot())
+        if prev is not None:
+            _restore_snapshot(prev)
+
+    def redo():
+        nxt = history_ref.current.pop_redo(_make_snapshot())
+        if nxt is not None:
+            _restore_snapshot(nxt)
+
+    def _maybe_push_draft_history():
+        if undo_push_pending.current:
+            _push_history()
+            undo_push_pending.current = False
 
     def _draft_for(li: int, si: int) -> str:
         if 0 <= li < len(document.lines):
@@ -447,6 +522,8 @@ def MarkdownEditor(
     def indent_or_outdent(delta: int):
         if active is None:
             return
+        _push_history()
+        undo_push_pending.current = True
         li, _ = active
         if not (0 <= li < len(document.lines)):
             return
@@ -479,6 +556,8 @@ def MarkdownEditor(
         # 所有块类型（标题/列表/引用/段落）行为一致
         if li <= 0:
             return
+        _push_history()
+        undo_push_pending.current = False
         # 先提交当前段草稿（此时当前行仍有效），确保合并内容含最新输入
         commit_active(draft_ref.current)
         prev = document.lines[li - 1]
@@ -541,6 +620,8 @@ def MarkdownEditor(
         # 会让用户感觉被"跳过"，直接删除字符更符合预期。
         # 标题以整行 raw 为 draft（si 恒为 0），跳过段间跳转。
         if not _heading_edit(line) and si < len(line.segments) - 1:
+            _push_history()
+            undo_push_pending.current = False
             commit_active(draft_ref.current)
             next_seg = line.segments[si + 1]
             if next_seg.raw:
@@ -556,6 +637,8 @@ def MarkdownEditor(
         # 所有块类型（标题/列表/引用/段落）行为一致
         if li >= len(document.lines) - 1:
             return
+        _push_history()
+        undo_push_pending.current = False
         # 先提交当前段草稿（此时当前行仍有效），确保合并内容含最新输入
         commit_active(draft_ref.current)
         line = document.lines[li]
@@ -644,6 +727,7 @@ def MarkdownEditor(
                 nav_ref.current["draft_len"] = len(e.control.value)
 
     def on_change_draft(value: str):
+        _maybe_push_draft_history()
         _set_draft(value)
         # 同步更新 cursor_ref["draft_len"] 和 nav_ref["draft_len"] 作为安全网：
         # on_selection_change 不可靠，可能导致这些值 stale。
@@ -660,6 +744,8 @@ def MarkdownEditor(
         进入原文模式：序列化当前文档为 raw_draft；
         返回编辑模式：重新解析 raw_draft 为行列表，替换 document.lines。
         """
+        _push_history()
+        undo_push_pending.current = True
         if not raw_mode:
             set_raw_draft(parser.serialize(document))
             set_active(None)
@@ -680,6 +766,11 @@ def MarkdownEditor(
         except Exception:
             pass
 
+    def _on_raw_draft_change(value: str):
+        _maybe_push_draft_history()
+        set_raw_draft(value)
+        mark_dirty()
+
     def _raw_editor() -> ft.Control:
         """原文模式编辑器：多行 TextField 直接编辑 Markdown 源码。"""
         return ft.Container(
@@ -692,7 +783,7 @@ def MarkdownEditor(
                 text_size=14,
                 text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
                 content_padding=ft.Padding.symmetric(horizontal=24, vertical=16),
-                on_change=lambda e: set_raw_draft(e.control.value),
+                on_change=lambda e: _on_raw_draft_change(e.control.value),
             ),
             expand=True,
             bgcolor=c.bg,
@@ -715,6 +806,8 @@ def MarkdownEditor(
         """
         if active is None or not clip_text or "\n" not in clip_text:
             return
+        _push_history()
+        undo_push_pending.current = True
         li, si = active
         if not (0 <= li < len(document.lines)):
             return
@@ -802,6 +895,8 @@ def MarkdownEditor(
     def on_submit(new_raw: str):
         if active is None:
             return
+        _push_history()
+        undo_push_pending.current = True
         li, si = active
         if not (0 <= li < len(document.lines)):
             return
@@ -903,6 +998,8 @@ def MarkdownEditor(
     def new_line_after(li: int):
         if not (0 <= li < len(document.lines)):
             return
+        _push_history()
+        undo_push_pending.current = True
         new_raw = _next_line_raw(document.lines[li])
         new_line = parser.parse_markdown(new_raw).lines[0]
         document.lines = (
@@ -917,6 +1014,8 @@ def MarkdownEditor(
         li = active[0] if active is not None else cursor_line
         if not (0 <= li < len(document.lines)):
             return
+        _push_history()
+        undo_push_pending.current = True
         line = document.lines[li]
         if active is not None:
             _commit_for_block(line, active, draft)
@@ -984,6 +1083,8 @@ def MarkdownEditor(
         """通用行内格式切换（加粗/斜体/行内代码/删除线）。"""
         if active is None:
             return
+        _push_history()
+        undo_push_pending.current = True
         li, si = active
         if not (0 <= li < len(document.lines)):
             return
@@ -1015,6 +1116,8 @@ def MarkdownEditor(
     def toggle_link():
         if active is None:
             return
+        _push_history()
+        undo_push_pending.current = True
         li, si = active
         if not (0 <= li < len(document.lines)):
             return
@@ -1040,6 +1143,8 @@ def MarkdownEditor(
     def toggle_task(li: int):
         if not (0 <= li < len(document.lines)):
             return
+        _push_history()
+        undo_push_pending.current = True
         line = document.lines[li]
         if not line.task:
             return
@@ -1054,6 +1159,8 @@ def MarkdownEditor(
         """代码块编辑态：修改语言类型，同步更新围栏首行。"""
         if active is None:
             return
+        _push_history()
+        undo_push_pending.current = True
         li = active[0]
         if not (0 <= li < len(document.lines)):
             return
@@ -1088,6 +1195,8 @@ def MarkdownEditor(
             return
         if not selections:
             return
+        _push_history()
+        undo_push_pending.current = True
         try:
             md = parser.compute_markdown_from_selections(document.lines, selections)
             if md:
@@ -1139,6 +1248,8 @@ def MarkdownEditor(
             ),
             "handle_paste": handle_paste,
             "handle_cut": handle_cut,
+            "undo": undo,
+            "redo": redo,
         }
 
     # ---- 预计算 TOC 条目（所有标题）----
@@ -1243,7 +1354,7 @@ def MarkdownEditor(
                                                 bgcolor="#35C759" if not document.dirty else "#FF9F0A",
                                             ),
                                             ft.Text(
-                                                value="Ctrl+S 保存 · Ctrl+K 链接 · Ctrl+/ 原文",
+                                                value="Ctrl+S 保存 · Ctrl+Z 撤销 · Ctrl+/ 原文",
                                                 size=11,
                                                 color=c.muted,
                                                 font_family=FONT_MAIN,

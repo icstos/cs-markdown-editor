@@ -504,6 +504,17 @@ def App():
             if nav and nav.get("active") is not None:
                 paste_old_draft.current = nav.get("draft", "")
                 page.run_task(_do_paste_check)
+        elif k == "Z":
+            nav = nav_ref.current
+            if nav and nav.get("undo"):
+                if e.shift:
+                    nav["redo"]()
+                else:
+                    nav["undo"]()
+        elif k == "Y":
+            nav = nav_ref.current
+            if nav and nav.get("redo"):
+                nav["redo"]()
 
     # 每次渲染更新 on_key_ref，使 page.on_keyboard_event 总能调用最新闭包
     on_key_ref.current = on_key
@@ -979,6 +990,8 @@ def App():
                                             ft.Text("Ctrl+S 保存", size=12),
                                             ft.Text("Ctrl+O 打开", size=12),
                                             ft.Text("Ctrl+N 新建", size=12),
+                                            ft.Text("Ctrl+Z 撤销", size=12),
+                                            ft.Text("Ctrl+Y / Ctrl+Shift+Z 重做", size=12),
                                             ft.Text("Ctrl+/ 原文模式", size=12),
                                             ft.Text("Ctrl+K 插入链接", size=12),
                                             ft.Text(

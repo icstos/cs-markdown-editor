@@ -476,6 +476,19 @@ def App():
                     nav["move_right"]()
                     return
 
+        # 非编辑态 Backspace：删除 SelectionArea 选中内容
+        if (
+            norm == "backspace"
+            and nav
+            and nav.get("active") is None
+            and not nav.get("raw_mode")
+        ):
+            sel_ref = nav.get("selection_text_ref")
+            plain = (sel_ref.current if sel_ref is not None else "") or ""
+            if plain and nav.get("handle_delete_selection"):
+                nav["handle_delete_selection"](plain)
+                return
+
         if not (e.ctrl or e.meta):
             return
         k = key.upper()

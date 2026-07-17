@@ -168,6 +168,8 @@ def MarkdownEditor(
     raw_draft, set_raw_draft = ft.use_state("")
     # ListView ref 用于 TOC 点击跳转滚动
     list_view_ref = ft.use_ref(None)
+    # SelectionArea 当前选中的纯文本（on_change 上报），供 Backspace 删除选区
+    selection_text_ref = ft.use_ref("")
     # 撤销 / 重做栈
     history_ref = ft.use_ref(EditHistory(max_size=50))
     restoring = ft.use_ref(False)
@@ -748,6 +750,7 @@ def MarkdownEditor(
         undo_push_pending.current = True
         if not raw_mode:
             set_raw_draft(parser.serialize(document))
+            selection_text_ref.current = ""
             set_active(None)
             set_raw_mode(True)
         else:
@@ -1185,6 +1188,35 @@ def MarkdownEditor(
         """点击编辑行右侧空白时设置 suppress_blur，防止 TextField blur 退出编辑态。"""
         suppress_blur.current = True
 
+    def _commit_selection_delete(selections: dict[int, tuple[int, int]]) -> None:
+        """删除已匹配的选区并定位光标到删除起点。"""
+        _push_history()
+        undo_push_pending.current = True
+        try:
+            new_lines, cursor_li, cursor_si, cursor_offset = parser.delete_selections(
+                document.lines, selections
+            )
+        except Exception:
+            return
+        document.lines = new_lines
+        mark_dirty()
+        selection_text_ref.current = ""
+        set_active(None)
+        if 0 <= cursor_li < len(document.lines):
+            _goto(cursor_li, cursor_si, cursor_at=cursor_offset)
+
+    def handle_delete_selection(plain_text: str):
+        """处理 Backspace 删除选中内容（非编辑态 SelectionArea 选区）。"""
+        if not plain_text:
+            return
+        try:
+            selections = parser.match_text_to_selections(document.lines, plain_text)
+        except Exception:
+            return
+        if not selections:
+            return
+        _commit_selection_delete(selections)
+
     async def handle_cut(plain_text: str):
         """处理 Ctrl+X 剪切：复制选中内容为 Markdown 到剪贴板，并删除文档中选中内容。"""
         if not plain_text:
@@ -1195,23 +1227,18 @@ def MarkdownEditor(
             return
         if not selections:
             return
-        _push_history()
-        undo_push_pending.current = True
         try:
             md = parser.compute_markdown_from_selections(document.lines, selections)
             if md:
                 clipboard = clipboard_ref.current if clipboard_ref is not None else None
                 if clipboard is not None:
                     await clipboard.set(md)
-            new_lines, cursor_li, cursor_si, cursor_offset = parser.delete_selections(document.lines, selections)
         except Exception:
             return
-        document.lines = new_lines
-        mark_dirty()
-        set_active(None)
-        if 0 <= cursor_li < len(document.lines):
-            # 激活光标段，cursor_at 为段内偏移（精确到剪切位置）
-            _goto(cursor_li, cursor_si, cursor_at=cursor_offset)
+        _commit_selection_delete(selections)
+
+    def on_selection_area_change(e):
+        selection_text_ref.current = e.data if e.data else ""
 
     # ---- TOC 跳转 ----
     def jump_to(li: int):
@@ -1248,6 +1275,9 @@ def MarkdownEditor(
             ),
             "handle_paste": handle_paste,
             "handle_cut": handle_cut,
+            "handle_delete_selection": handle_delete_selection,
+            "selection_text_ref": selection_text_ref,
+            "raw_mode": raw_mode,
             "undo": undo,
             "redo": redo,
         }
@@ -1479,6 +1509,7 @@ def MarkdownEditor(
             if raw_mode
             else ft.SelectionArea(
                 expand=True,
+                on_change=on_selection_area_change,
                 content=ft.Container(
                     content=ft.Container(
                         content=ft.Column(

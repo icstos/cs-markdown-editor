@@ -181,6 +181,7 @@ def _active_field(
     field_ref: ft.Ref | None = None,
     max_width: float | None = None,
     line_height: float = 1.6,
+    on_cursor_sync: Callable[[int, int], None] | None = None,
 ) -> ft.TextField:
     """构造激活态 TextField（统一入口，消除重复调用）。"""
     return active_text_field(
@@ -197,6 +198,7 @@ def _active_field(
         field_ref=field_ref,
         max_width=max_width,
         line_height=line_height,
+        on_cursor_sync=on_cursor_sync,
     )
 
 
@@ -222,6 +224,7 @@ def LineView(
     field_ref: ft.Ref | None = None,
     content_width: float | None = None,
     line_height: float = 1.6,
+    on_cursor_sync: Callable[[int, int], None] | None = None,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
@@ -259,7 +262,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height,
+                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
             )
             # 编辑态：设置 width=float("inf") 占满整行，点击右侧空白时抑制 blur 并激活最后段
             def _blank_edit_on_click(e):
@@ -298,7 +301,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height,
+                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
             )
             content = ft.Container(padding=ft.Padding.symmetric(vertical=6), content=field)
         else:
@@ -317,6 +320,7 @@ def LineView(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
                 base_size=14, multiline=True, max_width=avail_width, line_height=line_height,
+                on_cursor_sync=on_cursor_sync,
             )
             # 语言类型输入框：on_focus 设 suppress_blur 防止代码框 blur 退出
             lang_field = ft.TextField(
@@ -386,6 +390,7 @@ def LineView(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
                 base_size=16, multiline=True, max_width=avail_width, line_height=line_height,
+                on_cursor_sync=on_cursor_sync,
             )
             content = ft.Container(
                 content=field, bgcolor=c.math_bg, border_radius=6, width=float("inf"),
@@ -413,7 +418,7 @@ def LineView(
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
                 on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height,
+                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
             )
             content = ft.Container(
                 content=field, width=float("inf"),
@@ -549,7 +554,7 @@ def LineView(
                 seg0, draft, on_change_draft, on_submit, on_blur, base,
                 on_selection_change=on_selection_change,
                 initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height,
+                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
             ),
             width=float("inf"),
             padding=ft.Padding.symmetric(horizontal=8, vertical=4),
@@ -577,7 +582,7 @@ def LineView(
             active_seg_obj, draft, on_change_draft, on_submit, on_blur, base,
             on_selection_change=on_selection_change,
             initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
-            max_width=avail_width, line_height=line_height,
+            max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
         )
     )
     if after_spans:

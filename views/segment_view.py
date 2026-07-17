@@ -132,6 +132,7 @@ def active_text_field(
     field_ref: ft.Ref | None = None,
     max_width: float | None = None,
     line_height: float = 1.6,
+    on_cursor_sync: Callable[[int, int], None] | None = None,
 ) -> ft.TextField:
     """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。
 
@@ -157,10 +158,14 @@ def active_text_field(
     text_size = base_size if not is_mono else max(base_size - 1, 12)
 
     # autofocus 在 SelectionArea 内点击 span 时不可靠（手势竞争导致不触发 focus）。
-    # 用 on_focus 在聚焦后强制设置光标位置，仅应用一次：
-    #   initial_cursor >= 0 → 指定位置（跨段导航）
-    #   initial_cursor < 0  → 段尾（直接点击 span 激活）
+    # 用 on_focus 在聚焦后强制设置光标位置（每次 TextField 重建后应用一次）。
     # 声明式模式下控件被冻结（_frozen），需临时解冻才能命令式设置 selection 并 update。
+    #
+    # stale 段尾事件拦截由 editor.py 的 applied_cursor 机制负责（on_selection_change
+    # 中判断 applied_cursor != extent 且 extent == len(value) 则丢弃）。
+    # 不在此处用 cursor_applied 局部变量拦截：它每次渲染都重置为 False，
+    # 会导致 on_change_draft → set_draft 触发重渲染后，正常的 on_selection_change
+    # 被错误拦截，cursor_ref.draft_len 不更新，持续 Delete 到段尾时误判光标不在段尾。
     cursor_applied = [False]
 
     def _on_focus(e):
@@ -177,6 +182,12 @@ def active_text_field(
             finally:
                 if frozen is not None:
                     ctrl._frozen = frozen
+            # 直接同步光标到外层 cursor_ref：Flutter 聚焦时先触发 on_focus，
+            # 再触发默认 on_selection_change(段尾)，后者会覆盖 _sync_cursor 的正确值。
+            # 通过此回调把正确位置同步给 editor，并在 editor 端用 applied_cursor
+            # 识别并丢弃紧随其后的 stale 段尾事件。
+            if on_cursor_sync is not None:
+                on_cursor_sync(pos, len(draft))
 
     kwargs: dict = {
         "key": f"field-{nav_seq}",
@@ -207,6 +218,9 @@ def active_text_field(
         "on_blur": lambda e: on_blur(),
     }
     if on_selection_change is not None:
+        # 直接透传 on_selection_change，stale 段尾事件由 editor.py 的
+        # applied_cursor 机制拦截（不在此处用 cursor_applied 拦截，
+        # 因为它每次渲染重置会导致正常事件被错误丢弃）。
         kwargs["on_selection_change"] = on_selection_change
 
     if field_ref is not None:

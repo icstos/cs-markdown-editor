@@ -441,6 +441,9 @@ def App():
             if norm == "backspace":
                 nav["backspace_core"]()
                 return
+            if norm == "delete":
+                nav["delete_core"]()
+                return
             if norm == "tab":
                 if nav.get("active_line") is not None and getattr(nav["active_line"], "block_type", None) == BlockType.CODE:
                     return

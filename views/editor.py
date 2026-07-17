@@ -143,6 +143,14 @@ def MarkdownEditor(
     # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
     # 仅在跨段导航/块切换时通过 _sync_cursor 重置；on_key 经 nav_ref 读取
     cursor_ref = ft.use_ref({"base": 0, "extent": 0, "draft_len": 0})
+    # applied_cursor：_on_focus 设置光标后记录的目标位置（-1=未设置）。
+    # 用于 on_selection_change 识别并丢弃 Flutter 聚焦时默认触发的 stale 段尾事件：
+    # Flutter 先触发 on_focus（设置正确光标），再触发 on_selection_change(段尾)，
+    # 若不拦截会覆盖 cursor_ref 的正确值，导致 Delete/Backspace 误判光标位置。
+    applied_cursor = ft.use_ref(-1)
+    # draft_ref：同步镜像 draft 状态。闭包的 draft 在 set_draft 后到下次渲染前是 stale 的，
+    # 持续 Delete 时 delete_core 需在渲染前就读到最新 draft 才能正确删除字符。
+    draft_ref = ft.use_ref("")
     # nav_seq：每次跨段/激活递增，触发 TextField key 重建以重新 autofocus
     nav_seq, set_nav_seq = ft.use_state(0)
     # 跨段导航时的光标落点：-1=段尾(autofocus), 0=段首
@@ -170,6 +178,20 @@ def MarkdownEditor(
                 pass
 
     ft.use_effect(_focus_active_field, [active, nav_seq])
+
+    # 每次渲染同步 draft_ref 到最新 draft 状态；_set_draft 在渲染前也会同步，
+    # 确保 delete_core 等闭包在持续按键时也能读到最新 draft。
+    draft_ref.current = draft
+
+    def _set_draft(value: str):
+        """同步更新 draft_ref 并排队 set_draft 重渲染。
+
+        闭包的 draft 变量在 set_draft 后到下次渲染前是 stale 的，持续 Delete
+        时 delete_core 需立即读到最新 draft 才能正确删除字符；同时 on_change_draft
+        依赖 draft_ref 识别并跳过原生 Delete 产生的同值 on_change，避免重复 set_draft。
+        """
+        draft_ref.current = value
+        set_draft(value)
 
     def mark_dirty():
         document.dirty = True
@@ -201,7 +223,9 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        raw = new_raw if new_raw is not None else draft
+        # 使用 draft_ref.current 而非闭包 draft：持续 Delete 时闭包 draft 在
+        # set_draft 后到下次渲染前是 stale 的，会导致提交错误的旧 draft 到文档。
+        raw = new_raw if new_raw is not None else draft_ref.current
 
         if line.block_type == BlockType.CODE:
             lang = line.lang
@@ -232,7 +256,7 @@ def MarkdownEditor(
         （如行首 Backspace 合并），避免把草稿提交到移位后的错误行。
         """
         if not skip_commit and active is not None and active != (li, si):
-            commit_active(draft)
+            commit_active(draft_ref.current)
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
@@ -245,7 +269,7 @@ def MarkdownEditor(
             elif si > 0:
                 cursor_at = sum(len(line.segments[i].raw) for i in range(si)) + cursor_at
             cursor_at = min(max(cursor_at, 0), len(new_draft))
-            set_draft(new_draft)
+            _set_draft(new_draft)
             set_active((li, 0))
             set_cursor_line(li)
             set_cursor_pos(cursor_at)
@@ -253,7 +277,7 @@ def MarkdownEditor(
             set_nav_seq(nav_seq + 1)
             return
         new_draft = _draft_for(li, si)
-        set_draft(new_draft)
+        _set_draft(new_draft)
         set_active((li, si))
         set_cursor_line(li)
         set_cursor_pos(cursor_at)
@@ -455,7 +479,7 @@ def MarkdownEditor(
         if li <= 0:
             return
         # 先提交当前段草稿（此时当前行仍有效），确保合并内容含最新输入
-        commit_active(draft)
+        commit_active(draft_ref.current)
         prev = document.lines[li - 1]
         # 前一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其末尾
         if prev.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
@@ -487,13 +511,129 @@ def MarkdownEditor(
             offset += seg_len
         _goto(li - 1, target_si, cursor_at=seg_off, skip_commit=True)
 
+    def delete_core():
+        """行尾 Delete：与下一行合并（删除当前行行尾换行符），与行首 BackSpace 对称。
+
+        逻辑与 backspace_core 镜像：
+        - 光标不在段尾 → 交由 TextField 原生 Delete 删除下一个字符
+        - 非末段段尾 → 跳到下一段首部（便于继续删除）
+        - 末段段尾且非末行 → 与下一行合并
+        - 下一行是围栏块 → 跳到下一行首部
+        """
+        if active is None:
+            return
+        li, si = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        # 代码块 / 块级公式 / 分隔线 / 目录：整块编辑，行尾 Delete 不处理
+        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+            return
+        # 光标不在段尾：交由 TextField 原生 Delete 处理（正常删除下一个字符）
+        # 使用 len(draft_ref.current) 而非 cursor_ref["draft_len"]：
+        # on_selection_change 不可靠，可能导致 cursor_ref["draft_len"] stale；
+        # draft_ref 通过 on_change_draft 同步更新，始终是最新的。
+        if cursor_ref.current["extent"] < len(draft_ref.current):
+            return
+        # 行内段非末段（si < len-1）段尾 Delete：直接删除下一段的首字符，
+        # 而非仅跳转光标。对于短小的 Markdown 语法段（如 **、*），逐段跳转
+        # 会让用户感觉被"跳过"，直接删除字符更符合预期。
+        # 标题以整行 raw 为 draft（si 恒为 0），跳过段间跳转。
+        if not _heading_edit(line) and si < len(line.segments) - 1:
+            commit_active(draft_ref.current)
+            next_seg = line.segments[si + 1]
+            if next_seg.raw:
+                next_seg.raw = next_seg.raw[1:]
+            full = "".join(s.raw for s in line.segments)
+            parser.reparse_line(line, full)
+            mark_dirty()
+            suppress_blur.current = True
+            new_si = si + 1 if next_seg.raw else si
+            _goto(li, new_si, cursor_at=0, skip_commit=True)
+            return
+        # 行尾（末段段尾）且非末行：与下一行合并（删除当前行行尾换行符），
+        # 所有块类型（标题/列表/引用/段落）行为一致
+        if li >= len(document.lines) - 1:
+            return
+        # 先提交当前段草稿（此时当前行仍有效），确保合并内容含最新输入
+        commit_active(draft_ref.current)
+        line = document.lines[li]
+        next_line = document.lines[li + 1]
+        # 下一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其首部
+        if next_line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+            suppress_blur.current = True
+            _goto(li + 1, 0, cursor_at=0)
+            return
+        # 下一行含行内内容（段落/标题/列表/引用）：合并下一行内容到当前行末尾
+        current_raw = _line_raw(line)
+        junction = len(current_raw)
+        merged = current_raw + _line_raw(next_line)
+        parser.reparse_line(line, merged)
+        document.lines = document.lines[:li + 1] + document.lines[li + 2:]
+        mark_dirty()
+        suppress_blur.current = True
+        # 光标落在合并点：定位包含 junction 偏移的段及段内偏移
+        if _heading_edit(line):
+            _goto(li, 0, cursor_at=min(junction, len(_line_raw(line))), skip_commit=True)
+            return
+        target_si = max(0, len(line.segments) - 1)
+        seg_off = len(line.segments[target_si].raw)
+        offset = 0
+        for idx, seg in enumerate(line.segments):
+            seg_len = len(seg.raw)
+            if offset + seg_len >= junction:
+                target_si = idx
+                seg_off = max(0, junction - offset)
+                break
+            offset += seg_len
+        _goto(li, target_si, cursor_at=seg_off, skip_commit=True)
+
+    def _on_cursor_sync(pos: int, draft_len: int):
+        """_on_focus 设置光标后直接同步 cursor_ref，并记录 applied_cursor。
+
+        Flutter 聚焦时先触发 on_focus（设置正确光标位置），紧接着触发
+        on_selection_change(默认段尾)。若不处理，段尾事件会覆盖 cursor_ref，
+        导致 Delete/Backspace 误判光标在段尾。此处先记录正确位置，再由
+        on_selection_change 识别并丢弃 stale 段尾事件。
+
+        draft_len 使用 draft_ref.current 而非参数：持续 Delete 时段中删除已更新
+        draft_ref，但 segment_view 的 draft 参数在重渲染前是 stale 的，
+        len(draft) 会覆盖为旧长度，导致 delete_core 误判光标在段尾而触发合并。
+        """
+        actual_len = len(draft_ref.current)
+        cursor_ref.current["base"] = pos
+        cursor_ref.current["extent"] = pos
+        cursor_ref.current["draft_len"] = actual_len
+        applied_cursor.current = pos
+        if nav_ref is not None and nav_ref.current is not None:
+            nav_ref.current["base"] = pos
+            nav_ref.current["extent"] = pos
+            nav_ref.current["draft_len"] = actual_len
+
     def on_selection_change(e):
         """跟踪光标位置（extent/base），供 on_key 判断左右越界。
 
         使用 ref 而非 set_state，避免输入时触发重渲染导致光标跳动。
         同时直接更新 nav_ref.current，确保 on_key 读到最新值。
+
+        Stale 事件拦截：Flutter 聚焦时先触发 on_focus 设置正确光标（如行合并后
+        的 junction 位置），再触发 on_selection_change(默认段尾=draft_len)。
+        若 applied_cursor 已记录目标位置且与段尾不符，说明这是 stale 事件，丢弃。
+
+        关键：只在 TextField 值长度未变时拦截（len(value)==draft_len），
+        确保 stale 事件（值未变）被拦截，而用户删除到段尾的正常事件（值变短）
+        不被错误拦截——否则 cursor_ref.draft_len 不更新，delete_core 误判
+        光标不在段尾，持续 Delete 到段尾后失效。
         """
         if (sel := e.selection) is not None:
+            if (applied_cursor.current >= 0
+                    and applied_cursor.current != sel.extent_offset
+                    and sel.extent_offset == len(e.control.value)
+                    and len(e.control.value) == cursor_ref.current["draft_len"]):
+                # stale 段尾事件：_on_focus 已设置正确光标，值未变，忽略此覆盖
+                applied_cursor.current = -1
+                return
+            applied_cursor.current = -1
             cursor_ref.current["base"] = sel.base_offset
             cursor_ref.current["extent"] = sel.extent_offset
             cursor_ref.current["draft_len"] = len(e.control.value)
@@ -503,7 +643,15 @@ def MarkdownEditor(
                 nav_ref.current["draft_len"] = len(e.control.value)
 
     def on_change_draft(value: str):
-        set_draft(value)
+        _set_draft(value)
+        # 同步更新 cursor_ref["draft_len"] 和 nav_ref["draft_len"] 作为安全网：
+        # on_selection_change 不可靠，可能导致这些值 stale。
+        # 每次 draft 变更都同步更新，确保所有读取 draft_len 的地方（如 main.py
+        # 的 ArrowRight 判断、backspace_core 的段首判断）都读到最新值。
+        n = len(value)
+        cursor_ref.current["draft_len"] = n
+        if nav_ref is not None and nav_ref.current is not None:
+            nav_ref.current["draft_len"] = n
 
     def toggle_raw():
         """在 WYSIWYG 编辑与原始 Markdown 文本间切换。
@@ -554,7 +702,7 @@ def MarkdownEditor(
             suppress_blur.current = False
             return
         try:
-            commit_active(draft)
+            commit_active(draft_ref.current)
         finally:
             set_active(None)
 
@@ -629,7 +777,7 @@ def MarkdownEditor(
                     if target_si < len(last_line.segments)
                     else ""
                 )
-                set_draft(new_draft_val)
+                _set_draft(new_draft_val)
                 set_active((last_li, target_si))
                 set_cursor_line(last_li)
                 set_cursor_pos(-1)
@@ -639,13 +787,13 @@ def MarkdownEditor(
             suppress_blur.current = True
             if _heading_edit(line):
                 new_draft_val = _line_raw(line)
-                set_draft(new_draft_val)
+                _set_draft(new_draft_val)
                 set_active((li, 0))
                 set_cursor_line(li)
                 set_cursor_pos(-1)
                 _sync_cursor(new_draft_val)
             else:
-                set_draft(new_raw)
+                _set_draft(new_raw)
                 set_cursor_pos(-1)
                 _sync_cursor(new_raw)
             set_nav_seq(nav_seq + 1)
@@ -659,7 +807,7 @@ def MarkdownEditor(
         line = document.lines[li]
         # 代码块 / 块级公式内回车：仅更新 draft（多行输入，Shift+Enter 换行）
         if line.block_type in (BlockType.CODE, BlockType.MATH):
-            set_draft(new_raw)
+            _set_draft(new_raw)
             return
         # 特殊块（分隔线 / 目录）：提交后创建空行
         if line.block_type in (BlockType.HR, BlockType.TOC):
@@ -744,7 +892,7 @@ def MarkdownEditor(
             else ""
         )
         suppress_blur.current = True
-        set_draft(new_draft)
+        _set_draft(new_draft)
         set_active((li + 1, target_si))
         set_cursor_line(li + 1)
         set_cursor_pos(0)
@@ -856,7 +1004,7 @@ def MarkdownEditor(
         else:
             return
         mark_dirty()
-        set_draft(seg.raw)
+        _set_draft(seg.raw)
         _sync_cursor(seg.raw)
 
     # 别名：供工具栏调用
@@ -884,7 +1032,7 @@ def MarkdownEditor(
         else:
             return
         mark_dirty()
-        set_draft(seg.raw)
+        _set_draft(seg.raw)
         _sync_cursor(seg.raw)
 
     # ---- 任务列表项：切换勾选状态 ----
@@ -981,6 +1129,7 @@ def MarkdownEditor(
             "move_line_start": move_line_start,
             "move_line_end": move_line_end,
             "backspace_core": backspace_core,
+            "delete_core": delete_core,
             "indent_or_outdent": indent_or_outdent,
             "move_up": move_up,
             "move_down": move_down,
@@ -1035,6 +1184,7 @@ def MarkdownEditor(
             field_ref=active_field_ref if is_act else None,
             content_width=content_width,
             line_height=line_height,
+            on_cursor_sync=_on_cursor_sync if is_act else None,
         )
         for i, line in enumerate(document.lines)
     ]

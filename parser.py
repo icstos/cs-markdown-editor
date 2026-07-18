@@ -281,41 +281,41 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
     return BlockType.PARAGRAPH, {"content": raw}
 
 
-def _make_prefix_segment(block_type: BlockType, info: dict, line: Line) -> Segment:
-    """构造块级前缀段。"""
+def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, dict]:
+    """构造块级前缀段，返回 (segment, line_attrs)。
+
+    line_attrs 含应赋给 Line 的属性（level / task / checked）；由 _build_line
+    统一赋值，不在构造过程中副作用修改 Line——分离"构造"与"修改"职责。
+    """
     if block_type == BlockType.HEADING:
         lvl = info["level"]
-        line.level = lvl
-        return Segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl)
+        return Segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl), {"level": lvl}
     if block_type == BlockType.LIST_UO:
         indent = info.get("indent", 0)
-        line.level = indent
         marker = info["marker"]
         # 前缀段 raw 含缩进空格，保证 "".join(segments) 重建行源码时
         # 不丢失级别（编辑提交 / 续行 / 块切换均依赖此不变量）
         indent_sp = " " * indent
         if info.get("task"):
-            line.task = True
-            line.checked = info["checked"]
+            attrs = {"level": indent, "task": True, "checked": info["checked"]}
             return Segment(
                 SegType.LIST_PREFIX,
                 f"{indent_sp}{marker} [{'x' if info['checked'] else ' '}] ",
                 "",
                 level=indent,
-            )
-        return Segment(SegType.LIST_PREFIX, f"{indent_sp}{marker} ", "", level=indent)
+            ), attrs
+        return Segment(SegType.LIST_PREFIX, f"{indent_sp}{marker} ", "", level=indent), {"level": indent}
     if block_type == BlockType.LIST_O:
         indent = info.get("indent", 0)
-        line.level = indent
         indent_sp = " " * indent
-        return Segment(
-            SegType.LIST_PREFIX, f"{indent_sp}{info['num']}. ", "", level=indent
+        return (
+            Segment(SegType.LIST_PREFIX, f"{indent_sp}{info['num']}. ", "", level=indent),
+            {"level": indent},
         )
     if block_type == BlockType.QUOTE:
         lvl = info.get("level", 1)
-        line.level = lvl
-        return Segment(SegType.QUOTE_PREFIX, "> " * lvl, "", level=lvl)
-    return Segment(SegType.TEXT, "", "")
+        return Segment(SegType.QUOTE_PREFIX, "> " * lvl, "", level=lvl), {"level": lvl}
+    return Segment(SegType.TEXT, "", ""), {}
 
 
 def _build_line(raw: str) -> Line:
@@ -347,7 +347,9 @@ def _build_line(raw: str) -> Line:
 
     # 带前缀的块（heading / list / quote）
     if bt in (BlockType.HEADING, BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
-        prefix_seg = _make_prefix_segment(bt, info, line)
+        prefix_seg, attrs = _make_prefix_segment(bt, info)
+        for k, v in attrs.items():
+            setattr(line, k, v)
         line.segments = [prefix_seg, *parse_inline(info["content"])]
         return line
 
@@ -555,6 +557,24 @@ def _seg_display_text(seg: Segment) -> str:
     return seg.text
 
 
+def _iter_seg_offsets(line: Line):
+    """逐段 yield (seg, seg_start, seg_end)，seg_end = seg_start + len(display_text)。
+
+    compute_markdown_from_selections 与 delete_selections 共享此迭代逻辑，
+    统一"按展示偏移定位段"的边界处理。
+    """
+    offset = 0
+    for seg in line.segments:
+        text = _seg_display_text(seg)
+        yield seg, offset, offset + len(text), text
+        offset += len(text)
+
+
+def _line_display_len(line: Line) -> int:
+    """整行展示文本长度（所有段 display_text 拼接）。"""
+    return sum(len(_seg_display_text(s)) for s in line.segments)
+
+
 def _wrap_partial(seg: Segment, selected_text: str) -> str:
     """对部分选中的段应用语法包裹，返回 Markdown 源码。
 
@@ -610,12 +630,7 @@ def compute_markdown_from_selections(
             start, end = min(base, extent), max(base, extent)
             if start != end:
                 # 构建段偏移表，逐段计算选区
-                offset = 0
-                for seg in line.segments:
-                    text = _seg_display_text(seg)
-                    seg_start, seg_end = offset, offset + len(text)
-                    offset = seg_end
-
+                for seg, seg_start, seg_end, text in _iter_seg_offsets(line):
                     if seg_end <= start or seg_start >= end:
                         continue  # 不重叠
 
@@ -727,7 +742,7 @@ def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]])
     is_full_line = True
     for li in sorted_lines:
         line = lines[li]
-        total_len = sum(len(_seg_display_text(seg)) for seg in line.segments)
+        total_len = _line_display_len(line)
         base, extent = selections[li]
         if min(base, extent) != 0 or max(base, extent) != total_len:
             is_full_line = False
@@ -759,34 +774,27 @@ def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]])
         new_segments: list[Segment] = []
         cursor_si = 0
         cursor_offset = 0
-        offset = 0
-        for seg in line.segments:
-            text = _seg_display_text(seg)
-            seg_start, seg_end = offset, offset + len(text)
-            offset = seg_end
-
-            if seg_end <= start:
+        for seg, seg_start, seg_end, text in _iter_seg_offsets(line):
+            if seg_end <= start or seg_start >= end:
                 new_segments.append(seg)
-            elif seg_start >= end:
-                new_segments.append(seg)
-            else:
-                sel_start = max(0, start - seg_start)
-                sel_end = min(len(text), end - seg_start)
+                continue
+            sel_start = max(0, start - seg_start)
+            sel_end = min(len(text), end - seg_start)
 
-                if sel_start > 0:
-                    prefix_raw = _wrap_partial(seg, text[:sel_start])
-                    new_segments.append(Segment(SegType.TEXT, prefix_raw, text[:sel_start]))
-                    # 光标定位到剪切位置：前缀段的末尾
+            if sel_start > 0:
+                prefix_raw = _wrap_partial(seg, text[:sel_start])
+                new_segments.append(Segment(SegType.TEXT, prefix_raw, text[:sel_start]))
+                # 光标定位到剪切位置：前缀段的末尾
+                cursor_si = len(new_segments) - 1
+                cursor_offset = len(prefix_raw)
+
+            if sel_end < len(text):
+                suffix_raw = _wrap_partial(seg, text[sel_end:])
+                new_segments.append(Segment(SegType.TEXT, suffix_raw, text[sel_end:]))
+                # 若无前缀段，光标定位到后缀段首
+                if sel_start == 0:
                     cursor_si = len(new_segments) - 1
-                    cursor_offset = len(prefix_raw)
-
-                if sel_end < len(text):
-                    suffix_raw = _wrap_partial(seg, text[sel_end:])
-                    new_segments.append(Segment(SegType.TEXT, suffix_raw, text[sel_end:]))
-                    # 若无前缀段，光标定位到后缀段首
-                    if sel_start == 0:
-                        cursor_si = len(new_segments) - 1
-                        cursor_offset = 0
+                    cursor_offset = 0
 
         line.segments = new_segments
         if not line.segments:
@@ -807,11 +815,7 @@ def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]])
 
     # 收集首行选中之前的剩余段
     head_segments: list[Segment] = []
-    offset = 0
-    for seg in first_line.segments:
-        text = _seg_display_text(seg)
-        seg_start, seg_end = offset, offset + len(text)
-        offset = seg_end
+    for seg, seg_start, seg_end, text in _iter_seg_offsets(first_line):
         if seg_end <= first_start:
             head_segments.append(seg)
         elif seg_start < first_start:
@@ -822,11 +826,7 @@ def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]])
 
     # 收集尾行选中之后的剩余段
     tail_segments: list[Segment] = []
-    offset = 0
-    for seg in last_line.segments:
-        text = _seg_display_text(seg)
-        seg_start, seg_end = offset, offset + len(text)
-        offset = seg_end
+    for seg, seg_start, seg_end, text in _iter_seg_offsets(last_line):
         if seg_start >= last_end:
             tail_segments.append(seg)
         elif seg_end > last_end:

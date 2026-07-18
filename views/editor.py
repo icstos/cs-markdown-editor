@@ -20,12 +20,15 @@ import flet as ft
 from models import BlockType, Document, Line, SegType
 import parser
 from services.history import EditHistory, EditorSnapshot
+from state.actions import EditorActions
+from state.cursor import CursorState
 from styles import (
     FONT_MAIN,
     FONT_MONO,
     _current_colors,
     only_border,
 )
+from views.code_block_view import CodeBlockEditor
 from views.line_view import LineView
 from views.table_view import TableView
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
@@ -44,8 +47,35 @@ _WRAP_MAP: dict[SegType, str] = {
     SegType.STRIKE: "~~",
 }
 
-# 不参与跨段/跨行光标导航的块类型（整块编辑，方向键在块内处理）
-_NO_NAV_BLOCKS = (BlockType.CODE, BlockType.HR, BlockType.MATH, BlockType.TOC)
+# 围栏块（CODE/MATH/HR/TOC）：多行编辑，方向键在块内处理，BackSpace/Delete 不触发行合并
+_FENCE_BLOCKS = (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC)
+
+
+def _is_fence(line: Line) -> bool:
+    """围栏块判断：CODE / MATH / HR / TOC。
+
+    这类块整体编辑，不参与跨段/跨行光标导航，行首 BackSpace / 行尾 Delete
+    不与相邻行合并。
+    """
+    return line.block_type in _FENCE_BLOCKS
+
+
+def _locate_seg_by_raw_offset(line: Line, target: int) -> tuple[int, int]:
+    """按 raw 偏移定位段：返回 (seg_idx, seg内偏移)。
+
+    用于行合并后光标落 junction 段的定位。target 越界或 segments 为空时
+    落到末段尾部（与原 backspace_core / delete_core 内联循环的回退值一致）。
+    """
+    if not line.segments:
+        return 0, 0
+    acc = 0
+    for i, seg in enumerate(line.segments):
+        n = len(seg.raw)
+        if acc + n >= target:
+            return i, max(0, target - acc)
+        acc += n
+    last = max(0, len(line.segments) - 1)
+    return last, len(line.segments[last].raw)
 
 
 def _line_raw(line: Line) -> str:
@@ -149,7 +179,7 @@ def MarkdownEditor(
     cursor_line, set_cursor_line = ft.use_state(0)
     # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
     # 仅在跨段导航/块切换时通过 _sync_cursor 重置；on_key 经 nav_ref 读取
-    cursor_ref = ft.use_ref({"base": 0, "extent": 0, "draft_len": 0})
+    cursor_ref = ft.use_ref(CursorState())
     # applied_cursor：_on_focus 设置光标后记录的目标位置（-1=未设置）。
     # 用于 on_selection_change 识别并丢弃 Flutter 聚焦时默认触发的 stale 段尾事件：
     # Flutter 先触发 on_focus（设置正确光标），再触发 on_selection_change(段尾)，
@@ -217,8 +247,8 @@ def MarkdownEditor(
             markdown=md,
             active=active,
             draft=draft_ref.current,
-            cursor_base=cursor_ref.current["base"],
-            cursor_extent=cursor_ref.current["extent"],
+            cursor_base=cursor_ref.current.base,
+            cursor_extent=cursor_ref.current.extent,
             raw_mode=raw_mode,
             raw_draft=raw_draft,
         )
@@ -303,9 +333,7 @@ def MarkdownEditor(
         """同步光标状态。cursor_at=-1: 段尾; 0: 段首; >0: 指定偏移。"""
         n = len(text)
         pos = cursor_at if cursor_at >= 0 else n
-        cursor_ref.current["base"] = pos
-        cursor_ref.current["extent"] = pos
-        cursor_ref.current["draft_len"] = n
+        cursor_ref.current.reset(pos, n)
 
     # ---- 提交当前激活段 ----
     def commit_active(new_raw: str | None = None):
@@ -411,7 +439,7 @@ def MarkdownEditor(
 
     # ---- 段间/行间光标导航（由外层 on_key 经 nav_ref 调用）----
     def _nav_blocked(line: Line) -> bool:
-        return line.block_type in _NO_NAV_BLOCKS
+        return _is_fence(line)
 
     def move_left_cross():
         if active is None:
@@ -423,7 +451,7 @@ def MarkdownEditor(
         if _nav_blocked(line):
             return
         if _heading_edit(line):
-            if cursor_ref.current["base"] > 0:
+            if cursor_ref.current.base > 0:
                 return
             if li > 0:
                 prev = document.lines[li - 1]
@@ -445,7 +473,7 @@ def MarkdownEditor(
         if _nav_blocked(line):
             return
         if _heading_edit(line):
-            if cursor_ref.current["extent"] < len(draft):
+            if cursor_ref.current.extent < len(draft):
                 return
             if li < len(document.lines) - 1:
                 _goto(li + 1, 0, cursor_at=0)
@@ -502,7 +530,7 @@ def MarkdownEditor(
         li, si = active
         if li <= 0:
             return
-        target = _logical_offset(document.lines[li], si, cursor_ref.current["extent"])
+        target = _logical_offset(document.lines[li], si, cursor_ref.current.extent)
         nsi = _locate_seg_by_offset(document.lines[li - 1], target)
         _goto(li - 1, nsi)
 
@@ -513,7 +541,7 @@ def MarkdownEditor(
         li, si = active
         if li >= len(document.lines) - 1:
             return
-        target = _logical_offset(document.lines[li], si, cursor_ref.current["extent"])
+        target = _logical_offset(document.lines[li], si, cursor_ref.current.extent)
         nsi = _locate_seg_by_offset(document.lines[li + 1], target)
         _goto(li + 1, nsi)
 
@@ -592,17 +620,12 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块 / 块级公式 / 分隔线 / 目录：整块编辑，行首 BackSpace 不处理
-        if line.block_type in (
-            BlockType.CODE,
-            BlockType.MATH,
-            BlockType.HR,
-            BlockType.TOC,
-            BlockType.TABLE,
-        ):
+        # 代码块 / 块级公式 / 分隔线 / 目录 / 表格：整块编辑，行首 BackSpace 不处理
+        # （围栏块 + TABLE：TABLE 单独走 _table_* 路径）
+        if _is_fence(line) or line.block_type == BlockType.TABLE:
             return
         # 光标不在段首：交由 TextField 自身删除
-        if cursor_ref.current["extent"] > 0:
+        if cursor_ref.current.extent > 0:
             return
         # 行内段非首段（si > 0）段首 BackSpace：跳到上一段末尾，便于继续删除
         if si > 0:
@@ -618,14 +641,8 @@ def MarkdownEditor(
         commit_active(draft_ref.current)
         prev = document.lines[li - 1]
         # 前一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其末尾
-        if prev.block_type in (
-            BlockType.CODE,
-            BlockType.MATH,
-            BlockType.HR,
-            BlockType.TOC,
-        ):
-            suppress_blur.current = True
-            _goto(li - 1, max(0, len(prev.segments) - 1), cursor_at=-1)
+        if _is_fence(prev):
+            _goto_quiet(li - 1, max(0, len(prev.segments) - 1), cursor_at=-1)
             return
         # 前一行含行内内容（段落/标题/列表/引用）：合并当前行内容到前一行末尾
         prev_raw = _line_raw(prev)
@@ -645,16 +662,7 @@ def MarkdownEditor(
                 skip_commit=True,
             )
             return
-        target_si = max(0, len(prev.segments) - 1)
-        seg_off = len(prev.segments[target_si].raw)
-        offset = 0
-        for idx, seg in enumerate(prev.segments):
-            seg_len = len(seg.raw)
-            if offset + seg_len >= junction:
-                target_si = idx
-                seg_off = max(0, junction - offset)
-                break
-            offset += seg_len
+        target_si, seg_off = _locate_seg_by_raw_offset(prev, junction)
         _goto(li - 1, target_si, cursor_at=seg_off, skip_commit=True)
 
     def delete_core():
@@ -672,20 +680,15 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块 / 块级公式 / 分隔线 / 目录：整块编辑，行尾 Delete 不处理
-        if line.block_type in (
-            BlockType.CODE,
-            BlockType.MATH,
-            BlockType.HR,
-            BlockType.TOC,
-            BlockType.TABLE,
-        ):
+        # 代码块 / 块级公式 / 分隔线 / 目录 / 表格：整块编辑，行尾 Delete 不处理
+        # （围栏块 + TABLE：TABLE 单独走 _table_* 路径）
+        if _is_fence(line) or line.block_type == BlockType.TABLE:
             return
         # 光标不在段尾：交由 TextField 原生 Delete 处理（正常删除下一个字符）
-        # 使用 len(draft_ref.current) 而非 cursor_ref["draft_len"]：
-        # on_selection_change 不可靠，可能导致 cursor_ref["draft_len"] stale；
+        # 使用 len(draft_ref.current) 而非 cursor_ref.current.draft_len：
+        # on_selection_change 不可靠，可能导致 cursor_ref.current.draft_len stale；
         # draft_ref 通过 on_change_draft 同步更新，始终是最新的。
-        if cursor_ref.current["extent"] < len(draft_ref.current):
+        if cursor_ref.current.extent < len(draft_ref.current):
             return
         # 行内段非末段（si < len-1）段尾 Delete：直接删除下一段的首字符，
         # 而非仅跳转光标。对于短小的 Markdown 语法段（如 **、*），逐段跳转
@@ -716,14 +719,8 @@ def MarkdownEditor(
         line = document.lines[li]
         next_line = document.lines[li + 1]
         # 下一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其首部
-        if next_line.block_type in (
-            BlockType.CODE,
-            BlockType.MATH,
-            BlockType.HR,
-            BlockType.TOC,
-        ):
-            suppress_blur.current = True
-            _goto(li + 1, 0, cursor_at=0)
+        if _is_fence(next_line):
+            _goto_quiet(li + 1, 0, cursor_at=0)
             return
         # 下一行含行内内容（段落/标题/列表/引用）：合并下一行内容到当前行末尾
         current_raw = _line_raw(line)
@@ -739,16 +736,7 @@ def MarkdownEditor(
                 li, 0, cursor_at=min(junction, len(_line_raw(line))), skip_commit=True
             )
             return
-        target_si = max(0, len(line.segments) - 1)
-        seg_off = len(line.segments[target_si].raw)
-        offset = 0
-        for idx, seg in enumerate(line.segments):
-            seg_len = len(seg.raw)
-            if offset + seg_len >= junction:
-                target_si = idx
-                seg_off = max(0, junction - offset)
-                break
-            offset += seg_len
+        target_si, seg_off = _locate_seg_by_raw_offset(line, junction)
         _goto(li, target_si, cursor_at=seg_off, skip_commit=True)
 
     def _on_cursor_sync(pos: int, draft_len: int):
@@ -764,20 +752,14 @@ def MarkdownEditor(
         len(draft) 会覆盖为旧长度，导致 delete_core 误判光标在段尾而触发合并。
         """
         actual_len = len(draft_ref.current)
-        cursor_ref.current["base"] = pos
-        cursor_ref.current["extent"] = pos
-        cursor_ref.current["draft_len"] = actual_len
+        cursor_ref.current.reset(pos, actual_len)
         applied_cursor.current = pos
-        if nav_ref is not None and nav_ref.current is not None:
-            nav_ref.current["base"] = pos
-            nav_ref.current["extent"] = pos
-            nav_ref.current["draft_len"] = actual_len
 
     def on_selection_change(e):
         """跟踪光标位置（extent/base），供 on_key 判断左右越界。
 
         使用 ref 而非 set_state，避免输入时触发重渲染导致光标跳动。
-        同时直接更新 nav_ref.current，确保 on_key 读到最新值。
+        main.py 端通过 actions.cursor_ref.current 直接读取，无需双向同步。
 
         Stale 事件拦截：Flutter 聚焦时先触发 on_focus 设置正确光标（如行合并后
         的 junction 位置），再触发 on_selection_change(默认段尾=draft_len)。
@@ -793,31 +775,25 @@ def MarkdownEditor(
                 applied_cursor.current >= 0
                 and applied_cursor.current != sel.extent_offset
                 and sel.extent_offset == len(e.control.value)
-                and len(e.control.value) == cursor_ref.current["draft_len"]
+                and len(e.control.value) == cursor_ref.current.draft_len
             ):
                 # stale 段尾事件：_on_focus 已设置正确光标，值未变，忽略此覆盖
                 applied_cursor.current = -1
                 return
             applied_cursor.current = -1
-            cursor_ref.current["base"] = sel.base_offset
-            cursor_ref.current["extent"] = sel.extent_offset
-            cursor_ref.current["draft_len"] = len(e.control.value)
-            if nav_ref is not None and nav_ref.current is not None:
-                nav_ref.current["base"] = sel.base_offset
-                nav_ref.current["extent"] = sel.extent_offset
-                nav_ref.current["draft_len"] = len(e.control.value)
+            cursor_ref.current.base = sel.base_offset
+            cursor_ref.current.extent = sel.extent_offset
+            cursor_ref.current.draft_len = len(e.control.value)
 
     def on_change_draft(value: str):
         _maybe_push_draft_history()
         _set_draft(value)
-        # 同步更新 cursor_ref["draft_len"] 和 nav_ref["draft_len"] 作为安全网：
-        # on_selection_change 不可靠，可能导致这些值 stale。
+        # 同步更新 cursor_ref.draft_len 作为安全网：
+        # on_selection_change 不可靠，可能导致 draft_len stale。
         # 每次 draft 变更都同步更新，确保所有读取 draft_len 的地方（如 main.py
         # 的 ArrowRight 判断、backspace_core 的段首判断）都读到最新值。
         n = len(value)
-        cursor_ref.current["draft_len"] = n
-        if nav_ref is not None and nav_ref.current is not None:
-            nav_ref.current["draft_len"] = n
+        cursor_ref.current.draft_len = n
 
     def toggle_raw():
         """在 WYSIWYG 编辑与原始 Markdown 文本间切换。
@@ -848,192 +824,44 @@ def MarkdownEditor(
         except Exception:
             pass
 
-    def exit_code_block():
-        if active is None:
-            return
-        li, _ = active
-        if not (0 <= li < len(document.lines)):
-            return
-        if document.lines[li].block_type != BlockType.CODE:
-            return
-        commit_active(draft_ref.current)
+    def _set_suppress_blur():
         suppress_blur.current = True
-        set_active(None)
 
-    def _code_indent_width() -> str:
-        return "    "
+    def _goto_quiet(
+        li: int,
+        si: int,
+        cursor_at: int = -1,
+        skip_commit: bool = False,
+        table_cell_idx: int | None = None,
+    ):
+        """抑制 blur + 跨段导航的统一入口。
 
-    def _code_block_text() -> str:
-        return draft_ref.current
+        重渲染会导致旧 TextField 卸载触发 on_blur，覆盖 _goto 设置的 active；
+        先设 suppress_blur 抑制此次 blur。table_cell_idx 用于表格跨格导航。
+        """
+        suppress_blur.current = True
+        _goto(
+            li,
+            si,
+            cursor_at=cursor_at,
+            skip_commit=skip_commit,
+            table_cell_idx=table_cell_idx,
+        )
 
-    async def _copy_code(text: str):
-        clipboard = clipboard_ref.current if clipboard_ref is not None else None
-        if clipboard is None:
-            return
-        try:
-            await clipboard.set(text)
-        except Exception:
-            return
-
-    def _code_block_selection_text() -> str:
-        return (selection_text_ref.current or "")
-
-    def _code_selection() -> tuple[int, int]:
-        return cursor_ref.current.get("base", 0), cursor_ref.current.get("extent", 0)
-
-    def _set_code_selection(pos: int):
-        cursor_ref.current["base"] = pos
-        cursor_ref.current["extent"] = pos
-
-    def _sync_code_editor_selection(pos: int):
-        if active_field_ref is None:
-            return
-        ctrl = active_field_ref.current
-        if ctrl is None:
-            return
-        frozen = getattr(ctrl, "_frozen", None)
-        if frozen is not None:
-            del ctrl._frozen
-        try:
-            ctrl.selection = ft.TextSelection(base_offset=pos, extent_offset=pos)
-            ctrl.update()
-        except Exception:
-            pass
-        finally:
-            if frozen is not None:
-                ctrl._frozen = frozen
-
-    def _code_block_tab(delta: int):
-        if active is None:
-            return
-        li, _ = active
-        if not (0 <= li < len(document.lines)):
-            return
-        if document.lines[li].block_type != BlockType.CODE:
-            return
-        text = _code_block_text()
-        base, extent = _code_selection()
-        indent = _code_indent_width()
-        if base != extent:
-            start, end = sorted((base, extent))
-            lines = text.split("\n")
-            offsets = []
-            pos = 0
-            for i, line in enumerate(lines):
-                offsets.append((pos, pos + len(line), i))
-                pos += len(line) + 1
-            affected = [i for s, e, i in offsets if not (e < start or s > end)]
-            if not affected:
-                return
-            if delta > 0:
-                for i in affected:
-                    lines[i] = indent + lines[i]
-                _set_draft("\n".join(lines))
-                pos = end + len(indent) * len(affected)
-                _set_code_selection(pos)
-                _sync_code_editor_selection(pos)
-            else:
-                for i in affected:
-                    if lines[i].startswith(indent):
-                        lines[i] = lines[i][len(indent):]
-                _set_draft("\n".join(lines))
-                pos = max(0, start - len(indent) * len(affected))
-                _set_code_selection(pos)
-                _sync_code_editor_selection(pos)
-            return
-        if delta > 0:
-            _set_draft(text + indent)
-            pos = len(text) + len(indent)
-            _set_code_selection(pos)
-            _sync_code_editor_selection(pos)
-        else:
-            if text.endswith(indent):
-                _set_draft(text[:-len(indent)])
-                pos = max(0, len(text) - len(indent))
-                _set_code_selection(pos)
-                _sync_code_editor_selection(pos)
-
-    def _code_block_backspace():
-        if active is None:
-            return
-        li, _ = active
-        if not (0 <= li < len(document.lines)):
-            return
-        if document.lines[li].block_type != BlockType.CODE:
-            return
-        text = _code_block_text()
-        base, extent = _code_selection()
-        sel = _code_block_selection_text()
-        if base != extent:
-            start, end = sorted((base, extent))
-            _set_draft(text[:start] + text[end:])
-            _set_code_selection(start)
-            _sync_code_editor_selection(start)
-            return
-        indent = _code_indent_width()
-        left = text[:base]
-        if left.endswith(indent):
-            _set_draft(left[:-len(indent)] + text[extent:])
-            pos = base - len(indent)
-            _set_code_selection(pos)
-            _sync_code_editor_selection(pos)
-        elif left.endswith("\n"):
-            prev_nl = left[:-1].rfind("\n")
-            line_start = prev_nl + 1
-            prefix = left[line_start:base]
-            if prefix == indent:
-                _set_draft(text[:line_start] + text[base:])
-                _set_code_selection(line_start)
-                _sync_code_editor_selection(line_start)
-        elif sel:
-            _set_draft(text[:base] + text[extent:])
-            _set_code_selection(base)
-
-    def _code_block_delete():
-        if active is None:
-            return
-        li, _ = active
-        if not (0 <= li < len(document.lines)):
-            return
-        if document.lines[li].block_type != BlockType.CODE:
-            return
-        text = _code_block_text()
-        base, extent = _code_selection()
-        if base != extent:
-            return
-        if base < len(text) and text[base] == "\n":
-            _set_draft(text[:base] + text[base + 1 :])
-            _sync_code_editor_selection(base)
-
-    def _code_block_enter():
-        if active is None:
-            return
-        li, _ = active
-        if not (0 <= li < len(document.lines)):
-            return
-        if document.lines[li].block_type != BlockType.CODE:
-            return
-        text = _code_block_text()
-        base, extent = _code_selection()
-        if base != extent:
-            start, end = sorted((base, extent))
-            _set_draft(text[:start] + text[end:])
-            _set_code_selection(start)
-            return
-        left = text[:base]
-        line_start = left.rfind("\n") + 1
-        current = left[line_start:]
-        indent = len(current) - len(current.lstrip(" \t"))
-        prefix = current[:indent]
-        extra = prefix
-        trimmed = current.rstrip()
-        if trimmed.endswith((":", "{", "[", "(")):
-            extra = prefix + "    "
-        insert = "\n" + extra
-        _set_draft(text[:base] + insert + text[extent:])
-        pos = base + len(insert)
-        _set_code_selection(pos)
-        _sync_code_editor_selection(pos)
+    code_editor = CodeBlockEditor(
+        get_active=lambda: active,
+        get_line=lambda li: document.lines[li] if 0 <= li < len(document.lines) else None,
+        draft_ref=draft_ref,
+        cursor_ref=cursor_ref,
+        active_field_ref=active_field_ref,
+        selection_text_ref=selection_text_ref,
+        clipboard_ref=clipboard_ref,
+        set_draft=_set_draft,
+        mark_dirty=mark_dirty,
+        commit_active=lambda: commit_active(draft_ref.current),
+        suppress_blur=_set_suppress_blur,
+        deactivate=lambda: set_active(None),
+    )
 
     def _on_raw_draft_change(value: str):
         _maybe_push_draft_history()
@@ -1186,7 +1014,7 @@ def MarkdownEditor(
             set_active(None)
             new_line_after(li)
             return
-        split_pos = min(cursor_ref.current["extent"], len(new_raw))
+        split_pos = min(cursor_ref.current.extent, len(new_raw))
         before = new_raw[:split_pos]
         after = new_raw[split_pos:]
         if _heading_edit(line):
@@ -1213,8 +1041,7 @@ def MarkdownEditor(
                         break
                 else:
                     target_si = max(0, len(new_line.segments) - 1)
-            suppress_blur.current = True
-            _goto(li + 1, target_si, cursor_at=0)
+            _goto_quiet(li + 1, target_si, cursor_at=0)
             return
         if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
             if not before.strip():
@@ -1342,31 +1169,6 @@ def MarkdownEditor(
             return
         commit_active(draft_ref.current)
         set_table_selected_cell(None)
-        set_table_cell(None)
-        set_active(None)
-
-    def _table_enter():
-        if active is None or table_cell is None:
-            return
-        li, _ = active
-        if not (0 <= li < len(document.lines)):
-            return
-        line = document.lines[li]
-        if line.block_type != BlockType.TABLE:
-            return
-        cells = _table_cells(line)
-        if not cells:
-            return
-        if table_cell < len(cells) - 1:
-            _table_move(1)
-            return
-        if li + 1 < len(document.lines) and document.lines[li + 1].block_type == BlockType.TABLE:
-            commit_active(draft_ref.current)
-            suppress_blur.current = True
-            set_table_cell(0)
-            _goto(li + 1, 0, cursor_at=-1, table_cell_idx=0)
-            return
-        commit_active(draft_ref.current)
         set_table_cell(None)
         set_active(None)
 
@@ -1640,7 +1442,7 @@ def MarkdownEditor(
             li, si = active
             line = document.lines[li]
             col = (
-                _logical_offset(line, si, cursor_ref.current["extent"]) + 1
+                _logical_offset(line, si, cursor_ref.current.extent) + 1
                 if 0 <= si < len(line.segments)
                 else 1
             )
@@ -1651,46 +1453,44 @@ def MarkdownEditor(
         return row, col
 
     if nav_ref is not None:
-        nav_ref.current = {
-            "active": active,
-            "extent": cursor_ref.current["extent"],
-            "base": cursor_ref.current["base"],
-            "draft_len": cursor_ref.current["draft_len"],
-            "draft": draft,
-            "active_line": document.lines[active[0]]
+        nav_ref.current = EditorActions(
+            active=active,
+            draft=draft,
+            active_line=document.lines[active[0]]
             if active is not None and 0 <= active[0] < len(document.lines)
             else None,
-            "move_left": move_left_cross,
-            "move_right": move_right_cross,
-            "move_home": move_home,
-            "move_end": move_end,
-            "move_line_start": move_line_start,
-            "move_line_end": move_line_end,
-            "backspace_core": backspace_core,
-            "delete_core": delete_core,
-            "indent_or_outdent": indent_or_outdent,
-            "move_up": move_up,
-            "move_down": move_down,
-            "compute_markdown_from_text": lambda text: (
+            raw_mode=raw_mode,
+            cursor_ref=cursor_ref,
+            selection_text_ref=selection_text_ref,
+            move_left=move_left_cross,
+            move_right=move_right_cross,
+            move_home=move_home,
+            move_end=move_end,
+            move_line_start=move_line_start,
+            move_line_end=move_line_end,
+            move_up=move_up,
+            move_down=move_down,
+            backspace_core=backspace_core,
+            delete_core=delete_core,
+            indent_or_outdent=indent_or_outdent,
+            handle_paste=handle_paste,
+            handle_cut=handle_cut,
+            handle_delete_selection=handle_delete_selection,
+            compute_markdown_from_text=lambda text: (
                 parser.compute_markdown_from_text(document.lines, text)
             ),
-            "handle_paste": handle_paste,
-            "handle_cut": handle_cut,
-            "handle_delete_selection": handle_delete_selection,
-            "selection_text_ref": selection_text_ref,
-            "raw_mode": raw_mode,
-            "undo": undo,
-            "redo": redo,
-            "jump_to_line": jump_to,
-            "toggle_raw": toggle_raw,
-            "toggle_focus_mode": toggle_focus_mode,
-            "exit_code_block": exit_code_block,
-            "handle_tab_in_code": _code_block_tab,
-            "handle_backspace_in_code": _code_block_backspace,
-            "handle_delete_in_code": _code_block_delete,
-            "handle_enter_in_code": _code_block_enter,
-            "get_cursor_row_col": _get_cursor_row_col,
-        }
+            undo=undo,
+            redo=redo,
+            jump_to_line=jump_to,
+            toggle_raw=toggle_raw,
+            toggle_focus_mode=toggle_focus_mode,
+            exit_code_block=code_editor.exit,
+            handle_tab_in_code=code_editor.tab,
+            handle_backspace_in_code=code_editor.backspace,
+            handle_delete_in_code=code_editor.delete,
+            handle_enter_in_code=code_editor.enter,
+            get_cursor_row_col=_get_cursor_row_col,
+        )
 
     # ---- 预计算 TOC 条目（所有标题）----
     toc_entries = [
@@ -1885,15 +1685,15 @@ def MarkdownEditor(
         if line.block_type != BlockType.CODE:
             return
         if key in ("enter", "numpad enter") and ctrl:
-            exit_code_block()
+            code_editor.exit()
         elif key == "escape":
-            exit_code_block()
+            code_editor.exit()
         elif key == "tab":
-            _code_block_tab(-1 if shift else 1)
+            code_editor.tab(-1 if shift else 1)
         elif key == "backspace":
-            _code_block_backspace()
+            code_editor.backspace()
         elif key in ("enter", "numpad enter"):
-            _code_block_enter()
+            code_editor.enter()
 
     return ft.KeyboardListener(
         autofocus=True,

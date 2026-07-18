@@ -1,6 +1,6 @@
 # Markdown 编辑器
 
-基于 [Flet](https://flet.dev) 0.86.0 声明式组件与 [mistune](https://mistune.lepture.com/) 实时解析，参考 [Typora](https://typora.io/) 的段级所见即所得（WYSIWYG）编辑体验。
+基于 [Flet](https://flet.dev) 0.86.1 声明式组件与 [mistune](https://mistune.lepture.com/) 实时解析，参考 [Typora](https://typora.io/) 的段级所见即所得（WYSIWYG）编辑体验。
 
 点击任意段即显示其最小 Markdown 语法，其余保持渲染样式——这是与传统「源码 / 预览」双栏编辑器最大的不同。
 
@@ -52,7 +52,7 @@
 
 | 依赖 | 用途 |
 |------|------|
-| [Flet](https://flet.dev) ≥ 0.86.0 | 声明式 GUI（`@ft.component` + `use_state` / `use_effect` + `@ft.observable`） |
+| [Flet](https://flet.dev) ≥ 0.86.1 | 声明式 GUI（`@ft.component` + `use_state` / `use_effect` + `@ft.observable`） |
 | [mistune](https://mistune.lepture.com/) ≥ 3.0 | 行内 AST 解析；HTML 导出（含 strikethrough / mark / 上下标 / 表格等插件） |
 | [Pillow](https://pillow.readthedocs.io/) ≥ 10.0 | 文本像素宽度测量（编辑块自适应）+ 图片尺寸读取与缩放 |
 

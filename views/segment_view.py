@@ -1,14 +1,15 @@
-"""段级渲染：把 Segment 转为可点击的 TextSpan（渲染态）与内嵌 TextField（编辑态）。
+"""段级渲染：把 Segment 转为可点击的 TextSpan（渲染态）与内嵌编辑控件（编辑态）。
 
 设计原则：
 - 渲染态用 TextSpan 参与 Text 的整体排版（自动换行，符合阅读习惯）。
-- 编辑态用一个"无框、同字号"的 TextField 内嵌进行内，仅当前段显示原生 Markdown，
+- 编辑态用一个"无框、同字号"的编辑控件内嵌进行编辑，仅当前段显示原生 Markdown，
   其余段仍为渲染样式——这就是 Typora 式"最小语法"段级编辑。
 """
 
 from typing import Callable
 
 import flet as ft
+from flet_code_editor import CodeEditor, CodeLanguage, CodeTheme, GutterStyle
 
 from models import BlockType, SegType, Segment
 from styles import (
@@ -18,6 +19,7 @@ from styles import (
     block_weight,
     list_color_level,
     measure_text_width,
+    only_border,
     prefix_style,
     segment_style,
 )
@@ -118,6 +120,25 @@ def segment_to_span(
     return ft.TextSpan(**kwargs)
 
 
+def _code_language(lang: str | None) -> CodeLanguage:
+    if not lang:
+        return CodeLanguage.PYTHON
+    key = lang.strip().replace("-", "_").replace(" ", "").upper()
+    aliases = {
+        "JS": "JAVASCRIPT",
+        "TS": "TYPESCRIPT",
+        "PY": "PYTHON",
+        "C++": "CPP",
+        "C#": "C_SHARP",
+        "SH": "SHELL",
+        "BASH": "SHELL",
+        "ZSH": "SHELL",
+        "YAML": "YML",
+    }
+    key = aliases.get(key, key)
+    return getattr(CodeLanguage, key, CodeLanguage.PYTHON)
+
+
 def active_text_field(
     seg: Segment,
     draft: str,
@@ -133,10 +154,12 @@ def active_text_field(
     max_width: float | None = None,
     line_height: float = 1.6,
     on_cursor_sync: Callable[[int, int], None] | None = None,
-) -> ft.TextField:
-    """编辑态：段 -> 内嵌无框 TextField，显示该段原生 Markdown。
+    block_language: str | None = None,
+    use_code_editor: bool = False,
+) -> ft.Control:
+    """编辑态：段 -> 内嵌编辑控件，显示该段原生 Markdown。
 
-    单行段：依据本地字体测量文本宽度，让 TextField 恰好包裹文本内容
+    单行段：依据本地字体测量文本宽度，让编辑控件恰好包裹文本内容
     （Typora 式最小编辑块），避免撑满整行破坏阅读节奏。
     多行代码块：保持块级宽度，由父容器决定。
 
@@ -225,6 +248,57 @@ def active_text_field(
 
     if field_ref is not None:
         kwargs["ref"] = field_ref
+
+    if use_code_editor:
+        editor_width = max_width if max_width is not None else None
+        page = ft.context.page
+        is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
+        code_theme = CodeTheme.ATOM_ONE_DARK if is_dark else CodeTheme.GITHUB
+        line_count = max(1, draft.count("\n") + 1)
+        digits = len(str(line_count))
+        # 代码块行号按位数自动扩展，避免长代码块在两位/三位数时被挤压换行。
+        # 同时用浅色/深色不同的 gutter 背景和右侧分隔线增强 IDE 式层次感。
+        gutter_width = max(56, 24 + digits * 16)
+        gutter_bg = ft.Colors.with_opacity(0.22 if is_dark else 0.07, c.text)
+        gutter_border = ft.Colors.with_opacity(0.10 if is_dark else 0.14, c.border)
+        editor = CodeEditor(
+            value=draft,
+            language=_code_language(block_language),
+            code_theme=code_theme,
+            gutter_style=GutterStyle(
+                width=gutter_width,
+                margin=0,
+                show_line_numbers=True,
+                show_errors=True,
+                show_folding_handles=True,
+                background_color=gutter_bg,
+                text_style=ft.TextStyle(
+                    font_family=FONT_MONO,
+                    size=max(text_size - 4, 10),
+                    color=c.muted,
+                ),
+            ),
+            read_only=False,
+            autofocus=True,
+            text_style=ft.TextStyle(font_family=FONT_MONO, size=text_size, color=c.text),
+            padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+        )
+        if field_ref is not None:
+            editor.ref = field_ref
+        if on_selection_change is not None:
+            editor.on_selection_change = on_selection_change
+        if on_blur is not None:
+            editor.on_blur = lambda e: on_blur()
+        if on_change is not None:
+            editor.on_change = lambda e: on_change(e.control.value)
+        return ft.Container(
+            content=editor,
+            width=editor_width,
+            expand=editor_width is None,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            border=only_border(right=ft.BorderSide(1, gutter_border)),
+            animate=ft.Animation(duration=180, curve=ft.AnimationCurve.EASE_OUT),
+        )
 
     if not multiline:
         # 文本像素宽 + 余量；空文本给最小宽避免坍缩。

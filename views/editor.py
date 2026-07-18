@@ -806,6 +806,193 @@ def MarkdownEditor(
         except Exception:
             pass
 
+    def exit_code_block():
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        if document.lines[li].block_type != BlockType.CODE:
+            return
+        commit_active(draft_ref.current)
+        suppress_blur.current = True
+        set_active(None)
+
+    def _code_indent_width() -> str:
+        return "    "
+
+    def _code_block_text() -> str:
+        return draft_ref.current
+
+    async def _copy_code(text: str):
+        clipboard = clipboard_ref.current if clipboard_ref is not None else None
+        if clipboard is None:
+            return
+        try:
+            await clipboard.set(text)
+        except Exception:
+            return
+
+    def _code_block_selection_text() -> str:
+        return (selection_text_ref.current or "")
+
+    def _code_selection() -> tuple[int, int]:
+        return cursor_ref.current.get("base", 0), cursor_ref.current.get("extent", 0)
+
+    def _set_code_selection(pos: int):
+        cursor_ref.current["base"] = pos
+        cursor_ref.current["extent"] = pos
+
+    def _sync_code_editor_selection(pos: int):
+        if active_field_ref is None:
+            return
+        ctrl = active_field_ref.current
+        if ctrl is None:
+            return
+        frozen = getattr(ctrl, "_frozen", None)
+        if frozen is not None:
+            del ctrl._frozen
+        try:
+            ctrl.selection = ft.TextSelection(base_offset=pos, extent_offset=pos)
+            ctrl.update()
+        except Exception:
+            pass
+        finally:
+            if frozen is not None:
+                ctrl._frozen = frozen
+
+    def _code_block_tab(delta: int):
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        if document.lines[li].block_type != BlockType.CODE:
+            return
+        text = _code_block_text()
+        base, extent = _code_selection()
+        indent = _code_indent_width()
+        if base != extent:
+            start, end = sorted((base, extent))
+            lines = text.split("\n")
+            offsets = []
+            pos = 0
+            for i, line in enumerate(lines):
+                offsets.append((pos, pos + len(line), i))
+                pos += len(line) + 1
+            affected = [i for s, e, i in offsets if not (e < start or s > end)]
+            if not affected:
+                return
+            if delta > 0:
+                for i in affected:
+                    lines[i] = indent + lines[i]
+                _set_draft("\n".join(lines))
+                pos = end + len(indent) * len(affected)
+                _set_code_selection(pos)
+                _sync_code_editor_selection(pos)
+            else:
+                for i in affected:
+                    if lines[i].startswith(indent):
+                        lines[i] = lines[i][len(indent):]
+                _set_draft("\n".join(lines))
+                pos = max(0, start - len(indent) * len(affected))
+                _set_code_selection(pos)
+                _sync_code_editor_selection(pos)
+            return
+        if delta > 0:
+            _set_draft(text + indent)
+            pos = len(text) + len(indent)
+            _set_code_selection(pos)
+            _sync_code_editor_selection(pos)
+        else:
+            if text.endswith(indent):
+                _set_draft(text[:-len(indent)])
+                pos = max(0, len(text) - len(indent))
+                _set_code_selection(pos)
+                _sync_code_editor_selection(pos)
+
+    def _code_block_backspace():
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        if document.lines[li].block_type != BlockType.CODE:
+            return
+        text = _code_block_text()
+        base, extent = _code_selection()
+        sel = _code_block_selection_text()
+        if base != extent:
+            start, end = sorted((base, extent))
+            _set_draft(text[:start] + text[end:])
+            _set_code_selection(start)
+            _sync_code_editor_selection(start)
+            return
+        indent = _code_indent_width()
+        left = text[:base]
+        if left.endswith(indent):
+            _set_draft(left[:-len(indent)] + text[extent:])
+            pos = base - len(indent)
+            _set_code_selection(pos)
+            _sync_code_editor_selection(pos)
+        elif left.endswith("\n"):
+            prev_nl = left[:-1].rfind("\n")
+            line_start = prev_nl + 1
+            prefix = left[line_start:base]
+            if prefix == indent:
+                _set_draft(text[:line_start] + text[base:])
+                _set_code_selection(line_start)
+                _sync_code_editor_selection(line_start)
+        elif sel:
+            _set_draft(text[:base] + text[extent:])
+            _set_code_selection(base)
+
+    def _code_block_delete():
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        if document.lines[li].block_type != BlockType.CODE:
+            return
+        text = _code_block_text()
+        base, extent = _code_selection()
+        if base != extent:
+            return
+        if base < len(text) and text[base] == "\n":
+            _set_draft(text[:base] + text[base + 1 :])
+            _sync_code_editor_selection(base)
+
+    def _code_block_enter():
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        if document.lines[li].block_type != BlockType.CODE:
+            return
+        text = _code_block_text()
+        base, extent = _code_selection()
+        if base != extent:
+            start, end = sorted((base, extent))
+            _set_draft(text[:start] + text[end:])
+            _set_code_selection(start)
+            return
+        left = text[:base]
+        line_start = left.rfind("\n") + 1
+        current = left[line_start:]
+        indent = len(current) - len(current.lstrip(" \t"))
+        prefix = current[:indent]
+        extra = prefix
+        trimmed = current.rstrip()
+        if trimmed.endswith((":", "{", "[", "(")):
+            extra = prefix + "    "
+        insert = "\n" + extra
+        _set_draft(text[:base] + insert + text[extent:])
+        pos = base + len(insert)
+        _set_code_selection(pos)
+        _sync_code_editor_selection(pos)
+
     def _on_raw_draft_change(value: str):
         _maybe_push_draft_history()
         set_raw_draft(value)
@@ -828,6 +1015,10 @@ def MarkdownEditor(
             expand=True,
             bgcolor=c.bg,
         )
+
+    def commit_and_exit():
+        commit_active(draft_ref.current)
+        set_active(None)
 
     def on_blur():
         if suppress_blur.current:
@@ -941,7 +1132,8 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块 / 块级公式内回车：仅更新 draft（多行输入，Shift+Enter 换行）
+        # 代码块 / 块级公式内回车：仅更新 draft，不在 Enter 时退出编辑态
+        # 代码块的提交统一交给 Ctrl+Enter / Esc / 失焦，以获得更接近 IDE 的行为。
         if line.block_type in (BlockType.CODE, BlockType.MATH):
             _set_draft(new_raw)
             return
@@ -1355,6 +1547,11 @@ def MarkdownEditor(
             "jump_to_line": jump_to,
             "toggle_raw": toggle_raw,
             "toggle_focus_mode": toggle_focus_mode,
+            "exit_code_block": exit_code_block,
+            "handle_tab_in_code": _code_block_tab,
+            "handle_backspace_in_code": _code_block_backspace,
+            "handle_delete_in_code": _code_block_delete,
+            "handle_enter_in_code": _code_block_enter,
             "get_cursor_row_col": _get_cursor_row_col,
         }
 
@@ -1404,6 +1601,7 @@ def MarkdownEditor(
             line_height=line_height,
             on_cursor_sync=_on_cursor_sync if is_act else None,
             is_current_line=is_act,
+            clipboard_ref=clipboard_ref,
         )
         for i, line in enumerate(document.lines)
     ]
@@ -1491,34 +1689,61 @@ def MarkdownEditor(
 
     # ---- 页脚已提升到 App 层，贯穿侧边栏 + 编辑区全宽 ----
 
-    return ft.Column(
-        controls=[
-            _tool_area(),
-            _raw_editor()
-            if raw_mode
-            else ft.SelectionArea(
-                expand=True,
-                on_change=on_selection_area_change,
-                content=ft.Container(
-                    content=ft.Container(
-                        content=ft.Column(
-                            ref=list_view_ref,
-                            controls=line_controls,
-                            expand=True,
-                            spacing=0,  # 行间无间距：避免行间空白死区导致点击无效
-                            scroll=ft.ScrollMode.AUTO,
-                        ),
-                        width=content_max_width,
-                        alignment=ft.Alignment.TOP_LEFT,
-                    ),
+    def _on_key_down(e):
+        key = (getattr(e, "key", "") or "").lower()
+        ctrl = bool(getattr(e, "ctrl", False) or getattr(e, "meta", False))
+        shift = bool(getattr(e, "shift", False))
+        if active is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type != BlockType.CODE:
+            return
+        if key in ("enter", "numpad enter") and ctrl:
+            exit_code_block()
+        elif key == "escape":
+            exit_code_block()
+        elif key == "tab":
+            _code_block_tab(-1 if shift else 1)
+        elif key == "backspace":
+            _code_block_backspace()
+        elif key in ("enter", "numpad enter"):
+            _code_block_enter()
+
+    return ft.KeyboardListener(
+        autofocus=True,
+        on_key_down=_on_key_down,
+        content=ft.Column(
+            controls=[
+                _tool_area(),
+                _raw_editor()
+                if raw_mode
+                else ft.SelectionArea(
                     expand=True,
-                    alignment=ft.Alignment.TOP_CENTER,
-                    bgcolor=c.bg,
-                    padding=ft.Padding.symmetric(
-                        horizontal=content_padding, vertical=content_padding_top
+                    on_change=on_selection_area_change,
+                    content=ft.Container(
+                        content=ft.Container(
+                            content=ft.Column(
+                                ref=list_view_ref,
+                                controls=line_controls,
+                                expand=True,
+                                spacing=0,  # 行间无间距：避免行间空白死区导致点击无效
+                                scroll=ft.ScrollMode.AUTO,
+                            ),
+                            width=content_max_width,
+                            alignment=ft.Alignment.TOP_LEFT,
+                        ),
+                        expand=True,
+                        alignment=ft.Alignment.TOP_CENTER,
+                        bgcolor=c.bg,
+                        padding=ft.Padding.symmetric(
+                            horizontal=content_padding, vertical=content_padding_top
+                        ),
                     ),
                 ),
-            ),
-        ],
-        expand=True,
+            ],
+            expand=True,
+        ),
     )

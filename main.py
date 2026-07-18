@@ -21,7 +21,7 @@ from views.sidebar import Sidebar
 
 _SAMPLE = r"""# Markdown 编辑器
 
-基于 Flet 0.86.0 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
+基于 Flet 0.86.1 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
 
 ## 特性
 - 所见即所得
@@ -140,7 +140,7 @@ This is a **bold** text and this is *italic*. Here's some `inline code`.
 
 
 def _read_file(path: str) -> str:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return f.read()
 
 
@@ -201,36 +201,204 @@ _DEFAULT_SETTINGS = {
 }
 
 _ACTION_REGISTRY = [
-    {"id": "save", "label": "保存", "scope": "both", "category": "文件", "description": "保存当前文档到磁盘。", "default": {"browse": "ctrl+s", "edit": "ctrl+s"}},
-    {"id": "open", "label": "打开", "scope": "browse", "category": "文件", "description": "打开 Markdown 文件。", "default": {"browse": "ctrl+o"}},
-    {"id": "new", "label": "新建", "scope": "browse", "category": "文件", "description": "创建空白文档。", "default": {"browse": "ctrl+n"}},
-    {"id": "undo", "label": "撤销", "scope": "both", "category": "编辑", "description": "回退上一笔编辑。", "default": {"browse": "ctrl+z", "edit": "ctrl+z"}},
-    {"id": "redo", "label": "重做", "scope": "both", "category": "编辑", "description": "恢复最近撤销的编辑。", "default": {"browse": "ctrl+y", "edit": "ctrl+y"}},
-    {"id": "redo_alt", "label": "重做（备用）", "scope": "both", "category": "编辑", "description": "兼容 VS Code 风格的重做键位。", "default": {"browse": "ctrl+shift+z", "edit": "ctrl+shift+z"}},
-    {"id": "toggle_sidebar", "label": "切换侧边栏", "scope": "both", "category": "视图", "description": "显示或隐藏侧边栏。", "default": {"browse": "ctrl+b", "edit": "escape"}},
-    {"id": "toggle_theme", "label": "切换主题", "scope": "browse", "category": "视图", "description": "在亮色与暗色主题间切换。", "default": {"browse": "ctrl+shift+l"}},
-    {"id": "toggle_raw", "label": "原文模式", "scope": "both", "category": "写作", "description": "在可视化编辑与原始 Markdown 间切换。", "default": {"browse": "ctrl+/", "edit": "ctrl+enter"}},
-    {"id": "open_settings", "label": "打开设置", "scope": "browse", "category": "设置", "description": "进入设置中心。", "default": {"browse": "ctrl+comma"}},
-    {"id": "focus_mode", "label": "聚焦模式", "scope": "both", "category": "视图", "description": "切换窗口全屏聚焦写作。", "default": {"browse": "ctrl+k", "edit": "ctrl+k"}},
-    {"id": "format_h1", "label": "一级标题", "scope": "edit", "category": "格式", "description": "将当前行切换为一级标题。", "default": {}},
-    {"id": "format_h2", "label": "二级标题", "scope": "edit", "category": "格式", "description": "将当前行切换为二级标题。", "default": {}},
-    {"id": "format_h3", "label": "三级标题", "scope": "edit", "category": "格式", "description": "将当前行切换为三级标题。", "default": {}},
-    {"id": "format_paragraph", "label": "正文段落", "scope": "edit", "category": "格式", "description": "将当前行切换为普通段落。", "default": {}},
-    {"id": "format_list", "label": "无序列表", "scope": "edit", "category": "格式", "description": "将当前行切换为无序列表。", "default": {}},
-    {"id": "format_quote", "label": "引用", "scope": "edit", "category": "格式", "description": "将当前行切换为引用块。", "default": {}},
-    {"id": "format_code_block", "label": "代码块", "scope": "edit", "category": "格式", "description": "将当前行切换为代码块。", "default": {}},
-    {"id": "format_hr", "label": "分隔线", "scope": "edit", "category": "格式", "description": "将当前行切换为分隔线。", "default": {}},
-    {"id": "format_bold", "label": "加粗", "scope": "edit", "category": "行内格式", "description": "切换当前段落的加粗。", "default": {}},
-    {"id": "format_italic", "label": "斜体", "scope": "edit", "category": "行内格式", "description": "切换当前段落的斜体。", "default": {}},
-    {"id": "format_code", "label": "行内代码", "scope": "edit", "category": "行内格式", "description": "切换当前段落的行内代码。", "default": {}},
-    {"id": "format_link", "label": "链接", "scope": "edit", "category": "行内格式", "description": "为当前段落插入或移除链接。", "default": {}},
-    {"id": "format_strike", "label": "删除线", "scope": "edit", "category": "行内格式", "description": "切换当前段落的删除线。", "default": {}},
+    {
+        "id": "save",
+        "label": "保存",
+        "scope": "both",
+        "category": "文件",
+        "description": "保存当前文档到磁盘。",
+        "default": {"browse": "ctrl+s", "edit": "ctrl+s"},
+    },
+    {
+        "id": "open",
+        "label": "打开",
+        "scope": "browse",
+        "category": "文件",
+        "description": "打开 Markdown 文件。",
+        "default": {"browse": "ctrl+o"},
+    },
+    {
+        "id": "new",
+        "label": "新建",
+        "scope": "browse",
+        "category": "文件",
+        "description": "创建空白文档。",
+        "default": {"browse": "ctrl+n"},
+    },
+    {
+        "id": "undo",
+        "label": "撤销",
+        "scope": "both",
+        "category": "编辑",
+        "description": "回退上一笔编辑。",
+        "default": {"browse": "ctrl+z", "edit": "ctrl+z"},
+    },
+    {
+        "id": "redo",
+        "label": "重做",
+        "scope": "both",
+        "category": "编辑",
+        "description": "恢复最近撤销的编辑。",
+        "default": {"browse": "ctrl+y", "edit": "ctrl+y"},
+    },
+    {
+        "id": "redo_alt",
+        "label": "重做（备用）",
+        "scope": "both",
+        "category": "编辑",
+        "description": "兼容 VS Code 风格的重做键位。",
+        "default": {"browse": "ctrl+shift+z", "edit": "ctrl+shift+z"},
+    },
+    {
+        "id": "toggle_sidebar",
+        "label": "切换侧边栏",
+        "scope": "both",
+        "category": "视图",
+        "description": "显示或隐藏侧边栏。",
+        "default": {"browse": "ctrl+b", "edit": "escape"},
+    },
+    {
+        "id": "toggle_theme",
+        "label": "切换主题",
+        "scope": "browse",
+        "category": "视图",
+        "description": "在亮色与暗色主题间切换。",
+        "default": {"browse": "ctrl+shift+l"},
+    },
+    {
+        "id": "toggle_raw",
+        "label": "原文模式",
+        "scope": "both",
+        "category": "写作",
+        "description": "在可视化编辑与原始 Markdown 间切换。",
+        "default": {"browse": "ctrl+/", "edit": "ctrl+enter"},
+    },
+    {
+        "id": "open_settings",
+        "label": "打开设置",
+        "scope": "browse",
+        "category": "设置",
+        "description": "进入设置中心。",
+        "default": {"browse": "ctrl+comma"},
+    },
+    {
+        "id": "focus_mode",
+        "label": "聚焦模式",
+        "scope": "both",
+        "category": "视图",
+        "description": "切换窗口全屏聚焦写作。",
+        "default": {"browse": "ctrl+k", "edit": "ctrl+k"},
+    },
+    {
+        "id": "format_h1",
+        "label": "一级标题",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为一级标题。",
+        "default": {},
+    },
+    {
+        "id": "format_h2",
+        "label": "二级标题",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为二级标题。",
+        "default": {},
+    },
+    {
+        "id": "format_h3",
+        "label": "三级标题",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为三级标题。",
+        "default": {},
+    },
+    {
+        "id": "format_paragraph",
+        "label": "正文段落",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为普通段落。",
+        "default": {},
+    },
+    {
+        "id": "format_list",
+        "label": "无序列表",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为无序列表。",
+        "default": {},
+    },
+    {
+        "id": "format_quote",
+        "label": "引用",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为引用块。",
+        "default": {},
+    },
+    {
+        "id": "format_code_block",
+        "label": "代码块",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为代码块。",
+        "default": {},
+    },
+    {
+        "id": "format_hr",
+        "label": "分隔线",
+        "scope": "edit",
+        "category": "格式",
+        "description": "将当前行切换为分隔线。",
+        "default": {},
+    },
+    {
+        "id": "format_bold",
+        "label": "加粗",
+        "scope": "edit",
+        "category": "行内格式",
+        "description": "切换当前段落的加粗。",
+        "default": {},
+    },
+    {
+        "id": "format_italic",
+        "label": "斜体",
+        "scope": "edit",
+        "category": "行内格式",
+        "description": "切换当前段落的斜体。",
+        "default": {},
+    },
+    {
+        "id": "format_code",
+        "label": "行内代码",
+        "scope": "edit",
+        "category": "行内格式",
+        "description": "切换当前段落的行内代码。",
+        "default": {},
+    },
+    {
+        "id": "format_link",
+        "label": "链接",
+        "scope": "edit",
+        "category": "行内格式",
+        "description": "为当前段落插入或移除链接。",
+        "default": {},
+    },
+    {
+        "id": "format_strike",
+        "label": "删除线",
+        "scope": "edit",
+        "category": "行内格式",
+        "description": "切换当前段落的删除线。",
+        "default": {},
+    },
 ]
 
 
 def _load_settings() -> dict:
     try:
-        with open(_SETTINGS_PATH, "r", encoding="utf-8") as f:
+        with open(_SETTINGS_PATH, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             merged = dict(_DEFAULT_SETTINGS)
@@ -406,7 +574,9 @@ def App():
     def _action_rows():
         rows = []
         for layer in _action_layers():
-            layer_actions = [a for a in _ACTION_REGISTRY if a["scope"] in ("both", layer)]
+            layer_actions = [
+                a for a in _ACTION_REGISTRY if a["scope"] in ("both", layer)
+            ]
             cmap = _conflict_map(layer)
             rows.append(
                 ft.Container(
@@ -424,7 +594,9 @@ def App():
                 is_conflict = bool(current and current in cmap)
                 rows.append(
                     ft.Container(
-                        bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.RED) if is_conflict else None,
+                        bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.RED)
+                        if is_conflict
+                        else None,
                         border_radius=10,
                         padding=ft.Padding.symmetric(horizontal=10, vertical=8),
                         content=ft.Column(
@@ -433,9 +605,13 @@ def App():
                                     controls=[
                                         ft.Column(
                                             controls=[
-                                                ft.Text(action["label"], size=13, weight=ft.FontWeight.W_600),
                                                 ft.Text(
-                                                    f'{action["category"]} · {action["description"]}',
+                                                    action["label"],
+                                                    size=13,
+                                                    weight=ft.FontWeight.W_600,
+                                                ),
+                                                ft.Text(
+                                                    f"{action['category']} · {action['description']}",
                                                     size=11,
                                                     color=get_colors(theme_mode).muted,
                                                 ),
@@ -450,11 +626,26 @@ def App():
                                             border=ft.InputBorder.UNDERLINE,
                                             text_size=12,
                                             width=160,
-                                            border_color="#E66A00" if is_conflict else None,
-                                            focused_border_color="#E66A00" if is_conflict else get_colors(theme_mode).link,
-                                            on_submit=lambda e, l=layer, a=action["id"]: _set_scope_shortcut(l, a, (e.control.value or "").lower()),
+                                            border_color="#E66A00"
+                                            if is_conflict
+                                            else None,
+                                            focused_border_color="#E66A00"
+                                            if is_conflict
+                                            else get_colors(theme_mode).link,
+                                            on_submit=lambda e, l=layer, a=action["id"]: (
+                                                _set_scope_shortcut(
+                                                    l,
+                                                    a,
+                                                    (e.control.value or "").lower(),
+                                                )
+                                            ),
                                         ),
-                                        ft.TextButton("恢复默认", on_click=lambda e, l=layer, a=action["id"]: _reset_action(l, a)),
+                                        ft.TextButton(
+                                            "恢复默认",
+                                            on_click=lambda e, l=layer, a=action["id"]: (
+                                                _reset_action(l, a)
+                                            ),
+                                        ),
                                     ],
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
@@ -521,7 +712,11 @@ def App():
         if not path.lower().endswith(".json"):
             path += ".json"
         try:
-            payload = json.dumps(settings.get("shortcuts", _DEFAULT_SETTINGS["shortcuts"]), ensure_ascii=False, indent=2)
+            payload = json.dumps(
+                settings.get("shortcuts", _DEFAULT_SETTINGS["shortcuts"]),
+                ensure_ascii=False,
+                indent=2,
+            )
             _write_file(path, payload)
         except Exception as e:
             if page_ref.current is not None:
@@ -761,12 +956,23 @@ def App():
         key = (e.key or "").replace(" ", "").lower()
         if key in ("control", "meta", "shift", "alt"):
             return ""
-        mapping = {"arrowleft": "left", "arrowright": "right", "arrowup": "up", "arrowdown": "down", " ": "space", "comma": ",", "escape": "esc", "enter": "enter"}
+        mapping = {
+            "arrowleft": "left",
+            "arrowright": "right",
+            "arrowup": "up",
+            "arrowdown": "down",
+            " ": "space",
+            "comma": ",",
+            "escape": "esc",
+            "enter": "enter",
+        }
         key = mapping.get(key, key)
         return "+".join(parts + [key])
 
     def _matches(combo: str, target: str) -> bool:
-        return combo == target or (target == "ctrl+," and combo in {"ctrl+comma", "ctrl+,"})
+        return combo == target or (
+            target == "ctrl+," and combo in {"ctrl+comma", "ctrl+,"}
+        )
 
     def on_key(e):
         combo = _combo(e)
@@ -816,11 +1022,20 @@ def App():
             if norm == "arrowleft" and nav["extent"] == 0 and nav["base"] == 0:
                 nav["move_left"]()
                 return
-            if norm == "arrowright" and nav["extent"] == nav["draft_len"] and nav["base"] == nav["draft_len"]:
+            if (
+                norm == "arrowright"
+                and nav["extent"] == nav["draft_len"]
+                and nav["base"] == nav["draft_len"]
+            ):
                 nav["move_right"]()
                 return
 
-        if norm == "backspace" and nav and nav.get("active") is None and not nav.get("raw_mode"):
+        if (
+            norm == "backspace"
+            and nav
+            and nav.get("active") is None
+            and not nav.get("raw_mode")
+        ):
             sel_ref = nav.get("selection_text_ref")
             plain = (sel_ref.current if sel_ref is not None else "") or ""
             if plain and nav.get("handle_delete_selection"):
@@ -851,7 +1066,9 @@ def App():
                 nav = nav_ref.current
                 if nav and nav.get("toggle_focus_mode"):
                     nav["toggle_focus_mode"]()
-            elif _matches(combo, shortcuts.get("redo", "ctrl+y")) or _matches(combo, shortcuts.get("redo_alt", "ctrl+shift+z")):
+            elif _matches(combo, shortcuts.get("redo", "ctrl+y")) or _matches(
+                combo, shortcuts.get("redo_alt", "ctrl+shift+z")
+            ):
                 nav = nav_ref.current
                 if nav and nav.get("redo"):
                     nav["redo"]()
@@ -879,7 +1096,9 @@ def App():
             nav = nav_ref.current
             if nav and nav.get("undo"):
                 nav["undo"]()
-        elif _matches(combo, shortcuts.get("redo", "ctrl+y")) or _matches(combo, shortcuts.get("redo_alt", "ctrl+shift+z")):
+        elif _matches(combo, shortcuts.get("redo", "ctrl+y")) or _matches(
+            combo, shortcuts.get("redo_alt", "ctrl+shift+z")
+        ):
             nav = nav_ref.current
             if nav and nav.get("redo"):
                 nav["redo"]()
@@ -1384,13 +1603,23 @@ def App():
                                             ft.Text("Ctrl+O 打开", size=12),
                                             ft.Text("Ctrl+N 新建", size=12),
                                             ft.Text("Ctrl+Z 撤销", size=12),
-                                            ft.Text("Ctrl+Y / Ctrl+Shift+Z 重做", size=12),
-                                            ft.Text("编辑态：Ctrl+Enter 原文模式 / Esc 侧边栏", size=12),
-                                            ft.Text("浏览态：Ctrl+/ 原文模式 / Ctrl+, 设置", size=12),
+                                            ft.Text(
+                                                "Ctrl+Y / Ctrl+Shift+Z 重做", size=12
+                                            ),
+                                            ft.Text(
+                                                "编辑态：Ctrl+Enter 原文模式 / Esc 侧边栏",
+                                                size=12,
+                                            ),
+                                            ft.Text(
+                                                "浏览态：Ctrl+/ 原文模式 / Ctrl+, 设置",
+                                                size=12,
+                                            ),
                                             ft.Text("Ctrl+B 切换侧边栏", size=12),
                                             ft.Text("Ctrl+Shift+L 切换主题", size=12),
                                             ft.Text("Ctrl+K 聚焦模式", size=12),
-                                            ft.Text("Tab / Shift+Tab 列表缩进", size=12),
+                                            ft.Text(
+                                                "Tab / Shift+Tab 列表缩进", size=12
+                                            ),
                                             ft.Text("Home / End 段首段尾", size=12),
                                             ft.Text("Ctrl+1/2/3 标题", size=12),
                                         ],
@@ -1413,7 +1642,9 @@ def App():
                                                             ft.Text(
                                                                 "统一查看并管理浏览态 / 编辑态动作、默认键位与冲突状态。",
                                                                 size=12,
-                                                                color=get_colors(theme_mode).muted,
+                                                                color=get_colors(
+                                                                    theme_mode
+                                                                ).muted,
                                                             ),
                                                         ],
                                                         spacing=2,
@@ -1422,15 +1653,25 @@ def App():
                                                     ft.Container(expand=True),
                                                     ft.TextButton(
                                                         "导入方案",
-                                                        on_click=lambda e: page_ref.current.run_task(import_shortcuts),
+                                                        on_click=lambda e: (
+                                                            page_ref.current.run_task(
+                                                                import_shortcuts
+                                                            )
+                                                        ),
                                                     ),
                                                     ft.TextButton(
                                                         "导出方案",
-                                                        on_click=lambda e: page_ref.current.run_task(export_shortcuts),
+                                                        on_click=lambda e: (
+                                                            page_ref.current.run_task(
+                                                                export_shortcuts
+                                                            )
+                                                        ),
                                                     ),
                                                     ft.TextButton(
                                                         "恢复默认快捷键",
-                                                        on_click=lambda e: reset_shortcuts(),
+                                                        on_click=lambda e: (
+                                                            reset_shortcuts()
+                                                        ),
                                                     ),
                                                 ]
                                             ),
@@ -1449,7 +1690,9 @@ def App():
                                                     ),
                                                     ft.TextButton(
                                                         "定位第一个冲突",
-                                                        on_click=lambda e: _focus_first_conflict(),
+                                                        on_click=lambda e: (
+                                                            _focus_first_conflict()
+                                                        ),
                                                     ),
                                                 ],
                                                 spacing=10,
@@ -1458,9 +1701,14 @@ def App():
                                                 [
                                                     ft.Container(
                                                         expand=True,
-                                                        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                                                        padding=ft.Padding.symmetric(
+                                                            horizontal=10, vertical=8
+                                                        ),
                                                         border_radius=10,
-                                                        bgcolor=ft.Colors.with_opacity(0.08, get_colors(theme_mode).link),
+                                                        bgcolor=ft.Colors.with_opacity(
+                                                            0.08,
+                                                            get_colors(theme_mode).link,
+                                                        ),
                                                         content=ft.Column(
                                                             controls=[
                                                                 ft.Text(
@@ -1469,9 +1717,18 @@ def App():
                                                                     weight=ft.FontWeight.W_700,
                                                                 ),
                                                                 ft.Text(
-                                                                    _conflict_summary("browse") or "无冲突",
+                                                                    _conflict_summary(
+                                                                        "browse"
+                                                                    )
+                                                                    or "无冲突",
                                                                     size=11,
-                                                                    color="#E66A00" if _conflict_summary("browse") else get_colors(theme_mode).muted,
+                                                                    color="#E66A00"
+                                                                    if _conflict_summary(
+                                                                        "browse"
+                                                                    )
+                                                                    else get_colors(
+                                                                        theme_mode
+                                                                    ).muted,
                                                                 ),
                                                             ],
                                                             spacing=2,
@@ -1479,9 +1736,14 @@ def App():
                                                     ),
                                                     ft.Container(
                                                         expand=True,
-                                                        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                                                        padding=ft.Padding.symmetric(
+                                                            horizontal=10, vertical=8
+                                                        ),
                                                         border_radius=10,
-                                                        bgcolor=ft.Colors.with_opacity(0.08, get_colors(theme_mode).link),
+                                                        bgcolor=ft.Colors.with_opacity(
+                                                            0.08,
+                                                            get_colors(theme_mode).link,
+                                                        ),
                                                         content=ft.Column(
                                                             controls=[
                                                                 ft.Text(
@@ -1490,9 +1752,18 @@ def App():
                                                                     weight=ft.FontWeight.W_700,
                                                                 ),
                                                                 ft.Text(
-                                                                    _conflict_summary("edit") or "无冲突",
+                                                                    _conflict_summary(
+                                                                        "edit"
+                                                                    )
+                                                                    or "无冲突",
                                                                     size=11,
-                                                                    color="#E66A00" if _conflict_summary("edit") else get_colors(theme_mode).muted,
+                                                                    color="#E66A00"
+                                                                    if _conflict_summary(
+                                                                        "edit"
+                                                                    )
+                                                                    else get_colors(
+                                                                        theme_mode
+                                                                    ).muted,
                                                                 ),
                                                             ],
                                                             spacing=2,
@@ -1505,7 +1776,9 @@ def App():
                                             ft.Container(
                                                 expand=True,
                                                 border_radius=12,
-                                                bgcolor=ft.Colors.with_opacity(0.04, get_colors(theme_mode).text),
+                                                bgcolor=ft.Colors.with_opacity(
+                                                    0.04, get_colors(theme_mode).text
+                                                ),
                                                 padding=ft.Padding.all(12),
                                                 content=ft.Column(
                                                     controls=_action_rows(),

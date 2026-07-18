@@ -2,12 +2,13 @@
 
 布局策略（兼顾排版与段级编辑）：
 - 非编辑态：整行作为单个 ft.Text(spans=[...])，自动换行、排版美观。
-- 编辑态（该行某段被激活）：拆为 [前段 Text] + [激活段 TextField] + [后段 Text]，
+- 编辑态（该行某段被激活）：拆为 [前段 Text] + [激活段编辑器] + [后段 Text]，
   仅激活段显示原生 Markdown，其余段保持渲染样式——Typora 式最小语法编辑。
 特殊块（代码块 / 分隔线 / 空行）单独处理。
 """
 
 from typing import Callable
+import asyncio
 
 import flet as ft
 
@@ -29,6 +30,23 @@ from views.segment_view import (
     active_text_field,
     segment_to_span,
 )
+
+
+async def _copy_code_to_clipboard(
+    clipboard_ref: ft.Ref | None,
+    text: str,
+    set_copied: Callable[[bool], None],
+) -> None:
+    clipboard = clipboard_ref.current if clipboard_ref is not None else None
+    if clipboard is None:
+        return
+    try:
+        await clipboard.set(text)
+    except Exception:
+        return
+    set_copied(True)
+    await asyncio.sleep(1.2)
+    set_copied(False)
 
 _PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
 
@@ -182,8 +200,10 @@ def _active_field(
     max_width: float | None = None,
     line_height: float = 1.6,
     on_cursor_sync: Callable[[int, int], None] | None = None,
-) -> ft.TextField:
-    """构造激活态 TextField（统一入口，消除重复调用）。"""
+    block_language: str | None = None,
+    use_code_editor: bool = False,
+) -> ft.Control:
+    """构造激活态编辑控件（统一入口，消除重复调用）。"""
     return active_text_field(
         line.segments[0],
         draft,
@@ -199,6 +219,8 @@ def _active_field(
         max_width=max_width,
         line_height=line_height,
         on_cursor_sync=on_cursor_sync,
+        block_language=block_language,
+        use_code_editor=use_code_editor,
     )
 
 
@@ -226,6 +248,7 @@ def LineView(
     line_height: float = 1.6,
     on_cursor_sync: Callable[[int, int], None] | None = None,
     is_current_line: bool = False,
+    clipboard_ref: ft.Ref | None = None,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
@@ -318,10 +341,22 @@ def LineView(
     if line.block_type == BlockType.CODE:
         if active_seg == 0:
             inner = _active_field(
-                line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                base_size=14, multiline=True, max_width=avail_width, line_height=line_height,
+                line,
+                draft,
+                on_change_draft,
+                on_submit,
+                on_blur,
+                on_selection_change,
+                initial_cursor,
+                nav_seq,
+                field_ref=field_ref,
+                base_size=14,
+                multiline=True,
+                max_width=avail_width,
+                line_height=line_height,
                 on_cursor_sync=on_cursor_sync,
+                block_language=line.lang,
+                use_code_editor=True,
             )
             # 语言类型输入框：on_focus 设 suppress_blur 防止代码框 blur 退出
             lang_field = ft.TextField(
@@ -352,9 +387,6 @@ def LineView(
             page = ft.context.page
             is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
             code_theme = ft.MarkdownCodeTheme.ATOM_ONE_DARK if is_dark else ft.MarkdownCodeTheme.GITHUB
-            # ft.Markdown + GITHUB_WEB + code_theme 实现代码高亮
-            # selectable 留 False：外层 SelectionArea 已提供选择能力，
-            # 且 Markdown 自带 selectable 会消费 tap 导致 GestureDetector 失效
             md = ft.Markdown(
                 value=f"```{lang}\n{code}\n```",
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
@@ -363,6 +395,21 @@ def LineView(
             lang_tag = (
                 ft.Text(value=lang, size=11, color=c.muted, font_family=FONT_MONO)
                 if lang else ft.Text(" ")
+            )
+            copied, set_copied = ft.use_state(False)
+            copy_btn = ft.IconButton(
+                icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+                icon_size=14,
+                tooltip="已复制" if copied else "复制代码",
+                padding=6,
+                style=ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=6),
+                    color=ft.Colors.GREEN if copied else c.muted,
+                ),
+                on_click=lambda e, txt=code: (
+                    page.run_task(_copy_code_to_clipboard, clipboard_ref, txt, set_copied)
+                    if page is not None and not copied else None
+                ),
             )
 
             def _on_tap(e: ft.TapEvent):
@@ -373,9 +420,18 @@ def LineView(
                     return
                 activate(0)
 
+            header = ft.Row(
+                controls=[
+                    lang_tag,
+                    ft.Container(expand=True),
+                    copy_btn,
+                ],
+                spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
             content = ft.GestureDetector(
                 content=ft.Container(
-                    content=ft.Column([lang_tag, md], spacing=6),
+                    content=ft.Column([header, md], spacing=6),
                     bgcolor=c.code_block_bg, border_radius=6, padding=12,
                     ink=True,
                 ),
@@ -552,10 +608,19 @@ def LineView(
 
         content = ft.Container(
             content=active_text_field(
-                seg0, draft, on_change_draft, on_submit, on_blur, base,
+                seg0,
+                draft,
+                on_change_draft,
+                on_submit,
+                on_blur,
+                base,
                 on_selection_change=on_selection_change,
-                initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
+                initial_cursor=initial_cursor,
+                nav_seq=nav_seq,
+                field_ref=field_ref,
+                max_width=avail_width,
+                line_height=line_height,
+                on_cursor_sync=on_cursor_sync,
             ),
             width=float("inf"),
             padding=ft.Padding.symmetric(horizontal=8, vertical=4),
@@ -580,10 +645,19 @@ def LineView(
         controls.append(ft.Text(spans=before_spans, style=line_style))
     controls.append(
         active_text_field(
-            active_seg_obj, draft, on_change_draft, on_submit, on_blur, base,
+            active_seg_obj,
+            draft,
+            on_change_draft,
+            on_submit,
+            on_blur,
+            base,
             on_selection_change=on_selection_change,
-            initial_cursor=initial_cursor, nav_seq=nav_seq, field_ref=field_ref,
-            max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
+            initial_cursor=initial_cursor,
+            nav_seq=nav_seq,
+            field_ref=field_ref,
+            max_width=avail_width,
+            line_height=line_height,
+            on_cursor_sync=on_cursor_sync,
         )
     )
     if after_spans:

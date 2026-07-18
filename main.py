@@ -397,41 +397,39 @@ def App():
     on_key_ref = ft.use_ref(None)
 
     async def _do_copy():
-        """Ctrl+C 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown。"""
-        await asyncio.sleep(0.2)
-        clipboard = clipboard_holder.current
-        if clipboard is None:
-            return
-        try:
-            plain = await clipboard.get()
-        except Exception:
-            return
-        if not plain:
-            return
+        """Ctrl+C：用 SelectionArea 选区文本计算 Markdown 覆盖剪贴板。
+
+        用 selection_text_ref（on_change 上报的选区纯文本）而非 clipboard.get()
+        读取：原生 SelectionArea 复制到剪贴板的时序不可靠（sleep 0.2s 仍可能读到
+        空或旧值），且 selection_text_ref 与 BackSpace 删除选区共用同一数据源，
+        行为一致更可靠。
+        """
+        await asyncio.sleep(0.05)
         nav = nav_ref.current
-        if nav is None or not nav.get("compute_markdown_from_text"):
+        if nav is None:
+            return
+        sel_ref = nav.get("selection_text_ref")
+        plain = (sel_ref.current if sel_ref is not None else "") or ""
+        if not plain or not nav.get("compute_markdown_from_text"):
             return
         try:
             md = nav["compute_markdown_from_text"](plain)
             if md and md != plain:
-                await clipboard.set(md)
+                clipboard = clipboard_holder.current
+                if clipboard is not None:
+                    await clipboard.set(md)
         except Exception:
             return
 
     async def _do_cut():
-        """Ctrl+X 后异步执行：等待原生复制完成→读取纯文本→匹配文档→替换为 Markdown→删除选中内容。"""
-        await asyncio.sleep(0.2)
-        clipboard = clipboard_holder.current
-        if clipboard is None:
-            return
-        try:
-            plain = await clipboard.get()
-        except Exception:
-            return
-        if not plain:
-            return
+        """Ctrl+X：用 SelectionArea 选区文本计算 Markdown 覆盖剪贴板，并删除选中内容。"""
+        await asyncio.sleep(0.05)
         nav = nav_ref.current
-        if nav is None or not nav.get("handle_cut"):
+        if nav is None:
+            return
+        sel_ref = nav.get("selection_text_ref")
+        plain = (sel_ref.current if sel_ref is not None else "") or ""
+        if not plain or not nav.get("handle_cut"):
             return
         try:
             await nav["handle_cut"](plain)

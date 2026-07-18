@@ -1205,6 +1205,17 @@ def MarkdownEditor(
         selection_text_ref.current = ""
         set_active(None)
         if 0 <= cursor_li < len(document.lines):
+            # 防御：删除/合并后段结构可能变化（reparse），cursor_si/cursor_offset
+            # 可能越界导致 _goto 提前 return 不激活，视觉上内容已删但光标丢失。
+            # 越界时回退到最后一段、光标定段尾。
+            line = document.lines[cursor_li]
+            if not (0 <= cursor_si < len(line.segments)):
+                cursor_si = max(0, len(line.segments) - 1)
+                cursor_offset = -1
+            elif cursor_offset < 0 or (
+                cursor_offset > len(line.segments[cursor_si].raw)
+            ):
+                cursor_offset = -1
             _goto(cursor_li, cursor_si, cursor_at=cursor_offset)
 
     def handle_delete_selection(plain_text: str):

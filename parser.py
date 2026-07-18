@@ -757,7 +757,10 @@ def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]])
         if not line.segments:
             line.segments = [Segment(SegType.TEXT, "", "")]
             cursor_si, cursor_offset = 0, 0
-        return lines, li, cursor_si, cursor_offset
+        # 返回新列表触发 @ft.observable 通知：单行部分选中只改了
+        # line.segments（Line 非 observable），若返回同一 lines 引用，
+        # document.lines = lines 不触发重渲染，剪切/删除视觉无变化。
+        return list(lines), li, cursor_si, cursor_offset
 
     # 跨行部分选中：首行选中尾部 + 尾行选中头部合并为一行，中间行删除
     first_line = lines[first_li]

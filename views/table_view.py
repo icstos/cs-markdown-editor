@@ -1,4 +1,4 @@
-"""表格视图：基于 Flet DataTable 的 Typora 风格 Markdown 表格渲染与编辑。"""
+"""表格视图：基于 DataTable2 的 Typora 风格 Markdown 表格渲染与编辑。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,11 @@ import re
 from collections.abc import Callable
 
 import flet as ft
+
+try:
+    from flet_datatable2 import DataTable2
+except Exception:  # pragma: no cover - optional dependency fallback
+    DataTable2 = ft.DataTable
 
 from models import BlockType, Line
 from styles import FONT_MAIN, FONT_MONO, _current_colors
@@ -15,25 +20,27 @@ _ALIGN_RE = re.compile(r"^:?-{3,}:?$")
 
 def _parse_table_lines(
     lines: list[Line], start_idx: int
-) -> tuple[list[int], list[list[str]], list[str]]:
-    """从 start_idx 开始收集连续表格行，返回 (row_indices, rows, aligns)。"""
+) -> tuple[int, list[int], list[list[str]], list[str]]:
+    """从 start_idx 开始收集连续表格行，返回 (header_idx, row_indices, rows, aligns)。"""
     row_indices: list[int] = []
     rows: list[list[str]] = []
     aligns: list[str] = []
     i = start_idx
+    header_idx = start_idx
+    seen_header = False
     while i < len(lines) and lines[i].block_type == BlockType.TABLE:
         cells = [c.strip() for c in lines[i].raw.strip().strip("|").split("|")]
-        if not row_indices:
+        if all(_ALIGN_RE.fullmatch(c or "---") for c in cells):
+            aligns = cells
+        elif not seen_header:
+            header_idx = i
+            rows.append(cells)
+            seen_header = True
+        else:
             row_indices.append(i)
             rows.append(cells)
-        else:
-            if all(_ALIGN_RE.fullmatch(c or "---") for c in cells):
-                aligns = cells
-            else:
-                row_indices.append(i)
-                rows.append(cells)
         i += 1
-    return row_indices, rows, aligns
+    return header_idx, row_indices, rows, aligns
 
 
 def _normalize_rows(rows: list[list[str]]) -> list[list[str]]:
@@ -43,6 +50,10 @@ def _normalize_rows(rows: list[list[str]]) -> list[list[str]]:
 
 def _cell_text(cell: str) -> str:
     return cell.strip() or " "
+
+
+def _safe_color(color: str, opacity: float) -> str:
+    return ft.Colors.with_opacity(opacity, color)
 
 
 @ft.component
@@ -60,9 +71,11 @@ def TableView(
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
     content_width: float | None = None,
+    active_line_idx: int | None = None,
 ):
     c = _current_colors()
-    row_indices, rows, aligns = _parse_table_lines(lines, line_idx)
+    header_idx, row_indices, rows, aligns = _parse_table_lines(lines, line_idx)
+    active_line_idx = line_idx if active_line_idx is None else active_line_idx
     if not rows:
         return ft.Container()
 
@@ -78,13 +91,11 @@ def TableView(
             return ft.TextAlign.RIGHT
         return ft.TextAlign.LEFT
 
-    def _on_cell_tap(li: int, ci: int):
-        on_activate(row_indices[li], ci, -1)
+    def _on_cell_tap(source_line_idx: int, ci: int):
+        on_activate(source_line_idx, ci, -1)
 
-    header_style = ft.TextStyle(
-        font_family=FONT_MAIN, weight=ft.FontWeight.W_600, color=c.text
-    )
-    body_style = ft.TextStyle(font_family=FONT_MAIN, color=c.text)
+    def _cell_padding(is_active: bool) -> ft.Padding:
+        return ft.Padding.symmetric(horizontal=12 if is_active else 10, vertical=9)
 
     columns = []
     for ci in range(col_count):
@@ -93,30 +104,27 @@ def TableView(
                 label=ft.Container(
                     content=ft.Text(
                         value=_cell_text(normalized[0][ci]),
-                        style=header_style,
+                        style=ft.TextStyle(
+                            font_family=FONT_MAIN,
+                            weight=ft.FontWeight.W_600,
+                            color=c.text,
+                            size=14,
+                        ),
                         text_align=_align(ci),
                     ),
-                    padding=ft.Padding.symmetric(vertical=8, horizontal=4),
+                    padding=ft.Padding.symmetric(vertical=10, horizontal=10),
                 ),
             )
         )
 
     data_rows: list[ft.DataRow] = []
-    for ri, row in enumerate(normalized[1:] if len(normalized) > 1 else normalized):
+    body_rows = normalized[1:] if len(normalized) > 1 else []
+    for ri, row in enumerate(body_rows, start=1):
+        source_line_idx = row_indices[ri - 1]
         cells: list[ft.DataCell] = []
         for ci in range(col_count):
-            is_active = active_seg == ci and row_indices[ri] == line_idx
+            is_active = active_seg == ci and source_line_idx == active_line_idx
             value = draft if is_active else _cell_text(row[ci])
-            text = ft.Text(
-                value=value,
-                style=ft.TextStyle(
-                    font_family=FONT_MONO if is_active else FONT_MAIN,
-                    color=c.text,
-                    size=15,
-                ),
-                text_align=_align(ci),
-                no_wrap=not is_active,
-            )
             if is_active:
                 cell_content = ft.Container(
                     content=ft.TextField(
@@ -125,64 +133,112 @@ def TableView(
                         autofocus=True,
                         border=ft.InputBorder.NONE,
                         filled=True,
-                        fill_color=c.active_bg,
+                        fill_color=_safe_color(c.link, 0.08),
                         dense=True,
-                        content_padding=ft.Padding.symmetric(horizontal=4, vertical=2),
-                        text_style=ft.TextStyle(font_family=FONT_MAIN, color=c.text),
+                        content_padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                        text_style=ft.TextStyle(font_family=FONT_MAIN, color=c.text, size=15),
+                        cursor_color=c.link,
+                        selection_color=_safe_color(c.link, 0.18),
                         on_change=lambda e: on_change_draft(e.control.value),
                         on_submit=lambda e: on_submit(e.control.value),
                         on_blur=lambda e: on_blur(),
                         on_selection_change=on_selection_change,
                         ref=field_ref,
                     ),
-                    padding=ft.Padding.symmetric(horizontal=4, vertical=2),
+                    border_radius=8,
+                    bgcolor=_safe_color(c.link, 0.05),
+                    padding=0,
                 )
             else:
-                cell_content = ft.Container(
-                    content=text,
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=8),
-                    on_click=lambda e, ri=ri, ci=ci: _on_cell_tap(ri, ci),
-                    ink=True,
+                cell_content = ft.GestureDetector(
+                    content=ft.Container(
+                        content=ft.Text(
+                            value=value,
+                            style=ft.TextStyle(
+                                font_family=FONT_MAIN,
+                                color=c.text,
+                                size=15,
+                            ),
+                            text_align=_align(ci),
+                            no_wrap=False,
+                            selectable=False,
+                            max_lines=4,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=10),
+                        border_radius=8,
+                    ),
+                    on_tap=lambda e, source_line_idx=source_line_idx, ci=ci: _on_cell_tap(source_line_idx, ci),
+                    mouse_cursor=ft.MouseCursor.CLICK,
                 )
             cells.append(ft.DataCell(content=cell_content))
-        row_color = ft.Colors.with_opacity(0.03 if ri % 2 == 0 else 0.00, c.text)
+        row_color = _safe_color(c.text, 0.02 if ri % 2 == 0 else 0.00)
         data_rows.append(ft.DataRow(cells=cells, color=row_color))
 
-    table = ft.DataTable(
+    table_cls = DataTable2
+    table = table_cls(
         columns=columns,
         rows=data_rows,
-        column_spacing=18,
-        horizontal_margin=8,
-        data_row_min_height=42,
-        data_row_max_height=72,
-        heading_row_height=48,
+        column_spacing=16,
+        horizontal_margin=10,
+        data_row_height=52,
+        heading_row_height=46,
         divider_thickness=1,
-        horizontal_lines=ft.BorderSide(1, ft.Colors.with_opacity(0.10, c.border)),
-        vertical_lines=ft.BorderSide(1, ft.Colors.with_opacity(0.07, c.border)),
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.12, c.border)),
-        border_radius=8,
+        horizontal_lines=ft.BorderSide(1, _safe_color(c.border, 0.08)),
+        vertical_lines=ft.BorderSide(1, _safe_color(c.border, 0.08)),
+        border=ft.Border.all(1, _safe_color(c.border, 0.10)),
+        border_radius=14,
         show_bottom_border=True,
-        heading_row_color=ft.Colors.with_opacity(0.05, c.text),
-        data_row_color={ft.ControlState.PRESSED: c.active_bg},
-        bgcolor=c.code_bg,
-        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        heading_row_color=_safe_color(c.link, 0.04),
+        data_row_color={
+            ft.ControlState.HOVERED: _safe_color(c.link, 0.04),
+            ft.ControlState.PRESSED: _safe_color(c.link, 0.08),
+        },
+        bgcolor=_safe_color(c.surface if hasattr(c, "surface") else c.code_bg, 0.96),
+        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        heading_checkbox_theme=None,
+        show_checkbox_column=False,
+        fixed_top_rows=1,
+        fixed_left_columns=0,
+        fixed_columns_color=_safe_color(c.surface if hasattr(c, "surface") else c.code_bg, 0.98),
+        min_width=content_width,
     )
 
     return ft.Container(
         content=ft.Column(
             [
-                ft.Container(
-                    content=ft.Text(
-                        "Markdown Table", size=12, color=c.muted, font_family=FONT_MONO
-                    ),
-                    padding=ft.Padding.only(bottom=6),
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=16, color=c.muted),
+                        ft.Text(
+                            "Markdown Table",
+                            size=12,
+                            color=c.muted,
+                            font_family=FONT_MONO,
+                        ),
+                        ft.Container(
+                            content=ft.Text(
+                                f"{len(body_rows)} × {col_count}",
+                                size=11,
+                                color=c.muted,
+                                font_family=FONT_MONO,
+                            ),
+                            padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                            border_radius=999,
+                            bgcolor=_safe_color(c.text, 0.04),
+                        ),
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
+                ft.Container(height=8),
                 table,
             ],
             spacing=0,
         ),
         width=float("inf"),
-        padding=ft.Padding.symmetric(horizontal=8, vertical=6),
-        bgcolor=c.code_bg,
-        border_radius=10,
+        padding=ft.Padding.symmetric(horizontal=10, vertical=10),
+        bgcolor=_safe_color(c.code_bg, 0.55),
+        border_radius=16,
+        border=ft.Border.all(1, _safe_color(c.border, 0.08)),
     )

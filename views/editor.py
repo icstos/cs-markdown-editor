@@ -1586,26 +1586,35 @@ def MarkdownEditor(
         is_act = active is not None and active[0] == i
         active_seg = active[1] if is_act else None
         if line.block_type == BlockType.TABLE:
+            table_start = i
+            while (
+                i + 1 < len(document.lines)
+                and document.lines[i + 1].block_type == BlockType.TABLE
+            ):
+                i += 1
+            table_end = i
+            table_is_active = (
+                active is not None and table_start <= active[0] <= table_end
+            )
             line_controls.append(
                 TableView(
-                    key=f"table-{i}",
+                    key=f"table-{table_start}",
                     lines=document.lines,
-                    line_idx=i,
-                    active_seg=active_seg,
+                    line_idx=table_start,
+                    active_line_idx=active[0] if table_is_active else None,
+                    active_seg=active[1] if table_is_active else None,
                     draft=draft,
                     on_activate=activate,
                     on_change_draft=on_change_draft,
                     on_submit=on_submit,
                     on_blur=on_blur,
-                    on_selection_change=on_selection_change if is_act else None,
-                    initial_cursor=cursor_pos if is_act else -1,
-                    nav_seq=nav_seq if is_act else 0,
-                    field_ref=active_field_ref if is_act else None,
+                    on_selection_change=on_selection_change if table_is_active else None,
+                    initial_cursor=cursor_pos if table_is_active else -1,
+                    nav_seq=nav_seq if table_is_active else 0,
+                    field_ref=active_field_ref if table_is_active else None,
                     content_width=content_width,
                 )
             )
-            while i + 1 < len(document.lines) and document.lines[i + 1].block_type == BlockType.TABLE:
-                i += 1
         else:
             line_controls.append(
                 LineView(

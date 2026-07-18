@@ -72,6 +72,7 @@ def TableView(
     field_ref: ft.Ref | None = None,
     content_width: float | None = None,
     active_line_idx: int | None = None,
+    active_cell_idx: int | None = None,
 ):
     c = _current_colors()
     header_idx, row_indices, rows, aligns = _parse_table_lines(lines, line_idx)
@@ -92,7 +93,7 @@ def TableView(
         return ft.TextAlign.LEFT
 
     def _on_cell_tap(source_line_idx: int, ci: int):
-        on_activate(source_line_idx, ci, -1)
+        on_activate(source_line_idx, 0, ci)
 
     def _cell_padding(is_active: bool) -> ft.Padding:
         return ft.Padding.symmetric(horizontal=12 if is_active else 10, vertical=9)
@@ -123,7 +124,7 @@ def TableView(
         source_line_idx = row_indices[ri - 1]
         cells: list[ft.DataCell] = []
         for ci in range(col_count):
-            is_active = active_seg == ci and source_line_idx == active_line_idx
+            is_active = active_cell_idx == ci and source_line_idx == active_line_idx
             value = draft if is_active else _cell_text(row[ci])
             if is_active:
                 cell_content = ft.Container(

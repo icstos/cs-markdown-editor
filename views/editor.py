@@ -143,6 +143,7 @@ def MarkdownEditor(
     line_height = settings.get("line_height", 1.6)
     show_toolbar = settings.get("show_toolbar", True)
     active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
+    table_cell, set_table_cell = ft.use_state(None)  # 当前表格编辑列 | None
     draft, set_draft = ft.use_state("")  # 当前编辑段文本
     cursor_line, set_cursor_line = ft.use_state(0)
     # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
@@ -279,9 +280,15 @@ def MarkdownEditor(
             _push_history()
             undo_push_pending.current = False
 
-    def _draft_for(li: int, si: int) -> str:
+    def _table_cell_at(line: Line, cell_idx: int) -> str:
+        cells = [cell.strip() for cell in line.raw.strip().strip("|").split("|")]
+        return cells[cell_idx] if 0 <= cell_idx < len(cells) else ""
+
+    def _draft_for(li: int, si: int, table_cell_idx: int | None = None) -> str:
         if 0 <= li < len(document.lines):
             line = document.lines[li]
+            if line.block_type == BlockType.TABLE and table_cell_idx is not None:
+                return _table_cell_at(line, table_cell_idx)
             if _heading_edit(line):
                 return _line_raw(line)
             if 0 <= si < len(line.segments):
@@ -319,6 +326,12 @@ def MarkdownEditor(
             parser.reparse_line(line, full)
         elif line.block_type == BlockType.HR:
             parser.reparse_line(line, raw if raw.strip() else "---")
+        elif line.block_type == BlockType.TABLE:
+            cell_idx = table_cell if table_cell is not None else 0
+            cells = [cell.strip() for cell in line.raw.strip().strip("|").split("|")]
+            if cell_idx < len(cells):
+                cells[cell_idx] = raw
+            parser.reparse_line(line, "| " + " | ".join(cells) + " |")
         elif _heading_edit(line):
             parser.reparse_line(line, raw)
         else:
@@ -329,14 +342,25 @@ def MarkdownEditor(
         mark_dirty()
 
     # ---- 激活段（统一的状态切换入口）----
-    def _goto(li: int, si: int, cursor_at: int = -1, skip_commit: bool = False):
+    def _goto(
+        li: int,
+        si: int,
+        cursor_at: int = -1,
+        skip_commit: bool = False,
+        table_cell_idx: int | None = None,
+    ):
         """跨段/激活目标段：先提交当前段，再切换 draft+active，递增 nav_seq
         触发 TextField key 重建以重新 autofocus。cursor_at: -1=段尾, 0=段首。
 
         skip_commit=True 跳过提交当前段——用于当前行即将被删除/移位的场景
         （如行首 Backspace 合并），避免把草稿提交到移位后的错误行。
         """
-        if not skip_commit and active is not None and active != (li, si):
+        is_new_table_cell = (
+            0 <= li < len(document.lines)
+            and document.lines[li].block_type == BlockType.TABLE
+            and table_cell_idx != table_cell
+        )
+        if not skip_commit and active is not None and (active != (li, si) or is_new_table_cell):
             commit_active(draft_ref.current)
         if not (0 <= li < len(document.lines)):
             return
@@ -359,7 +383,7 @@ def MarkdownEditor(
             _sync_cursor(new_draft, cursor_at)
             set_nav_seq(nav_seq + 1)
             return
-        new_draft = _draft_for(li, si)
+        new_draft = _draft_for(li, si, table_cell_idx)
         _set_draft(new_draft)
         set_active((li, si))
         set_cursor_line(li)
@@ -368,7 +392,16 @@ def MarkdownEditor(
         set_nav_seq(nav_seq + 1)
 
     def activate(li: int, si: int, cursor_at: int = -1):
-        _goto(li, si, cursor_at=cursor_at)
+        if not (0 <= li < len(document.lines)):
+            return
+        table_cell_idx = cursor_at if document.lines[li].block_type == BlockType.TABLE else None
+        set_table_cell(table_cell_idx)
+        _goto(
+            li,
+            si,
+            cursor_at=-1 if table_cell_idx is not None else cursor_at,
+            table_cell_idx=table_cell_idx,
+        )
 
     # ---- 段间/行间光标导航（由外层 on_key 经 nav_ref 调用）----
     def _nav_blocked(line: Line) -> bool:
@@ -779,8 +812,6 @@ def MarkdownEditor(
         cursor_ref.current["draft_len"] = n
         if nav_ref is not None and nav_ref.current is not None:
             nav_ref.current["draft_len"] = n
-        if active is not None and document.lines[active[0]].block_type == BlockType.TABLE:
-            document.lines[active[0]].raw = value
 
     def toggle_raw():
         """在 WYSIWYG 编辑与原始 Markdown 文本间切换。
@@ -1602,6 +1633,7 @@ def MarkdownEditor(
                     lines=document.lines,
                     line_idx=table_start,
                     active_line_idx=active[0] if table_is_active else None,
+                    active_cell_idx=table_cell if table_is_active else None,
                     active_seg=active[1] if table_is_active else None,
                     draft=draft,
                     on_activate=activate,

@@ -222,6 +222,12 @@ def MarkdownEditor(
     history_ref = ft.use_ref(EditHistory(max_size=50))
     restoring = ft.use_ref(False)
     undo_push_pending = ft.use_ref(True)
+    # 向外选区：(anchor_li, anchor_off, active_li, active_off) | None
+    # Shift+Click / Shift+Arrow 起始的跨段/跨行选区；*_off 为行级 raw 偏移
+    outward_sel, set_outward_sel = ft.use_state(None)
+    outward_sel_ref = ft.use_ref(None)
+    # Shift 键状态跟踪（ref，不触发重渲染；由 _on_key_down/_on_key_up 维护）
+    shift_pressed_ref = ft.use_ref(False)
 
     # 渲染后显式聚焦激活段 TextField：SelectionArea 内点击 span 触发的
     # autofocus 因手势竞争不可靠，用 use_effect 在渲染提交后调用 focus() 确保聚焦。
@@ -238,6 +244,7 @@ def MarkdownEditor(
     # 每次渲染同步 draft_ref 到最新 draft 状态；_set_draft 在渲染前也会同步，
     # 确保 delete_core 等闭包在持续按键时也能读到最新 draft。
     draft_ref.current = draft
+    outward_sel_ref.current = outward_sel
 
     def _set_draft(value: str):
         """同步更新 draft_ref 并排队 set_draft 重渲染。
@@ -248,6 +255,15 @@ def MarkdownEditor(
         """
         draft_ref.current = value
         set_draft(value)
+
+    def _set_outward_sel(value):
+        """同步更新 outward_sel_ref 并排队 set_outward_sel 重渲染。
+
+        闭包的 outward_sel 变量在 set_outward_sel 后到下次渲染前是 stale 的，
+        连续按 Shift+Arrow 扩展选区时需立即读到最新值，否则每次都重新设置锚点。
+        """
+        outward_sel_ref.current = value
+        set_outward_sel(value)
 
     def mark_dirty():
         document.dirty = True
@@ -656,7 +672,11 @@ def MarkdownEditor(
         段级编辑：光标在段内时交由 TextField 原生删除（光标与字符一致）。
         段首且非首段：跳到上一段段尾（不合并段，符合 memory 约束）。
         段首且首段：与前一行合并（删除上一行行尾换行符）。
+        向外选区激活时：删除整个选区。
         """
+        if outward_sel is not None:
+            handle_outward_delete()
+            return
         if active is None:
             return
         li = active
@@ -705,7 +725,11 @@ def MarkdownEditor(
         段级编辑：光标在段内时交由 TextField 原生 Delete（光标与字符一致）。
         段尾且非末段：跳到下一段段首。
         段尾且末段：与下一行合并（删除当前行行尾换行符）。
+        向外选区激活时：删除整个选区。
         """
+        if outward_sel is not None:
+            handle_outward_delete()
+            return
         if active is None:
             return
         li = active
@@ -1484,6 +1508,239 @@ def MarkdownEditor(
     def on_selection_area_change(e):
         selection_text_ref.current = e.data if e.data else ""
 
+    # ---- 向外选区（Shift+Click / Shift+Arrow 起始的跨段/跨行选区）----
+    def _line_raw_offset(li: int, seg_idx: int, seg_offset: int) -> int:
+        """段内偏移 → 整行 raw 偏移。"""
+        line = document.lines[li]
+        return sum(len(line.segments[i].raw) for i in range(seg_idx)) + seg_offset
+
+    def _step_left(li: int, off: int) -> tuple[int, int] | None:
+        """raw 偏移空间向左一步，跨行时跳过围栏块。"""
+        if off > 0:
+            return (li, off - 1)
+        if li <= 0:
+            return None
+        prev = document.lines[li - 1]
+        if _is_fence(prev):
+            return None
+        return (li - 1, len(_line_raw(prev)))
+
+    def _step_right(li: int, off: int) -> tuple[int, int] | None:
+        """raw 偏移空间向右一步。"""
+        if not (0 <= li < len(document.lines)):
+            return None
+        cur_raw = _line_raw(document.lines[li])
+        if off < len(cur_raw):
+            return (li, off + 1)
+        if li >= len(document.lines) - 1:
+            return None
+        nxt = document.lines[li + 1]
+        if _is_fence(nxt):
+            return None
+        return (li + 1, 0)
+
+    def _step_up(li: int, off: int) -> tuple[int, int] | None:
+        if li <= 0:
+            return None
+        prev = document.lines[li - 1]
+        if _is_fence(prev):
+            return None
+        return (li - 1, min(off, len(_line_raw(prev))))
+
+    def _step_down(li: int, off: int) -> tuple[int, int] | None:
+        if li >= len(document.lines) - 1:
+            return None
+        nxt = document.lines[li + 1]
+        if _is_fence(nxt):
+            return None
+        return (li + 1, min(off, len(_line_raw(nxt))))
+
+    def _start_outward(target_li: int, target_off: int) -> None:
+        """从当前编辑光标起始向外选区，扩展到 (target_li, target_off)。"""
+        if active is None or outward_sel is not None:
+            return
+        if not (0 <= target_li < len(document.lines)):
+            return
+        src_li = active
+        if not (0 <= src_li < len(document.lines)):
+            return
+        seg_idx = active_seg if active_seg is not None else 0
+        src_off = _line_raw_offset(src_li, seg_idx, cursor_ref.current.extent)
+        commit_active(draft_ref.current)
+        # 抑制重渲染导致的 on_blur（旧 TextField 卸载）——与 _goto_quiet 一致，
+        # 否则 on_blur 会用 stale closure 的 active 再次 commit_active + set_active(None)，
+        # 虽然 commit 对同一 draft 幂等，但 set_active(None) 会触发额外重渲染，
+        # 干扰刚设置的 outward_sel 状态（编辑光标起始跨段/跨行选区无效的根因）。
+        suppress_blur.current = True
+        set_active(None)
+        set_active_seg(None)
+        _set_outward_sel((src_li, src_off, target_li, target_off))
+
+    def _extend_outward(target_li: int, target_off: int) -> None:
+        """已存在向外选区时，保留 anchor，更新 active 端点。"""
+        if outward_sel is None:
+            return _start_outward(target_li, target_off)
+        a_li, a_off, _, _ = outward_sel
+        _set_outward_sel((a_li, a_off, target_li, target_off))
+
+    def _extend_outward_step(step_fn) -> None:
+        """Shift+Arrow：用 step_fn 移动 active 端点一步。"""
+        current_outward = outward_sel_ref.current
+        if active is not None and current_outward is None:
+            # 起始：anchor = 当前光标
+            seg_idx = active_seg if active_seg is not None else 0
+            cur_off = _line_raw_offset(active, seg_idx, cursor_ref.current.extent)
+            new_pos = step_fn(active, cur_off)
+            if new_pos is None:
+                return
+            commit_active(draft_ref.current)
+            src_li = active
+            # 抑制重渲染导致的 on_blur（旧 TextField 卸载）——与 _goto_quiet 一致，
+            # 否则 on_blur 会用 stale closure 的 active 再次 commit_active + set_active(None)，
+            # 虽然 commit 对同一 draft 幂等，但 set_active(None) 会触发额外重渲染，
+            # 干扰刚设置的 outward_sel 状态（编辑光标起始跨段/跨行选区无效的根因）。
+            suppress_blur.current = True
+            set_active(None)
+            set_active_seg(None)
+            _set_outward_sel((src_li, cur_off, new_pos[0], new_pos[1]))
+            return
+        if current_outward is None:
+            return
+        a_li, a_off, act_li, act_off = current_outward
+        new_pos = step_fn(act_li, act_off)
+        if new_pos is None:
+            return
+        _set_outward_sel((a_li, a_off, new_pos[0], new_pos[1]))
+
+    def clear_outward_sel() -> None:
+        """取消向外选区（Esc、非 Shift 点击等）。"""
+        if outward_sel is not None:
+            _set_outward_sel(None)
+
+    def on_extend_outward(target_li: int, target_off: int) -> None:
+        """LineView Shift+Click 回调：起始或扩展向外选区。"""
+        if outward_sel is None:
+            _start_outward(target_li, target_off)
+        else:
+            _extend_outward(target_li, target_off)
+
+    def _delete_raw_range(start_li: int, start_off: int, end_li: int, end_off: int) -> None:
+        """删除 raw 范围 [start, end)，跨行时合并边界行。光标定位到 start。"""
+        _push_history()
+        undo_push_pending.current = True
+        try:
+            if start_li == end_li:
+                if not (0 <= start_li < len(document.lines)):
+                    return
+                line = document.lines[start_li]
+                cur_raw = _line_raw(line)
+                new_raw = cur_raw[:start_off] + cur_raw[end_off:]
+                parser.reparse_line(line, new_raw)
+                new_lines = list(document.lines)
+            else:
+                if not (0 <= start_li < len(document.lines) and 0 <= end_li < len(document.lines)):
+                    return
+                start_line = document.lines[start_li]
+                end_line = document.lines[end_li]
+                merged = _line_raw(start_line)[:start_off] + _line_raw(end_line)[end_off:]
+                parser.reparse_line(start_line, merged)
+                new_lines = document.lines[:start_li + 1] + document.lines[end_li + 1:]
+        except Exception:
+            return
+        document.lines = new_lines  # 新列表对象触发 observable 通知
+        mark_dirty()
+        _set_outward_sel(None)
+        set_active(None)
+        set_active_seg(None)
+        # 光标定位到删除起点
+        if 0 <= start_li < len(document.lines):
+            line = document.lines[start_li]
+            cur_raw = _line_raw(line)
+            if start_off < 0 or start_off > len(cur_raw):
+                start_off = -1
+            if start_off < 0:
+                _goto(start_li, seg_idx=_first_content_seg(line), cursor_at=-1)
+            else:
+                target_seg, target_off = _locate_seg_by_raw_offset(line, start_off)
+                _goto(start_li, seg_idx=target_seg, cursor_at=target_off)
+
+    def handle_outward_delete() -> None:
+        """BackSpace/Delete on outward_sel：删除选区。"""
+        if outward_sel is None:
+            return
+        a_li, a_off, b_li, b_off = outward_sel
+        # 归一化为 (start < end)
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        _delete_raw_range(a_li, a_off, b_li, b_off)
+
+    async def handle_outward_cut() -> None:
+        """Ctrl+X on outward_sel：复制 Markdown 到剪贴板，再删除选区。"""
+        if outward_sel is None:
+            return
+        a_li, a_off, b_li, b_off = outward_sel
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        # 提取选区 raw 文本作为 Markdown
+        md_parts: list[str] = []
+        for li in range(a_li, b_li + 1):
+            if not (0 <= li < len(document.lines)):
+                break
+            line = document.lines[li]
+            raw = _line_raw(line)
+            s = a_off if li == a_li else 0
+            e = b_off if li == b_li else len(raw)
+            md_parts.append(raw[s:e])
+        md = "\n".join(md_parts)
+        clipboard = clipboard_ref.current if clipboard_ref is not None else None
+        if clipboard is not None and md:
+            try:
+                await clipboard.set(md)
+            except Exception:
+                pass
+        _delete_raw_range(a_li, a_off, b_li, b_off)
+
+    def handle_segment_cut_sync() -> str | None:
+        """编辑态段内 Ctrl+X 同步部分：捕获选区、剪切 draft、立即提交、光标重定位。
+
+        必须同步执行（不通过 page.run_task），在原生 TextField 剪切之前完成。
+        原因：原生剪切会触发 on_change_draft 更新 draft_ref.current，但
+        on_selection_change 可能尚未更新 cursor_ref（光标仍为旧选区 base/extent），
+        若异步执行会读到「已剪切 draft + 旧光标选区」→ 再次剪切 → 双份剪切 bug。
+
+        同步执行后，draft_ref.current 已更新为剪切后文本；原生剪切产生的
+        on_change 事件因值相等被 on_change_draft 去重逻辑跳过（见 L812-813）。
+
+        返回选中文本供异步写入剪贴板（handle_segment_cut_clipboard）。
+        """
+        if active is None:
+            return None
+        cur = cursor_ref.current
+        if cur.base == cur.extent:
+            return None  # 段内无选区，交由 TextField 原生
+        start = min(cur.base, cur.extent)
+        end = max(cur.base, cur.extent)
+        selected = draft_ref.current[start:end]
+        new_draft = draft_ref.current[:start] + draft_ref.current[end:]
+        seg_idx = active_seg if active_seg is not None else 0
+        _push_history()
+        undo_push_pending.current = True
+        commit_active(new_draft)
+        if 0 <= active < len(document.lines):
+            _goto(active, seg_idx=seg_idx, cursor_at=start, skip_commit=True)
+        return selected
+
+    async def handle_segment_cut_clipboard(text: str) -> None:
+        """编辑态段内 Ctrl+X 异步部分：将选中文本写入剪贴板。"""
+        if not text:
+            return
+        clipboard = clipboard_ref.current if clipboard_ref is not None else None
+        if clipboard is not None:
+            try:
+                await clipboard.set(text)
+            except Exception:
+                pass
+
     # ---- TOC 跳转 ----
     def jump_to(li: int):
         if not (0 <= li < len(document.lines)):
@@ -1547,6 +1804,17 @@ def MarkdownEditor(
             handle_delete_in_code=code_editor.delete,
             handle_enter_in_code=code_editor.enter,
             get_cursor_row_col=_get_cursor_row_col,
+            outward_sel=outward_sel,
+            shift_pressed_ref=shift_pressed_ref,
+            extend_outward_left=lambda: _extend_outward_step(_step_left),
+            extend_outward_right=lambda: _extend_outward_step(_step_right),
+            extend_outward_up=lambda: _extend_outward_step(_step_up),
+            extend_outward_down=lambda: _extend_outward_step(_step_down),
+            handle_outward_cut=handle_outward_cut,
+            handle_outward_delete=handle_outward_delete,
+            handle_segment_cut_sync=handle_segment_cut_sync,
+            handle_segment_cut_clipboard=handle_segment_cut_clipboard,
+            clear_outward_sel=clear_outward_sel,
         )
 
     # ---- 预计算 TOC 条目（所有标题）----
@@ -1568,6 +1836,27 @@ def MarkdownEditor(
     # ---- 行视图列表 ----
     # 内容区可用宽度 = 内容最大宽度 - 左右内边距，传给 LineView 用于编辑态宽度限位
     content_width = content_max_width - 2 * content_padding
+
+    def _line_highlight_range(li: int) -> tuple[int, int] | None:
+        """计算某行的向外选区高亮范围 (start_off, end_off)，无则 None。"""
+        if outward_sel is None:
+            return None
+        a_li, a_off, b_li, b_off = outward_sel
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        if li < a_li or li > b_li:
+            return None
+        if not (0 <= li < len(document.lines)):
+            return None
+        line_raw_len = len(_line_raw(document.lines[li]))
+        if li == a_li and li == b_li:
+            return (a_off, b_off)
+        if li == a_li:
+            return (a_off, line_raw_len)
+        if li == b_li:
+            return (0, b_off)
+        return (0, line_raw_len)
+
     line_controls = []
     i = 0
     while i < len(document.lines):
@@ -1633,6 +1922,10 @@ def MarkdownEditor(
                     on_cursor_sync=_on_cursor_sync if is_act else None,
                     is_current_line=is_act,
                     clipboard_ref=clipboard_ref,
+                    outward_range=_line_highlight_range(i),
+                    on_extend_outward=on_extend_outward,
+                    shift_pressed_ref=shift_pressed_ref,
+                    on_clear_outward=clear_outward_sel,
                 )
             )
         i += 1
@@ -1722,8 +2015,13 @@ def MarkdownEditor(
 
     def _on_key_down(e):
         key = (getattr(e, "key", "") or "").lower()
-        ctrl = bool(getattr(e, "ctrl", False) or getattr(e, "meta", False))
-        shift = bool(getattr(e, "shift", False))
+        # Flet 0.86.1 KeyDownEvent 只有 key 字段，无 ctrl/shift/meta。
+        # 用 shift_pressed_ref 跟踪 Shift 状态（_on_key_up 释放时清零）。
+        if key == "shift":
+            shift_pressed_ref.current = True
+        # 兼容旧代码：用 shift_pressed_ref 替代失效的 e.shift
+        shift = shift_pressed_ref.current
+        ctrl = False  # KeyDownEvent 无 ctrl 字段；Ctrl 组合键由 page.on_keyboard_event 处理
         if active is None:
             return
         if key == "tab" and active is not None:
@@ -1753,9 +2051,20 @@ def MarkdownEditor(
         elif key in ("enter", "numpad enter"):
             code_editor.enter()
 
+    def _on_key_up(e):
+        """跟踪 Shift 释放：Flet 0.86.1 KeyUpEvent 仅 key 字段，无修饰键。
+
+        page.on_keyboard_event 仅在 key-down 触发，无法捕获 Shift 单独释放；
+        KeyboardListener.on_key_up 是 Shift 释放信号的唯一来源。
+        """
+        key = (getattr(e, "key", "") or "").lower()
+        if key == "shift":
+            shift_pressed_ref.current = False
+
     return ft.KeyboardListener(
         autofocus=True,
         on_key_down=_on_key_down,
+        on_key_up=_on_key_up,
         content=ft.Column(
             controls=[
                 _tool_area(),

@@ -81,6 +81,48 @@ class KeyDispatcher:
         key = e.key or ""
         norm = key.replace(" ", "").lower()
         actions: EditorActions | None = self._actions_ref.current
+
+        # 向外选区激活时（active is None, outward_sel is not None）：
+        # 优先路由 BackSpace/Delete/Ctrl+X/Escape/Shift+Arrow 到 outward handlers，
+        # 绕过 layer 判定（此时 layer=browse 会误路由到 SelectionArea 删除分支）
+        if (
+            actions is not None
+            and actions.outward_sel is not None
+            and not actions.raw_mode
+        ):
+            if norm in ("backspace", "delete"):
+                if actions.handle_outward_delete is not None:
+                    actions.handle_outward_delete()
+                return
+            if combo == "ctrl+x":
+                if actions.handle_outward_cut is not None:
+                    page = self._page_ref.current
+                    if page is not None:
+                        page.run_task(actions.handle_outward_cut)
+                return
+            if norm == "esc":
+                if actions.clear_outward_sel is not None:
+                    actions.clear_outward_sel()
+                return
+            if e.shift:
+                if norm == "arrowleft" and actions.extend_outward_left is not None:
+                    actions.extend_outward_left()
+                    return
+                if norm == "arrowright" and actions.extend_outward_right is not None:
+                    actions.extend_outward_right()
+                    return
+                if norm == "arrowup" and actions.extend_outward_up is not None:
+                    actions.extend_outward_up()
+                    return
+                if norm == "arrowdown" and actions.extend_outward_down is not None:
+                    actions.extend_outward_down()
+                    return
+            # 非 Shift 方向键/Home/End：取消选区（v1 不做光标落点激活，用户可点击重新激活）
+            if norm in ("arrowleft", "arrowright", "arrowup", "arrowdown", "home", "end"):
+                if actions.clear_outward_sel is not None:
+                    actions.clear_outward_sel()
+                return
+
         layer = "edit" if actions is not None and actions.active is not None else "browse"
         shortcuts = self._shortcut_mgr.get(layer)
 
@@ -107,7 +149,12 @@ class KeyDispatcher:
 
     # ---- 编辑态光标导航（home/end/up/down/backspace/delete/tab/越界 arrow）----
     def _handle_edit_nav(self, actions: EditorActions, e, norm: str) -> bool:
-        """处理编辑态纯导航键。返回 True 表示已消费，False 继续走快捷键分支。"""
+        """处理编辑态纯导航键。返回 True 表示已消费，False 继续走快捷键分支。
+
+        注：outward_sel 激活时 active is None → layer=browse → 本函数不被调用，
+        outward_sel 相关键由 handle() 顶部拦截块处理。此处 Shift+Arrow 仅负责
+        从编辑态起始 outward 选区（active is not None, outward_sel is None）。
+        """
         if norm == "home":
             actions.move_line_start() if e.ctrl else actions.move_home()
             return True
@@ -115,10 +162,16 @@ class KeyDispatcher:
             actions.move_line_end() if e.ctrl else actions.move_end()
             return True
         if norm == "arrowup":
-            actions.move_up()
+            if e.shift and actions.extend_outward_up is not None:
+                actions.extend_outward_up()
+            else:
+                actions.move_up()
             return True
         if norm == "arrowdown":
-            actions.move_down()
+            if e.shift and actions.extend_outward_down is not None:
+                actions.extend_outward_down()
+            else:
+                actions.move_down()
             return True
         if norm == "backspace":
             actions.backspace_core()
@@ -144,16 +197,17 @@ class KeyDispatcher:
                 else:
                     actions.move_right()
             return True
-        cur = actions.cursor_ref.current
-        if norm == "arrowleft" and cur.extent == 0 and cur.base == 0:
-            actions.move_left()
+        if norm == "arrowleft":
+            if e.shift and actions.extend_outward_left is not None:
+                actions.extend_outward_left()
+            else:
+                actions.move_left()
             return True
-        if (
-            norm == "arrowright"
-            and cur.extent == cur.draft_len
-            and cur.base == cur.draft_len
-        ):
-            actions.move_right()
+        if norm == "arrowright":
+            if e.shift and actions.extend_outward_right is not None:
+                actions.extend_outward_right()
+            else:
+                actions.move_right()
             return True
         return False
 
@@ -227,6 +281,16 @@ class KeyDispatcher:
         elif combo == "ctrl+x":
             if actions is None or actions.active is None:
                 page.run_task(self._do_cut)
+            elif actions.handle_segment_cut_sync is not None:
+                cur = actions.cursor_ref.current
+                if cur.base != cur.extent:
+                    # 段内选区剪切：同步捕获选区+剪切+提交（必须在原生 TextField
+                    # 剪切前执行，避免 on_change_draft 更新 draft_ref 后 cursor_ref
+                    # 仍为旧选区导致双份剪切），再异步写入剪贴板
+                    selected = actions.handle_segment_cut_sync()
+                    if selected and actions.handle_segment_cut_clipboard is not None:
+                        page.run_task(actions.handle_segment_cut_clipboard, selected)
+                # 无选区：不拦截，交由 TextField 原生剪切（剪切整段等场景）
         elif combo == "ctrl+v":
             if actions is not None and actions.active is not None:
                 self._paste_old_draft.current = actions.draft

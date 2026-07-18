@@ -29,6 +29,8 @@ from views.segment_view import (
     _open_link_url,
     active_text_field,
     segment_to_span,
+    segment_to_spans_partial,
+    selection_highlight_bg,
 )
 
 
@@ -150,14 +152,59 @@ def _spans_for(
     seg_to_excl: int,
     on_activate: Callable[[int], None] | None,
     base_size: int,
+    line_highlight_range: tuple[int, int] | None = None,
 ) -> list[ft.TextSpan]:
-    """构造 [seg_from, seg_to_excl) 范围的 TextSpan 列表。"""
+    """构造 [seg_from, seg_to_excl) 范围的 TextSpan 列表。
+
+    line_highlight_range：本行向外选区高亮范围 (start_off, end_off)（行级 raw 偏移），
+    非 None 时落入此范围的段注入 highlight_bg。
+    """
     heading_level = line.level if line.block_type == BlockType.HEADING else 0
-    return [
-        segment_to_span(line.segments[i], i, on_activate, base_size, heading_level)
-        for i in range(seg_from, seg_to_excl)
-        if i < len(line.segments)
-    ]
+    hl_bg = selection_highlight_bg() if line_highlight_range is not None else None
+    spans: list[ft.TextSpan] = []
+    for i in range(seg_from, seg_to_excl):
+        if i >= len(line.segments):
+            break
+        seg = line.segments[i]
+        if line_highlight_range is not None:
+            seg_start = sum(len(line.segments[j].raw) for j in range(i))
+            seg_end = seg_start + len(seg.raw)
+            hl_s, hl_e = line_highlight_range
+            inter_start = max(seg_start, hl_s)
+            inter_end = min(seg_end, hl_e)
+            if inter_start < inter_end:
+                # 有交集：判断是整段覆盖还是部分覆盖
+                if hl_s <= seg_start and seg_end <= hl_e:
+                    # 整段在范围内：整段高亮
+                    spans.append(
+                        segment_to_span(
+                            seg, i, on_activate, base_size, heading_level,
+                            highlight_bg=hl_bg,
+                        )
+                    )
+                else:
+                    # 部分覆盖：字符级拆分高亮
+                    spans.extend(
+                        segment_to_spans_partial(
+                            seg, i, on_activate, base_size, heading_level,
+                            hl_start_local=inter_start - seg_start,
+                            hl_end_local=inter_end - seg_start,
+                        )
+                    )
+            else:
+                # 不在范围内
+                spans.append(
+                    segment_to_span(
+                        seg, i, on_activate, base_size, heading_level,
+                    )
+                )
+        else:
+            spans.append(
+                segment_to_span(
+                    seg, i, on_activate, base_size, heading_level,
+                )
+            )
+    return spans
 
 
 def _has_visible_text(line: Line) -> bool:
@@ -254,6 +301,10 @@ def LineView(
     on_cursor_sync: Callable[[int, int], None] | None = None,
     is_current_line: bool = False,
     clipboard_ref: ft.Ref | None = None,
+    outward_range: tuple[int, int] | None = None,
+    on_extend_outward: Callable[[int, int], None] | None = None,
+    shift_pressed_ref: ft.Ref | None = None,
+    on_clear_outward: Callable[[], None] | None = None,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
@@ -520,7 +571,7 @@ def LineView(
     # ============ 任务列表项（非编辑态）============
     if line.task and active_seg is None:
         content_target_si = 1 if len(line.segments) > 1 else 0
-        content_spans = _spans_for(line, 1, len(line.segments), activate, base) or [
+        content_spans = _spans_for(line, 1, len(line.segments), activate, base, line_highlight_range=outward_range) or [
             ft.TextSpan(" ", style=line_style, on_click=lambda e: activate(content_target_si))
         ]
 
@@ -581,7 +632,7 @@ def LineView(
     if active_seg is None:
         # spans 不绑定 on_click：GestureDetector 统一处理点击，获取精确坐标
         # 做命中测试，把光标定位到点击的字符位置（而非段尾）。
-        spans = _spans_for(line, 0, len(line.segments), None, base)
+        spans = _spans_for(line, 0, len(line.segments), None, base, line_highlight_range=outward_range)
 
         def _on_tap(e: ft.TapEvent):
             pos = e.local_position
@@ -592,9 +643,23 @@ def LineView(
                     if seg.seg_type == SegType.LINK and seg.url:
                         _open_link_url(seg.url)
                         return
+                    shift_held = (
+                        shift_pressed_ref is not None
+                        and bool(shift_pressed_ref.current)
+                    )
+                    if shift_held and on_extend_outward is not None:
+                        # Shift+Click：起始/扩展向外选区到点击位置
+                        active_off = _logical_raw_offset(line, si, offset)
+                        on_extend_outward(line_idx, active_off)
+                        return
+                    # 既有向外选区 + 非 Shift 点击：先清除选区再激活
+                    if outward_range is not None and on_clear_outward is not None:
+                        on_clear_outward()
                     # 段级激活：统一调用 activate(si, offset)（含 heading）
                     activate(si, offset)
                     return
+            if outward_range is not None and on_clear_outward is not None:
+                on_clear_outward()
             # 回退：点击多行区域或无法定位时，激活最后一个段
             activate(max(0, len(line.segments) - 1))
 
@@ -612,7 +677,7 @@ def LineView(
     # ============ 编辑态：段级 before + active + after（Typora 式 WYSIWYG）============
     # active_seg 越界兜底：退化为整行渲染
     if active_seg >= len(line.segments):
-        spans = _spans_for(line, 0, len(line.segments), activate, base)
+        spans = _spans_for(line, 0, len(line.segments), activate, base, line_highlight_range=outward_range)
         content = ft.Container(
             content=ft.Text(spans=spans, style=line_style, width=float("inf")),
             padding=ft.Padding.symmetric(horizontal=8, vertical=4),
@@ -622,8 +687,8 @@ def LineView(
     # 段级布局：前段 Text(spans) + 激活段 TextField + 后段 Text(spans)
     # 仅激活段显示原生 Markdown，前后段保持渲染态——Typora 式最小语法编辑
     active_seg_obj = line.segments[active_seg]
-    before_spans = _spans_for(line, 0, active_seg, activate, base)
-    after_spans = _spans_for(line, active_seg + 1, len(line.segments), activate, base)
+    before_spans = _spans_for(line, 0, active_seg, activate, base, line_highlight_range=outward_range)
+    after_spans = _spans_for(line, active_seg + 1, len(line.segments), activate, base, line_highlight_range=outward_range)
 
     controls: list[ft.Control] = []
     if before_spans:

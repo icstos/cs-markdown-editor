@@ -10,7 +10,7 @@
   ArrowLeft/ArrowRight 越界判断会读到 stale 值。
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,3 +73,17 @@ class EditorActions:
 
     # ---- 状态栏 ----
     get_cursor_row_col: Callable[[], tuple[int, int]]
+
+    # ---- 向外选区（Shift+Click / Shift+Arrow 起始的跨段/跨行选区）----
+    # outward_sel = (anchor_li, anchor_off, active_li, active_off) | None
+    outward_sel: tuple | None = None
+    shift_pressed_ref: ft.Ref | None = None  # Shift 键状态（editor 内部跟踪）
+    extend_outward_left: Callable[[], None] | None = None
+    extend_outward_right: Callable[[], None] | None = None
+    extend_outward_up: Callable[[], None] | None = None
+    extend_outward_down: Callable[[], None] | None = None
+    handle_outward_cut: Callable[[], Awaitable[None]] | None = None  # async
+    handle_outward_delete: Callable[[], None] | None = None
+    handle_segment_cut_sync: Callable[[], str | None] | None = None  # 同步：捕获选区+剪切+提交，返回选中文本
+    handle_segment_cut_clipboard: Callable[[str], Awaitable[None]] | None = None  # async：写入剪贴板
+    clear_outward_sel: Callable[[], None] | None = None

@@ -21,7 +21,6 @@ _ALIGN_RE = re.compile(r"^:?-{3,}:?$")
 def _parse_table_lines(
     lines: list[Line], start_idx: int
 ) -> tuple[int, list[int], list[list[str]], list[str]]:
-    """从 start_idx 开始收集连续表格行，返回 (header_idx, row_indices, rows, aligns)。"""
     row_indices: list[int] = []
     rows: list[list[str]] = []
     aligns: list[str] = []
@@ -56,6 +55,14 @@ def _safe_color(color: str, opacity: float) -> str:
     return ft.Colors.with_opacity(opacity, color)
 
 
+def _split_row(raw: str) -> list[str]:
+    return [c.strip() for c in raw.strip().strip("|").split("|")]
+
+
+def _join_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
 @ft.component
 def TableView(
     lines: list[Line],
@@ -73,16 +80,21 @@ def TableView(
     content_width: float | None = None,
     active_line_idx: int | None = None,
     active_cell_idx: int | None = None,
+    on_cell_double_tap: Callable[[int, int], None] | None = None,
+    on_cell_tap: Callable[[int, int], None] | None = None,
 ):
     c = _current_colors()
     header_idx, row_indices, rows, aligns = _parse_table_lines(lines, line_idx)
-    active_line_idx = line_idx if active_line_idx is None else active_line_idx
     if not rows:
         return ft.Container()
 
     normalized = _normalize_rows(rows)
     col_count = len(normalized[0]) if normalized else 0
     aligns = (aligns + [""] * max(0, col_count - len(aligns)))[:col_count]
+    header_row = normalized[0]
+    body_rows = normalized[1:] if len(normalized) > 1 else []
+
+    active_line_idx = header_idx if active_line_idx is None else active_line_idx
 
     def _align(idx: int) -> ft.TextAlign:
         val = aligns[idx].strip() if idx < len(aligns) else ""
@@ -92,19 +104,55 @@ def TableView(
             return ft.TextAlign.RIGHT
         return ft.TextAlign.LEFT
 
-    def _on_cell_tap(source_line_idx: int, ci: int):
+    def _activate(source_line_idx: int, ci: int):
         on_activate(source_line_idx, 0, ci)
 
-    def _cell_padding(is_active: bool) -> ft.Padding:
-        return ft.Padding.symmetric(horizontal=12 if is_active else 10, vertical=9)
+    def _select(source_line_idx: int, ci: int):
+        if on_cell_tap is not None:
+            on_cell_tap(source_line_idx, ci)
+        else:
+            _activate(source_line_idx, ci)
+
+    def _edit(source_line_idx: int, ci: int):
+        if on_cell_double_tap is not None:
+            on_cell_double_tap(source_line_idx, ci)
+        else:
+            _activate(source_line_idx, ci)
 
     columns = []
     for ci in range(col_count):
-        columns.append(
-            ft.DataColumn(
-                label=ft.Container(
+        is_selected = active_line_idx == header_idx and active_cell_idx == ci
+        if is_selected:
+            label = ft.Container(
+                content=ft.TextField(
+                    key=f"table-header-field-{nav_seq}-{ci}",
+                    value=draft,
+                    autofocus=True,
+                    border=ft.InputBorder.NONE,
+                    filled=True,
+                    fill_color=_safe_color(c.link, 0.08),
+                    dense=True,
+                    content_padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                    text_style=ft.TextStyle(
+                        font_family=FONT_MAIN, color=c.text, size=14, weight=ft.FontWeight.W_600
+                    ),
+                    cursor_color=c.link,
+                    selection_color=_safe_color(c.link, 0.18),
+                    on_change=lambda e: on_change_draft(e.control.value),
+                    on_submit=lambda e: on_submit(e.control.value),
+                    on_blur=lambda e: on_blur(),
+                    on_selection_change=on_selection_change,
+                    ref=field_ref,
+                ),
+                bgcolor=_safe_color(c.link, 0.05),
+                border_radius=8,
+                padding=0,
+            )
+        else:
+            label = ft.GestureDetector(
+                content=ft.Container(
                     content=ft.Text(
-                        value=_cell_text(normalized[0][ci]),
+                        value=_cell_text(header_row[ci]),
                         style=ft.TextStyle(
                             font_family=FONT_MAIN,
                             weight=ft.FontWeight.W_600,
@@ -114,20 +162,25 @@ def TableView(
                         text_align=_align(ci),
                     ),
                     padding=ft.Padding.symmetric(vertical=10, horizontal=10),
+                    border_radius=8,
+                    bgcolor=_safe_color(c.link, 0.05) if is_selected else None,
                 ),
+                on_tap=lambda e, ci=ci: _select(header_idx, ci),
+                on_double_tap=lambda e, ci=ci: _edit(header_idx, ci),
+                mouse_cursor=ft.MouseCursor.CLICK,
             )
-        )
+        columns.append(ft.DataColumn(label=label))
 
     data_rows: list[ft.DataRow] = []
-    body_rows = normalized[1:] if len(normalized) > 1 else []
-    for ri, row in enumerate(body_rows, start=1):
-        source_line_idx = row_indices[ri - 1]
+    for ri, source_line_idx in enumerate(row_indices):
+        row = normalized[ri + 1] if ri + 1 < len(normalized) else [""] * col_count
+        row_is_selected = active_line_idx == source_line_idx
         cells: list[ft.DataCell] = []
         for ci in range(col_count):
-            is_active = active_cell_idx == ci and source_line_idx == active_line_idx
+            is_active = row_is_selected and active_cell_idx == ci
             value = draft if is_active else _cell_text(row[ci])
             if is_active:
-                cell_content = ft.Container(
+                content = ft.Container(
                     content=ft.TextField(
                         key=f"table-field-{nav_seq}",
                         value=draft,
@@ -151,7 +204,7 @@ def TableView(
                     padding=0,
                 )
             else:
-                cell_content = ft.GestureDetector(
+                content = ft.GestureDetector(
                     content=ft.Container(
                         content=ft.Text(
                             value=value,
@@ -168,16 +221,16 @@ def TableView(
                         ),
                         padding=ft.Padding.symmetric(horizontal=10, vertical=10),
                         border_radius=8,
+                        bgcolor=_safe_color(c.link, 0.06) if row_is_selected and active_cell_idx == ci else None,
                     ),
-                    on_tap=lambda e, source_line_idx=source_line_idx, ci=ci: _on_cell_tap(source_line_idx, ci),
+                    on_tap=lambda e, source_line_idx=source_line_idx, ci=ci: _select(source_line_idx, ci),
+                    on_double_tap=lambda e, source_line_idx=source_line_idx, ci=ci: _edit(source_line_idx, ci),
                     mouse_cursor=ft.MouseCursor.CLICK,
                 )
-            cells.append(ft.DataCell(content=cell_content))
-        row_color = _safe_color(c.text, 0.02 if ri % 2 == 0 else 0.00)
-        data_rows.append(ft.DataRow(cells=cells, color=row_color))
+            cells.append(ft.DataCell(content=content))
+        data_rows.append(ft.DataRow(cells=cells, color=_safe_color(c.text, 0.02 if ri % 2 == 0 else 0.00)))
 
-    table_cls = DataTable2
-    table = table_cls(
+    table = DataTable2(
         columns=columns,
         rows=data_rows,
         column_spacing=16,
@@ -211,12 +264,7 @@ def TableView(
                 ft.Row(
                     [
                         ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=16, color=c.muted),
-                        ft.Text(
-                            "Markdown Table",
-                            size=12,
-                            color=c.muted,
-                            font_family=FONT_MONO,
-                        ),
+                        ft.Text("Markdown Table", size=12, color=c.muted, font_family=FONT_MONO),
                         ft.Container(
                             content=ft.Text(
                                 f"{len(body_rows)} × {col_count}",

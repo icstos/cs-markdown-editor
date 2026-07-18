@@ -144,6 +144,7 @@ def MarkdownEditor(
     show_toolbar = settings.get("show_toolbar", True)
     active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
     table_cell, set_table_cell = ft.use_state(None)  # 当前表格编辑列 | None
+    table_selected_cell, set_table_selected_cell = ft.use_state(None)  # 当前表格选中列 | None
     draft, set_draft = ft.use_state("")  # 当前编辑段文本
     cursor_line, set_cursor_line = ft.use_state(0)
     # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
@@ -280,8 +281,11 @@ def MarkdownEditor(
             _push_history()
             undo_push_pending.current = False
 
+    def _table_cells(line: Line) -> list[str]:
+        return [cell.strip() for cell in line.raw.strip().strip("|").split("|")]
+
     def _table_cell_at(line: Line, cell_idx: int) -> str:
-        cells = [cell.strip() for cell in line.raw.strip().strip("|").split("|")]
+        cells = _table_cells(line)
         return cells[cell_idx] if 0 <= cell_idx < len(cells) else ""
 
     def _draft_for(li: int, si: int, table_cell_idx: int | None = None) -> str:
@@ -328,7 +332,7 @@ def MarkdownEditor(
             parser.reparse_line(line, raw if raw.strip() else "---")
         elif line.block_type == BlockType.TABLE:
             cell_idx = table_cell if table_cell is not None else 0
-            cells = [cell.strip() for cell in line.raw.strip().strip("|").split("|")]
+            cells = _table_cells(line)
             if cell_idx < len(cells):
                 cells[cell_idx] = raw
             parser.reparse_line(line, "| " + " | ".join(cells) + " |")
@@ -394,7 +398,9 @@ def MarkdownEditor(
     def activate(li: int, si: int, cursor_at: int = -1):
         if not (0 <= li < len(document.lines)):
             return
-        table_cell_idx = cursor_at if document.lines[li].block_type == BlockType.TABLE else None
+        line = document.lines[li]
+        table_cell_idx = cursor_at if line.block_type == BlockType.TABLE else None
+        set_table_selected_cell(table_cell_idx)
         set_table_cell(table_cell_idx)
         _goto(
             li,
@@ -1269,6 +1275,101 @@ def MarkdownEditor(
         _sync_cursor(new_draft, 0)
         set_nav_seq(nav_seq + 1)
 
+    def _table_move(delta: int):
+        if active is None or table_cell is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type != BlockType.TABLE:
+            return
+        cells = _table_cells(line)
+        if not cells:
+            return
+        next_idx = table_cell + delta
+        if next_idx < 0:
+            prev_li = li - 1
+            while prev_li >= 0 and document.lines[prev_li].block_type != BlockType.TABLE:
+                prev_li -= 1
+            if prev_li < 0:
+                next_idx = 0
+            else:
+                prev_cells = _table_cells(document.lines[prev_li])
+                next_idx = len(prev_cells) - 1 if prev_cells else 0
+                li = prev_li
+        elif next_idx >= len(cells):
+            next_li = li + 1
+            while next_li < len(document.lines) and document.lines[next_li].block_type != BlockType.TABLE:
+                next_li += 1
+            if next_li < len(document.lines):
+                li = next_li
+                next_idx = 0
+            else:
+                next_idx = len(cells) - 1
+        if li == active[0] and next_idx == table_cell:
+            return
+        commit_active(draft_ref.current)
+        suppress_blur.current = True
+        set_table_selected_cell(next_idx)
+        set_table_cell(next_idx)
+        _goto(li, 0, cursor_at=-1, table_cell_idx=next_idx)
+
+    def _table_tab(delta: int):
+        _table_move(delta)
+
+    def _table_enter():
+        if active is None or table_cell is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type != BlockType.TABLE:
+            return
+        cells = _table_cells(line)
+        if not cells:
+            return
+        if table_cell < len(cells) - 1:
+            _table_move(1)
+            return
+        if li + 1 < len(document.lines) and document.lines[li + 1].block_type == BlockType.TABLE:
+            commit_active(draft_ref.current)
+            suppress_blur.current = True
+            set_table_selected_cell(0)
+            set_table_cell(0)
+            _goto(li + 1, 0, cursor_at=-1, table_cell_idx=0)
+            return
+        commit_active(draft_ref.current)
+        set_table_selected_cell(None)
+        set_table_cell(None)
+        set_active(None)
+
+    def _table_enter():
+        if active is None or table_cell is None:
+            return
+        li, _ = active
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type != BlockType.TABLE:
+            return
+        cells = _table_cells(line)
+        if not cells:
+            return
+        if table_cell < len(cells) - 1:
+            _table_move(1)
+            return
+        if li + 1 < len(document.lines) and document.lines[li + 1].block_type == BlockType.TABLE:
+            commit_active(draft_ref.current)
+            suppress_blur.current = True
+            set_table_cell(0)
+            _goto(li + 1, 0, cursor_at=-1, table_cell_idx=0)
+            return
+        commit_active(draft_ref.current)
+        set_table_cell(None)
+        set_active(None)
+
     def new_line_after(li: int):
         if not (0 <= li < len(document.lines)):
             return
@@ -1633,7 +1734,7 @@ def MarkdownEditor(
                     lines=document.lines,
                     line_idx=table_start,
                     active_line_idx=active[0] if table_is_active else None,
-                    active_cell_idx=table_cell if table_is_active else None,
+                    active_cell_idx=table_selected_cell if table_is_active else None,
                     active_seg=active[1] if table_is_active else None,
                     draft=draft,
                     on_activate=activate,
@@ -1767,6 +1868,16 @@ def MarkdownEditor(
         shift = bool(getattr(e, "shift", False))
         if active is None:
             return
+        if key == "tab" and active is not None:
+            li, _ = active
+            if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
+                _table_tab(-1 if shift else 1)
+                return
+        if key in ("enter", "numpad enter") and active is not None:
+            li, _ = active
+            if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
+                _table_enter()
+                return
         li, _ = active
         if not (0 <= li < len(document.lines)):
             return

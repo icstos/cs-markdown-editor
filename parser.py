@@ -18,7 +18,7 @@ from models import BlockType, Document, Line, SegType, Segment
 
 # 行内解析器：启用删除线/高亮/上下标插件，支持组合语法 ***加粗斜体*** 等
 _INLINE_PLUGINS = ["strikethrough", "mark", "superscript", "subscript"]
-_md = mistune.create_markdown(renderer="ast", plugins=_INLINE_PLUGINS)
+_md = mistune.create_markdown(renderer="ast", plugins=_INLINE_PLUGINS + ["table"])
 _html_md = mistune.create_markdown(
     renderer="html",
     plugins=_INLINE_PLUGINS + ["table", "footnotes", "task_lists"],
@@ -340,6 +340,11 @@ def _build_line(raw: str) -> Line:
         line.segments = [Segment(SegType.TEXT, "[toc]", "[toc]")]
         return line
 
+    if bt == BlockType.TABLE:
+        # 表格行由专门的表格视图渲染，segments 只保留原始行源码，便于编辑回写。
+        line.segments = [Segment(SegType.TEXT, raw, raw)]
+        return line
+
     # 带前缀的块（heading / list / quote）
     if bt in (BlockType.HEADING, BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
         prefix_seg = _make_prefix_segment(bt, info, line)
@@ -375,6 +380,20 @@ def _split_code_block(raw: str) -> tuple[str, str]:
     return lang, body
 
 
+def _is_table_separator(raw: str) -> bool:
+    cells = [c.strip() for c in raw.strip().strip("|").split("|")]
+    if len(cells) < 2:
+        return False
+    for cell in cells:
+        if not re.fullmatch(r":?-{3,}:?", cell):
+            return False
+    return True
+
+
+def _is_table_row(raw: str) -> bool:
+    return "|" in raw and raw.strip().startswith("|") and raw.strip().endswith("|")
+
+
 def parse_markdown(text: str) -> Document:
     """把 Markdown 文本解析为 Document。代码块作为一个编辑单元合并。"""
     lines_src = text.split("\n")
@@ -384,7 +403,7 @@ def parse_markdown(text: str) -> Document:
         raw = lines_src[i]
         m = _RE_CODE_FENCE.match(raw)
         if m:
-            indent, fence, lang = m.group(1), m.group(2), m.group(3)
+            _, fence, lang = m.group(1), m.group(2), m.group(3)
             inner: list[str] = []
             j = i + 1
             while j < n and not (
@@ -417,6 +436,18 @@ def parse_markdown(text: str) -> Document:
             doc.lines.append(line)
             i = j + 1
             continue
+        if _is_table_row(raw) and i + 1 < n and _is_table_separator(lines_src[i + 1]):
+            table_lines = [raw]
+            j = i + 2
+            while j < n and _is_table_row(lines_src[j]) and lines_src[j].strip():
+                table_lines.append(lines_src[j])
+                j += 1
+            for row in table_lines:
+                line = Line(block_type=BlockType.TABLE, raw=row)
+                line.segments = [Segment(SegType.TEXT, row, row)]
+                doc.lines.append(line)
+            i = j
+            continue
         doc.lines.append(_build_line(raw))
         i += 1
 
@@ -431,7 +462,7 @@ def parse_markdown(text: str) -> Document:
 def reparse_line(line: Line, new_raw: str | None = None) -> None:
     """用新的整行源码重新解析该行（就地更新 block_type/level/segments）。
 
-    保留代码块 / HR / MATH 的特殊结构（整行为单位编辑，不拆段）。
+    保留代码块 / HR / MATH / TABLE 的特殊结构（整行为单位编辑，不拆段）。
     """
     if new_raw is not None:
         line.raw = new_raw
@@ -451,6 +482,10 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
         m = _RE_MATH_BLOCK.match(raw)
         content = m.group(1).strip() if m else raw
         line.segments = [Segment(SegType.MATH, content, content)]
+        return
+
+    if line.block_type == BlockType.TABLE:
+        line.segments = [Segment(SegType.TEXT, raw, raw)]
         return
 
     # 普通块：完整重建

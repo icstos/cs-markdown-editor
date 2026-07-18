@@ -27,6 +27,7 @@ from styles import (
     only_border,
 )
 from views.line_view import LineView
+from views.table_view import TableView
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
 
 
@@ -558,6 +559,7 @@ def MarkdownEditor(
             BlockType.MATH,
             BlockType.HR,
             BlockType.TOC,
+            BlockType.TABLE,
         ):
             return
         # 光标不在段首：交由 TextField 自身删除
@@ -637,6 +639,7 @@ def MarkdownEditor(
             BlockType.MATH,
             BlockType.HR,
             BlockType.TOC,
+            BlockType.TABLE,
         ):
             return
         # 光标不在段尾：交由 TextField 原生 Delete 处理（正常删除下一个字符）
@@ -776,6 +779,8 @@ def MarkdownEditor(
         cursor_ref.current["draft_len"] = n
         if nav_ref is not None and nav_ref.current is not None:
             nav_ref.current["draft_len"] = n
+        if active is not None and document.lines[active[0]].block_type == BlockType.TABLE:
+            document.lines[active[0]].raw = value
 
     def toggle_raw():
         """在 WYSIWYG 编辑与原始 Markdown 文本间切换。
@@ -1574,37 +1579,63 @@ def MarkdownEditor(
     # ---- 行视图列表 ----
     # 内容区可用宽度 = 内容最大宽度 - 左右内边距，传给 LineView 用于编辑态宽度限位
     content_width = content_max_width - 2 * content_padding
-    line_controls = [
-        LineView(
-            key=f"line-{i}",
-            line=line,
-            line_idx=i,
-            active_seg=active[1]
-            if (is_act := active is not None and active[0] == i)
-            else None,
-            draft=draft,
-            on_activate=activate,
-            on_change_draft=on_change_draft,
-            on_submit=on_submit,
-            on_blur=on_blur,
-            on_selection_change=on_selection_change if is_act else None,
-            on_toggle_task=toggle_task,
-            toc_entries=toc_entries,
-            on_jump_to=jump_to,
-            on_change_lang=change_lang,
-            on_lang_focus=suppress_blur_for_lang,
-            on_suppress_blur=suppress_blur_for_click,
-            initial_cursor=cursor_pos if is_act else -1,
-            nav_seq=nav_seq if is_act else 0,
-            field_ref=active_field_ref if is_act else None,
-            content_width=content_width,
-            line_height=line_height,
-            on_cursor_sync=_on_cursor_sync if is_act else None,
-            is_current_line=is_act,
-            clipboard_ref=clipboard_ref,
-        )
-        for i, line in enumerate(document.lines)
-    ]
+    line_controls = []
+    i = 0
+    while i < len(document.lines):
+        line = document.lines[i]
+        is_act = active is not None and active[0] == i
+        active_seg = active[1] if is_act else None
+        if line.block_type == BlockType.TABLE:
+            line_controls.append(
+                TableView(
+                    key=f"table-{i}",
+                    lines=document.lines,
+                    line_idx=i,
+                    active_seg=active_seg,
+                    draft=draft,
+                    on_activate=activate,
+                    on_change_draft=on_change_draft,
+                    on_submit=on_submit,
+                    on_blur=on_blur,
+                    on_selection_change=on_selection_change if is_act else None,
+                    initial_cursor=cursor_pos if is_act else -1,
+                    nav_seq=nav_seq if is_act else 0,
+                    field_ref=active_field_ref if is_act else None,
+                    content_width=content_width,
+                )
+            )
+            while i + 1 < len(document.lines) and document.lines[i + 1].block_type == BlockType.TABLE:
+                i += 1
+        else:
+            line_controls.append(
+                LineView(
+                    key=f"line-{i}",
+                    line=line,
+                    line_idx=i,
+                    active_seg=active_seg,
+                    draft=draft,
+                    on_activate=activate,
+                    on_change_draft=on_change_draft,
+                    on_submit=on_submit,
+                    on_blur=on_blur,
+                    on_selection_change=on_selection_change if is_act else None,
+                    on_toggle_task=toggle_task,
+                    toc_entries=toc_entries,
+                    on_jump_to=jump_to,
+                    on_change_lang=change_lang,
+                    on_lang_focus=suppress_blur_for_lang,
+                    on_suppress_blur=suppress_blur_for_click,
+                    initial_cursor=cursor_pos if is_act else -1,
+                    nav_seq=nav_seq if is_act else 0,
+                    field_ref=active_field_ref if is_act else None,
+                    content_width=content_width,
+                    line_height=line_height,
+                    on_cursor_sync=_on_cursor_sync if is_act else None,
+                    is_current_line=is_act,
+                    clipboard_ref=clipboard_ref,
+                )
+            )
+        i += 1
 
     # ---- 工具区：菜单 | 工具栏 | 原文切换 + 导出 ----
     def _tool_area():

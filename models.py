@@ -52,6 +52,7 @@ class BlockType(StrEnum):
     LIST_O = "list_ordered"
     QUOTE = "quote"
     CODE = "code_block"
+    TABLE = "table"
     HR = "hr"
     MATH = "math"  # $$...$$ 行间公式
     TOC = "toc"  # [toc] 目录

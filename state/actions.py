@@ -28,7 +28,8 @@ class EditorActions:
     """
 
     # ---- 当前状态（每次渲染重建，main.py 据此判断 browse/edit 层）----
-    active: tuple[int, int] | None  # (line_idx, seg_idx) | None
+    active: int | None  # line_idx | None（Typora 式行级编辑）
+    active_seg: int | None  # seg_idx | None（段级编辑：当前编辑段索引）
     draft: str
     active_line: Line | None
     raw_mode: bool

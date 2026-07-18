@@ -235,7 +235,7 @@ def LineView(
     line_idx: int,
     active_seg: int | None,
     draft: str,
-    on_activate: Callable[[int, int, int], None],
+    on_activate: Callable[[int, int], None],
     on_change_draft: Callable[[str], None],
     on_submit: Callable[[str], None],
     on_blur: Callable[[], None],
@@ -274,7 +274,8 @@ def LineView(
     else:
         avail_width = None
 
-    def activate(seg_idx: int, cursor_at: int = -1):
+    def activate(seg_idx: int = 0, cursor_at: int = -1):
+        """段级激活：透传 seg_idx 给外层 on_activate。"""
         on_activate(line_idx, seg_idx, cursor_at)
 
     def _edit_on_click_factory(seg_idx: int):
@@ -288,20 +289,18 @@ def LineView(
     # 行间空白死区点击兜底：激活最后一个段（与 _on_tap 回退策略一致）。
     # 内层 GestureDetector 会消费其覆盖区域的 tap，此回调仅在 padding 死区触发。
     def _fallback_activate(e):
-        if line.block_type == BlockType.HEADING:
-            activate(0)
-        else:
-            activate(max(0, len(line.segments) - 1))
+        activate(max(0, len(line.segments) - 1))
 
     # ============ 空行 ============
     if line.block_type == BlockType.BLANK or not _has_visible_text(line):
         if active_seg is not None:
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
+                on_selection_change, initial_cursor, nav_seq,
+                base_size=base, field_ref=field_ref, max_width=avail_width,
+                line_height=line_height, on_cursor_sync=on_cursor_sync,
             )
-            # 编辑态：设置 width=float("inf") 占满整行，点击右侧空白时抑制 blur 并激活最后段
+            # 编辑态：设置 width=float("inf") 占满整行，点击右侧空白时抑制 blur 并激活行尾
             content = ft.Container(
                 content=field,
                 padding=ft.Padding.symmetric(horizontal=2),
@@ -332,10 +331,17 @@ def LineView(
         if active_seg is not None:
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
+                on_selection_change, initial_cursor, nav_seq,
+                field_ref=field_ref, max_width=avail_width,
+                line_height=line_height, on_cursor_sync=on_cursor_sync,
             )
-            content = ft.Container(padding=ft.Padding.symmetric(vertical=6), content=field)
+            content = ft.Container(
+                content=field,
+                padding=ft.Padding.symmetric(vertical=6),
+                width=float("inf"),
+                on_click=_edit_on_click_factory(0),
+                ink=True,
+            )
         else:
             content = ft.Container(
                 content=ft.Divider(height=1, thickness=1, color=c.quote_bar),
@@ -482,12 +488,15 @@ def LineView(
         if active_seg is not None:
             field = _active_field(
                 line, draft, on_change_draft, on_submit, on_blur,
-                on_selection_change, initial_cursor, nav_seq, field_ref=field_ref,
-                max_width=avail_width, line_height=line_height, on_cursor_sync=on_cursor_sync,
+                on_selection_change, initial_cursor, nav_seq,
+                field_ref=field_ref, max_width=avail_width,
+                line_height=line_height, on_cursor_sync=on_cursor_sync,
             )
             content = ft.Container(
                 content=field, width=float("inf"),
                 padding=ft.Padding.symmetric(horizontal=2),
+                on_click=_edit_on_click_factory(0),
+                ink=True,
             )
         else:
             toc_items: list[ft.Control] = [
@@ -583,16 +592,11 @@ def LineView(
                     if seg.seg_type == SegType.LINK and seg.url:
                         _open_link_url(seg.url)
                         return
-                    if line.block_type == BlockType.HEADING:
-                        activate(0, _logical_raw_offset(line, si, offset))
-                    else:
-                        activate(si, offset)
+                    # 段级激活：统一调用 activate(si, offset)（含 heading）
+                    activate(si, offset)
                     return
             # 回退：点击多行区域或无法定位时，激活最后一个段
-            if line.block_type == BlockType.HEADING:
-                activate(0)
-            else:
-                activate(max(0, len(line.segments) - 1))
+            activate(max(0, len(line.segments) - 1))
 
         content = ft.Container(
             content=ft.GestureDetector(
@@ -605,76 +609,42 @@ def LineView(
         )
         return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
-    # 标题编辑态：整行原文（含 # 前缀）单字段编辑
-    if line.block_type == BlockType.HEADING and active_seg is not None:
-        seg0 = line.segments[0] if line.segments else Segment(SegType.HEADING_PREFIX, "# ", "")
-
+    # ============ 编辑态：段级 before + active + after（Typora 式 WYSIWYG）============
+    # active_seg 越界兜底：退化为整行渲染
+    if active_seg >= len(line.segments):
+        spans = _spans_for(line, 0, len(line.segments), activate, base)
         content = ft.Container(
-            content=_active_field(
-                line,
-                draft,
-                on_change_draft,
-                on_submit,
-                on_blur,
-                on_selection_change,
-                initial_cursor,
-                nav_seq,
-                base_size=base,
-                field_ref=field_ref,
-                max_width=avail_width,
-                line_height=line_height,
-                on_cursor_sync=on_cursor_sync,
-                seg=seg0,
-            ),
-            width=float("inf"),
+            content=ft.Text(spans=spans, style=line_style, width=float("inf")),
             padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-            on_click=_edit_on_click_factory(0),
-            ink=True,
         )
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
-    # 编辑态：前段 Text + 激活段 TextField + 后段 Text
+    # 段级布局：前段 Text(spans) + 激活段 TextField + 后段 Text(spans)
+    # 仅激活段显示原生 Markdown，前后段保持渲染态——Typora 式最小语法编辑
+    active_seg_obj = line.segments[active_seg]
     before_spans = _spans_for(line, 0, active_seg, activate, base)
     after_spans = _spans_for(line, active_seg + 1, len(line.segments), activate, base)
-    active_seg_obj = line.segments[active_seg] if active_seg < len(line.segments) else None
-
-    if active_seg_obj is None:
-        # 段索引越界，退回非编辑态
-        spans = _spans_for(line, 0, len(line.segments), activate, base)
-        content = ft.Text(spans=spans, style=line_style)
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
     controls: list[ft.Control] = []
     if before_spans:
         controls.append(ft.Text(spans=before_spans, style=line_style))
     controls.append(
         _active_field(
-            line,
-            draft,
-            on_change_draft,
-            on_submit,
-            on_blur,
-            on_selection_change,
-            initial_cursor,
-            nav_seq,
-            base_size=base,
-            field_ref=field_ref,
-            max_width=avail_width,
-            line_height=line_height,
-            on_cursor_sync=on_cursor_sync,
+            line, draft, on_change_draft, on_submit, on_blur,
+            on_selection_change, initial_cursor, nav_seq,
+            base_size=base, field_ref=field_ref, max_width=avail_width,
+            line_height=line_height, on_cursor_sync=on_cursor_sync,
             seg=active_seg_obj,
         )
     )
     if after_spans:
         controls.append(ft.Text(spans=after_spans, style=line_style))
 
-    # 编辑态：Row 外包裹 Container，设置 width=float("inf") 占满整行，
-    # 防止点击右侧空白触发外层 _fallback_activate。同时添加 on_click：
-    # 点击右侧空白时激活最后一个段（行尾），保持编辑状态。
     row = ft.Row(
         controls=controls, wrap=True, spacing=0, run_spacing=0,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
+    # Container 占满整行，点击右侧空白时抑制 blur 并激活行尾，保持编辑状态。
     content = ft.Container(
         content=row,
         width=float("inf"),
@@ -683,7 +653,7 @@ def LineView(
         ink=True,
         border_radius=8,
     )
-    return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+    return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
 
 def _wrap_block(

@@ -78,13 +78,25 @@ def _locate_seg_by_raw_offset(line: Line, target: int) -> tuple[int, int]:
     return last, len(line.segments[last].raw)
 
 
+def _first_content_seg(line: Line) -> int:
+    """返回行内首个内容段索引（跳过 HEADING_PREFIX/LIST_PREFIX/QUOTE_PREFIX）。
+
+    用于工具栏操作（indent/set_block/new_line_after）后定位光标到内容段，
+    而非前缀段（# / - / > ）。无内容段时返回 0（兜底）。
+    """
+    for i, seg in enumerate(line.segments):
+        if seg.seg_type not in (
+            SegType.HEADING_PREFIX,
+            SegType.LIST_PREFIX,
+            SegType.QUOTE_PREFIX,
+        ):
+            return i
+    return 0
+
+
 def _line_raw(line: Line) -> str:
     """整行 Markdown 源码（段 raw 拼接，与 line.raw 一致）。"""
     return line.raw or "".join(s.raw for s in line.segments)
-
-
-def _heading_edit(line: Line) -> bool:
-    return line.block_type == BlockType.HEADING
 
 
 def _inline_content(line: Line) -> str:
@@ -172,13 +184,14 @@ def MarkdownEditor(
     body_font_size = settings.get("body_font_size", 16)
     line_height = settings.get("line_height", 1.6)
     show_toolbar = settings.get("show_toolbar", True)
-    active, set_active = ft.use_state(None)  # (line_idx, seg_idx) | None
+    active, set_active = ft.use_state(None)  # line_idx | None（Typora 式行级编辑）
+    active_seg, set_active_seg = ft.use_state(None)  # seg_idx | None（段级编辑：当前编辑段）
     table_cell, set_table_cell = ft.use_state(None)  # 当前表格编辑列 | None
     table_selected_cell, set_table_selected_cell = ft.use_state(None)  # 当前表格选中列 | None
-    draft, set_draft = ft.use_state("")  # 当前编辑段文本
+    draft, set_draft = ft.use_state("")  # 当前编辑段 raw（inline 块）或段内容（CODE/MATH/TABLE）
     cursor_line, set_cursor_line = ft.use_state(0)
     # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
-    # 仅在跨段导航/块切换时通过 _sync_cursor 重置；on_key 经 nav_ref 读取
+    # 仅在跨行导航/块切换时通过 _sync_cursor 重置；on_key 经 nav_ref 读取
     cursor_ref = ft.use_ref(CursorState())
     # applied_cursor：_on_focus 设置光标后记录的目标位置（-1=未设置）。
     # 用于 on_selection_change 识别并丢弃 Flutter 聚焦时默认触发的 stale 段尾事件：
@@ -188,14 +201,14 @@ def MarkdownEditor(
     # draft_ref：同步镜像 draft 状态。闭包的 draft 在 set_draft 后到下次渲染前是 stale 的，
     # 持续 Delete 时 delete_core 需在渲染前就读到最新 draft 才能正确删除字符。
     draft_ref = ft.use_ref("")
-    # nav_seq：每次跨段/激活递增，触发 TextField key 重建以重新 autofocus
+    # nav_seq：每次跨行/激活递增，触发 TextField key 重建以重新 autofocus
     nav_seq, set_nav_seq = ft.use_state(0)
-    # 跨段导航时的光标落点：-1=段尾(autofocus), 0=段首
+    # 跨行导航时的光标落点：-1=段尾(autofocus), 0=段首, >0=段内 raw 偏移
     cursor_pos, set_cursor_pos = ft.use_state(-1)
     # 粘贴时抑制 on_blur：handle_paste 修改 document.lines 触发重渲染，
     # 旧 TextField 卸载导致 on_blur 覆盖 set_active，需跳过这一次 blur
     suppress_blur = ft.use_ref(False)
-    # 激活段 TextField 的 ref：use_effect 在渲染后显式调用 focus()，
+    # 激活行 TextField 的 ref：use_effect 在渲染后显式调用 focus()，
     # 绕过 SelectionArea 内 autofocus 因手势竞争不可靠的问题
     active_field_ref = ft.use_ref(None)
     # 原文模式：切换到原始 Markdown 文本编辑
@@ -246,6 +259,7 @@ def MarkdownEditor(
         return EditorSnapshot(
             markdown=md,
             active=active,
+            active_seg=active_seg,
             draft=draft_ref.current,
             cursor_base=cursor_ref.current.base,
             cursor_extent=cursor_ref.current.extent,
@@ -271,15 +285,11 @@ def MarkdownEditor(
             else:
                 document.lines = parser.parse_markdown(snap.markdown).lines
                 if snap.active is not None:
-                    li, si = snap.active
+                    li = snap.active
                     if 0 <= li < len(document.lines):
-                        line = document.lines[li]
-                        if _heading_edit(line):
-                            target_si = 0
-                        else:
-                            target_si = min(si, max(0, len(line.segments) - 1))
                         _set_draft(snap.draft)
-                        set_active((li, target_si))
+                        set_active(li)
+                        set_active_seg(snap.active_seg)
                         set_cursor_line(li)
                         cursor_at = snap.cursor_base
                         set_cursor_pos(cursor_at if cursor_at >= 0 else -1)
@@ -287,9 +297,11 @@ def MarkdownEditor(
                         set_nav_seq(nav_seq + 1)
                     else:
                         set_active(None)
+                        set_active_seg(None)
                         _set_draft("")
                 else:
                     set_active(None)
+                    set_active_seg(None)
                     _set_draft("")
             mark_dirty()
         finally:
@@ -318,28 +330,44 @@ def MarkdownEditor(
         cells = _table_cells(line)
         return cells[cell_idx] if 0 <= cell_idx < len(cells) else ""
 
-    def _draft_for(li: int, si: int, table_cell_idx: int | None = None) -> str:
+    def _draft_for(li: int, seg_idx: int | None = None, table_cell_idx: int | None = None) -> str:
+        """获取激活段的 draft 文本。
+
+        - 表格：返回 cell 内容
+        - CODE/MATH：返回段内容（不含围栏）
+        - inline 块（段落/标题/列表/引用/HR/TOC/BLANK）：返回激活段 raw（段级编辑）
+        """
         if 0 <= li < len(document.lines):
             line = document.lines[li]
             if line.block_type == BlockType.TABLE and table_cell_idx is not None:
                 return _table_cell_at(line, table_cell_idx)
-            if _heading_edit(line):
-                return _line_raw(line)
-            if 0 <= si < len(line.segments):
-                return line.segments[si].raw
+            if line.block_type == BlockType.CODE:
+                return line.segments[0].text if line.segments else ""
+            if line.block_type == BlockType.MATH:
+                return line.segments[0].text if line.segments else ""
+            # inline 块：返回激活段 raw
+            if seg_idx is not None and 0 <= seg_idx < len(line.segments):
+                return line.segments[seg_idx].raw
+            return line.segments[0].raw if line.segments else ""
         return ""
 
+    def _reconstruct_line_raw(line: Line, seg_idx: int, seg_draft: str) -> str:
+        """重构整行 raw = before_raw + seg_draft + after_raw（段级提交用）。"""
+        before_raw = "".join(s.raw for s in line.segments[:seg_idx])
+        after_raw = "".join(s.raw for s in line.segments[seg_idx + 1:])
+        return before_raw + seg_draft + after_raw
+
     def _sync_cursor(text: str, cursor_at: int = -1):
-        """同步光标状态。cursor_at=-1: 段尾; 0: 段首; >0: 指定偏移。"""
+        """同步光标状态。cursor_at=-1: 段尾; 0: 段首; >0: 段内偏移。"""
         n = len(text)
         pos = cursor_at if cursor_at >= 0 else n
         cursor_ref.current.reset(pos, n)
 
-    # ---- 提交当前激活段 ----
+    # ---- 提交当前激活行 ----
     def commit_active(new_raw: str | None = None):
         if active is None:
             return
-        li, si = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
@@ -364,208 +392,217 @@ def MarkdownEditor(
             if cell_idx < len(cells):
                 cells[cell_idx] = raw
             parser.reparse_line(line, "| " + " | ".join(cells) + " |")
-        elif _heading_edit(line):
-            parser.reparse_line(line, raw)
         else:
-            if si < len(line.segments):
-                line.segments[si].raw = raw
-            full = "".join(s.raw for s in line.segments)
-            parser.reparse_line(line, full)
+            # inline 块（段落/标题/列表/引用/HR/TOC/BLANK）：段级重构整行 raw
+            seg_idx = active_seg if active_seg is not None else 0
+            if 0 <= seg_idx < len(line.segments):
+                full_raw = _reconstruct_line_raw(line, seg_idx, raw)
+            else:
+                full_raw = raw
+            parser.reparse_line(line, full_raw)
         mark_dirty()
 
-    # ---- 激活段（统一的状态切换入口）----
+    # ---- 激活行（统一的状态切换入口）----
     def _goto(
         li: int,
-        si: int,
+        seg_idx: int | None = None,
         cursor_at: int = -1,
         skip_commit: bool = False,
         table_cell_idx: int | None = None,
     ):
-        """跨段/激活目标段：先提交当前段，再切换 draft+active，递增 nav_seq
-        触发 TextField key 重建以重新 autofocus。cursor_at: -1=段尾, 0=段首。
+        """跨行/激活目标段：先提交当前段，再切换 draft+active+active_seg，递增 nav_seq
+        触发 TextField key 重建以重新 autofocus。cursor_at: -1=段尾, 0=段首, >0=段内 raw 偏移。
 
-        skip_commit=True 跳过提交当前段——用于当前行即将被删除/移位的场景
-        （如行首 Backspace 合并），避免把草稿提交到移位后的错误行。
+        skip_commit=True 跳过提交当前段——用于当前段即将被删除/移位的场景
+        （如段首 Backspace 合并），避免把草稿提交到移位后的错误段。
         """
         is_new_table_cell = (
             0 <= li < len(document.lines)
             and document.lines[li].block_type == BlockType.TABLE
             and table_cell_idx != table_cell
         )
-        if not skip_commit and active is not None and (active != (li, si) or is_new_table_cell):
+        if not skip_commit and active is not None and (active != li or is_new_table_cell):
             commit_active(draft_ref.current)
         if not (0 <= li < len(document.lines)):
             return
-        line = document.lines[li]
-        if not (0 <= si < len(line.segments)):
-            return
-        if _heading_edit(line):
-            new_draft = _line_raw(line)
-            if cursor_at < 0:
-                cursor_at = len(new_draft)
-            elif si > 0:
-                cursor_at = (
-                    sum(len(line.segments[i].raw) for i in range(si)) + cursor_at
-                )
-            cursor_at = min(max(cursor_at, 0), len(new_draft))
-            _set_draft(new_draft)
-            set_active((li, 0))
-            set_cursor_line(li)
-            set_cursor_pos(cursor_at)
-            _sync_cursor(new_draft, cursor_at)
-            set_nav_seq(nav_seq + 1)
-            return
-        new_draft = _draft_for(li, si, table_cell_idx)
+        new_draft = _draft_for(li, seg_idx, table_cell_idx)
+        actual_cursor = len(new_draft) if cursor_at < 0 else min(cursor_at, len(new_draft))
         _set_draft(new_draft)
-        set_active((li, si))
+        set_active(li)
+        set_active_seg(seg_idx)
         set_cursor_line(li)
-        set_cursor_pos(cursor_at)
-        _sync_cursor(new_draft, cursor_at)
+        set_cursor_pos(actual_cursor)
+        _sync_cursor(new_draft, actual_cursor)
         set_nav_seq(nav_seq + 1)
 
-    def activate(li: int, si: int, cursor_at: int = -1):
+    def activate(li: int, seg_idx: int | None = None, cursor_at: int = -1):
+        """激活段。cursor_at: -1=段尾, 0=段首, >0=段内 raw 偏移。
+
+        表格行：cursor_at 作为 cell 索引，走 table_cell 路径。
+        """
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        table_cell_idx = cursor_at if line.block_type == BlockType.TABLE else None
-        set_table_selected_cell(table_cell_idx)
-        set_table_cell(table_cell_idx)
-        _goto(
-            li,
-            si,
-            cursor_at=-1 if table_cell_idx is not None else cursor_at,
-            table_cell_idx=table_cell_idx,
-        )
+        if line.block_type == BlockType.TABLE:
+            cell_idx = cursor_at if cursor_at >= 0 else 0
+            set_table_selected_cell(cell_idx)
+            set_table_cell(cell_idx)
+            _goto(li, seg_idx=None, cursor_at=-1, table_cell_idx=cell_idx)
+            return
+        _goto(li, seg_idx=seg_idx, cursor_at=cursor_at)
 
     # ---- 段间/行间光标导航（由外层 on_key 经 nav_ref 调用）----
     def _nav_blocked(line: Line) -> bool:
         return _is_fence(line)
 
     def move_left_cross():
+        """段首 ← 越界：先尝试跳上一段段尾，首段则跳上一行末段段尾。"""
         if active is None:
             return
-        li, si = active
+        li = active
         if li >= len(document.lines):
             return
         line = document.lines[li]
         if _nav_blocked(line):
             return
-        if _heading_edit(line):
-            if cursor_ref.current.base > 0:
-                return
-            if li > 0:
-                prev = document.lines[li - 1]
-                _goto(li - 1, max(0, len(prev.segments) - 1))
+        if cursor_ref.current.extent > 0:
+            return  # 不在段首
+        seg_idx = active_seg if active_seg is not None else 0
+        # 段内：跳上一段段尾
+        if seg_idx > 0:
+            commit_active(draft_ref.current)
+            _goto(li, seg_idx=seg_idx - 1, cursor_at=-1)
             return
-        if si > 0:
-            _goto(li, si - 1)
-        elif li > 0:
-            prev = document.lines[li - 1]
-            _goto(li - 1, max(0, len(prev.segments) - 1))
-
-    def move_right_cross():
-        if active is None:
-            return
-        li, si = active
-        if li >= len(document.lines):
-            return
-        line = document.lines[li]
-        if _nav_blocked(line):
-            return
-        if _heading_edit(line):
-            if cursor_ref.current.extent < len(draft):
-                return
-            if li < len(document.lines) - 1:
-                _goto(li + 1, 0, cursor_at=0)
-            return
-        if si < len(line.segments) - 1:
-            _goto(li, si + 1, cursor_at=0)
-        elif li < len(document.lines) - 1:
-            _goto(li + 1, 0, cursor_at=0)
-
-    def move_home():
-        """Home：跳到当前行第一个段的起点。"""
-        if active is None:
-            return
-        li, _ = active
-        if li >= len(document.lines) or _nav_blocked(document.lines[li]):
-            return
-        line = document.lines[li]
-        if _heading_edit(line):
-            _goto(li, 0, cursor_at=0)
-            return
-        _goto(li, 0)
-
-    def move_end():
-        """End：跳到当前行最后一个段（段尾由 autofocus 落点）。"""
-        if active is None:
-            return
-        li, _ = active
-        if li >= len(document.lines) or _nav_blocked(document.lines[li]):
-            return
-        line = document.lines[li]
-        if _heading_edit(line):
-            _goto(li, 0, cursor_at=-1)
-            return
-        _goto(li, max(0, len(document.lines[li].segments) - 1))
-
-    def _logical_offset(line: Line, seg_idx: int, extent: int) -> int:
-        """行内逻辑字符偏移 = 前序段 raw 长度累加 + 段内偏移。"""
-        return sum(len(line.segments[i].raw) for i in range(seg_idx)) + extent
-
-    def _locate_seg_by_offset(line: Line, target_off: int) -> int:
-        """在行内找包含逻辑偏移 target_off 的段索引。"""
-        acc = 0
-        for i, seg in enumerate(line.segments):
-            n = len(seg.raw)
-            if acc + n >= target_off:
-                return i
-            acc += n
-        return max(0, len(line.segments) - 1)
-
-    def move_up():
-        """上键：按行内逻辑偏移跨到上一行对应段。"""
-        if active is None:
-            return
-        li, si = active
+        # 首段：跳上一行末段段尾
         if li <= 0:
             return
-        target = _logical_offset(document.lines[li], si, cursor_ref.current.extent)
-        nsi = _locate_seg_by_offset(document.lines[li - 1], target)
-        _goto(li - 1, nsi)
+        commit_active(draft_ref.current)
+        prev = document.lines[li - 1]
+        if _is_fence(prev):
+            _goto_quiet(li - 1, seg_idx=None, cursor_at=-1)
+            return
+        prev_last = max(0, len(prev.segments) - 1)
+        _goto(li - 1, seg_idx=prev_last, cursor_at=-1)
 
-    def move_down():
-        """下键：按行内逻辑偏移跨到下一行对应段。"""
+    def move_right_cross():
+        """段尾 → 越界：先尝试跳下一段段首，末段则跳下一行首段段首。"""
         if active is None:
             return
-        li, si = active
+        li = active
+        if li >= len(document.lines):
+            return
+        line = document.lines[li]
+        if _nav_blocked(line):
+            return
+        if cursor_ref.current.extent < len(draft_ref.current):
+            return  # 不在段尾
+        seg_idx = active_seg if active_seg is not None else 0
+        # 段内：跳下一段段首
+        if seg_idx < len(line.segments) - 1:
+            commit_active(draft_ref.current)
+            _goto(li, seg_idx=seg_idx + 1, cursor_at=0)
+            return
+        # 末段：跳下一行首段段首
         if li >= len(document.lines) - 1:
             return
-        target = _logical_offset(document.lines[li], si, cursor_ref.current.extent)
-        nsi = _locate_seg_by_offset(document.lines[li + 1], target)
-        _goto(li + 1, nsi)
+        commit_active(draft_ref.current)
+        _goto(li + 1, seg_idx=0, cursor_at=0)
+
+    def move_home():
+        """Home：跳到本行首段段首。"""
+        if active is None:
+            return
+        li = active
+        if li >= len(document.lines) or _nav_blocked(document.lines[li]):
+            return
+        commit_active(draft_ref.current)
+        _goto(li, seg_idx=0, cursor_at=0)
+
+    def move_end():
+        """End：跳到本行末段段尾。"""
+        if active is None:
+            return
+        li = active
+        if li >= len(document.lines) or _nav_blocked(document.lines[li]):
+            return
+        last_seg = max(0, len(document.lines[li].segments) - 1)
+        commit_active(draft_ref.current)
+        _goto(li, seg_idx=last_seg, cursor_at=-1)
+
+    def _vertical_cursor_offset(line: Line, target_x_chars: int) -> int:
+        """估算上下行垂直导航的目标 raw 偏移。
+
+        基于行内字符累加：target_x_chars 是当前行光标的 raw 偏移，
+        直接作为目标行的 raw 偏移（截断到目标行长度）。
+        这是简化估算，用户可用方向键微调。
+        """
+        return max(0, min(target_x_chars, len(_line_raw(line))))
+
+    def move_up():
+        """上键：跳到上一行，定位到对应行级 raw 偏移所在段。"""
+        if active is None:
+            return
+        li = active
+        if li <= 0:
+            return
+        target = cursor_ref.current.extent
+        seg_idx = active_seg if active_seg is not None else 0
+        cur_line = document.lines[li]
+        # 计算行级 raw 偏移（前段 raw + 段内偏移）
+        line_offset = sum(len(cur_line.segments[i].raw) for i in range(seg_idx)) + target
+        commit_active(draft_ref.current)
+        prev_line = document.lines[li - 1]
+        if _is_fence(prev_line):
+            _goto_quiet(li - 1, seg_idx=None, cursor_at=-1)
+            return
+        target_seg, seg_offset = _locate_seg_by_raw_offset(prev_line, line_offset)
+        _goto(li - 1, seg_idx=target_seg, cursor_at=seg_offset)
+
+    def move_down():
+        """下键：跳到下一行，定位到对应行级 raw 偏移所在段。"""
+        if active is None:
+            return
+        li = active
+        if li >= len(document.lines) - 1:
+            return
+        target = cursor_ref.current.extent
+        seg_idx = active_seg if active_seg is not None else 0
+        cur_line = document.lines[li]
+        line_offset = sum(len(cur_line.segments[i].raw) for i in range(seg_idx)) + target
+        commit_active(draft_ref.current)
+        next_line = document.lines[li + 1]
+        if _is_fence(next_line):
+            _goto_quiet(li + 1, seg_idx=None, cursor_at=-1)
+            return
+        target_seg, seg_offset = _locate_seg_by_raw_offset(next_line, line_offset)
+        _goto(li + 1, seg_idx=target_seg, cursor_at=seg_offset)
 
     def move_line_start():
+        """Ctrl+Home：跳到本行首段段首。"""
         if active is None:
             return
-        li, _ = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         if _nav_blocked(line):
             return
-        _goto(li, 0, cursor_at=0)
+        commit_active(draft_ref.current)
+        _goto(li, seg_idx=0, cursor_at=0)
 
     def move_line_end():
+        """Ctrl+End：跳到本行末段段尾。"""
         if active is None:
             return
-        li, _ = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         if _nav_blocked(line):
             return
-        _goto(li, max(0, len(line.segments) - 1), cursor_at=-1)
+        last_seg = max(0, len(line.segments) - 1)
+        commit_active(draft_ref.current)
+        _goto(li, seg_idx=last_seg, cursor_at=-1)
 
     def _first_content_index(line: Line) -> int:
         for i, s in enumerate(line.segments):
@@ -602,142 +639,115 @@ def MarkdownEditor(
             return
         _push_history()
         undo_push_pending.current = True
-        li, _ = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
             _indent_list_line(line, delta)
-            _goto(li, _first_content_index(line), cursor_at=0)
+            _goto(li, seg_idx=_first_content_seg(document.lines[li]), cursor_at=0)
         elif line.block_type == BlockType.QUOTE:
             _toggle_quote_level(line, delta)
-            _goto(li, _first_content_index(line), cursor_at=0)
+            _goto(li, seg_idx=_first_content_seg(document.lines[li]), cursor_at=0)
 
     def backspace_core():
+        """段首 BackSpace：先尝试跳上一段段尾；首段则与前一行合并。
+
+        段级编辑：光标在段内时交由 TextField 原生删除（光标与字符一致）。
+        段首且非首段：跳到上一段段尾（不合并段，符合 memory 约束）。
+        段首且首段：与前一行合并（删除上一行行尾换行符）。
+        """
         if active is None:
             return
-        li, si = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         # 代码块 / 块级公式 / 分隔线 / 目录 / 表格：整块编辑，行首 BackSpace 不处理
-        # （围栏块 + TABLE：TABLE 单独走 _table_* 路径）
         if _is_fence(line) or line.block_type == BlockType.TABLE:
             return
         # 光标不在段首：交由 TextField 自身删除
         if cursor_ref.current.extent > 0:
             return
-        # 行内段非首段（si > 0）段首 BackSpace：跳到上一段末尾，便于继续删除
-        if si > 0:
-            _goto(li, si - 1, cursor_at=-1)
+        seg_idx = active_seg if active_seg is not None else 0
+        # 段内分支：非首段跳上一段段尾（不合并段，符合 memory 约束）
+        if seg_idx > 0:
+            commit_active(draft_ref.current)
+            _goto(li, seg_idx=seg_idx - 1, cursor_at=-1)
             return
-        # 行首（si == 0）且非首行：与前一行合并（删除上一行行尾换行符），
-        # 所有块类型（标题/列表/引用/段落）行为一致
+        # 首段段首且非首行：与前一行合并
         if li <= 0:
             return
         _push_history()
         undo_push_pending.current = False
-        # 先提交当前段草稿（此时当前行仍有效），确保合并内容含最新输入
+        # 先提交当前行草稿（此时当前行仍有效），确保合并内容含最新输入
         commit_active(draft_ref.current)
         prev = document.lines[li - 1]
         # 前一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其末尾
         if _is_fence(prev):
-            _goto_quiet(li - 1, max(0, len(prev.segments) - 1), cursor_at=-1)
+            _goto_quiet(li - 1, seg_idx=0, cursor_at=-1)
             return
         # 前一行含行内内容（段落/标题/列表/引用）：合并当前行内容到前一行末尾
         prev_raw = _line_raw(prev)
         junction = len(prev_raw)
         merged = prev_raw + _line_raw(document.lines[li])
         parser.reparse_line(prev, merged)
-        document.lines = document.lines[:li] + document.lines[li + 1 :]
+        document.lines = document.lines[:li] + document.lines[li + 1:]
         mark_dirty()
         suppress_blur.current = True
-        # 光标落在合并点：定位包含 junction 偏移的段及段内偏移
-        if _heading_edit(prev):
-            # 标题以整行 raw 为 draft，cursor_at 即整行偏移
-            _goto(
-                li - 1,
-                0,
-                cursor_at=min(junction, len(_line_raw(prev))),
-                skip_commit=True,
-            )
-            return
-        target_si, seg_off = _locate_seg_by_raw_offset(prev, junction)
-        _goto(li - 1, target_si, cursor_at=seg_off, skip_commit=True)
+        # 光标落在合并点：定位到 junction 所在段
+        junction_seg, junction_off = _locate_seg_by_raw_offset(prev, junction)
+        _goto(li - 1, seg_idx=junction_seg, cursor_at=junction_off, skip_commit=True)
 
     def delete_core():
-        """行尾 Delete：与下一行合并（删除当前行行尾换行符），与行首 BackSpace 对称。
+        """段尾 Delete：先尝试跳下一段段首；末段则与下一行合并。
 
-        逻辑与 backspace_core 镜像：
-        - 光标不在段尾 → 交由 TextField 原生 Delete 删除下一个字符
-        - 非末段段尾 → 跳到下一段首部（便于继续删除）
-        - 末段段尾且非末行 → 与下一行合并
-        - 下一行是围栏块 → 跳到下一行首部
+        段级编辑：光标在段内时交由 TextField 原生 Delete（光标与字符一致）。
+        段尾且非末段：跳到下一段段首。
+        段尾且末段：与下一行合并（删除当前行行尾换行符）。
         """
         if active is None:
             return
-        li, si = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         # 代码块 / 块级公式 / 分隔线 / 目录 / 表格：整块编辑，行尾 Delete 不处理
-        # （围栏块 + TABLE：TABLE 单独走 _table_* 路径）
         if _is_fence(line) or line.block_type == BlockType.TABLE:
             return
-        # 光标不在段尾：交由 TextField 原生 Delete 处理（正常删除下一个字符）
-        # 使用 len(draft_ref.current) 而非 cursor_ref.current.draft_len：
-        # on_selection_change 不可靠，可能导致 cursor_ref.current.draft_len stale；
-        # draft_ref 通过 on_change_draft 同步更新，始终是最新的。
+        # 光标不在段尾：交由 TextField 原生 Delete 处理
         if cursor_ref.current.extent < len(draft_ref.current):
             return
-        # 行内段非末段（si < len-1）段尾 Delete：直接删除下一段的首字符，
-        # 而非仅跳转光标。对于短小的 Markdown 语法段（如 **、*），逐段跳转
-        # 会让用户感觉被"跳过"，直接删除字符更符合预期。
-        # 标题以整行 raw 为 draft（si 恒为 0），跳过段间跳转。
-        if not _heading_edit(line) and si < len(line.segments) - 1:
-            _push_history()
-            undo_push_pending.current = False
+        seg_idx = active_seg if active_seg is not None else 0
+        # 段内分支：非末段跳下一段段首
+        if seg_idx < len(line.segments) - 1:
             commit_active(draft_ref.current)
-            next_seg = line.segments[si + 1]
-            if next_seg.raw:
-                next_seg.raw = next_seg.raw[1:]
-            full = "".join(s.raw for s in line.segments)
-            parser.reparse_line(line, full)
-            mark_dirty()
-            suppress_blur.current = True
-            new_si = si + 1 if next_seg.raw else si
-            _goto(li, new_si, cursor_at=0, skip_commit=True)
+            _goto(li, seg_idx=seg_idx + 1, cursor_at=0)
             return
-        # 行尾（末段段尾）且非末行：与下一行合并（删除当前行行尾换行符），
-        # 所有块类型（标题/列表/引用/段落）行为一致
+        # 末段段尾且非末行：与下一行合并
         if li >= len(document.lines) - 1:
             return
         _push_history()
         undo_push_pending.current = False
-        # 先提交当前段草稿（此时当前行仍有效），确保合并内容含最新输入
+        # 先提交当前行草稿（此时当前行仍有效），确保合并内容含最新输入
         commit_active(draft_ref.current)
         line = document.lines[li]
         next_line = document.lines[li + 1]
-        # 下一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其首部
+        # 下一行是围栏块：无法合并，跳到其首部
         if _is_fence(next_line):
-            _goto_quiet(li + 1, 0, cursor_at=0)
+            _goto_quiet(li + 1, seg_idx=0, cursor_at=0)
             return
-        # 下一行含行内内容（段落/标题/列表/引用）：合并下一行内容到当前行末尾
+        # 下一行含行内内容：合并下一行内容到当前行末尾
         current_raw = _line_raw(line)
         junction = len(current_raw)
         merged = current_raw + _line_raw(next_line)
         parser.reparse_line(line, merged)
-        document.lines = document.lines[: li + 1] + document.lines[li + 2 :]
+        document.lines = document.lines[:li + 1] + document.lines[li + 2:]
         mark_dirty()
         suppress_blur.current = True
-        # 光标落在合并点：定位包含 junction 偏移的段及段内偏移
-        if _heading_edit(line):
-            _goto(
-                li, 0, cursor_at=min(junction, len(_line_raw(line))), skip_commit=True
-            )
-            return
-        target_si, seg_off = _locate_seg_by_raw_offset(line, junction)
-        _goto(li, target_si, cursor_at=seg_off, skip_commit=True)
+        # 光标落在合并点：定位到 junction 所在段
+        junction_seg, junction_off = _locate_seg_by_raw_offset(line, junction)
+        _goto(li, seg_idx=junction_seg, cursor_at=junction_off, skip_commit=True)
 
     def _on_cursor_sync(pos: int, draft_len: int):
         """_on_focus 设置光标后直接同步 cursor_ref，并记录 applied_cursor。
@@ -786,6 +796,8 @@ def MarkdownEditor(
             cursor_ref.current.draft_len = len(e.control.value)
 
     def on_change_draft(value: str):
+        if value == draft_ref.current:
+            return  # 跳过同值事件（保留现有约束）
         _maybe_push_draft_history()
         _set_draft(value)
         # 同步更新 cursor_ref.draft_len 作为安全网：
@@ -794,6 +806,9 @@ def MarkdownEditor(
         # 的 ArrowRight 判断、backspace_core 的段首判断）都读到最新值。
         n = len(value)
         cursor_ref.current.draft_len = n
+        set_cursor_pos(-1)  # 清除强制光标位置，让 on_selection_change 接管
+        # 段级编辑：前后段保持静态渲染态，仅激活段 TextField 显示原生 Markdown，
+        # 无需 staging reparse。提交时（blur/跨段/工具栏）才由 commit_active 重构整行 reparse。
 
     def toggle_raw():
         """在 WYSIWYG 编辑与原始 Markdown 文本间切换。
@@ -829,12 +844,12 @@ def MarkdownEditor(
 
     def _goto_quiet(
         li: int,
-        si: int,
+        seg_idx: int | None = None,
         cursor_at: int = -1,
         skip_commit: bool = False,
         table_cell_idx: int | None = None,
     ):
-        """抑制 blur + 跨段导航的统一入口。
+        """抑制 blur + 跨段/跨行导航的统一入口（段级：active=li, active_seg=seg_idx）。
 
         重渲染会导致旧 TextField 卸载触发 on_blur，覆盖 _goto 设置的 active；
         先设 suppress_blur 抑制此次 blur。table_cell_idx 用于表格跨格导航。
@@ -842,7 +857,7 @@ def MarkdownEditor(
         suppress_blur.current = True
         _goto(
             li,
-            si,
+            seg_idx=seg_idx,
             cursor_at=cursor_at,
             skip_commit=skip_commit,
             table_cell_idx=table_cell_idx,
@@ -900,8 +915,10 @@ def MarkdownEditor(
             set_active(None)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
-        """处理多行粘贴：用 diff 定位粘贴位置，第一行留当前段，后续行插入为新行。
+        """处理多行粘贴：diff 定位粘贴位置，第一行留当前段，后续行插入为新行。
 
+        段级编辑下 draft = segment.raw，diff 在段 raw 上定位粘贴区域，
+        再重构整行 raw = before + new_seg_raw + after 提交。
         单行 TextField（max_lines=1）会剥离换行符，导致粘贴的多行内容变为一行。
         本函数通过对比粘贴前后的 draft 定位粘贴文本，再用剪贴板原始多行文本重建。
         """
@@ -909,15 +926,15 @@ def MarkdownEditor(
             return
         _push_history()
         undo_push_pending.current = True
-        li, si = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块/数学/HR 本身多行编辑，不处理
-        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR):
+        # 代码块/数学/HR/TOC 本身多行编辑或特殊块，不处理
+        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
             return
 
-        new_draft = draft  # 粘贴后（换行符已剥离）
+        new_draft = draft_ref.current  # 粘贴后（换行符已剥离）
 
         # diff：找 old/new 的公共前缀和后缀，定位粘贴区域
         pre = 0
@@ -940,17 +957,18 @@ def MarkdownEditor(
         first = parts[0]
         rest = parts[1:]
 
-        # 重建当前段 raw：旧前缀 + 第一行 + 旧后缀
-        new_raw = old_draft[:pre] + first
+        # 重建当前段 raw：旧段前缀 + 第一行 + 旧段后缀
+        new_seg_raw = old_draft[:pre] + first
         if suf > 0:
-            new_raw += old_draft[len(old_draft) - suf :]
+            new_seg_raw += old_draft[len(old_draft) - suf :]
 
-        if _heading_edit(line):
-            parser.reparse_line(line, new_raw)
+        # 段级：重构整行 raw = before + new_seg_raw + after
+        seg_idx = active_seg if active_seg is not None else 0
+        if 0 <= seg_idx < len(line.segments):
+            full_raw = _reconstruct_line_raw(line, seg_idx, new_seg_raw)
         else:
-            if si < len(line.segments):
-                line.segments[si].raw = new_raw
-            parser.reparse_line(line, "".join(s.raw for s in line.segments))
+            full_raw = new_seg_raw
+        parser.reparse_line(line, full_raw)
         mark_dirty()
 
         if rest:
@@ -960,37 +978,16 @@ def MarkdownEditor(
             )
             # 抑制重渲染导致的 on_blur（旧 TextField 卸载）
             suppress_blur.current = True
-            # 激活最后一行最后一段
+            # 段级：激活最后一行末段段尾
             last_li = li + len(new_lines)
             last_line = document.lines[last_li]
-            if _heading_edit(last_line):
-                _goto(last_li, 0, cursor_at=-1)
-            else:
-                target_si = max(0, len(last_line.segments) - 1)
-                new_draft_val = (
-                    last_line.segments[target_si].raw
-                    if target_si < len(last_line.segments)
-                    else ""
-                )
-                _set_draft(new_draft_val)
-                set_active((last_li, target_si))
-                set_cursor_line(last_li)
-                set_cursor_pos(-1)
-                _sync_cursor(new_draft_val)
-                set_nav_seq(nav_seq + 1)
+            last_seg = max(0, len(last_line.segments) - 1)
+            _goto(last_li, seg_idx=last_seg, cursor_at=-1)
         else:
             suppress_blur.current = True
-            if _heading_edit(line):
-                new_draft_val = _line_raw(line)
-                _set_draft(new_draft_val)
-                set_active((li, 0))
-                set_cursor_line(li)
-                set_cursor_pos(-1)
-                _sync_cursor(new_draft_val)
-            else:
-                _set_draft(new_raw)
-                set_cursor_pos(-1)
-                _sync_cursor(new_raw)
+            _set_draft(new_seg_raw)
+            set_cursor_pos(-1)
+            _sync_cursor(new_seg_raw)
             set_nav_seq(nav_seq + 1)
 
     def on_submit(new_raw: str):
@@ -998,7 +995,7 @@ def MarkdownEditor(
             return
         _push_history()
         undo_push_pending.current = True
-        li, si = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
@@ -1014,14 +1011,29 @@ def MarkdownEditor(
             set_active(None)
             new_line_after(li)
             return
-        split_pos = min(cursor_ref.current.extent, len(new_raw))
-        before = new_raw[:split_pos]
-        after = new_raw[split_pos:]
-        if _heading_edit(line):
+
+        # 段级：new_raw 是激活段 raw，需重构整行再按行级偏移分割
+        seg_idx = active_seg if active_seg is not None else 0
+        if 0 <= seg_idx < len(line.segments):
+            line_raw = _reconstruct_line_raw(line, seg_idx, new_raw)
+        else:
+            line_raw = new_raw
+        before_raw_len = sum(len(line.segments[i].raw) for i in range(seg_idx))
+        split_pos = min(before_raw_len + cursor_ref.current.extent, len(line_raw))
+        before = line_raw[:split_pos]
+        after = line_raw[split_pos:]
+
+        # 标题：before 空 → 清空前缀；否则分割成两行（标题 + 段落）
+        if line.block_type == BlockType.HEADING:
             if not before.strip():
                 parser.reparse_line(line, after.lstrip())
                 mark_dirty()
-                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                target_li = li + 1 if li + 1 < len(document.lines) else li
+                _goto(
+                    target_li,
+                    seg_idx=_first_content_seg(document.lines[target_li]),
+                    cursor_at=0,
+                )
                 return
             parser.reparse_line(line, before)
             new_line = parser.parse_markdown(after).lines[0]
@@ -1029,20 +1041,10 @@ def MarkdownEditor(
                 document.lines[: li + 1] + [new_line] + document.lines[li + 1 :]
             )
             mark_dirty()
-            target_si = 0
-            if new_line.segments:
-                for i, s in enumerate(new_line.segments):
-                    if s.seg_type not in (
-                        SegType.HEADING_PREFIX,
-                        SegType.LIST_PREFIX,
-                        SegType.QUOTE_PREFIX,
-                    ):
-                        target_si = i
-                        break
-                else:
-                    target_si = max(0, len(new_line.segments) - 1)
-            _goto_quiet(li + 1, target_si, cursor_at=0)
+            _goto_quiet(li + 1, seg_idx=_first_content_seg(new_line), cursor_at=0)
             return
+
+        # 列表 / 引用：before 仅前缀（空内容）→ 退出列表/引用
         if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
             if not before.strip():
                 stripped = after.lstrip()
@@ -1050,7 +1052,12 @@ def MarkdownEditor(
                     stripped = stripped.lstrip("> ")
                 parser.reparse_line(line, stripped)
                 mark_dirty()
-                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                target_li = li + 1 if li + 1 < len(document.lines) else li
+                _goto(
+                    target_li,
+                    seg_idx=_first_content_seg(document.lines[target_li]),
+                    cursor_at=0,
+                )
                 return
             if line.block_type == BlockType.LIST_UO and before.rstrip() in (
                 "-",
@@ -1059,53 +1066,43 @@ def MarkdownEditor(
             ):
                 parser.reparse_line(line, after.lstrip())
                 mark_dirty()
-                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                target_li = li + 1 if li + 1 < len(document.lines) else li
+                _goto(
+                    target_li,
+                    seg_idx=_first_content_seg(document.lines[target_li]),
+                    cursor_at=0,
+                )
                 return
             if line.block_type == BlockType.LIST_O and re.match(
                 r"^\d+\.$", before.rstrip()
             ):
                 parser.reparse_line(line, after.lstrip())
                 mark_dirty()
-                _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
+                target_li = li + 1 if li + 1 < len(document.lines) else li
+                _goto(
+                    target_li,
+                    seg_idx=_first_content_seg(document.lines[target_li]),
+                    cursor_at=0,
+                )
                 return
+
+        # 默认：分割当前行，续行加列表/引用前缀
         cont_prefix = _next_line_raw(line)
-        remaining = "".join(s.raw for s in line.segments[si + 1 :])
-        current_full = "".join(s.raw for s in line.segments[:si]) + before
-        parser.reparse_line(line, current_full)
-        new_line = parser.parse_markdown(cont_prefix + after + remaining).lines[0]
+        parser.reparse_line(line, before)
+        new_line = parser.parse_markdown(cont_prefix + after).lines[0]
         document.lines = (
             document.lines[: li + 1] + [new_line] + document.lines[li + 1 :]
         )
         mark_dirty()
-        target_si = 0
-        if new_line.segments:
-            for i, s in enumerate(new_line.segments):
-                if s.seg_type not in (
-                    SegType.HEADING_PREFIX,
-                    SegType.LIST_PREFIX,
-                    SegType.QUOTE_PREFIX,
-                ):
-                    target_si = i
-                    break
-            else:
-                target_si = max(0, len(new_line.segments) - 1)
-        new_draft = (
-            new_line.segments[target_si].raw
-            if target_si < len(new_line.segments)
-            else ""
-        )
+        # 段级：cursor_at 是行级偏移（len(cont_prefix)），定位到对应段
+        target_seg, target_off = _locate_seg_by_raw_offset(new_line, len(cont_prefix))
         suppress_blur.current = True
-        _set_draft(new_draft)
-        set_active((li + 1, target_si))
-        set_cursor_line(li + 1)
-        set_cursor_pos(0)
-        _sync_cursor(new_draft, 0)
-        set_nav_seq(nav_seq + 1)
+        _goto_quiet(li + 1, seg_idx=target_seg, cursor_at=target_off)
 
     def _table_move(delta: int):
         if active is None or table_cell is None:
             return
-        li, _ = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
@@ -1134,13 +1131,13 @@ def MarkdownEditor(
                 next_idx = 0
             else:
                 next_idx = len(cells) - 1
-        if li == active[0] and next_idx == table_cell:
+        if li == active and next_idx == table_cell:
             return
         commit_active(draft_ref.current)
         suppress_blur.current = True
         set_table_selected_cell(next_idx)
         set_table_cell(next_idx)
-        _goto(li, 0, cursor_at=-1, table_cell_idx=next_idx)
+        _goto(li, cursor_at=-1, table_cell_idx=next_idx)
 
     def _table_tab(delta: int):
         _table_move(delta)
@@ -1148,7 +1145,7 @@ def MarkdownEditor(
     def _table_enter():
         if active is None or table_cell is None:
             return
-        li, _ = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
@@ -1165,7 +1162,7 @@ def MarkdownEditor(
             suppress_blur.current = True
             set_table_selected_cell(0)
             set_table_cell(0)
-            _goto(li + 1, 0, cursor_at=-1, table_cell_idx=0)
+            _goto(li + 1, cursor_at=-1, table_cell_idx=0)
             return
         commit_active(draft_ref.current)
         set_table_selected_cell(None)
@@ -1183,19 +1180,18 @@ def MarkdownEditor(
             document.lines[: li + 1] + [new_line] + document.lines[li + 1 :]
         )
         mark_dirty()
-        target_si = max(0, len(new_line.segments) - 1)
-        _goto(li + 1, target_si)
+        _goto(li + 1, seg_idx=_first_content_seg(new_line), cursor_at=-1)
 
     # ---- 工具栏：块类型切换 ----
     def set_block(block_type: BlockType, level: int = 0):
-        li = active[0] if active is not None else cursor_line
+        li = active if active is not None else cursor_line
         if not (0 <= li < len(document.lines)):
             return
         _push_history()
         undo_push_pending.current = True
         line = document.lines[li]
         if active is not None:
-            _commit_for_block(line, active, draft)
+            _commit_for_block(line, draft_ref.current)
             # 抑制旧 TextField 卸载时触发的 on_blur，避免覆盖 _goto 设置的 active
             suppress_blur.current = True
             set_active(None)
@@ -1227,15 +1223,14 @@ def MarkdownEditor(
             new_raw = content
         parser.reparse_line(line, new_raw)
         mark_dirty()
-        if line.block_type == BlockType.HEADING:
-            _goto(li, 0)
-        else:
-            target_si = max(0, len(line.segments) - 1)
-            _goto(li, target_si)
+        _goto(li, seg_idx=_first_content_seg(document.lines[li]), cursor_at=-1)
 
-    def _commit_for_block(line: Line, active_pair: tuple[int, int], draft_val: str):
-        """块切换前先提交当前编辑段（避免丢失草稿）。"""
-        li, si = active_pair
+    def _commit_for_block(line: Line, draft_val: str):
+        """块切换前提交当前段级 draft（避免丢失）。
+
+        CODE/MATH：draft_val 是段内容（不含围栏），按围栏包裹 reparse。
+        inline 块：draft_val 是激活段 raw，需重构整行 = before + draft + after 再 reparse。
+        """
         if line.block_type == BlockType.CODE:
             full = (
                 f"```{line.lang}\n{draft_val}\n```"
@@ -1247,74 +1242,138 @@ def MarkdownEditor(
             formula = draft_val.strip()
             full = f"$$\n{formula}\n$$" if formula else "$$\n$$"
             parser.reparse_line(line, full)
-        elif _heading_edit(line):
-            parser.reparse_line(line, draft_val)
-        elif line.block_type != BlockType.HR:
-            if si < len(line.segments):
-                line.segments[si].raw = draft_val
-            parser.reparse_line(line, "".join(s.raw for s in line.segments))
+        else:
+            # inline 块：段级重构整行
+            seg_idx = active_seg if active_seg is not None else 0
+            if 0 <= seg_idx < len(line.segments):
+                full_raw = _reconstruct_line_raw(line, seg_idx, draft_val)
+            else:
+                full_raw = draft_val
+            parser.reparse_line(line, full_raw)
         mark_dirty()
 
     # ---- 工具栏：行内格式切换 ----
     def _toggle_seg(seg_type: SegType):
-        """通用行内格式切换（加粗/斜体/行内代码/删除线）。"""
+        """通用行内格式切换（段级）：有选区包裹/解裹段内选区；无选区切换光标所在段。
+
+        draft 是激活段 raw（段级编辑），操作产生 new_seg_raw 后用
+        _reconstruct_line_raw 重构整行 reparse，再用行级偏移重新定位光标所在段
+        （reparse 可能改变段数与边界，需重新查找）。
+        """
         if active is None:
             return
         _push_history()
         undo_push_pending.current = True
-        li, si = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         if _nav_blocked(line):
             return
-        if si >= len(line.segments):
-            return
-        seg = line.segments[si]
         wrap = _WRAP_MAP.get(seg_type)
         if wrap is None:
             return
-        if seg.seg_type == seg_type:
-            seg.seg_type = SegType.TEXT
-            seg.raw = seg.text
-        elif seg.seg_type == SegType.TEXT:
-            seg.seg_type = seg_type
-            seg.raw = wrap + seg.text + wrap
-        else:
+        seg_idx = active_seg if active_seg is not None else 0
+        if not (0 <= seg_idx < len(line.segments)):
             return
+        seg_raw = draft_ref.current  # 段 raw
+        base = cursor_ref.current.base
+        extent = cursor_ref.current.extent
+
+        if base != extent:
+            # 有选区：包裹/解裹段内选区
+            selected = seg_raw[base:extent]
+            if (
+                selected.startswith(wrap)
+                and selected.endswith(wrap)
+                and len(selected) >= 2 * len(wrap)
+            ):
+                inner = selected[len(wrap):-len(wrap)]
+                new_seg_raw = seg_raw[:base] + inner + seg_raw[extent:]
+                cursor_at = base
+            else:
+                new_seg_raw = seg_raw[:base] + wrap + selected + wrap + seg_raw[extent:]
+                cursor_at = base + len(wrap)
+        else:
+            # 无选区：切换激活段格式
+            seg = line.segments[seg_idx]
+            if seg.seg_type == seg_type:
+                # 解裹
+                inner = (
+                    seg_raw[len(wrap):-len(wrap)]
+                    if len(seg_raw) >= 2 * len(wrap)
+                    else seg_raw
+                )
+                new_seg_raw = inner
+                cursor_at = max(0, extent - len(wrap))
+            elif seg.seg_type == SegType.TEXT:
+                # 包裹
+                new_seg_raw = wrap + seg_raw + wrap
+                cursor_at = extent + len(wrap)
+            else:
+                return
+
+        # 段级：重构整行 raw = before + new_seg_raw + after，reparse
+        full_raw = _reconstruct_line_raw(line, seg_idx, new_seg_raw)
+        parser.reparse_line(line, full_raw)
         mark_dirty()
-        _set_draft(seg.raw)
-        _sync_cursor(seg.raw)
+        # 重新定位光标所在段：行级偏移 = before_raw_len + cursor_at
+        before_raw_len = sum(len(line.segments[i].raw) for i in range(seg_idx))
+        new_seg, new_offset = _locate_seg_by_raw_offset(line, before_raw_len + cursor_at)
+        _goto(li, seg_idx=new_seg, cursor_at=new_offset)
 
     # 别名：供工具栏调用
     def toggle_inline(seg_type: SegType):
         _toggle_seg(seg_type)
 
     def toggle_link():
+        """链接切换（段级）：有选区包裹为 [text](url)；无选区切换光标所在段。
+
+        draft 是激活段 raw，操作产生 new_seg_raw 后重构整行 reparse，
+        再用行级偏移重新定位光标所在段。
+        """
         if active is None:
             return
         _push_history()
         undo_push_pending.current = True
-        li, si = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        if _nav_blocked(line) or si >= len(line.segments):
+        if _nav_blocked(line):
             return
-        seg = line.segments[si]
-        if seg.seg_type == SegType.LINK:
-            seg.seg_type = SegType.TEXT
-            seg.raw = seg.text
-            seg.url = ""
-        elif seg.seg_type == SegType.TEXT:
-            seg.seg_type = SegType.LINK
-            seg.url = "url"
-            seg.raw = f"[{seg.text}]({seg.url})"
+        seg_idx = active_seg if active_seg is not None else 0
+        if not (0 <= seg_idx < len(line.segments)):
+            return
+        seg_raw = draft_ref.current
+        base = cursor_ref.current.base
+        extent = cursor_ref.current.extent
+
+        if base != extent:
+            # 有选区：包裹段内选区为 [text](url)
+            selected = seg_raw[base:extent]
+            new_seg_raw = seg_raw[:base] + f"[{selected}](url)" + seg_raw[extent:]
+            cursor_at = base + 1
         else:
-            return
+            # 无选区：切换激活段格式
+            seg = line.segments[seg_idx]
+            if seg.seg_type == SegType.LINK:
+                # 解裹为纯文本
+                new_seg_raw = seg.text
+                cursor_at = 0
+            elif seg.seg_type == SegType.TEXT:
+                new_seg_raw = f"[{seg.text}](url)"
+                cursor_at = len(seg.text) + 3  # 落在 ) 前
+            else:
+                return
+
+        # 段级：重构整行 raw，reparse，重新定位段
+        full_raw = _reconstruct_line_raw(line, seg_idx, new_seg_raw)
+        parser.reparse_line(line, full_raw)
         mark_dirty()
-        _set_draft(seg.raw)
-        _sync_cursor(seg.raw)
+        before_raw_len = sum(len(line.segments[i].raw) for i in range(seg_idx))
+        new_seg, new_offset = _locate_seg_by_raw_offset(line, before_raw_len + cursor_at)
+        _goto(li, seg_idx=new_seg, cursor_at=new_offset)
 
     # ---- 任务列表项：切换勾选状态 ----
     def toggle_task(li: int):
@@ -1338,14 +1397,14 @@ def MarkdownEditor(
             return
         _push_history()
         undo_push_pending.current = True
-        li = active[0]
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         if line.block_type != BlockType.CODE:
             return
-        # li == active[0]，draft 即当前编辑草稿；保持与原逻辑一致
-        code = draft
+        # li == active，draft 即当前编辑草稿；保持与原逻辑一致
+        code = draft_ref.current
         line.lang = new_lang
         full = f"```{new_lang}\n{code}\n```" if code else f"```{new_lang}\n```"
         try:
@@ -1377,18 +1436,18 @@ def MarkdownEditor(
         selection_text_ref.current = ""
         set_active(None)
         if 0 <= cursor_li < len(document.lines):
-            # 防御：删除/合并后段结构可能变化（reparse），cursor_si/cursor_offset
-            # 可能越界导致 _goto 提前 return 不激活，视觉上内容已删但光标丢失。
-            # 越界时回退到最后一段、光标定段尾。
+            # 行级：cursor_offset 即 raw 偏移；越界回退行尾。
+            # cursor_si 在行级模式下不再使用（保留返回值兼容）。
             line = document.lines[cursor_li]
-            if not (0 <= cursor_si < len(line.segments)):
-                cursor_si = max(0, len(line.segments) - 1)
+            if cursor_offset < 0 or cursor_offset > len(line.raw):
                 cursor_offset = -1
-            elif cursor_offset < 0 or (
-                cursor_offset > len(line.segments[cursor_si].raw)
-            ):
-                cursor_offset = -1
-            _goto(cursor_li, cursor_si, cursor_at=cursor_offset)
+            if cursor_offset < 0:
+                # 段尾：定位到首个内容段
+                _goto(cursor_li, seg_idx=_first_content_seg(line), cursor_at=-1)
+            else:
+                # 行级偏移定位到段
+                target_seg, target_off = _locate_seg_by_raw_offset(line, cursor_offset)
+                _goto(cursor_li, seg_idx=target_seg, cursor_at=target_off)
 
     def handle_delete_selection(plain_text: str):
         """处理 Backspace 删除选中内容（非编辑态 SelectionArea 选区）。"""
@@ -1433,20 +1492,17 @@ def MarkdownEditor(
         page = ft.context.page
         if page is not None and (lv := list_view_ref.current) is not None:
             page.run_task(lv.scroll_to, scroll_key=f"line-{li}")
-        _goto(li, 0)
+        _goto(li, seg_idx=_first_content_seg(document.lines[li]), cursor_at=0)
 
     # ---- 同步导航接口给外层 on_key（nav_ref）----
     def _get_cursor_row_col() -> tuple[int, int]:
-        """返回当前光标 (row, col)，供外层状态栏使用。"""
-        if active is not None and 0 <= active[0] < len(document.lines):
-            li, si = active
-            line = document.lines[li]
-            col = (
-                _logical_offset(line, si, cursor_ref.current.extent) + 1
-                if 0 <= si < len(line.segments)
-                else 1
-            )
-            row = li + 1
+        """返回当前光标 (row, col)，供外层状态栏使用。
+
+        行级编辑：col = cursor_ref.current.extent + 1（raw 偏移 +1 转 1-indexed）。
+        """
+        if active is not None and 0 <= active < len(document.lines):
+            row = active + 1
+            col = cursor_ref.current.extent + 1
         else:
             row = cursor_line + 1
             col = 1
@@ -1455,9 +1511,10 @@ def MarkdownEditor(
     if nav_ref is not None:
         nav_ref.current = EditorActions(
             active=active,
+            active_seg=active_seg,
             draft=draft,
-            active_line=document.lines[active[0]]
-            if active is not None and 0 <= active[0] < len(document.lines)
+            active_line=document.lines[active]
+            if active is not None and 0 <= active < len(document.lines)
             else None,
             raw_mode=raw_mode,
             cursor_ref=cursor_ref,
@@ -1515,8 +1572,9 @@ def MarkdownEditor(
     i = 0
     while i < len(document.lines):
         line = document.lines[i]
-        is_act = active is not None and active[0] == i
-        active_seg = active[1] if is_act else None
+        is_act = active is not None and active == i
+        # 段级编辑：使用真实 active_seg state（不再覆盖为 0）
+        active_seg_val = active_seg if is_act else None
         if line.block_type == BlockType.TABLE:
             table_start = i
             while (
@@ -1526,16 +1584,16 @@ def MarkdownEditor(
                 i += 1
             table_end = i
             table_is_active = (
-                active is not None and table_start <= active[0] <= table_end
+                active is not None and table_start <= active <= table_end
             )
             line_controls.append(
                 TableView(
                     key=f"table-{table_start}",
                     lines=document.lines,
                     line_idx=table_start,
-                    active_line_idx=active[0] if table_is_active else None,
+                    active_line_idx=active if table_is_active else None,
                     active_cell_idx=table_selected_cell if table_is_active else None,
-                    active_seg=active[1] if table_is_active else None,
+                    active_seg=0 if table_is_active else None,
                     draft=draft,
                     on_activate=activate,
                     on_change_draft=on_change_draft,
@@ -1554,7 +1612,7 @@ def MarkdownEditor(
                     key=f"line-{i}",
                     line=line,
                     line_idx=i,
-                    active_seg=active_seg,
+                    active_seg=active_seg_val,
                     draft=draft,
                     on_activate=activate,
                     on_change_draft=on_change_draft,
@@ -1669,16 +1727,16 @@ def MarkdownEditor(
         if active is None:
             return
         if key == "tab" and active is not None:
-            li, _ = active
+            li = active
             if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
                 _table_tab(-1 if shift else 1)
                 return
         if key in ("enter", "numpad enter") and active is not None:
-            li, _ = active
+            li = active
             if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
                 _table_enter()
                 return
-        li, _ = active
+        li = active
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]

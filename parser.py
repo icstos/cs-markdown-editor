@@ -505,6 +505,23 @@ def segment_raw(segments: list[Segment]) -> str:
     return "".join(s.raw for s in segments)
 
 
+def staging_reparse(line: Line, new_raw: str) -> Line:
+    """返回一个新的 Line（不修改原 line），用于 ActiveLineView 实时渲染。
+
+    Typora 式 WYSIWYG：每次 on_change_draft 触发本地 staging reparse，
+    避免 @ft.observable 的 document.line 被频繁修改导致整文档重渲染。
+    提交时（blur/跨行/块操作）才由 editor.commit_active 写回 document.line。
+
+    安全性：reparse_line 对 line.segments 是赋值新 list（line.segments = ...），
+    不会修改原 line.segments 中的 Segment 对象。浅拷贝（copy.copy）足够隔离。
+    """
+    import copy
+    staging = copy.copy(line)        # 浅拷贝：line.segments 引用仍指向原 list
+    staging.segments = []            # reparse_line 会赋新 list，原 line.segments 不受影响
+    reparse_line(staging, new_raw)
+    return staging
+
+
 def line_to_raw(line: Line) -> str:
     """行的源码（直接取 raw，保证序列化稳定）。"""
     return line.raw

@@ -8,7 +8,8 @@ class EditorSnapshot:
     """编辑器可恢复状态。"""
 
     markdown: str
-    active: tuple[int, int] | None
+    active: int | None  # line_idx | None
+    active_seg: int | None  # seg_idx | None（段级编辑）
     draft: str
     cursor_base: int
     cursor_extent: int

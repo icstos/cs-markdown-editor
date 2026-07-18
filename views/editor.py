@@ -347,7 +347,9 @@ def MarkdownEditor(
             if cursor_at < 0:
                 cursor_at = len(new_draft)
             elif si > 0:
-                cursor_at = sum(len(line.segments[i].raw) for i in range(si)) + cursor_at
+                cursor_at = (
+                    sum(len(line.segments[i].raw) for i in range(si)) + cursor_at
+                )
             cursor_at = min(max(cursor_at, 0), len(new_draft))
             _set_draft(new_draft)
             set_active((li, 0))
@@ -499,7 +501,11 @@ def MarkdownEditor(
 
     def _first_content_index(line: Line) -> int:
         for i, s in enumerate(line.segments):
-            if s.seg_type not in (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX):
+            if s.seg_type not in (
+                SegType.HEADING_PREFIX,
+                SegType.LIST_PREFIX,
+                SegType.QUOTE_PREFIX,
+            ):
                 return i
         return max(0, len(line.segments) - 1)
 
@@ -547,7 +553,12 @@ def MarkdownEditor(
             return
         line = document.lines[li]
         # 代码块 / 块级公式 / 分隔线 / 目录：整块编辑，行首 BackSpace 不处理
-        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+        if line.block_type in (
+            BlockType.CODE,
+            BlockType.MATH,
+            BlockType.HR,
+            BlockType.TOC,
+        ):
             return
         # 光标不在段首：交由 TextField 自身删除
         if cursor_ref.current["extent"] > 0:
@@ -566,7 +577,12 @@ def MarkdownEditor(
         commit_active(draft_ref.current)
         prev = document.lines[li - 1]
         # 前一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其末尾
-        if prev.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+        if prev.block_type in (
+            BlockType.CODE,
+            BlockType.MATH,
+            BlockType.HR,
+            BlockType.TOC,
+        ):
             suppress_blur.current = True
             _goto(li - 1, max(0, len(prev.segments) - 1), cursor_at=-1)
             return
@@ -575,13 +591,18 @@ def MarkdownEditor(
         junction = len(prev_raw)
         merged = prev_raw + _line_raw(document.lines[li])
         parser.reparse_line(prev, merged)
-        document.lines = document.lines[:li] + document.lines[li + 1:]
+        document.lines = document.lines[:li] + document.lines[li + 1 :]
         mark_dirty()
         suppress_blur.current = True
         # 光标落在合并点：定位包含 junction 偏移的段及段内偏移
         if _heading_edit(prev):
             # 标题以整行 raw 为 draft，cursor_at 即整行偏移
-            _goto(li - 1, 0, cursor_at=min(junction, len(_line_raw(prev))), skip_commit=True)
+            _goto(
+                li - 1,
+                0,
+                cursor_at=min(junction, len(_line_raw(prev))),
+                skip_commit=True,
+            )
             return
         target_si = max(0, len(prev.segments) - 1)
         seg_off = len(prev.segments[target_si].raw)
@@ -611,7 +632,12 @@ def MarkdownEditor(
             return
         line = document.lines[li]
         # 代码块 / 块级公式 / 分隔线 / 目录：整块编辑，行尾 Delete 不处理
-        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+        if line.block_type in (
+            BlockType.CODE,
+            BlockType.MATH,
+            BlockType.HR,
+            BlockType.TOC,
+        ):
             return
         # 光标不在段尾：交由 TextField 原生 Delete 处理（正常删除下一个字符）
         # 使用 len(draft_ref.current) 而非 cursor_ref["draft_len"]：
@@ -648,7 +674,12 @@ def MarkdownEditor(
         line = document.lines[li]
         next_line = document.lines[li + 1]
         # 下一行是围栏块（代码/公式/分隔线/目录）：无法合并，跳到其首部
-        if next_line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+        if next_line.block_type in (
+            BlockType.CODE,
+            BlockType.MATH,
+            BlockType.HR,
+            BlockType.TOC,
+        ):
             suppress_blur.current = True
             _goto(li + 1, 0, cursor_at=0)
             return
@@ -657,12 +688,14 @@ def MarkdownEditor(
         junction = len(current_raw)
         merged = current_raw + _line_raw(next_line)
         parser.reparse_line(line, merged)
-        document.lines = document.lines[:li + 1] + document.lines[li + 2:]
+        document.lines = document.lines[: li + 1] + document.lines[li + 2 :]
         mark_dirty()
         suppress_blur.current = True
         # 光标落在合并点：定位包含 junction 偏移的段及段内偏移
         if _heading_edit(line):
-            _goto(li, 0, cursor_at=min(junction, len(_line_raw(line))), skip_commit=True)
+            _goto(
+                li, 0, cursor_at=min(junction, len(_line_raw(line))), skip_commit=True
+            )
             return
         target_si = max(0, len(line.segments) - 1)
         seg_off = len(line.segments[target_si].raw)
@@ -714,10 +747,12 @@ def MarkdownEditor(
         光标不在段尾，持续 Delete 到段尾后失效。
         """
         if (sel := e.selection) is not None:
-            if (applied_cursor.current >= 0
-                    and applied_cursor.current != sel.extent_offset
-                    and sel.extent_offset == len(e.control.value)
-                    and len(e.control.value) == cursor_ref.current["draft_len"]):
+            if (
+                applied_cursor.current >= 0
+                and applied_cursor.current != sel.extent_offset
+                and sel.extent_offset == len(e.control.value)
+                and len(e.control.value) == cursor_ref.current["draft_len"]
+            ):
                 # stale 段尾事件：_on_focus 已设置正确光标，值未变，忽略此覆盖
                 applied_cursor.current = -1
                 return
@@ -956,12 +991,18 @@ def MarkdownEditor(
                 mark_dirty()
                 _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
                 return
-            if line.block_type == BlockType.LIST_UO and before.rstrip() in ("-", "*", "+"):
+            if line.block_type == BlockType.LIST_UO and before.rstrip() in (
+                "-",
+                "*",
+                "+",
+            ):
                 parser.reparse_line(line, after.lstrip())
                 mark_dirty()
                 _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
                 return
-            if line.block_type == BlockType.LIST_O and re.match(r'^\d+\.$', before.rstrip()):
+            if line.block_type == BlockType.LIST_O and re.match(
+                r"^\d+\.$", before.rstrip()
+            ):
                 parser.reparse_line(line, after.lstrip())
                 mark_dirty()
                 _goto(li + 1 if li + 1 < len(document.lines) else li, 0, cursor_at=0)
@@ -1287,7 +1328,9 @@ def MarkdownEditor(
             "base": cursor_ref.current["base"],
             "draft_len": cursor_ref.current["draft_len"],
             "draft": draft,
-            "active_line": document.lines[active[0]] if active is not None and 0 <= active[0] < len(document.lines) else None,
+            "active_line": document.lines[active[0]]
+            if active is not None and 0 <= active[0] < len(document.lines)
+            else None,
             "move_left": move_left_cross,
             "move_right": move_right_cross,
             "move_home": move_home,
@@ -1310,6 +1353,8 @@ def MarkdownEditor(
             "undo": undo,
             "redo": redo,
             "jump_to_line": jump_to,
+            "toggle_raw": toggle_raw,
+            "toggle_focus_mode": toggle_focus_mode,
             "get_cursor_row_col": _get_cursor_row_col,
         }
 
@@ -1358,6 +1403,7 @@ def MarkdownEditor(
             content_width=content_width,
             line_height=line_height,
             on_cursor_sync=_on_cursor_sync if is_act else None,
+            is_current_line=is_act,
         )
         for i, line in enumerate(document.lines)
     ]
@@ -1375,14 +1421,16 @@ def MarkdownEditor(
             ),
             ft.PopupMenuItem(content="保存", on_click=lambda e: (on_save or _noop)()),
             ft.PopupMenuItem(),
-            ft.PopupMenuItem(content="设置", on_click=lambda e: (on_open_settings or _noop)()),
+            ft.PopupMenuItem(
+                content="设置", on_click=lambda e: (on_open_settings or _noop)()
+            ),
         ]
         if not show_toolbar:
             return ft.Container(height=0)
         return ft.Container(
-            bgcolor=c.toolbar_bg,
+            bgcolor=ft.Colors.with_opacity(0.96, c.toolbar_bg),
             border=only_border(bottom=ft.BorderSide(1, c.border)),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
             content=ft.Row(
                 controls=[
                     ft.PopupMenuButton(
@@ -1430,6 +1478,11 @@ def MarkdownEditor(
                         "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
                         on_toggle_theme or _noop,
                     ),
+                    _btn(
+                        ft.Icons.SETTINGS,
+                        "设置  Ctrl+,",
+                        on_open_settings or _noop,
+                    ),
                 ],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1461,7 +1514,9 @@ def MarkdownEditor(
                     expand=True,
                     alignment=ft.Alignment.TOP_CENTER,
                     bgcolor=c.bg,
-                    padding=ft.Padding.symmetric(horizontal=content_padding, vertical=content_padding_top),
+                    padding=ft.Padding.symmetric(
+                        horizontal=content_padding, vertical=content_padding_top
+                    ),
                 ),
             ),
         ],

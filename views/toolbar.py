@@ -4,8 +4,7 @@
 - 块级（标题 / 列表 / 引用 / 代码块 / 分隔线）：改变当前行块类型。
 - 行内（加粗 / 斜体 / 行内代码 / 链接 / 删除线）：在激活段上包裹或解包语法。
 
-原文模式切换与导出按钮由外层工具区（editor._tool_area）提供，
-工具栏本身仅负责格式按钮，无状态，符合单向数据流。
+以紧凑、低干扰的方式承载常用格式操作，符合 Typora 式写作节奏。
 """
 
 from typing import Callable
@@ -26,8 +25,10 @@ def _btn(
         icon_size=18,
         style=ft.ButtonStyle(
             color=c.link if toggle_on else c.muted,
-            bgcolor=ft.Colors.with_opacity(0.0, ft.Colors.TRANSPARENT),
+            bgcolor=ft.Colors.with_opacity(0.10 if toggle_on else 0.0, c.link),
             padding=4,
+            shape=ft.RoundedRectangleBorder(radius=8),
+            animation_duration=160,
         ),
     )
 

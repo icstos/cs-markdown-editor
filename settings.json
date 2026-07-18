@@ -14,10 +14,34 @@
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
-  "sidebar_panel": "search",
+  "sidebar_panel": "outline",
   "sidebar_width": 180,
   "recent_files": [
     "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\README.md"
-  ]
+  ],
+  "shortcuts": {
+    "browse": {
+      "save": "ctrl+s",
+      "open": "ctrl+o",
+      "new": "ctrl+n",
+      "undo": "ctrl+z",
+      "redo": "ctrl+y",
+      "redo_alt": "ctrl+shift+z",
+      "toggle_sidebar": "ctrl+b",
+      "toggle_theme": "ctrl+shift+l",
+      "toggle_raw": "ctrl+/",
+      "open_settings": "ctrl+comma",
+      "focus_mode": "ctrl+k"
+    },
+    "edit": {
+      "save": "ctrl+s",
+      "undo": "ctrl+z",
+      "redo": "ctrl+y",
+      "redo_alt": "ctrl+shift+z",
+      "toggle_raw": "ctrl+enter",
+      "toggle_sidebar": "escape",
+      "focus_mode": "ctrl+k"
+    }
+  }
 }

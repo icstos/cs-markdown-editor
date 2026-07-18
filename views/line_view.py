@@ -225,6 +225,7 @@ def LineView(
     content_width: float | None = None,
     line_height: float = 1.6,
     on_cursor_sync: Callable[[int, int], None] | None = None,
+    is_current_line: bool = False,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
@@ -293,7 +294,7 @@ def LineView(
                 ink=True,
                 on_click=lambda e: activate(0),
             )
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
     # ============ 分隔线 ============
     if line.block_type == BlockType.HR:
@@ -311,7 +312,7 @@ def LineView(
                 on_click=lambda e: on_activate(line_idx, 0),
                 ink=True,
             )
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
     # ============ 代码块 ============
     if line.block_type == BlockType.CODE:
@@ -380,7 +381,7 @@ def LineView(
                 ),
                 on_tap=_on_tap,
             )
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
     # ============ 块级公式 ============
     if line.block_type == BlockType.MATH:
@@ -410,7 +411,7 @@ def LineView(
                 on_click=lambda e: on_activate(line_idx, 0),
                 ink=True,
             )
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
     # ============ 目录 [toc] ============
     if line.block_type == BlockType.TOC:
@@ -441,7 +442,7 @@ def LineView(
                 padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                 bgcolor=c.code_bg, border_radius=6,
             )
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
+        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
     # ============ 任务列表项（非编辑态）============
     if line.task and active_seg is None:
@@ -535,7 +536,7 @@ def LineView(
                 on_tap=_on_tap,
             ),
             ink=True,
-            border_radius=6,
+            border_radius=8,
             padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         )
         return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
@@ -606,6 +607,7 @@ def LineView(
         padding=ft.Padding.symmetric(horizontal=8, vertical=4),
         on_click=_edit_on_click,
         ink=True,
+        border_radius=8,
     )
     return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate)
 
@@ -613,6 +615,7 @@ def LineView(
 def _wrap_block(
     content: ft.Control, line: Line, base: int, line_idx: int | None = None,
     on_click: Callable | None = None,
+    is_current_line: bool = False,
 ) -> ft.Control:
     """包一层块级容器：缩进、引用边框。
 
@@ -625,6 +628,15 @@ def _wrap_block(
     """
     c = _current_colors()  # 当前主题颜色（亮/暗）
     pad_left = 0
+
+    if is_current_line:
+        content = ft.Container(
+            content=content,
+            bgcolor=ft.Colors.with_opacity(0.22, c.active_bg),
+            border_radius=8,
+            border=only_border(left=ft.BorderSide(3, c.link)),
+            padding=ft.Padding.only(left=6),
+        )
 
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
         pad_left = line.level * 20

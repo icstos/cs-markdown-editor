@@ -186,6 +186,7 @@ def _list_item(
         padding=ft.Padding.only(left=indent, top=4, bottom=4, right=8),
         on_click=on_click,
         ink=True,
+        border_radius=8,
     )
 
 
@@ -508,8 +509,8 @@ def Sidebar(
         on_pan_update=_on_pan_update,
         on_pan_end=_on_pan_end,
         content=ft.Container(
-            width=2,
-            bgcolor=c.border,
+            width=4,
+            bgcolor=ft.Colors.with_opacity(0.0, c.link),
             expand=True,
         ),
     )

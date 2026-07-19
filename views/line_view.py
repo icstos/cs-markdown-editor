@@ -89,14 +89,29 @@ def _hit_test_tap(line: Line, x: float, y: float, base: int, line_height: float 
     通过累加各段展示文本宽度做命中测试，再用 measure_text_width
     逐字逼近找到字符偏移。多行文本（y 超过行高）回退到 (-1, -1)。
     """
+    return _hit_test_segs(line, 0, len(line.segments), x, y, base, line_height)
+
+
+def _hit_test_segs(
+    line: Line, seg_from: int, seg_to_excl: int,
+    x: float, y: float, base: int, line_height: float = 1.6,
+) -> tuple[int, int]:
+    """命中测试一个段范围 [seg_from, seg_to_excl)。x 相对范围起点。
+
+    用于编辑态 before/after Text 的精确点击定位（GestureDetector 坐标
+    相对于 Text 控件，而非整行）。
+    """
     if y > base * line_height:
         return (-1, -1)
     acc = 0.0
-    for i, seg in enumerate(line.segments):
+    for i in range(seg_from, seg_to_excl):
+        if i >= len(line.segments):
+            break
+        seg = line.segments[i]
         display = _display_text(seg)
         font, size = _seg_font_size(seg, base)
         w = measure_text_width(display, font, size)
-        if x < acc + w or i == len(line.segments) - 1:
+        if x < acc + w or i == seg_to_excl - 1:
             local_x = x - acc
             # 逐字逼近：找到宽度 >= local_x 的最小前缀
             disp_off = len(display)
@@ -329,9 +344,33 @@ def LineView(
         """段级激活：透传 seg_idx 给外层 on_activate。"""
         on_activate(line_idx, seg_idx, cursor_at)
 
+    # 闭包共享标志：GestureDetector.on_tap 处理 Shift+Click 后置 True，
+    # 供后续可能触发的 Container.on_click 检测并跳过（避免 activate() 覆盖
+    # _start_outward 的 set_active(None)，导致选区不可见）。
+    # 每次 LineView 渲染重建（新闭包新 list），同次事件同步帧内可见。
+    _shift_tap_handled = [False]
+
     def _edit_on_click_factory(seg_idx: int):
-        """编辑态点击右侧空白：抑制 blur + 激活指定段尾。"""
+        """编辑态点击右侧空白：抑制 blur + 激活指定段尾。
+
+        Shift+Click 处理：
+        - 若 _shift_tap_handled[0] 为 True，说明内层 GestureDetector 已处理
+          span 上的精确 Shift+Click（on_extend_outward 已用精确 offset 调用），
+          此处跳过避免 activate() 覆盖 _start_outward 的 set_active(None)。
+        - 若 Shift 按下但 _shift_tap_handled[0] 为 False，说明点击落在右侧空白区
+          （无 GestureDetector 覆盖），起始/扩展向外选区到行尾。
+        """
         def _handler(e):
+            if _shift_tap_handled[0]:
+                # GestureDetector 已处理 Shift+Click：跳过 activate，避免覆盖
+                _shift_tap_handled[0] = False
+                return
+            if shift_pressed_ref is not None and bool(shift_pressed_ref.current):
+                # Shift+Click 右侧空白：起始/扩展向外选区到行尾
+                if on_extend_outward is not None:
+                    line_end_off = sum(len(s.raw) for s in line.segments)
+                    on_extend_outward(line_idx, line_end_off)
+                return
             if on_suppress_blur:
                 on_suppress_blur()
             activate(seg_idx, cursor_at=-1)
@@ -339,7 +378,18 @@ def LineView(
 
     # 行间空白死区点击兜底：激活最后一个段（与 _on_tap 回退策略一致）。
     # 内层 GestureDetector 会消费其覆盖区域的 tap，此回调仅在 padding 死区触发。
+    # Shift+Click 死区：起始/扩展向外选区到行尾（与 _edit_on_click_factory 一致）。
     def _fallback_activate(e):
+        if _shift_tap_handled[0]:
+            # GestureDetector 已处理 Shift+Click：跳过，避免覆盖精确 offset
+            _shift_tap_handled[0] = False
+            return
+        if shift_pressed_ref is not None and bool(shift_pressed_ref.current):
+            # Shift+Click 死区空白：起始/扩展向外选区到行尾
+            if on_extend_outward is not None:
+                line_end_off = sum(len(s.raw) for s in line.segments)
+                on_extend_outward(line_idx, line_end_off)
+            return
         activate(max(0, len(line.segments) - 1))
 
     # ============ 空行 ============
@@ -648,9 +698,17 @@ def LineView(
                         and bool(shift_pressed_ref.current)
                     )
                     if shift_held and on_extend_outward is not None:
+                        # 立即抑制 blur：TextField 失去焦点会在 on_extend_outward 之前触发 on_blur，
+                        # 导致 _start_outward 检查 active 时已为 None，提前返回（选区无法起始）。
+                        # 必须在 on_extend_outward 调用前设置 suppress_blur。
+                        if on_suppress_blur:
+                            on_suppress_blur()
                         # Shift+Click：起始/扩展向外选区到点击位置
                         active_off = _logical_raw_offset(line, si, offset)
                         on_extend_outward(line_idx, active_off)
+                        # 标记已处理：防止后续 _fallback_activate 再次调用 on_extend_outward
+                        # 覆盖精确 offset（外层 Container.on_click 可能在手势竞技场后触发）
+                        _shift_tap_handled[0] = True
                         return
                     # 既有向外选区 + 非 Shift 点击：先清除选区再激活
                     if outward_range is not None and on_clear_outward is not None:
@@ -663,10 +721,43 @@ def LineView(
             # 回退：点击多行区域或无法定位时，激活最后一个段
             activate(max(0, len(line.segments) - 1))
 
+        # 拖动选区：pan_start 起始选区，pan_update 实时扩展（跨行用 y 估算行号）
+        _line_h = base * line_height
+
+        def _pan_target_off(pos) -> tuple[int, int]:
+            """根据 pan 坐标估算 (target_li, target_off)。跨行用 y 估算。"""
+            if pos is None:
+                return (line_idx, 0)
+            line_dy = round(pos.y / _line_h) if _line_h > 0 else 0
+            target_li = line_idx + line_dy
+            if target_li == line_idx:
+                si, offset = _hit_test_tap(line, pos.x, pos.y, base, line_height)
+                if si >= 0:
+                    return (line_idx, _logical_raw_offset(line, si, offset))
+                return (line_idx, 0)
+            # 跨行：向上用大偏移（钳制到行尾），向下用 0（行首）
+            if line_dy < 0:
+                return (target_li, 999999)
+            return (target_li, 0)
+
+        def _on_pan_start(e: ft.DragStartEvent):
+            if on_extend_outward is None:
+                return
+            t_li, t_off = _pan_target_off(e.local_position)
+            on_extend_outward(t_li, t_off)
+
+        def _on_pan_update(e: ft.DragUpdateEvent):
+            if on_extend_outward is None:
+                return
+            t_li, t_off = _pan_target_off(e.local_position)
+            on_extend_outward(t_li, t_off)
+
         content = ft.Container(
             content=ft.GestureDetector(
                 content=ft.Text(spans=spans, style=line_style, width=float("inf")),
                 on_tap=_on_tap,
+                on_pan_start=_on_pan_start,
+                on_pan_update=_on_pan_update,
             ),
             ink=True,
             border_radius=8,
@@ -686,13 +777,85 @@ def LineView(
 
     # 段级布局：前段 Text(spans) + 激活段 TextField + 后段 Text(spans)
     # 仅激活段显示原生 Markdown，前后段保持渲染态——Typora 式最小语法编辑
+    # before/after spans 不绑定 on_click：GestureDetector 统一处理点击 + Shift+Click
     active_seg_obj = line.segments[active_seg]
-    before_spans = _spans_for(line, 0, active_seg, activate, base, line_highlight_range=outward_range)
-    after_spans = _spans_for(line, active_seg + 1, len(line.segments), activate, base, line_highlight_range=outward_range)
+    before_spans = _spans_for(line, 0, active_seg, None, base, line_highlight_range=outward_range)
+    after_spans = _spans_for(line, active_seg + 1, len(line.segments), None, base, line_highlight_range=outward_range)
+
+    def _shift_held() -> bool:
+        return shift_pressed_ref is not None and bool(shift_pressed_ref.current)
+
+    def _handle_seg_tap(si: int, offset: int) -> bool:
+        """处理 before/after 段点击。返回 True 表示已处理（含链接打开）。"""
+        if si < 0:
+            return False
+        seg = line.segments[si]
+        if seg.seg_type == SegType.LINK and seg.url:
+            _open_link_url(seg.url)
+            return True
+        if _shift_held() and on_extend_outward is not None:
+            # 立即抑制 blur：TextField 失去焦点会在 on_extend_outward 之前触发 on_blur，
+            # 导致 _start_outward 检查 active 时已为 None，提前返回（选区无法起始）。
+            # 必须在 on_extend_outward 调用前设置 suppress_blur。
+            if on_suppress_blur:
+                on_suppress_blur()
+            # Shift+Click：从编辑光标起始/扩展向外选区到点击位置
+            active_off = _logical_raw_offset(line, si, offset)
+            on_extend_outward(line_idx, active_off)
+            # 标记已处理：防止后续 Container.on_click 触发 activate() 覆盖
+            # _start_outward 的 set_active(None)（否则选区不可见）
+            _shift_tap_handled[0] = True
+            return True
+        # 既有向外选区 + 非 Shift 点击：先清除选区再激活
+        if outward_range is not None and on_clear_outward is not None:
+            on_clear_outward()
+        activate(si, offset)
+        return True
 
     controls: list[ft.Control] = []
+    _line_h = base * line_height
     if before_spans:
-        controls.append(ft.Text(spans=before_spans, style=line_style))
+        def _on_before_tap(e: ft.TapEvent):
+            pos = e.local_position
+            if pos is not None:
+                si, offset = _hit_test_segs(line, 0, active_seg, pos.x, pos.y, base, line_height)
+                if _handle_seg_tap(si, offset):
+                    return
+            # 回退：激活前段最后一段
+            activate(max(0, active_seg - 1))
+
+        def _on_before_pan_start(e: ft.DragStartEvent):
+            if on_extend_outward is None:
+                return
+            pos = e.local_position
+            if pos is not None:
+                si, offset = _hit_test_segs(line, 0, active_seg, pos.x, pos.y, base, line_height)
+                if si >= 0:
+                    on_extend_outward(line_idx, _logical_raw_offset(line, si, offset))
+
+        def _on_before_pan_update(e: ft.DragUpdateEvent):
+            if on_extend_outward is None:
+                return
+            pos = e.local_position
+            if pos is None:
+                return
+            line_dy = round(pos.y / _line_h) if _line_h > 0 else 0
+            target_li = line_idx + line_dy
+            if target_li == line_idx:
+                si, offset = _hit_test_segs(line, 0, active_seg, pos.x, pos.y, base, line_height)
+                if si >= 0:
+                    on_extend_outward(target_li, _logical_raw_offset(line, si, offset))
+            elif line_dy < 0:
+                on_extend_outward(target_li, 999999)
+            else:
+                on_extend_outward(target_li, 0)
+
+        controls.append(ft.GestureDetector(
+            content=ft.Text(spans=before_spans, style=line_style),
+            on_tap=_on_before_tap,
+            on_pan_start=_on_before_pan_start,
+            on_pan_update=_on_before_pan_update,
+        ))
     controls.append(
         _active_field(
             line, draft, on_change_draft, on_submit, on_blur,
@@ -703,7 +866,54 @@ def LineView(
         )
     )
     if after_spans:
-        controls.append(ft.Text(spans=after_spans, style=line_style))
+        def _on_after_tap(e: ft.TapEvent):
+            pos = e.local_position
+            if pos is not None:
+                si, offset = _hit_test_segs(
+                    line, active_seg + 1, len(line.segments), pos.x, pos.y, base, line_height,
+                )
+                if _handle_seg_tap(si, offset):
+                    return
+            # 回退：激活后段第一段
+            nxt = active_seg + 1
+            activate(nxt if nxt < len(line.segments) else active_seg)
+
+        def _on_after_pan_start(e: ft.DragStartEvent):
+            if on_extend_outward is None:
+                return
+            pos = e.local_position
+            if pos is not None:
+                si, offset = _hit_test_segs(
+                    line, active_seg + 1, len(line.segments), pos.x, pos.y, base, line_height,
+                )
+                if si >= 0:
+                    on_extend_outward(line_idx, _logical_raw_offset(line, si, offset))
+
+        def _on_after_pan_update(e: ft.DragUpdateEvent):
+            if on_extend_outward is None:
+                return
+            pos = e.local_position
+            if pos is None:
+                return
+            line_dy = round(pos.y / _line_h) if _line_h > 0 else 0
+            target_li = line_idx + line_dy
+            if target_li == line_idx:
+                si, offset = _hit_test_segs(
+                    line, active_seg + 1, len(line.segments), pos.x, pos.y, base, line_height,
+                )
+                if si >= 0:
+                    on_extend_outward(target_li, _logical_raw_offset(line, si, offset))
+            elif line_dy < 0:
+                on_extend_outward(target_li, 999999)
+            else:
+                on_extend_outward(target_li, 0)
+
+        controls.append(ft.GestureDetector(
+            content=ft.Text(spans=after_spans, style=line_style),
+            on_tap=_on_after_tap,
+            on_pan_start=_on_after_pan_start,
+            on_pan_update=_on_after_pan_update,
+        ))
 
     row = ft.Row(
         controls=controls, wrap=True, spacing=0, run_spacing=0,

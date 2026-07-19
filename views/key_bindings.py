@@ -82,6 +82,13 @@ class KeyDispatcher:
         norm = key.replace(" ", "").lower()
         actions: EditorActions | None = self._actions_ref.current
 
+        # 用 KeyboardEvent.shift 可靠同步 Shift 状态到 shift_pressed_ref。
+        # KeyboardListener 的 KeyDownEvent.key 对 Shift 可能返回 "Shift Left" /
+        # "Shift Right"（而非 "shift"），导致 _on_key_down 的 key == "shift" 匹配
+        # 失败；此处 e.shift 是 Flet 从 Flutter 修饰键状态直接读取，始终可靠。
+        if actions is not None and actions.shift_pressed_ref is not None:
+            actions.shift_pressed_ref.current = bool(e.shift)
+
         # 向外选区激活时（active is None, outward_sel is not None）：
         # 优先路由 BackSpace/Delete/Ctrl+X/Escape/Shift+Arrow 到 outward handlers，
         # 绕过 layer 判定（此时 layer=browse 会误路由到 SelectionArea 删除分支）

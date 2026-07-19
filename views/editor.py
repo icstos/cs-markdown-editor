@@ -930,6 +930,11 @@ def MarkdownEditor(
         set_active(None)
 
     def on_blur():
+        # Shift+Click 时保持 active 不变：on_blur 在 GestureDetector.on_tap 之前触发，
+        # 若此时调用 set_active(None)，后续 _start_outward 检查 active 时为 None，
+        # 提前返回导致选区无法起始。此处跳过，_start_outward 内部会补上 commit_active。
+        if shift_pressed_ref is not None and bool(shift_pressed_ref.current):
+            return
         if suppress_blur.current:
             suppress_blur.current = False
             return
@@ -1561,6 +1566,7 @@ def MarkdownEditor(
             return
         if not (0 <= target_li < len(document.lines)):
             return
+        target_off = max(0, min(target_off, len(document.lines[target_li].raw or "")))
         src_li = active
         if not (0 <= src_li < len(document.lines)):
             return
@@ -1580,6 +1586,9 @@ def MarkdownEditor(
         """已存在向外选区时，保留 anchor，更新 active 端点。"""
         if outward_sel is None:
             return _start_outward(target_li, target_off)
+        if not (0 <= target_li < len(document.lines)):
+            return
+        target_off = max(0, min(target_off, len(document.lines[target_li].raw or "")))
         a_li, a_off, _, _ = outward_sel
         _set_outward_sel((a_li, a_off, target_li, target_off))
 
@@ -2017,7 +2026,9 @@ def MarkdownEditor(
         key = (getattr(e, "key", "") or "").lower()
         # Flet 0.86.1 KeyDownEvent 只有 key 字段，无 ctrl/shift/meta。
         # 用 shift_pressed_ref 跟踪 Shift 状态（_on_key_up 释放时清零）。
-        if key == "shift":
+        # KeyDownEvent.key 对 Shift 可能返回 "Shift Left" / "Shift Right"，
+        # 用 startswith 兼容所有变体。主同步源为 KeyDispatcher.handle() 的 e.shift。
+        if key.startswith("shift"):
             shift_pressed_ref.current = True
         # 兼容旧代码：用 shift_pressed_ref 替代失效的 e.shift
         shift = shift_pressed_ref.current
@@ -2058,7 +2069,7 @@ def MarkdownEditor(
         KeyboardListener.on_key_up 是 Shift 释放信号的唯一来源。
         """
         key = (getattr(e, "key", "") or "").lower()
-        if key == "shift":
+        if key.startswith("shift"):
             shift_pressed_ref.current = False
 
     return ft.KeyboardListener(

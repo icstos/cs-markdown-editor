@@ -1582,6 +1582,26 @@ def MarkdownEditor(
         set_active_seg(None)
         _set_outward_sel((src_li, src_off, target_li, target_off))
 
+    def _start_outward_from_point(anchor_li: int, anchor_off: int, target_li: int, target_off: int) -> None:
+        """从指定点起始向外选区，不依赖 active 状态。
+
+        用于非编辑模式拖动选区（active=None）和编辑模式拖动（on_blur 在 on_pan_start
+        之前触发，导致 active 已被清除）。anchor 为选区起点，target 为当前终点。
+        """
+        if outward_sel is not None:
+            return
+        if not (0 <= anchor_li < len(document.lines) and 0 <= target_li < len(document.lines)):
+            return
+        anchor_off = max(0, min(anchor_off, len(document.lines[anchor_li].raw or "")))
+        target_off = max(0, min(target_off, len(document.lines[target_li].raw or "")))
+        # 若存在 active 编辑段，先提交草稿
+        if active is not None:
+            commit_active(draft_ref.current)
+            suppress_blur.current = True
+            set_active(None)
+            set_active_seg(None)
+        _set_outward_sel((anchor_li, anchor_off, target_li, target_off))
+
     def _extend_outward(target_li: int, target_off: int) -> None:
         """已存在向外选区时，保留 anchor，更新 active 端点。"""
         if outward_sel is None:
@@ -1627,9 +1647,14 @@ def MarkdownEditor(
             _set_outward_sel(None)
 
     def on_extend_outward(target_li: int, target_off: int) -> None:
-        """LineView Shift+Click 回调：起始或扩展向外选区。"""
+        """LineView Shift+Click / 拖动选区回调：起始或扩展向外选区。"""
         if outward_sel is None:
-            _start_outward(target_li, target_off)
+            # 无选区时：若有 active 编辑段，从编辑光标起始；否则从点击/拖动点起始
+            if active is not None:
+                _start_outward(target_li, target_off)
+            else:
+                # 非编辑模式或编辑模式但 on_blur 已清除 active：从点击/拖动点起始
+                _start_outward_from_point(target_li, target_off, target_li, target_off)
         else:
             _extend_outward(target_li, target_off)
 

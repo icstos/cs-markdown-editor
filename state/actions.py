@@ -78,6 +78,7 @@ class EditorActions:
     # outward_sel = (anchor_li, anchor_off, active_li, active_off) | None
     outward_sel: tuple | None = None
     shift_pressed_ref: ft.Ref | None = None  # Shift 键状态（editor 内部跟踪）
+    ctrl_pressed_ref: ft.Ref | None = None  # Ctrl 键状态（主同步源 KeyDispatcher.e.ctrl）
     extend_outward_left: Callable[[], None] | None = None
     extend_outward_right: Callable[[], None] | None = None
     extend_outward_up: Callable[[], None] | None = None

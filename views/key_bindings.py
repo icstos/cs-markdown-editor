@@ -88,6 +88,11 @@ class KeyDispatcher:
         # 失败；此处 e.shift 是 Flet 从 Flutter 修饰键状态直接读取，始终可靠。
         if actions is not None and actions.shift_pressed_ref is not None:
             actions.shift_pressed_ref.current = bool(e.shift)
+        # 同步 Ctrl 状态到 editor 的 ctrl_pressed_ref（KeyboardEvent.ctrl 可靠）。
+        # editor 的 KeyboardListener KeyDownEvent 无 ctrl 字段，需此处同步，供
+        # _on_key_down 的 tab 分支判断 Ctrl+Tab（避免代码块/表格缩进与标签切换冲突）。
+        if actions is not None and getattr(actions, "ctrl_pressed_ref", None) is not None:
+            actions.ctrl_pressed_ref.current = bool(e.ctrl)
 
         # 向外选区激活时（active is None, outward_sel is not None）：
         # 优先路由 BackSpace/Delete/Ctrl+X/Escape/Shift+Arrow 到 outward handlers，
@@ -129,6 +134,20 @@ class KeyDispatcher:
                 if actions.clear_outward_sel is not None:
                     actions.clear_outward_sel()
                 return
+
+        # 全局标签快捷键：Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab 在两层均生效，
+        # 置于 layer 判定之前拦截，避免被 edit 层 tab 缩进逻辑吃掉。
+        cb = self._app_callbacks
+        browse_sc = self._shortcut_mgr.get("browse")
+        if matches(combo, browse_sc.get("close_tab", "ctrl+w")):
+            cb["close_tab"]()
+            return
+        if matches(combo, browse_sc.get("next_tab", "ctrl+tab")):
+            cb["next_tab"]()
+            return
+        if matches(combo, browse_sc.get("prev_tab", "ctrl+shift+tab")):
+            cb["prev_tab"]()
+            return
 
         layer = "edit" if actions is not None and actions.active is not None else "browse"
         shortcuts = self._shortcut_mgr.get(layer)
@@ -186,7 +205,8 @@ class KeyDispatcher:
         if norm == "delete":
             actions.delete_core()
             return True
-        if norm == "tab":
+        if norm == "tab" and not e.ctrl:
+            # Ctrl+Tab 已在 handle() 顶部拦截为标签切换，此处仅处理普通 Tab。
             # 代码块 Tab 由 editor.py 的 _on_key_down 处理（缩进），此处跳过不拦截
             if (
                 actions.active_line is not None

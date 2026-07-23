@@ -228,6 +228,10 @@ def MarkdownEditor(
     outward_sel_ref = ft.use_ref(None)
     # Shift 键状态跟踪（ref，不触发重渲染；由 _on_key_down/_on_key_up 维护）
     shift_pressed_ref = ft.use_ref(False)
+    # Ctrl 键状态：主同步源为 KeyDispatcher.handle() 的 e.ctrl（KeyboardEvent.ctrl 可靠），
+    # _on_key_down/_on_key_up 用 key 名做兜底同步。用于 tab 分支判断 Ctrl+Tab，
+    # 避免代码块/表格内 Ctrl+Tab 同时触发缩进与标签切换。
+    ctrl_pressed_ref = ft.use_ref(False)
 
     # 渲染后显式聚焦激活段 TextField：SelectionArea 内点击 span 触发的
     # autofocus 因手势竞争不可靠，用 use_effect 在渲染提交后调用 focus() 确保聚焦。
@@ -1840,6 +1844,7 @@ def MarkdownEditor(
             get_cursor_row_col=_get_cursor_row_col,
             outward_sel=outward_sel,
             shift_pressed_ref=shift_pressed_ref,
+            ctrl_pressed_ref=ctrl_pressed_ref,
             extend_outward_left=lambda: _extend_outward_step(_step_left),
             extend_outward_right=lambda: _extend_outward_step(_step_right),
             extend_outward_up=lambda: _extend_outward_step(_step_up),
@@ -2055,12 +2060,14 @@ def MarkdownEditor(
         # 用 startswith 兼容所有变体。主同步源为 KeyDispatcher.handle() 的 e.shift。
         if key.startswith("shift"):
             shift_pressed_ref.current = True
+        if key.startswith("control"):
+            ctrl_pressed_ref.current = True
         # 兼容旧代码：用 shift_pressed_ref 替代失效的 e.shift
         shift = shift_pressed_ref.current
         ctrl = False  # KeyDownEvent 无 ctrl 字段；Ctrl 组合键由 page.on_keyboard_event 处理
         if active is None:
             return
-        if key == "tab" and active is not None:
+        if key == "tab" and active is not None and not ctrl_pressed_ref.current:
             li = active
             if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
                 _table_tab(-1 if shift else 1)
@@ -2080,7 +2087,8 @@ def MarkdownEditor(
             code_editor.exit()
         elif key == "escape":
             code_editor.exit()
-        elif key == "tab":
+        elif key == "tab" and not ctrl_pressed_ref.current:
+            # Ctrl+Tab 由 KeyDispatcher 顶部拦截为标签切换，此处跳过缩进
             code_editor.tab(-1 if shift else 1)
         elif key == "backspace":
             code_editor.backspace()
@@ -2096,6 +2104,8 @@ def MarkdownEditor(
         key = (getattr(e, "key", "") or "").lower()
         if key.startswith("shift"):
             shift_pressed_ref.current = False
+        if key.startswith("control"):
+            ctrl_pressed_ref.current = False
 
     return ft.KeyboardListener(
         autofocus=True,

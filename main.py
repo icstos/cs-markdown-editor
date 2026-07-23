@@ -22,6 +22,7 @@ from views.key_bindings import KeyDispatcher
 from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
 from views.status_bar import StatusBar
+from views.tab_bar import ConfirmCloseDialog, TabBar
 
 _SAMPLE = r"""# Markdown 编辑器
 
@@ -190,6 +191,16 @@ def _load_settings() -> dict:
         if isinstance(data, dict):
             merged = dict(_DEFAULT_SETTINGS)
             merged.update(data)
+            # 深合并 shortcuts：保留用户自定义键位，同时补齐新增默认项
+            # （避免老 settings.json 缺少 close_tab/next_tab/prev_tab 等新键）
+            user_sc = data.get("shortcuts", {})
+            merged_sc: dict = {}
+            if isinstance(user_sc, dict):
+                for layer, def_layer in _DEFAULT_SETTINGS["shortcuts"].items():
+                    merged_sc[layer] = {**def_layer, **user_sc.get(layer, {})}
+            else:
+                merged_sc = {k: dict(v) for k, v in _DEFAULT_SETTINGS["shortcuts"].items()}
+            merged["shortcuts"] = merged_sc
             return merged
     except Exception:
         pass
@@ -206,10 +217,15 @@ def _save_settings(settings: dict) -> None:
 
 @ft.component
 def App():
-    document, set_document = ft.use_state(lambda: parser.parse_markdown(_SAMPLE))
-    file_path, set_file_path = ft.use_state(None)
-    dirty, set_dirty = ft.use_state(False)
-    session, set_session = ft.use_state(0)  # 切换文档时自增，强制编辑器重置内部状态
+    # 多文档标签：每个 tab 持有 {document, file_path, dirty}；active_index 指向当前标签
+    tabs, set_tabs = ft.use_state(
+        lambda: [
+            {"document": parser.parse_markdown(_SAMPLE), "file_path": None, "dirty": False}
+        ]
+    )
+    active_index, set_active_index = ft.use_state(0)
+    session, set_session = ft.use_state(0)  # 切换标签时自增，强制编辑器重置内部状态
+    confirm_close, set_confirm_close = ft.use_state(None)  # 待确认关闭的 tab index | None
     # 亮/暗主题模式
     theme_mode, set_theme_mode = ft.use_state(ft.ThemeMode.LIGHT)
     settings, set_settings = ft.use_state(_load_settings)
@@ -224,6 +240,174 @@ def App():
     clipboard_holder = ft.use_ref()
     # page 引用：事件回调中 ft.context.page 可能不可用，提前缓存
     page_ref = ft.use_ref()
+    # tabs / active_index 的 ref 镜像：异步回调（autosave 延时保存）读取最新值，
+    # 避免闭包捕获渲染期快照导致保存到错误标签
+    tabs_ref = ft.use_ref(tabs)
+    tabs_ref.current = tabs
+    active_index_ref = ft.use_ref(active_index)
+    active_index_ref.current = active_index
+
+    # 当前激活标签的派生值（供下游闭包与渲染使用）
+    _safe_idx = active_index if 0 <= active_index < len(tabs) else 0
+    cur_tab = tabs[_safe_idx] if tabs else {"document": parser.parse_markdown(""), "file_path": None, "dirty": False}
+    document = cur_tab["document"]
+    file_path = cur_tab["file_path"]
+    dirty = cur_tab["dirty"]
+
+    def _cur_tab():
+        """从 ref 读取最新激活标签（异步场景使用）。"""
+        ts = tabs_ref.current
+        ai = active_index_ref.current
+        if ts and 0 <= ai < len(ts):
+            return ts[ai]
+        return ts[0] if ts else None
+
+    def _update_active(**changes):
+        """不可变更新当前激活标签字段，触发 tabs 重渲染。
+
+        同步写 tabs_ref.current，供 autosave 等异步读取者立即读到最新值
+        （不必等下一次渲染同步 ref）。
+        """
+        new_tabs = list(tabs)
+        if not (0 <= active_index < len(new_tabs)):
+            return
+        new_tabs[active_index] = {**new_tabs[active_index], **changes}
+        set_tabs(new_tabs)
+        tabs_ref.current = new_tabs
+
+    def _update_tab(tab_index: int, **changes):
+        """不可变更新指定索引标签字段。"""
+        new_tabs = list(tabs)
+        if not (0 <= tab_index < len(new_tabs)):
+            return
+        new_tabs[tab_index] = {**new_tabs[tab_index], **changes}
+        set_tabs(new_tabs)
+        tabs_ref.current = new_tabs
+
+    def _doc_has_text(doc) -> bool:
+        return any(line.raw.strip() for line in doc.lines)
+
+    def _is_blank_untitled(tab) -> bool:
+        return (
+            tab["file_path"] is None
+            and not tab["dirty"]
+            and not _doc_has_text(tab["document"])
+        )
+
+    def select_tab(index: int):
+        if index == active_index:
+            return
+        if not (0 <= index < len(tabs)):
+            return
+        set_active_index(index)
+        set_session(session + 1)
+
+    def _cycle_tab(direction: int):
+        """Ctrl+Tab / Ctrl+Shift+Tab 循环切换标签。"""
+        n = len(tabs_ref.current)
+        if n <= 1:
+            return
+        cur = active_index_ref.current
+        nxt = (cur + direction) % n
+        select_tab(nxt)
+
+    def _do_close_many(indices):
+        """一次性移除多个标签（避免逐个 set_tabs 的索引漂移与 stale 覆盖）。
+
+        基于 tabs_ref.current 最新值计算，空列表回退为一个空白标签。
+        """
+        ts = list(tabs_ref.current)
+        remove_set = {i for i in indices if 0 <= i < len(ts)}
+        if not remove_set:
+            return
+        new_tabs = [t for i, t in enumerate(ts) if i not in remove_set]
+        if not new_tabs:
+            new_tabs = [
+                {"document": parser.parse_markdown(""), "file_path": None, "dirty": False}
+            ]
+        cur_active = active_index_ref.current
+        removed_before = sum(1 for i in remove_set if i < cur_active)
+        if cur_active in remove_set:
+            new_active = min(max(cur_active - removed_before, 0), len(new_tabs) - 1)
+        else:
+            new_active = cur_active - removed_before
+        set_tabs(new_tabs)
+        tabs_ref.current = new_tabs
+        set_active_index(new_active)
+        active_index_ref.current = new_active
+        set_session(session + 1)
+
+    def _request_close(targets):
+        """请求关闭一批标签：干净标签直接关，含脏标签则弹统一确认。"""
+        ts = tabs_ref.current
+        valid = [i for i in targets if 0 <= i < len(ts)]
+        if not valid:
+            return
+        if any(ts[i]["dirty"] for i in valid):
+            set_confirm_close(valid)
+        else:
+            _do_close_many(valid)
+
+    def close_tab(index: int):
+        """关闭单个标签：脏标签走确认，干净标签直接关。"""
+        _request_close([index])
+
+    def _on_tab_context_action(action: str, index: int):
+        if action == "close":
+            close_tab(index)
+        elif action == "close_others":
+            _request_close([j for j in range(len(tabs_ref.current)) if j != index])
+        elif action == "close_all":
+            _request_close(list(range(len(tabs_ref.current))))
+        elif action == "copy_path":
+            ts = tabs_ref.current
+            path = ts[index]["file_path"] if 0 <= index < len(ts) else None
+            page = page_ref.current
+            if path and page is not None:
+                page.run_task(_copy_path, path)
+            elif page is not None:
+                page.open(ft.SnackBar(ft.Text("该标签无文件路径")))
+
+    async def _save_and_close_pending():
+        """确认弹层「保存并关闭」：逐个保存脏标签，全部成功后关闭整批。
+
+        任一保存被用户在另存对话框取消或失败则中止，保留未关闭标签。
+        """
+        pending = confirm_close
+        if not pending:
+            return
+        for idx in list(pending):
+            ts = tabs_ref.current
+            if 0 <= idx < len(ts) and ts[idx]["dirty"]:
+                ok = await save_doc(idx)
+                if not ok:
+                    set_confirm_close(None)
+                    return
+        targets = list(pending)
+        set_confirm_close(None)
+        _do_close_many(targets)
+
+    def _close_without_save():
+        """确认弹层「不保存」：直接关闭整批待确认标签。"""
+        pending = confirm_close
+        if not pending:
+            return
+        targets = list(pending)
+        set_confirm_close(None)
+        _do_close_many(targets)
+
+    def _cancel_close():
+        set_confirm_close(None)
+
+    async def _copy_path(path: str):
+        cb = clipboard_holder.current
+        if cb is not None:
+            try:
+                await cb.set(path)
+                if page_ref.current is not None:
+                    page_ref.current.open(ft.SnackBar(ft.Text("路径已复制")))
+            except Exception:
+                pass
 
     # 同步设置 page.theme_mode：use_effect 在渲染之后执行，本次渲染期间
     # 子组件（MarkdownEditor→LineView 等）调用 _current_colors() 读到的
@@ -283,20 +467,30 @@ def App():
             layer, action = shortcut_mgr.first_conflict_target()
             set_shortcut_focus((layer, action))
 
-    def _autosave_enabled() -> bool:
-        return bool(settings.get("auto_save", False)) and bool(file_path)
+    def _autosave_enabled_for(tab) -> bool:
+        return bool(settings.get("auto_save", False)) and bool(tab and tab["file_path"])
 
     def _schedule_autosave():
-        if not dirty or not _autosave_enabled():
+        """基于 ref 读取当前激活标签，延时 2s 自动保存该标签。
+
+        捕获调度时的 active_index，即便用户切换到其他标签，仍保存当初变脏的标签。
+        """
+        tab = _cur_tab()
+        if not tab or not tab["dirty"] or not _autosave_enabled_for(tab):
             return
         page = page_ref.current
         if page is None:
             return
+        sched_idx = active_index_ref.current
 
         async def _debounced_save():
             await asyncio.sleep(2.0)
-            if dirty and _autosave_enabled():
-                await save_doc()
+            ts = tabs_ref.current
+            if not (0 <= sched_idx < len(ts)):
+                return
+            t2 = ts[sched_idx]
+            if t2["dirty"] and _autosave_enabled_for(t2):
+                await save_doc(sched_idx)
 
         page.run_task(_debounced_save)
 
@@ -382,7 +576,19 @@ def App():
         update_setting("recent_files", recent)
 
     def _open_file_by_path(path: str):
-        """从绝对路径打开文件（供侧边栏文件树点击与 open_doc 复用）。"""
+        """从绝对路径打开文件（供侧边栏文件树点击与 open_doc 复用）。
+
+        - 该路径已打开过 → 切换到对应标签，不重复开
+        - 当前标签为空白未命名 → 复用该标签加载
+        - 否则 → 追加新标签并激活
+        """
+        # 已在某标签打开：直接切换
+        for i, t in enumerate(tabs):
+            if t["file_path"] == path:
+                if i != active_index:
+                    set_active_index(i)
+                    set_session(session + 1)
+                return
         try:
             text = _read_file(path)
         except Exception as e:
@@ -391,9 +597,17 @@ def App():
             return
         doc = parser.parse_markdown(text)
         doc.file_path = path
-        set_document(doc)
-        set_file_path(path)
-        set_dirty(False)
+        if _is_blank_untitled(cur_tab):
+            # 复用当前空标签
+            _update_active(document=doc, file_path=path, dirty=False)
+        else:
+            new_tabs = list(tabs)
+            new_tabs.append({"document": doc, "file_path": path, "dirty": False})
+            set_tabs(new_tabs)
+            tabs_ref.current = new_tabs
+            new_idx = len(new_tabs) - 1
+            set_active_index(new_idx)
+            active_index_ref.current = new_idx
         set_session(session + 1)
         _push_recent_file(path)
 
@@ -418,16 +632,25 @@ def App():
             actions.jump_to_line(li)
 
     def on_dirty_change(d: bool):
-        set_dirty(d)
+        """编辑器上报脏状态变化时，更新当前标签的 dirty（仅状态变化时写，避免每键重渲染）。"""
+        if cur_tab["dirty"] != d:
+            _update_active(dirty=d)
         if d:
             _schedule_autosave()
 
     def new_doc():
-        doc = parser.parse_markdown("")
-        doc.file_path = None
-        set_document(doc)
-        set_file_path(None)
-        set_dirty(False)
+        """新建标签：当前标签为空白未命名时复用，否则追加新空标签。"""
+        if _is_blank_untitled(cur_tab):
+            return  # 已是空文档，无需新增
+        new_tabs = list(tabs)
+        new_tabs.append(
+            {"document": parser.parse_markdown(""), "file_path": None, "dirty": False}
+        )
+        set_tabs(new_tabs)
+        tabs_ref.current = new_tabs
+        new_idx = len(new_tabs) - 1
+        set_active_index(new_idx)
+        active_index_ref.current = new_idx
         set_session(session + 1)
 
     async def open_doc():
@@ -443,13 +666,23 @@ def App():
             return
         _open_file_by_path(files[0].path)
 
-    async def save_doc():
-        text = parser.serialize(document)
-        path = file_path
+    async def save_doc(tab_index: int | None = None) -> bool:
+        """保存指定标签（默认激活标签）。返回是否真正保存成功（用户取消另存则 False）。
+
+        基于 tabs_ref.current 读取/更新，保证批量保存（确认弹层）时不互相覆盖。
+        """
+        if tab_index is None:
+            tab_index = active_index_ref.current
+        ts = tabs_ref.current
+        if not (0 <= tab_index < len(ts)):
+            return False
+        tab = ts[tab_index]
+        doc = tab["document"]
+        path = tab["file_path"]
         if not path:
             picker = picker_holder.current
             if picker is None:
-                return
+                return False
             path = await picker.save_file(
                 dialog_title="保存 Markdown",
                 file_name="未命名.md",
@@ -457,19 +690,25 @@ def App():
                 file_type=ft.FilePickerFileType.CUSTOM,
             )
             if not path:
-                return
+                return False
             if not path.lower().endswith(".md"):
                 path += ".md"
+        text = parser.serialize(doc)
         try:
             _write_file(path, text)
         except Exception as e:
-            page_ref.current.open(ft.SnackBar(ft.Text(f"保存失败：{e}")))
-            return
-        document.file_path = path
-        document.dirty = False
-        set_file_path(path)
-        set_dirty(False)
+            if page_ref.current is not None:
+                page_ref.current.open(ft.SnackBar(ft.Text(f"保存失败：{e}")))
+            return False
+        doc.file_path = path
+        doc.dirty = False
+        # 不可变更新该 tab，基于最新 tabs_ref 避免批量保存时覆盖前序结果
+        latest = list(tabs_ref.current)
+        latest[tab_index] = {**latest[tab_index], "file_path": path, "dirty": False}
+        set_tabs(latest)
+        tabs_ref.current = latest
         _push_recent_file(path)
+        return True
 
     async def export_doc():
         """导出为 HTML 文件。"""
@@ -516,6 +755,9 @@ def App():
             "toggle_sidebar": toggle_sidebar,
             "toggle_theme": toggle_theme,
             "open_settings": open_settings,
+            "close_tab": lambda: close_tab(active_index_ref.current),
+            "next_tab": lambda: _cycle_tab(1),
+            "prev_tab": lambda: _cycle_tab(-1),
         },
     )
 
@@ -616,8 +858,20 @@ def App():
         else ft.Container(height=0)
     )
 
+    # 顶部多文档标签栏
+    tab_bar = TabBar(
+        tabs=[{"file_path": t["file_path"], "dirty": t["dirty"]} for t in tabs],
+        active_index=active_index,
+        theme_mode=theme_mode,
+        on_select=select_tab,
+        on_close=close_tab,
+        on_new=new_doc,
+        on_context_action=_on_tab_context_action,
+    )
+
     main_col = ft.Column(
         controls=[
+            tab_bar,
             body,
             footer,
         ],
@@ -625,10 +879,32 @@ def App():
         expand=True,
     )
 
+    # 关闭脏标签确认弹层
+    _pending = confirm_close
+    if _pending and len(_pending) == 1 and 0 <= _pending[0] < len(tabs):
+        _pending_label = _file_name(tabs[_pending[0]]["file_path"])
+        _pending_save_label = "保存并关闭"
+    elif _pending and len(_pending) > 1:
+        _pending_label = f"{len(_pending)} 个标签"
+        _pending_save_label = "全部保存并关闭"
+    else:
+        _pending_label = ""
+        _pending_save_label = "保存并关闭"
+    confirm_dialog = ConfirmCloseDialog(
+        visible=bool(_pending),
+        file_name=_pending_label,
+        save_label=_pending_save_label,
+        theme_mode=theme_mode,
+        on_save_and_close=lambda: page_ref.current.run_task(_save_and_close_pending),
+        on_close_without_save=_close_without_save,
+        on_cancel=_cancel_close,
+    )
+
     return ft.Stack(
         controls=[
             main_col,
             settings_view,
+            confirm_dialog,
         ],
         expand=True,
     )

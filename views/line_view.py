@@ -113,15 +113,31 @@ def _hit_test_segs(
         w = measure_text_width(display, font, size)
         if x < acc + w or i == seg_to_excl - 1:
             local_x = x - acc
-            # 逐字逼近：找到宽度 >= local_x 的最小前缀
+            # 中点吸附：找到 local_x 落入的字符区间 [prev_w, cur_w)，
+            # 比较与中点决定光标落在该字符前(左半, j-1)或后(右半, j)。
+            # 修复最左边缘 local_x=0 → 中点 (0+w1)/2 > 0 → 落左半 → disp_off=0
+            # （原「宽度 >= local_x」阈值会落到第 1 字符之后，off-by-one）。
             disp_off = len(display)
+            prev_w = 0.0
             for j in range(1, len(display) + 1):
-                if measure_text_width(display[:j], font, size) >= local_x:
-                    disp_off = j
+                cur_w = measure_text_width(display[:j], font, size)
+                if local_x < cur_w:
+                    mid = (prev_w + cur_w) / 2
+                    disp_off = j if local_x >= mid else j - 1
                     break
+                prev_w = cur_w
             return (i, _display_to_raw_offset(seg, disp_off))
         acc += w
     return (-1, -1)
+
+
+def _hit_test_x(line: Line, x: float, base: int, line_height: float = 1.6) -> tuple[int, int]:
+    """y 无关命中测试：直接对全行段做 x 命中（供跨行拖拽复用）。
+
+    与 _hit_test_tap 的区别：不基于 y 判定多行（y 固定 0.0），
+    用于跨行 pan 时用同一 x 列定位目标行偏移。返回 (seg_idx, raw_offset)。
+    """
+    return _hit_test_segs(line, 0, len(line.segments), x, 0.0, base, line_height)
 
 
 def _hit_test_code(code: str, x: float, y: float, base: int) -> int:
@@ -147,14 +163,18 @@ def _hit_test_code(code: str, x: float, y: float, base: int) -> int:
     row = int((y - code_start_y) // line_h)
     row = max(0, min(row, len(lines) - 1))
 
-    # 用 measure_text_width 逐字逼近列号
+    # 中点吸附：用 measure_text_width 逐字逼近列号
     line_text = lines[row]
     local_x = x - code_start_x
     col = len(line_text)
+    prev_w = 0.0
     for j in range(1, len(line_text) + 1):
-        if measure_text_width(line_text[:j], FONT_MONO, base) >= local_x:
-            col = j
+        cur_w = measure_text_width(line_text[:j], FONT_MONO, base)
+        if local_x < cur_w:
+            mid = (prev_w + cur_w) / 2
+            col = j if local_x >= mid else j - 1
             break
+        prev_w = cur_w
 
     # 偏移 = 前面行的长度（含换行符）+ 当前列
     offset = sum(len(lines[i]) + 1 for i in range(row)) + col
@@ -320,6 +340,7 @@ def LineView(
     on_extend_outward: Callable[[int, int], None] | None = None,
     shift_pressed_ref: ft.Ref | None = None,
     on_clear_outward: Callable[[], None] | None = None,
+    on_hit_test_x: Callable[[int, float], int] | None = None,
 ):
     c = _current_colors()  # 当前主题颜色（亮/暗）
     base = block_text_size(line.block_type, line.level)
@@ -735,7 +756,12 @@ def LineView(
                 if si >= 0:
                     return (line_idx, _logical_raw_offset(line, si, offset))
                 return (line_idx, 0)
-            # 跨行：向上用大偏移（钳制到行尾），向下用 0（行首）
+            # 跨行：用同一 x 列命中目标行偏移（on_hit_test_x 可用时），
+            # 否则回退向上用大偏移（钳制到行尾）、向下用 0（行首）。
+            # 坐标一致性：各行 Container 横向 padding 均为 8，GestureDetector
+            # 包裹 Text，pos.x 相对 Text 起点，跨行可直接复用。
+            if on_hit_test_x is not None:
+                return (target_li, on_hit_test_x(target_li, pos.x))
             if line_dy < 0:
                 return (target_li, 999999)
             return (target_li, 0)
@@ -743,6 +769,11 @@ def LineView(
         def _on_pan_start(e: ft.DragStartEvent):
             if on_extend_outward is None:
                 return
+            # 拖拽起始：先清除已有选区，再以当前点为新起点起始选区
+            # （修复"再次拖拽仍以上次起点为起点"的 BUG：不清除则 on_extend_outward
+            # 走 _extend_outward 分支，保留旧 anchor）
+            if on_clear_outward is not None:
+                on_clear_outward()
             t_li, t_off = _pan_target_off(e.local_position)
             on_extend_outward(t_li, t_off)
 
@@ -827,6 +858,9 @@ def LineView(
         def _on_before_pan_start(e: ft.DragStartEvent):
             if on_extend_outward is None:
                 return
+            # 拖拽起始：先清除已有选区，再以当前点为新起点起始选区（同 _on_pan_start）
+            if on_clear_outward is not None:
+                on_clear_outward()
             pos = e.local_position
             if pos is not None:
                 si, offset = _hit_test_segs(line, 0, active_seg, pos.x, pos.y, base, line_height)
@@ -881,6 +915,9 @@ def LineView(
         def _on_after_pan_start(e: ft.DragStartEvent):
             if on_extend_outward is None:
                 return
+            # 拖拽起始：先清除已有选区，再以当前点为新起点起始选区（同 _on_pan_start）
+            if on_clear_outward is not None:
+                on_clear_outward()
             pos = e.local_position
             if pos is not None:
                 si, offset = _hit_test_segs(

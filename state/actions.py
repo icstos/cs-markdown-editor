@@ -41,10 +41,12 @@ class EditorActions:
     move_right: Callable[[], None]
     move_home: Callable[[], None]
     move_end: Callable[[], None]
-    move_line_start: Callable[[], None]
-    move_line_end: Callable[[], None]
+    move_doc_start: Callable[[], None]  # Ctrl+Home：跳到文档首行
+    move_doc_end: Callable[[], None]  # Ctrl+End：跳到文档末行
     move_up: Callable[[], None]
     move_down: Callable[[], None]
+    page_up: Callable[[], None]  # PageUp：编辑态光标上移一页 / 浏览态纯滚动
+    page_down: Callable[[], None]  # PageDown：编辑态光标下移一页 / 浏览态纯滚动
 
     # ---- 删除 / 缩进 ----
     backspace_core: Callable[[], None]

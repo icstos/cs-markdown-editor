@@ -149,6 +149,16 @@ class KeyDispatcher:
             cb["prev_tab"]()
             return
 
+        # PageUp / PageDown：两层均生效（编辑态光标翻页跟随，浏览态纯滚动）。
+        # 置于 layer 判定之前，确保浏览态也能响应。outward_sel 激活时顶部拦截块
+        # 不匹配 pageup/pagedown 会 fall-through 到此，active is None → 浏览态纯滚动。
+        if norm == "pageup" and actions is not None:
+            actions.page_up()
+            return
+        if norm == "pagedown" and actions is not None:
+            actions.page_down()
+            return
+
         layer = "edit" if actions is not None and actions.active is not None else "browse"
         shortcuts = self._shortcut_mgr.get(layer)
 
@@ -182,10 +192,10 @@ class KeyDispatcher:
         从编辑态起始 outward 选区（active is not None, outward_sel is None）。
         """
         if norm == "home":
-            actions.move_line_start() if e.ctrl else actions.move_home()
+            actions.move_doc_start() if e.ctrl else actions.move_home()
             return True
         if norm == "end":
-            actions.move_line_end() if e.ctrl else actions.move_end()
+            actions.move_doc_end() if e.ctrl else actions.move_end()
             return True
         if norm == "arrowup":
             if e.shift and actions.extend_outward_up is not None:

@@ -26,10 +26,11 @@ from styles import (
     FONT_MAIN,
     FONT_MONO,
     _current_colors,
+    block_text_size,
     only_border,
 )
 from views.code_block_view import CodeBlockEditor
-from views.line_view import LineView
+from views.line_view import LineView, _hit_test_tap
 from views.table_view import TableView
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
 
@@ -214,8 +215,15 @@ def MarkdownEditor(
     # 原文模式：切换到原始 Markdown 文本编辑
     raw_mode, set_raw_mode = ft.use_state(False)
     raw_draft, set_raw_draft = ft.use_state("")
-    # ListView ref 用于 TOC 点击跳转滚动
+    # ListView ref 用于 TOC 点击跳转滚动 + 导航滚动入视
     list_view_ref = ft.use_ref(None)
+    # 视口滚动跟踪（on_scroll 上报）：用于 _ensure_visible 判断目标行是否可见
+    scroll_offset_ref = ft.use_ref(0.0)  # 当前滚动偏移（像素）
+    viewport_h_ref = ft.use_ref(0.0)  # 视口可见高度（像素）
+    max_scroll_ref = ft.use_ref(0.0)  # 最大滚动范围（像素）
+    # 记忆列：垂直导航时记录的行级 raw 偏移，跨短行后回到原列（VS Code 风格）。
+    # 水平移动 / Home/End / Ctrl+Home/End / 点击 / 输入时清空为 None。
+    preferred_col_ref = ft.use_ref(None)
     # SelectionArea 当前选中的纯文本（on_change 上报），供 Backspace 删除选区
     selection_text_ref = ft.use_ref("")
     # 撤销 / 重做栈
@@ -468,8 +476,12 @@ def MarkdownEditor(
             set_table_selected_cell(cell_idx)
             set_table_cell(cell_idx)
             _goto(li, seg_idx=None, cursor_at=-1, table_cell_idx=cell_idx)
+            preferred_col_ref.current = None
+            _ensure_visible(li)
             return
         _goto(li, seg_idx=seg_idx, cursor_at=cursor_at)
+        preferred_col_ref.current = None
+        _ensure_visible(li)
 
     # ---- 段间/行间光标导航（由外层 on_key 经 nav_ref 调用）----
     def _nav_blocked(line: Line) -> bool:
@@ -487,6 +499,7 @@ def MarkdownEditor(
             return
         if cursor_ref.current.extent > 0:
             return  # 不在段首
+        preferred_col_ref.current = None  # 水平跨段移动：清空记忆列
         seg_idx = active_seg if active_seg is not None else 0
         # 段内：跳上一段段尾
         if seg_idx > 0:
@@ -516,6 +529,7 @@ def MarkdownEditor(
             return
         if cursor_ref.current.extent < len(draft_ref.current):
             return  # 不在段尾
+        preferred_col_ref.current = None  # 水平跨段移动：清空记忆列
         seg_idx = active_seg if active_seg is not None else 0
         # 段内：跳下一段段首
         if seg_idx < len(line.segments) - 1:
@@ -537,6 +551,8 @@ def MarkdownEditor(
             return
         commit_active(draft_ref.current)
         _goto(li, seg_idx=0, cursor_at=0)
+        preferred_col_ref.current = None
+        _ensure_visible(li)
 
     def move_end():
         """End：跳到本行末段段尾。"""
@@ -548,6 +564,8 @@ def MarkdownEditor(
         last_seg = max(0, len(document.lines[li].segments) - 1)
         commit_active(draft_ref.current)
         _goto(li, seg_idx=last_seg, cursor_at=-1)
+        preferred_col_ref.current = None
+        _ensure_visible(li)
 
     def _vertical_cursor_offset(line: Line, target_x_chars: int) -> int:
         """估算上下行垂直导航的目标 raw 偏移。
@@ -558,71 +576,82 @@ def MarkdownEditor(
         """
         return max(0, min(target_x_chars, len(_line_raw(line))))
 
+    def _vertical_goto(target_li: int):
+        """垂直导航到 target_li 行，使用记忆列定位目标行 raw 偏移。
+
+        首次垂直移动记录当前行级 raw 偏移为 preferred_col；后续垂直移动
+        复用该列，跨短行后回到原列（VS Code 风格）。围栏块走 _goto_quiet。
+        供 move_up / move_down / page_up / page_down 复用。
+        """
+        if not (0 <= target_li < len(document.lines)):
+            return
+        if active is None:
+            return
+        seg_idx = active_seg if active_seg is not None else 0
+        cur_line = document.lines[active]
+        cur_offset = (
+            sum(len(cur_line.segments[i].raw) for i in range(seg_idx))
+            + cursor_ref.current.extent
+        )
+        if preferred_col_ref.current is None:
+            preferred_col_ref.current = cur_offset
+        col = preferred_col_ref.current
+        commit_active(draft_ref.current)
+        target_line = document.lines[target_li]
+        if _is_fence(target_line):
+            _goto_quiet(target_li, seg_idx=None, cursor_at=-1)
+        else:
+            target_seg, seg_offset = _locate_seg_by_raw_offset(target_line, col)
+            _goto(target_li, seg_idx=target_seg, cursor_at=seg_offset)
+        _ensure_visible(target_li)
+
     def move_up():
-        """上键：跳到上一行，定位到对应行级 raw 偏移所在段。"""
+        """上键：跳到上一行，使用记忆列定位（VS Code 风格）。"""
         if active is None:
             return
         li = active
         if li <= 0:
             return
-        target = cursor_ref.current.extent
-        seg_idx = active_seg if active_seg is not None else 0
-        cur_line = document.lines[li]
-        # 计算行级 raw 偏移（前段 raw + 段内偏移）
-        line_offset = sum(len(cur_line.segments[i].raw) for i in range(seg_idx)) + target
-        commit_active(draft_ref.current)
-        prev_line = document.lines[li - 1]
-        if _is_fence(prev_line):
-            _goto_quiet(li - 1, seg_idx=None, cursor_at=-1)
-            return
-        target_seg, seg_offset = _locate_seg_by_raw_offset(prev_line, line_offset)
-        _goto(li - 1, seg_idx=target_seg, cursor_at=seg_offset)
+        _vertical_goto(li - 1)
 
     def move_down():
-        """下键：跳到下一行，定位到对应行级 raw 偏移所在段。"""
+        """下键：跳到下一行，使用记忆列定位（VS Code 风格）。"""
         if active is None:
             return
         li = active
         if li >= len(document.lines) - 1:
             return
-        target = cursor_ref.current.extent
-        seg_idx = active_seg if active_seg is not None else 0
-        cur_line = document.lines[li]
-        line_offset = sum(len(cur_line.segments[i].raw) for i in range(seg_idx)) + target
-        commit_active(draft_ref.current)
-        next_line = document.lines[li + 1]
-        if _is_fence(next_line):
-            _goto_quiet(li + 1, seg_idx=None, cursor_at=-1)
-            return
-        target_seg, seg_offset = _locate_seg_by_raw_offset(next_line, line_offset)
-        _goto(li + 1, seg_idx=target_seg, cursor_at=seg_offset)
+        _vertical_goto(li + 1)
 
-    def move_line_start():
-        """Ctrl+Home：跳到本行首段段首。"""
-        if active is None:
+    def move_doc_start():
+        """Ctrl+Home：跳到文档首行首段段首。"""
+        if not document.lines:
             return
-        li = active
-        if not (0 <= li < len(document.lines)):
-            return
-        line = document.lines[li]
-        if _nav_blocked(line):
-            return
-        commit_active(draft_ref.current)
-        _goto(li, seg_idx=0, cursor_at=0)
+        if active is not None:
+            commit_active(draft_ref.current)
+        first_line = document.lines[0]
+        if _is_fence(first_line):
+            _goto_quiet(0, seg_idx=None, cursor_at=-1)
+        else:
+            _goto(0, seg_idx=0, cursor_at=0)
+        preferred_col_ref.current = None
+        _ensure_visible(0)
 
-    def move_line_end():
-        """Ctrl+End：跳到本行末段段尾。"""
-        if active is None:
+    def move_doc_end():
+        """Ctrl+End：跳到文档末行末段段尾。"""
+        if not document.lines:
             return
-        li = active
-        if not (0 <= li < len(document.lines)):
-            return
-        line = document.lines[li]
-        if _nav_blocked(line):
-            return
-        last_seg = max(0, len(line.segments) - 1)
-        commit_active(draft_ref.current)
-        _goto(li, seg_idx=last_seg, cursor_at=-1)
+        if active is not None:
+            commit_active(draft_ref.current)
+        last = len(document.lines) - 1
+        last_line = document.lines[last]
+        if _is_fence(last_line):
+            _goto_quiet(last, seg_idx=None, cursor_at=-1)
+        else:
+            last_seg = max(0, len(last_line.segments) - 1)
+            _goto(last, seg_idx=last_seg, cursor_at=-1)
+        preferred_col_ref.current = None
+        _ensure_visible(last)
 
     def _first_content_index(line: Line) -> int:
         for i, s in enumerate(line.segments):
@@ -835,6 +864,7 @@ def MarkdownEditor(
         n = len(value)
         cursor_ref.current.draft_len = n
         set_cursor_pos(-1)  # 清除强制光标位置，让 on_selection_change 接管
+        preferred_col_ref.current = None  # 输入：清空记忆列
         # 段级编辑：前后段保持静态渲染态，仅激活段 TextField 显示原生 Markdown，
         # 无需 staging reparse。提交时（blur/跨段/工具栏）才由 commit_active 重构整行 reparse。
 
@@ -1566,7 +1596,7 @@ def MarkdownEditor(
 
     def _start_outward(target_li: int, target_off: int) -> None:
         """从当前编辑光标起始向外选区，扩展到 (target_li, target_off)。"""
-        if active is None or outward_sel is not None:
+        if active is None or outward_sel_ref.current is not None:
             return
         if not (0 <= target_li < len(document.lines)):
             return
@@ -1591,8 +1621,12 @@ def MarkdownEditor(
 
         用于非编辑模式拖动选区（active=None）和编辑模式拖动（on_blur 在 on_pan_start
         之前触发，导致 active 已被清除）。anchor 为选区起点，target 为当前终点。
+
+        读 outward_sel_ref.current（而非闭包 outward_sel）：on_pan_start 会先调
+        on_clear_outward 同步置空 ref，但闭包变量在此帧仍是旧值，guard 会误判返回，
+        导致"再次拖拽仍以上次起点为起点"的 BUG。
         """
-        if outward_sel is not None:
+        if outward_sel_ref.current is not None:
             return
         if not (0 <= anchor_li < len(document.lines) and 0 <= target_li < len(document.lines)):
             return
@@ -1607,13 +1641,18 @@ def MarkdownEditor(
         _set_outward_sel((anchor_li, anchor_off, target_li, target_off))
 
     def _extend_outward(target_li: int, target_off: int) -> None:
-        """已存在向外选区时，保留 anchor，更新 active 端点。"""
-        if outward_sel is None:
+        """已存在向外选区时，保留 anchor，更新 active 端点。
+
+        读 outward_sel_ref.current（与 _extend_outward_step 一致）：连续 pan_update
+        在同一渲染帧内触发时，闭包 outward_sel 是 stale 的，需读 ref 镜像拿最新 anchor。
+        """
+        current = outward_sel_ref.current
+        if current is None:
             return _start_outward(target_li, target_off)
         if not (0 <= target_li < len(document.lines)):
             return
         target_off = max(0, min(target_off, len(document.lines[target_li].raw or "")))
-        a_li, a_off, _, _ = outward_sel
+        a_li, a_off, _, _ = current
         _set_outward_sel((a_li, a_off, target_li, target_off))
 
     def _extend_outward_step(step_fn) -> None:
@@ -1647,12 +1686,17 @@ def MarkdownEditor(
 
     def clear_outward_sel() -> None:
         """取消向外选区（Esc、非 Shift 点击等）。"""
-        if outward_sel is not None:
+        if outward_sel_ref.current is not None:
             _set_outward_sel(None)
 
     def on_extend_outward(target_li: int, target_off: int) -> None:
-        """LineView Shift+Click / 拖动选区回调：起始或扩展向外选区。"""
-        if outward_sel is None:
+        """LineView Shift+Click / 拖动选区回调：起始或扩展向外选区。
+
+        读 outward_sel_ref.current（而非闭包 outward_sel）：on_pan_start 会先调
+        on_clear_outward 同步置空 ref，但闭包变量在此帧仍是旧值，会误走 _extend_outward
+        分支保留旧 anchor——"再次拖拽仍以上次起点为起点"的 BUG 根因。
+        """
+        if outward_sel_ref.current is None:
             # 无选区时：若有 active 编辑段，从编辑光标起始；否则从点击/拖动点起始
             if active is not None:
                 _start_outward(target_li, target_off)
@@ -1779,6 +1823,128 @@ def MarkdownEditor(
             except Exception:
                 pass
 
+    # ---- 视口滚动跟踪与导航滚动入视 ----
+    def _on_scroll(e):
+        """跟踪 Column 滚动位置，供 _ensure_visible 判断目标行可见性。"""
+        scroll_offset_ref.current = getattr(e, "pixels", 0.0) or 0.0
+        viewport_h_ref.current = getattr(e, "viewport_dimension", 0.0) or 0.0
+        max_scroll_ref.current = getattr(e, "max_scroll_extent", 0.0) or 0.0
+
+    def _safe_scroll_to(li: int):
+        """滚动使目标行入视（复用 jump_to 的 try/except RuntimeError 模板）。
+
+        切换标签/文档时编辑器重挂载，旧 Column 可能已脱离 page，
+        scroll_to 抛 RuntimeError —— 静默忽略即可。
+        """
+        page = ft.context.page
+        lv = list_view_ref.current
+        if page is None or lv is None:
+            return
+
+        async def _scroll():
+            try:
+                await lv.scroll_to(scroll_key=f"line-{li}")
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
+
+        page.run_task(_scroll)
+
+    def _ensure_visible(li: int):
+        """导航后确保目标行在视口内，否则滚动入视。
+
+        估算目标行像素 Y（基于平均行高 = (max_scroll+vh)/行数）；
+        若 target_y 不在可见区间 [so-avg, so+vh-avg] 则滚动到该行。
+        视口尺寸未知时保守不滚动（初始加载态，光标通常已可见）。
+        """
+        if not (0 <= li < len(document.lines)):
+            return
+        so = scroll_offset_ref.current
+        vh = viewport_h_ref.current
+        ms = max_scroll_ref.current
+        n = len(document.lines)
+        if vh <= 0 or n <= 0:
+            return  # 视口尺寸未知：保守不滚动
+        avg = (ms + vh) / n  # 平均每行像素高度（含间距）
+        if avg <= 0:
+            return
+        target_y = li * avg
+        # 可见区间（留一行余量避免贴边判定）
+        if so - avg <= target_y <= so + vh - avg:
+            return
+        _safe_scroll_to(li)
+
+    def _hit_test_line_x(li: int, x: float) -> int:
+        """跨行拖拽 x 列命中：返回目标行 raw 偏移。
+
+        围栏/表格块回退行尾；否则用 _hit_test_tap 命中后转 raw 偏移。
+        供 LineView 的 on_hit_test_x 回调使用。
+        """
+        if not (0 <= li < len(document.lines)):
+            return 0
+        line = document.lines[li]
+        if _is_fence(line) or line.block_type == BlockType.TABLE:
+            return len(_line_raw(line))
+        base = block_text_size(line.block_type, line.level)
+        si, off = _hit_test_tap(line, x, 0.0, base, line_height)
+        if si < 0:
+            return len(_line_raw(line))
+        return _line_raw_offset(li, si, off)
+
+    # ---- PageUp / PageDown ----
+    def _page_rows() -> int:
+        """估算一页可容纳的行数。"""
+        lh = body_font_size * line_height
+        if lh <= 0:
+            return 1
+        vh = viewport_h_ref.current
+        if vh > 0:
+            return max(1, int(vh / lh))
+        # 视口高度未知：用窗口高度估算（减去工具栏/状态栏等 chrome ≈140）
+        page = ft.context.page
+        win_h = getattr(getattr(page, "window", None), "height", 0) or 0
+        if win_h > 0:
+            return max(1, int((win_h - 140) / lh))
+        return max(1, int(600 / lh))
+
+    def _scroll_by_page(direction: int):
+        """浏览态纯滚动：按一页视口高度滚动（direction: -1 上 / 1 下）。"""
+        page = ft.context.page
+        lv = list_view_ref.current
+        if page is None or lv is None:
+            return
+        vh = viewport_h_ref.current
+        if vh <= 0:
+            return
+        delta = direction * vh
+
+        async def _scroll():
+            try:
+                await lv.scroll_to(delta=delta)
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
+
+        page.run_task(_scroll)
+
+    def page_up():
+        """PageUp：编辑态光标上移一页（记忆列），浏览态纯滚动。"""
+        if active is None:
+            _scroll_by_page(-1)
+            return
+        target = max(0, active - _page_rows())
+        _vertical_goto(target)
+
+    def page_down():
+        """PageDown：编辑态光标下移一页（记忆列），浏览态纯滚动。"""
+        if active is None:
+            _scroll_by_page(1)
+            return
+        target = min(len(document.lines) - 1, active + _page_rows())
+        _vertical_goto(target)
+
     # ---- TOC 跳转 ----
     def jump_to(li: int):
         if not (0 <= li < len(document.lines)):
@@ -1830,10 +1996,12 @@ def MarkdownEditor(
             move_right=move_right_cross,
             move_home=move_home,
             move_end=move_end,
-            move_line_start=move_line_start,
-            move_line_end=move_line_end,
+            move_doc_start=move_doc_start,
+            move_doc_end=move_doc_end,
             move_up=move_up,
             move_down=move_down,
+            page_up=page_up,
+            page_down=page_down,
             backspace_core=backspace_core,
             delete_core=delete_core,
             indent_or_outdent=indent_or_outdent,
@@ -1977,6 +2145,7 @@ def MarkdownEditor(
                     on_extend_outward=on_extend_outward,
                     shift_pressed_ref=shift_pressed_ref,
                     on_clear_outward=clear_outward_sel,
+                    on_hit_test_x=_hit_test_line_x,
                 )
             )
         i += 1
@@ -2139,6 +2308,7 @@ def MarkdownEditor(
                                 expand=True,
                                 spacing=0,  # 行间无间距：避免行间空白死区导致点击无效
                                 scroll=ft.ScrollMode.AUTO,
+                                on_scroll=_on_scroll,
                             ),
                             width=content_max_width,
                             alignment=ft.Alignment.TOP_LEFT,

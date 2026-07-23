@@ -32,7 +32,10 @@
       "toggle_theme": "ctrl+shift+l",
       "toggle_raw": "ctrl+/",
       "open_settings": "ctrl+comma",
-      "focus_mode": "ctrl+k"
+      "focus_mode": "ctrl+k",
+      "close_tab": "ctrl+w",
+      "next_tab": "ctrl+tab",
+      "prev_tab": "ctrl+shift+tab"
     },
     "edit": {
       "save": "ctrl+s",

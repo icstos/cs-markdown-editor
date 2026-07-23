@@ -2049,7 +2049,7 @@ def MarkdownEditor(
 
     def _on_key_down(e):
         key = (getattr(e, "key", "") or "").lower()
-        # Flet 0.86.1 KeyDownEvent 只有 key 字段，无 ctrl/shift/meta。
+        # Flet 0.86.2 KeyDownEvent 只有 key 字段，无 ctrl/shift/meta。
         # 用 shift_pressed_ref 跟踪 Shift 状态（_on_key_up 释放时清零）。
         # KeyDownEvent.key 对 Shift 可能返回 "Shift Left" / "Shift Right"，
         # 用 startswith 兼容所有变体。主同步源为 KeyDispatcher.handle() 的 e.shift。
@@ -2088,7 +2088,7 @@ def MarkdownEditor(
             code_editor.enter()
 
     def _on_key_up(e):
-        """跟踪 Shift 释放：Flet 0.86.1 KeyUpEvent 仅 key 字段，无修饰键。
+        """跟踪 Shift 释放：Flet 0.86.2 KeyUpEvent 仅 key 字段，无修饰键。
 
         page.on_keyboard_event 仅在 key-down 触发，无法捕获 Shift 单独释放；
         KeyboardListener.on_key_up 是 Shift 释放信号的唯一来源。

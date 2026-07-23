@@ -25,7 +25,7 @@ from views.status_bar import StatusBar
 
 _SAMPLE = r"""# Markdown 编辑器
 
-基于 Flet 0.86.1 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
+基于 Flet 0.86.2 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
 
 ## 特性
 - 所见即所得

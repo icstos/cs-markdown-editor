@@ -1,6 +1,6 @@
 # Markdown 编辑器
 
-基于 [Flet](https://flet.dev) 0.86.1 声明式组件与 [mistune](https://mistune.lepture.com/) 实时解析，参考 [Typora](https://typora.io/) 的段级所见即所得（WYSIWYG）编辑体验。
+基于 [Flet](https://flet.dev) 0.86.2 声明式组件与 [mistune](https://mistune.lepture.com/) 实时解析，参考 [Typora](https://typora.io/) 的段级所见即所得（WYSIWYG）编辑体验。
 
 点击任意段即显示其最小 Markdown 语法，其余保持渲染样式——这是与传统「源码 / 预览」双栏编辑器最大的不同。
 
@@ -58,7 +58,7 @@
 
 | 依赖 | 用途 |
 |------|------|
-| [Flet](https://flet.dev) ≥ 0.86.1 | 声明式 GUI（`@ft.component` + `use_state` / `use_effect` + `@ft.observable`） |
+| [Flet](https://flet.dev) ≥ 0.86.2 | 声明式 GUI（`@ft.component` + `use_state` / `use_effect` + `@ft.observable`） |
 | [mistune](https://mistune.lepture.com/) ≥ 3.0 | 行内 AST 解析；HTML 导出（含 strikethrough / mark / 上下标 / 表格等插件） |
 | [Pillow](https://pillow.readthedocs.io/) ≥ 10.0 | 文本像素宽度测量（编辑块自适应）+ 图片尺寸读取与缩放 |
 
@@ -199,7 +199,6 @@ cs-markdown-editor/
 ├── styles.py            # 主题配色、段→TextStyle、标题字重、列表色阶、文本测量
 ├── settings.json        # 用户设置（内容宽度、边距、字号、行高、主题、代码高亮等）
 ├── pyproject.toml       # 项目元数据与依赖
-├── _verify_step1_2.py   # 自动化验证：拼接一致性 / staging reparse / 段定位往返
 ├── assets/
 │   ├── fonts/
 │   │   └── AlibabaPuHuiTi-3-55-Regular.otf
@@ -249,7 +248,7 @@ cs-markdown-editor/
 - **块级前缀也是段**：`#`、`-`、`>` 统一抽象为 `Segment`；标题在阅读态隐藏前缀、编辑态整行原文
 - **主题同步渲染**：`App` 在渲染期间同步写入 `page.theme_mode`，保证子组件 `_current_colors()` 取色与切换一致
 - **向外选区路由拦截**：`outward_sel` 激活时 `active is None` → `layer=browse` → `_handle_edit_nav` 不被调用；在 `KeyDispatcher.handle` 顶部加拦截块，在 layer 判定前优先路由 BackSpace / Delete / Ctrl+X / Escape / Shift+Arrow 到 outward handlers
-- **Shift 键状态跟踪**：Flet 0.86.1 的 `TapEvent` 无修饰键字段、`KeyDownEvent` 无 ctrl / shift 字段；用 `KeyboardListener.on_key_down`（key=="shift" → True）+ `on_key_up`（key=="shift" → False）跟踪 Shift 状态，`shift_pressed_ref` 传给 LineView 检测 Shift+Click
+- **Shift 键状态跟踪**：Flet 0.86.2 的 `TapEvent` 无修饰键字段、`KeyDownEvent` 无 ctrl / shift 字段；用 `KeyboardListener.on_key_down`（key=="shift" → True）+ `on_key_up`（key=="shift" → False）跟踪 Shift 状态，`shift_pressed_ref` 传给 LineView 检测 Shift+Click
 - **段内剪切同步执行**：`handle_segment_cut_sync` 同步捕获选区 + 剪切 + 提交（不通过 `page.run_task`），在原生 TextField 剪切前完成；原生剪切产生的 `on_change` 因值相等被 `on_change_draft` 去重跳过，避免「已剪切 draft + 旧光标选区」竞态导致双份剪切；剪贴板写入由 `handle_segment_cut_clipboard` 异步执行
 - **`EditorActions` 替代 `nav_ref` 字典**：旧 `nav_ref.current = {20+ 字符串 key}` 字典改为 `EditorActions` dataclass，必填字段构造时校验，避免 `nav.get("xxx")` 静默失败
 

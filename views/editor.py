@@ -1785,8 +1785,20 @@ def MarkdownEditor(
             return
         # scroll_to 是 async 方法，通过 run_task 调度执行
         page = ft.context.page
-        if page is not None and (lv := list_view_ref.current) is not None:
-            page.run_task(lv.scroll_to, scroll_key=f"line-{li}")
+        lv = list_view_ref.current
+        if page is not None and lv is not None:
+            async def _safe_scroll():
+                # 切换标签/文档时编辑器会因 key=session 重挂载，旧 Column 可能已脱离
+                # page，此时 scroll_to 会抛 RuntimeError("Control must be added to the
+                # page first") —— 静默忽略即可（跳转目标已随旧实例卸载，无需滚动）。
+                try:
+                    await lv.scroll_to(scroll_key=f"line-{li}")
+                except RuntimeError:
+                    pass
+                except Exception:
+                    pass
+
+            page.run_task(_safe_scroll)
         _goto(li, seg_idx=_first_content_seg(document.lines[li]), cursor_at=0)
 
     # ---- 同步导航接口给外层 on_key（nav_ref）----

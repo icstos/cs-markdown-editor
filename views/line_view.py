@@ -550,7 +550,7 @@ def LineView(
         # 行号 gutter 宽度按代码行数位数自适应，避免长代码块行号被挤压
         line_count = max(1, code.count("\n") + 1)
         digits = len(str(line_count))
-        gutter_width = max(48, 24 + digits * 12)
+        gutter_width = max(48, 24 + digits * 12)+8
         gutter_bg = ft.Colors.with_opacity(0.22 if is_dark else 0.04, c.text)
         # 编辑器高度按行数自适应；on_change_code 在行数变化时触发重渲染以更新高度
         editor_height = max(line_count * 20 + 16, 52)
@@ -562,7 +562,7 @@ def LineView(
             code_theme=code_theme,
             gutter_style=GutterStyle(
                 width=gutter_width,
-                margin=0,
+                margin=8,
                 show_line_numbers=True,
                 show_errors=False,
                 show_folding_handles=False,

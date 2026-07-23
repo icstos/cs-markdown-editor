@@ -30,7 +30,7 @@ from styles import (
     only_border,
 )
 from views.line_view import LineView, _hit_test_tap
-from views.table_view import TableView
+from views.table_view import TableView, _join_row
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
 
 
@@ -47,8 +47,13 @@ _WRAP_MAP: dict[SegType, str] = {
     SegType.STRIKE: "~~",
 }
 
-# 围栏块（CODE/MATH/HR/TOC）：多行编辑，方向键在块内处理，BackSpace/Delete 不触发行合并
-_FENCE_BLOCKS = (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC)
+# 特殊块（CODE/MATH/HR/TOC/TABLE）：自管理独立岛屿，不参与跨段/跨行光标导航，
+# 行首 BackSpace / 行尾 Delete 不与相邻行合并。CODE/MATH 多行编辑，TABLE 由
+# TableView 自管理编辑。方向键越界时走 _goto_quiet（设 active 但不激活段编辑器）。
+_FENCE_BLOCKS = (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC, BlockType.TABLE)
+
+# 表格分隔行单元格正则：:--- / ---: / :---: / ---
+_ALIGN_RE_TABLE = re.compile(r"^:?-{3,}:?$")
 
 
 def _is_fence(line: Line) -> bool:
@@ -186,9 +191,7 @@ def MarkdownEditor(
     show_toolbar = settings.get("show_toolbar", True)
     active, set_active = ft.use_state(None)  # line_idx | None（Typora 式行级编辑）
     active_seg, set_active_seg = ft.use_state(None)  # seg_idx | None（段级编辑：当前编辑段）
-    table_cell, set_table_cell = ft.use_state(None)  # 当前表格编辑列 | None
-    table_selected_cell, set_table_selected_cell = ft.use_state(None)  # 当前表格选中列 | None
-    draft, set_draft = ft.use_state("")  # 当前编辑段 raw（inline 块）或段内容（CODE/MATH/TABLE）
+    draft, set_draft = ft.use_state("")  # 当前编辑段 raw（inline 块）或段内容（CODE/MATH）
     cursor_line, set_cursor_line = ft.use_state(0)
     # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
     # 仅在跨行导航/块切换时通过 _sync_cursor 重置；on_key 经 nav_ref 读取
@@ -246,6 +249,11 @@ def MarkdownEditor(
     # 代码块行数变化计数器：on_change_code 仅在代码行数变化时递增触发重渲染，
     # 以更新 CodeEditor 高度；普通字符输入走原地变更不重渲染（避免光标跳动）。
     code_height_version, set_code_height_version = ft.use_state(0)
+    # 表格聚焦行索引：TableView 是自管理的独立可编辑岛屿（不纳入 active/draft 系统），
+    # table_focus_ref 跟踪当前聚焦的表格起始行，供 KeyDispatcher 跳过全局导航/剪贴板键。
+    # table_nav_ref 存储 TableView 的导航函数，供 _on_key_down 调用 Tab/Escape。
+    table_focus_ref = ft.use_ref(None)
+    table_nav_ref = ft.use_ref(None)
 
     # 渲染后显式聚焦激活段 TextField：SelectionArea 内点击 span 触发的
     # autofocus 因手势竞争不可靠，用 use_effect 在渲染提交后调用 focus() 确保聚焦。
@@ -364,17 +372,14 @@ def MarkdownEditor(
         cells = _table_cells(line)
         return cells[cell_idx] if 0 <= cell_idx < len(cells) else ""
 
-    def _draft_for(li: int, seg_idx: int | None = None, table_cell_idx: int | None = None) -> str:
+    def _draft_for(li: int, seg_idx: int | None = None) -> str:
         """获取激活段的 draft 文本。
 
-        - 表格：返回 cell 内容
         - CODE/MATH：返回段内容（不含围栏）
         - inline 块（段落/标题/列表/引用/HR/TOC/BLANK）：返回激活段 raw（段级编辑）
         """
         if 0 <= li < len(document.lines):
             line = document.lines[li]
-            if line.block_type == BlockType.TABLE and table_cell_idx is not None:
-                return _table_cell_at(line, table_cell_idx)
             if line.block_type == BlockType.CODE:
                 return line.segments[0].text if line.segments else ""
             if line.block_type == BlockType.MATH:
@@ -420,12 +425,6 @@ def MarkdownEditor(
             parser.reparse_line(line, full)
         elif line.block_type == BlockType.HR:
             parser.reparse_line(line, raw if raw.strip() else "---")
-        elif line.block_type == BlockType.TABLE:
-            cell_idx = table_cell if table_cell is not None else 0
-            cells = _table_cells(line)
-            if cell_idx < len(cells):
-                cells[cell_idx] = raw
-            parser.reparse_line(line, "| " + " | ".join(cells) + " |")
         else:
             # inline 块（段落/标题/列表/引用/HR/TOC/BLANK）：段级重构整行 raw
             seg_idx = active_seg if active_seg is not None else 0
@@ -442,7 +441,6 @@ def MarkdownEditor(
         seg_idx: int | None = None,
         cursor_at: int = -1,
         skip_commit: bool = False,
-        table_cell_idx: int | None = None,
     ):
         """跨行/激活目标段：先提交当前段，再切换 draft+active+active_seg，递增 nav_seq
         触发 TextField key 重建以重新 autofocus。cursor_at: -1=段尾, 0=段首, >0=段内 raw 偏移。
@@ -450,16 +448,11 @@ def MarkdownEditor(
         skip_commit=True 跳过提交当前段——用于当前段即将被删除/移位的场景
         （如段首 Backspace 合并），避免把草稿提交到移位后的错误段。
         """
-        is_new_table_cell = (
-            0 <= li < len(document.lines)
-            and document.lines[li].block_type == BlockType.TABLE
-            and table_cell_idx != table_cell
-        )
-        if not skip_commit and active is not None and (active != li or is_new_table_cell):
+        if not skip_commit and active is not None and active != li:
             commit_active(draft_ref.current)
         if not (0 <= li < len(document.lines)):
             return
-        new_draft = _draft_for(li, seg_idx, table_cell_idx)
+        new_draft = _draft_for(li, seg_idx)
         actual_cursor = len(new_draft) if cursor_at < 0 else min(cursor_at, len(new_draft))
         _set_draft(new_draft)
         set_active(li)
@@ -470,20 +463,8 @@ def MarkdownEditor(
         set_nav_seq(nav_seq + 1)
 
     def activate(li: int, seg_idx: int | None = None, cursor_at: int = -1):
-        """激活段。cursor_at: -1=段尾, 0=段首, >0=段内 raw 偏移。
-
-        表格行：cursor_at 作为 cell 索引，走 table_cell 路径。
-        """
+        """激活段。cursor_at: -1=段尾, 0=段首, >0=段内 raw 偏移。"""
         if not (0 <= li < len(document.lines)):
-            return
-        line = document.lines[li]
-        if line.block_type == BlockType.TABLE:
-            cell_idx = cursor_at if cursor_at >= 0 else 0
-            set_table_selected_cell(cell_idx)
-            set_table_cell(cell_idx)
-            _goto(li, seg_idx=None, cursor_at=-1, table_cell_idx=cell_idx)
-            preferred_col_ref.current = None
-            _ensure_visible(li)
             return
         _goto(li, seg_idx=seg_idx, cursor_at=cursor_at)
         preferred_col_ref.current = None
@@ -722,8 +703,8 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块 / 块级公式 / 分隔线 / 目录 / 表格：整块编辑，行首 BackSpace 不处理
-        if _is_fence(line) or line.block_type == BlockType.TABLE:
+        # 特殊块（CODE/MATH/HR/TOC/TABLE）：整块编辑，行首 BackSpace 不处理
+        if _is_fence(line):
             return
         # 光标不在段首：交由 TextField 自身删除
         if cursor_ref.current.extent > 0:
@@ -775,8 +756,8 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块 / 块级公式 / 分隔线 / 目录 / 表格：整块编辑，行尾 Delete 不处理
-        if _is_fence(line) or line.block_type == BlockType.TABLE:
+        # 特殊块（CODE/MATH/HR/TOC/TABLE）：整块编辑，行尾 Delete 不处理
+        if _is_fence(line):
             return
         # 光标不在段尾：交由 TextField 原生 Delete 处理
         if cursor_ref.current.extent < len(draft_ref.current):
@@ -911,12 +892,11 @@ def MarkdownEditor(
         seg_idx: int | None = None,
         cursor_at: int = -1,
         skip_commit: bool = False,
-        table_cell_idx: int | None = None,
     ):
         """抑制 blur + 跨段/跨行导航的统一入口（段级：active=li, active_seg=seg_idx）。
 
         重渲染会导致旧 TextField 卸载触发 on_blur，覆盖 _goto 设置的 active；
-        先设 suppress_blur 抑制此次 blur。table_cell_idx 用于表格跨格导航。
+        先设 suppress_blur 抑制此次 blur。
         """
         suppress_blur.current = True
         _goto(
@@ -924,7 +904,6 @@ def MarkdownEditor(
             seg_idx=seg_idx,
             cursor_at=cursor_at,
             skip_commit=skip_commit,
-            table_cell_idx=table_cell_idx,
         )
 
     # ---- 代码块始终可编辑（CodeEditor 独立岛屿）----
@@ -1026,8 +1005,8 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
-        # 代码块/数学/HR/TOC 本身多行编辑或特殊块，不处理
-        if line.block_type in (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC):
+        # 特殊块（CODE/MATH/HR/TOC/TABLE）：自管理独立岛屿，不走段级粘贴
+        if _is_fence(line):
             return
 
         new_draft = draft_ref.current  # 粘贴后（换行符已剥离）
@@ -1195,75 +1174,160 @@ def MarkdownEditor(
         suppress_blur.current = True
         _goto_quiet(li + 1, seg_idx=target_seg, cursor_at=target_off)
 
-    def _table_move(delta: int):
-        if active is None or table_cell is None:
-            return
-        li = active
+    # ---- 表格始终可编辑（TableView 独立岛屿）----
+    # on_change_cell：原地更新单元格文本（不触发 observable 重渲染，避免光标跳动），
+    # 仅在行数变化时由 on_table_op 触发重渲染。历史撤销：on_table_focus 推基线快照，
+    # on_table_blur 标记可推，单次聚焦会话合并为一步。
+    def on_change_cell(li: int, cell_idx: int, value: str) -> None:
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         if line.block_type != BlockType.TABLE:
             return
         cells = _table_cells(line)
-        if not cells:
-            return
-        next_idx = table_cell + delta
-        if next_idx < 0:
-            prev_li = li - 1
-            while prev_li >= 0 and document.lines[prev_li].block_type != BlockType.TABLE:
-                prev_li -= 1
-            if prev_li < 0:
-                next_idx = 0
-            else:
-                prev_cells = _table_cells(document.lines[prev_li])
-                next_idx = len(prev_cells) - 1 if prev_cells else 0
-                li = prev_li
-        elif next_idx >= len(cells):
-            next_li = li + 1
-            while next_li < len(document.lines) and document.lines[next_li].block_type != BlockType.TABLE:
-                next_li += 1
-            if next_li < len(document.lines):
-                li = next_li
-                next_idx = 0
-            else:
-                next_idx = len(cells) - 1
-        if li == active and next_idx == table_cell:
-            return
-        commit_active(draft_ref.current)
-        suppress_blur.current = True
-        set_table_selected_cell(next_idx)
-        set_table_cell(next_idx)
-        _goto(li, cursor_at=-1, table_cell_idx=next_idx)
+        if cell_idx < len(cells):
+            old = cells[cell_idx]
+            if old == value:
+                return
+            cells[cell_idx] = value
+        new_raw = _join_row(cells)
+        line.raw = new_raw
+        if line.segments:
+            line.segments[0].text = new_raw
+            line.segments[0].raw = new_raw
+        _maybe_push_draft_history()
+        if not document.dirty:
+            mark_dirty()
 
-    def _table_tab(delta: int):
-        _table_move(delta)
+    def on_table_op(op: str, params: dict) -> None:
+        """表格结构操作：add_row / delete_row / clear_row / add_col / delete_col / set_align。
 
-    def _table_enter():
-        if active is None or table_cell is None:
-            return
-        li = active
-        if not (0 <= li < len(document.lines)):
-            return
-        line = document.lines[li]
-        if line.block_type != BlockType.TABLE:
-            return
-        cells = _table_cells(line)
-        if not cells:
-            return
-        if table_cell < len(cells) - 1:
-            _table_move(1)
-            return
-        if li + 1 < len(document.lines) and document.lines[li + 1].block_type == BlockType.TABLE:
-            commit_active(draft_ref.current)
-            suppress_blur.current = True
-            set_table_selected_cell(0)
-            set_table_cell(0)
-            _goto(li + 1, cursor_at=-1, table_cell_idx=0)
-            return
-        commit_active(draft_ref.current)
-        set_table_selected_cell(None)
-        set_table_cell(None)
-        set_active(None)
+        修改 document.lines 后通过 list(...) 触发 observable 重渲染。
+        """
+        _push_history()
+        undo_push_pending.current = True
+        lines = list(document.lines)
+
+        def _find_table_start_from_li(li: int) -> int:
+            """从任意表格行索引向上回溯找到表格起始行。"""
+            if not (0 <= li < len(lines)):
+                return li
+            j = li
+            while j > 0 and lines[j - 1].block_type == BlockType.TABLE:
+                j -= 1
+            return j
+
+        # table_start 优先取 params，否则从 after_li/li 回溯
+        ts = params.get("table_start")
+        if ts is None:
+            ref_li = params.get("after_li", params.get("li", 0))
+            ts = _find_table_start_from_li(ref_li)
+
+        def _find_table_range(start: int) -> tuple[int, int]:
+            """返回表格的 (start, end) 行索引（含 header + sep + data rows）。"""
+            i = start
+            while i < len(lines) and lines[i].block_type == BlockType.TABLE:
+                i += 1
+            return start, i - 1
+
+        def _find_sep_line(start: int) -> int:
+            """找到表格的分隔行索引（第二行）。"""
+            if start + 1 < len(lines) and lines[start + 1].block_type == BlockType.TABLE:
+                cells = [c.strip() for c in lines[start + 1].raw.strip().strip("|").split("|")]
+                if all(_ALIGN_RE_TABLE.fullmatch(c or "---") for c in cells):
+                    return start + 1
+            return start + 1
+
+        if op == "add_row":
+            after_li = params["after_li"]
+            col_count = params["col_count"]
+            new_raw = "| " + " | ".join([""] * col_count) + " |"
+            new_line = parser.parse_markdown(new_raw).lines[0]
+            lines.insert(after_li + 1, new_line)
+            document.lines = lines
+            mark_dirty()
+        elif op == "delete_row":
+            li = params["li"]
+            ts2, te2 = _find_table_range(ts)
+            # 统计数据行数（排除 header 和 sep）
+            data_indices = [
+                i for i in range(ts2, te2 + 1)
+                if i != ts2 and i != _find_sep_line(ts2)
+            ]
+            if li in data_indices and len(data_indices) > 1:
+                del lines[li]
+                document.lines = lines
+                mark_dirty()
+        elif op == "clear_row":
+            li = params["li"]
+            if 0 <= li < len(lines):
+                cells = _table_cells(lines[li])
+                new_raw = _join_row([""] * len(cells))
+                lines[li].raw = new_raw
+                if lines[li].segments:
+                    lines[li].segments[0].text = new_raw
+                    lines[li].segments[0].raw = new_raw
+                document.lines = lines
+                mark_dirty()
+        elif op == "add_col":
+            ts2, te2 = _find_table_range(ts)
+            col_idx = params["col_idx"]
+            sep_li = _find_sep_line(ts2)
+            for i in range(ts2, te2 + 1):
+                cells = _table_cells(lines[i])
+                if i == sep_li:
+                    cells.insert(col_idx, "---")
+                else:
+                    cells.insert(col_idx, "")
+                lines[i].raw = _join_row(cells)
+                if lines[i].segments:
+                    lines[i].segments[0].text = lines[i].raw
+                    lines[i].segments[0].raw = lines[i].raw
+            document.lines = lines
+            mark_dirty()
+        elif op == "delete_col":
+            ts2, te2 = _find_table_range(ts)
+            col_idx = params["col_idx"]
+            # 保护至少 1 列
+            sample_cells = _table_cells(lines[ts2])
+            if len(sample_cells) <= 1:
+                return
+            for i in range(ts2, te2 + 1):
+                cells = _table_cells(lines[i])
+                if col_idx < len(cells):
+                    del cells[col_idx]
+                lines[i].raw = _join_row(cells)
+                if lines[i].segments:
+                    lines[i].segments[0].text = lines[i].raw
+                    lines[i].segments[0].raw = lines[i].raw
+            document.lines = lines
+            mark_dirty()
+        elif op == "set_align":
+            ts2, te2 = _find_table_range(ts)
+            col_idx = params["col_idx"]
+            align = params["align"]
+            sep_li = _find_sep_line(ts2)
+            marker = {"left": "---", "center": ":---:", "right": "---:"}.get(align, "---")
+            if 0 <= sep_li < len(lines):
+                cells = _table_cells(lines[sep_li])
+                if col_idx < len(cells):
+                    cells[col_idx] = marker
+                lines[sep_li].raw = _join_row(cells)
+                if lines[sep_li].segments:
+                    lines[sep_li].segments[0].text = lines[sep_li].raw
+                    lines[sep_li].segments[0].raw = lines[sep_li].raw
+                document.lines = lines
+                mark_dirty()
+
+    def on_table_focus() -> None:
+        table_focus_ref.current = True
+        _maybe_push_draft_history()
+
+    def on_table_blur() -> None:
+        table_focus_ref.current = None
+        undo_push_pending.current = True
+        if not document.dirty:
+            mark_dirty()
 
     def new_line_after(li: int):
         if not (0 <= li < len(document.lines)):
@@ -1920,7 +1984,7 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return 0
         line = document.lines[li]
-        if _is_fence(line) or line.block_type == BlockType.TABLE:
+        if _is_fence(line):
             return len(_line_raw(line))
         base = block_text_size(line.block_type, line.level)
         si, off = _hit_test_tap(line, x, 0.0, base, line_height)
@@ -2053,6 +2117,7 @@ def MarkdownEditor(
             toggle_raw=toggle_raw,
             toggle_focus_mode=toggle_focus_mode,
             code_focus_ref=code_focus_ref,
+            table_focus_ref=table_focus_ref,
             get_cursor_row_col=_get_cursor_row_col,
             outward_sel=outward_sel,
             shift_pressed_ref=shift_pressed_ref,
@@ -2123,27 +2188,19 @@ def MarkdownEditor(
             ):
                 i += 1
             table_end = i
-            table_is_active = (
-                active is not None and table_start <= active <= table_end
-            )
             line_controls.append(
                 TableView(
                     key=f"table-{table_start}",
                     lines=document.lines,
                     line_idx=table_start,
-                    active_line_idx=active if table_is_active else None,
-                    active_cell_idx=table_selected_cell if table_is_active else None,
-                    active_seg=0 if table_is_active else None,
-                    draft=draft,
-                    on_activate=activate,
-                    on_change_draft=on_change_draft,
-                    on_submit=on_submit,
-                    on_blur=on_blur,
-                    on_selection_change=on_selection_change if table_is_active else None,
-                    initial_cursor=cursor_pos if table_is_active else -1,
-                    nav_seq=nav_seq if table_is_active else 0,
-                    field_ref=active_field_ref if table_is_active else None,
                     content_width=content_width,
+                    clipboard_ref=clipboard_ref,
+                    on_change_cell=on_change_cell,
+                    on_table_op=on_table_op,
+                    on_table_focus=on_table_focus,
+                    on_table_blur=on_table_blur,
+                    table_nav_ref=table_nav_ref,
+                    is_current_line=table_start <= cursor_line <= table_end,
                 )
             )
         else:
@@ -2277,22 +2334,25 @@ def MarkdownEditor(
             shift_pressed_ref.current = True
         if key.startswith("control"):
             ctrl_pressed_ref.current = True
+        # 表格为自管理的独立可编辑岛屿（active 为 None）：Tab/Escape 由 table_nav_ref
+        # 路由到 TableView 的单元格导航逻辑（Tab 移动到下一格、Escape 退出编辑）。
+        # 必须在 `if active is None: return` 之前处理，因为表格编辑时 active 为 None。
+        # Enter 由 TextField 的 on_submit 直接处理（调用 _move_down），此处不拦截。
+        if (
+            table_focus_ref.current is not None
+            and table_nav_ref.current is not None
+        ):
+            if key == "tab" and not ctrl_pressed_ref.current:
+                table_nav_ref.current("tab", -1 if shift_pressed_ref.current else 1)
+                return
+            if key == "escape":
+                table_nav_ref.current("escape")
+                return
         # 代码块为始终可编辑的 CodeEditor 独立岛屿：active 为 None（代码不走 active
         # 系统），此处直接返回，Tab/Backspace/Enter/方向键均由 CodeEditor 原生处理，
         # 全局冲突键由 KeyDispatcher.handle 的 code_focus_ref 守卫跳过。
         if active is None:
             return
-        shift = shift_pressed_ref.current
-        if key == "tab" and not ctrl_pressed_ref.current:
-            li = active
-            if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
-                _table_tab(-1 if shift else 1)
-                return
-        if key in ("enter", "numpad enter"):
-            li = active
-            if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
-                _table_enter()
-                return
 
     def _on_key_up(e):
         """跟踪 Shift 释放：Flet 0.86.2 KeyUpEvent 仅 key 字段，无修饰键。

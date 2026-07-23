@@ -113,6 +113,26 @@ class KeyDispatcher:
             if combo in ("ctrl+c", "ctrl+x", "ctrl+v", "ctrl+a"):
                 return
 
+        # 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板组合交由 TableView
+        # 内部 TextField 原生处理（方向键移动光标、Backspace 删除、Ctrl+C 复制等），
+        # Tab/Escape 由 editor.py 的 _on_key_down 通过 table_nav_ref 路由到 TableView
+        # 的单元格导航逻辑。跳过全局导航/选区/剪贴板逻辑，避免与表格编辑冲突。
+        # 全局快捷键（Ctrl+S/Z、Ctrl+Tab 切换等）仍正常处理。
+        if (
+            actions is not None
+            and getattr(actions, "table_focus_ref", None) is not None
+            and actions.table_focus_ref.current is not None
+        ):
+            if not (e.ctrl or e.meta or e.alt):
+                if norm in (
+                    "backspace", "delete", "enter", "tab", "home", "end",
+                    "pageup", "pagedown",
+                    "arrowleft", "arrowright", "arrowup", "arrowdown",
+                ):
+                    return
+            if combo in ("ctrl+c", "ctrl+x", "ctrl+v", "ctrl+a"):
+                return
+
         # 向外选区激活时（active is None, outward_sel is not None）：
         # 优先路由 BackSpace/Delete/Ctrl+X/Escape/Shift+Arrow 到 outward handlers，
         # 绕过 layer 判定（此时 layer=browse 会误路由到 SelectionArea 删除分支）
@@ -236,11 +256,12 @@ class KeyDispatcher:
             return True
         if norm == "tab" and not e.ctrl:
             # Ctrl+Tab 已在 handle() 顶部拦截为标签切换，此处仅处理普通 Tab。
-            # 代码块 Tab 由 editor.py 的 _on_key_down 处理（缩进），此处跳过不拦截
-            if (
-                actions.active_line is not None
-                and getattr(actions.active_line, "block_type", None) == BlockType.CODE
-            ):
+            # 代码块 Tab 由 CodeEditor 原生处理（缩进），此处跳过不拦截。
+            # 表格 Tab 由 editor.py _on_key_down 通过 table_nav_ref 路由到
+            # TableView 单元格导航（table_focus_ref 守卫已跳过此处，但用户从
+            # 非编辑态按 Tab 时 active 可能指向 TABLE 行，此处拦截防止 indent）。
+            active_bt = getattr(actions.active_line, "block_type", None) if actions.active_line else None
+            if active_bt in (BlockType.CODE, BlockType.TABLE):
                 return True
             if e.shift:
                 if actions.indent_or_outdent:

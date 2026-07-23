@@ -71,6 +71,11 @@ class EditorActions:
     # 剪贴板键，交由 CodeEditor 原生处理 Tab/Backspace/方向键/复制等。
     code_focus_ref: ft.Ref
 
+    # ---- 表格（始终可编辑 DataTable2 独立岛屿）----
+    # 当前聚焦的表格起始行索引 | None。KeyDispatcher 据此在表格编辑时跳过全局导航/
+    # 剪贴板键，交由 TableView 内部 TextField 处理 Tab/Enter/Backspace/方向键/复制等。
+    table_focus_ref: ft.Ref
+
     # ---- 状态栏 ----
     get_cursor_row_col: Callable[[], tuple[int, int]]
 

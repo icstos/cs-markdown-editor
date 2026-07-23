@@ -94,6 +94,25 @@ class KeyDispatcher:
         if actions is not None and getattr(actions, "ctrl_pressed_ref", None) is not None:
             actions.ctrl_pressed_ref.current = bool(e.ctrl)
 
+        # 代码块 CodeEditor 聚焦时：文本编辑键（无修饰键）与剪贴板组合交由 CodeEditor
+        # 原生处理（Tab 缩进、方向键移动、Backspace、Ctrl+C 复制等），跳过全局导航/
+        # 选区/剪贴板逻辑，避免与代码编辑器内置行为冲突。全局快捷键（Ctrl+S/Z、
+        # Ctrl+Tab 切换等）仍正常处理（不在跳过清单内）。
+        if (
+            actions is not None
+            and getattr(actions, "code_focus_ref", None) is not None
+            and actions.code_focus_ref.current is not None
+        ):
+            if not (e.ctrl or e.meta or e.alt):
+                if norm in (
+                    "backspace", "delete", "enter", "tab", "home", "end",
+                    "pageup", "pagedown",
+                    "arrowleft", "arrowright", "arrowup", "arrowdown",
+                ):
+                    return
+            if combo in ("ctrl+c", "ctrl+x", "ctrl+v", "ctrl+a"):
+                return
+
         # 向外选区激活时（active is None, outward_sel is not None）：
         # 优先路由 BackSpace/Delete/Ctrl+X/Escape/Shift+Arrow 到 outward handlers，
         # 绕过 layer 判定（此时 layer=browse 会误路由到 SelectionArea 删除分支）

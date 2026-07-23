@@ -9,7 +9,6 @@
 from typing import Callable
 
 import flet as ft
-from flet_code_editor import CodeEditor, CodeLanguage, CodeTheme, GutterStyle
 
 from models import BlockType, Line, SegType, Segment
 from styles import (
@@ -437,25 +436,6 @@ def raw_to_visible_spans(
     return spans
 
 
-def _code_language(lang: str | None) -> CodeLanguage:
-    if not lang:
-        return CodeLanguage.PYTHON
-    key = lang.strip().replace("-", "_").replace(" ", "").upper()
-    aliases = {
-        "JS": "JAVASCRIPT",
-        "TS": "TYPESCRIPT",
-        "PY": "PYTHON",
-        "C++": "CPP",
-        "C#": "C_SHARP",
-        "SH": "SHELL",
-        "BASH": "SHELL",
-        "ZSH": "SHELL",
-        "YAML": "YML",
-    }
-    key = aliases.get(key, key)
-    return getattr(CodeLanguage, key, CodeLanguage.PYTHON)
-
-
 def active_text_field(
     seg: Segment,
     draft: str,
@@ -471,8 +451,6 @@ def active_text_field(
     max_width: float | None = None,
     line_height: float = 1.6,
     on_cursor_sync: Callable[[int, int], None] | None = None,
-    block_language: str | None = None,
-    use_code_editor: bool = False,
 ) -> ft.Control:
     """编辑态：段 -> 内嵌编辑控件，显示该段原生 Markdown。
 
@@ -565,57 +543,6 @@ def active_text_field(
 
     if field_ref is not None:
         kwargs["ref"] = field_ref
-
-    if use_code_editor:
-        editor_width = max_width if max_width is not None else None
-        page = ft.context.page
-        is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
-        code_theme = CodeTheme.ATOM_ONE_DARK if is_dark else CodeTheme.GITHUB
-        line_count = max(1, draft.count("\n") + 1)
-        digits = len(str(line_count))
-        # 代码块行号按位数自动扩展，避免长代码块在两位/三位数时被挤压换行。
-        # 同时用浅色/深色不同的 gutter 背景和右侧分隔线增强 IDE 式层次感。
-        gutter_width = max(56, 24 + digits * 16)
-        gutter_bg = ft.Colors.with_opacity(0.22 if is_dark else 0.07, c.text)
-        gutter_border = ft.Colors.with_opacity(0.10 if is_dark else 0.14, c.border)
-        editor = CodeEditor(
-            value=draft,
-            language=_code_language(block_language),
-            code_theme=code_theme,
-            gutter_style=GutterStyle(
-                width=gutter_width,
-                margin=0,
-                show_line_numbers=True,
-                show_errors=True,
-                show_folding_handles=True,
-                background_color=gutter_bg,
-                text_style=ft.TextStyle(
-                    font_family=FONT_MONO,
-                    size=max(text_size - 4, 10),
-                    color=c.muted,
-                ),
-            ),
-            read_only=False,
-            autofocus=True,
-            text_style=ft.TextStyle(font_family=FONT_MONO, size=text_size, color=c.text),
-            padding=ft.Padding.symmetric(horizontal=8, vertical=6),
-        )
-        if field_ref is not None:
-            editor.ref = field_ref
-        if on_selection_change is not None:
-            editor.on_selection_change = on_selection_change
-        if on_blur is not None:
-            editor.on_blur = lambda e: on_blur()
-        if on_change is not None:
-            editor.on_change = lambda e: on_change(e.control.value)
-        return ft.Container(
-            content=editor,
-            width=editor_width,
-            expand=editor_width is None,
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            border=only_border(right=ft.BorderSide(1, gutter_border)),
-            animate=ft.Animation(duration=180, curve=ft.AnimationCurve.EASE_OUT),
-        )
 
     if not multiline:
         # 文本像素宽 + 余量；空文本给最小宽避免坍缩。

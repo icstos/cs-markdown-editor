@@ -11,6 +11,7 @@ from typing import Callable
 import asyncio
 
 import flet as ft
+from flet_code_editor import CodeEditor, CodeLanguage, CodeTheme, GutterStyle
 
 from models import BlockType, Line, Segment, SegType
 from styles import (
@@ -32,6 +33,72 @@ from views.segment_view import (
     segment_to_spans_partial,
     selection_highlight_bg,
 )
+
+
+# 代码块语言选择下拉框的常用语言清单（key 为 markdown 围栏标识，text 为展示名）。
+# 支持可搜索：用户可在下拉框中输入关键字过滤。文档中已存在但不在清单内的语言
+# 会被动态追加为额外选项，避免显示为空。
+_COMMON_LANGS: list[tuple[str, str]] = [
+    ("", "Plain text"),
+    ("python", "Python"),
+    ("javascript", "JavaScript"),
+    ("typescript", "TypeScript"),
+    ("java", "Java"),
+    ("kotlin", "Kotlin"),
+    ("swift", "Swift"),
+    ("go", "Go"),
+    ("rust", "Rust"),
+    ("c", "C"),
+    ("cpp", "C++"),
+    ("csharp", "C#"),
+    ("php", "PHP"),
+    ("ruby", "Ruby"),
+    ("html", "HTML"),
+    ("css", "CSS"),
+    ("json", "JSON"),
+    ("yaml", "YAML"),
+    ("xml", "XML"),
+    ("sql", "SQL"),
+    ("bash", "Bash / Shell"),
+    ("powershell", "PowerShell"),
+    ("markdown", "Markdown"),
+    ("dockerfile", "Dockerfile"),
+    ("ini", "INI"),
+    ("diff", "Diff"),
+]
+
+
+def _code_language(lang: str | None) -> CodeLanguage:
+    """把 markdown 围栏语言标识映射为 CodeEditor 的 CodeLanguage 枚举。
+
+    未知语言回退到 PYTHON（CodeEditor 仍可编辑，仅不高亮）。
+    """
+    if not lang:
+        return CodeLanguage.PYTHON
+    key = lang.strip().replace("-", "_").replace(" ", "").upper()
+    aliases = {
+        "JS": "JAVASCRIPT",
+        "TS": "TYPESCRIPT",
+        "PY": "PYTHON",
+        "C++": "CPP",
+        "C#": "C_SHARP",
+        "SH": "SHELL",
+        "BASH": "SHELL",
+        "ZSH": "SHELL",
+        "YAML": "YML",
+        "CSHARP": "C_SHARP",
+    }
+    key = aliases.get(key, key)
+    return getattr(CodeLanguage, key, CodeLanguage.PYTHON)
+
+
+def _lang_options(current_lang: str) -> list[ft.DropdownOption]:
+    """构造语言下拉框选项；若当前语言不在常用清单内，追加为额外选项。"""
+    options = [ft.DropdownOption(key=k, text=t) for k, t in _COMMON_LANGS]
+    known = {k for k, _ in _COMMON_LANGS}
+    if current_lang and current_lang not in known:
+        options.append(ft.DropdownOption(key=current_lang, text=current_lang))
+    return options
 
 
 async def _copy_code_to_clipboard(
@@ -140,47 +207,6 @@ def _hit_test_x(line: Line, x: float, base: int, line_height: float = 1.6) -> tu
     return _hit_test_segs(line, 0, len(line.segments), x, 0.0, base, line_height)
 
 
-def _hit_test_code(code: str, x: float, y: float, base: int) -> int:
-    """代码块点击命中测试：根据坐标估算字符偏移。
-
-    几何基于 Flet Markdown(GITHUB_WEB) 代码块的近似渲染参数
-    （Container padding + lang_tag + spacing + 代码块内边距 + 行高），
-    可能存在小偏差，用户可用方向键微调。
-    """
-    # 估算代码区域起始位置（Container padding=12, lang_tag≈16, spacing=6, md 代码块内边距≈16）
-    code_start_y = 12 + 16 + 6 + 16
-    code_start_x = 12 + 16  # Container padding + md 代码块内边距
-    line_h = max(base * 1.5, 20)  # 代码行高（字号 14 * 1.5）
-
-    if not code:
-        return 0
-    if y < code_start_y:
-        return 0
-    if x < code_start_x:
-        x = code_start_x
-
-    lines = code.split("\n")
-    row = int((y - code_start_y) // line_h)
-    row = max(0, min(row, len(lines) - 1))
-
-    # 中点吸附：用 measure_text_width 逐字逼近列号
-    line_text = lines[row]
-    local_x = x - code_start_x
-    col = len(line_text)
-    prev_w = 0.0
-    for j in range(1, len(line_text) + 1):
-        cur_w = measure_text_width(line_text[:j], FONT_MONO, base)
-        if local_x < cur_w:
-            mid = (prev_w + cur_w) / 2
-            col = j if local_x >= mid else j - 1
-            break
-        prev_w = cur_w
-
-    # 偏移 = 前面行的长度（含换行符）+ 当前列
-    offset = sum(len(lines[i]) + 1 for i in range(row)) + col
-    return min(max(offset, 0), len(code))
-
-
 def _spans_for(
     line: Line,
     seg_from: int,
@@ -282,14 +308,13 @@ def _active_field(
     max_width: float | None = None,
     line_height: float = 1.6,
     on_cursor_sync: Callable[[int, int], None] | None = None,
-    block_language: str | None = None,
-    use_code_editor: bool = False,
     seg: Segment | None = None,
 ) -> ft.Control:
     """构造激活态编辑控件（统一入口，消除重复调用）。
 
     seg 默认取 line.segments[0]；标题/普通编辑态传入显式 seg 以处理空 segments
-    兜底或按 active_seg 索引取段。
+    兜底或按 active_seg 索引取段。代码块不经过此入口——直接在 CODE 分支渲染
+    始终可编辑的 CodeEditor。
     """
     return active_text_field(
         seg if seg is not None else line.segments[0],
@@ -306,8 +331,6 @@ def _active_field(
         max_width=max_width,
         line_height=line_height,
         on_cursor_sync=on_cursor_sync,
-        block_language=block_language,
-        use_code_editor=use_code_editor,
     )
 
 
@@ -325,9 +348,12 @@ def LineView(
     on_toggle_task: Callable[[int], None] | None = None,
     toc_entries: list[tuple[int, int, str]] | None = None,
     on_jump_to: Callable[[int], None] | None = None,
-    on_change_lang: Callable[[str], None] | None = None,
-    on_lang_focus: Callable[[], None] | None = None,
+    on_change_lang: Callable[[int, str], None] | None = None,
     on_suppress_blur: Callable[[], None] | None = None,
+    on_change_code: Callable[[int, str], None] | None = None,
+    on_code_focus: Callable[[int], None] | None = None,
+    on_code_blur: Callable[[int], None] | None = None,
+    code_field_ref: ft.Ref | None = None,
     initial_cursor: int = -1,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
@@ -474,106 +500,111 @@ def LineView(
         return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
 
     # ============ 代码块 ============
+    # 始终可编辑的 CodeEditor（Typora / VSCode 式）：语法高亮 + 行号 + 语言选择，
+    # 点击即编辑，无需"激活"步骤。代码块不纳入 active/draft 系统，作为独立可编辑岛屿：
+    # on_change 原地更新行模型（不触发 observable 重渲染，避免光标跳动），
+    # 由外层 on_change_code 负责。全局按键在 CodeEditor 聚焦时交由其原生处理。
     if line.block_type == BlockType.CODE:
-        if active_seg == 0:
-            inner = _active_field(
-                line,
-                draft,
-                on_change_draft,
-                on_submit,
-                on_blur,
-                on_selection_change,
-                initial_cursor,
-                nav_seq,
-                field_ref=field_ref,
-                base_size=14,
-                multiline=True,
-                max_width=avail_width,
-                line_height=line_height,
-                on_cursor_sync=on_cursor_sync,
-                block_language=line.lang,
-                use_code_editor=True,
-            )
-            # 语言类型输入框：on_focus 设 suppress_blur 防止代码框 blur 退出
-            lang_field = ft.TextField(
-                value=line.lang,
-                hint_text="lang",
-                width=160,
-                border=ft.InputBorder.NONE,
-                text_size=12,
-                text_style=ft.TextStyle(color=c.muted, font_family=FONT_MONO),
-                content_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
-                on_focus=lambda e: on_lang_focus() if on_lang_focus else None,
-                on_change=lambda e: on_change_lang(e.control.value) if on_change_lang else None,
-            )
-            content = ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Container(content=lang_field, padding=ft.Padding.only(left=4, top=2)),
-                        inner,
-                    ],
-                    spacing=4,
-                ),
-                bgcolor=c.code_block_bg, border_radius=6, padding=12,
-            )
-        else:
-            code = line.segments[0].text if line.segments else ""
-            lang = line.lang or ""
-            # 亮暗模式适配不同代码高亮主题：亮色用 GitHub 风格，暗色用 One Dark
-            page = ft.context.page
-            is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
-            code_theme = ft.MarkdownCodeTheme.ATOM_ONE_DARK if is_dark else ft.MarkdownCodeTheme.GITHUB
-            md = ft.Markdown(
-                value=f"```{lang}\n{code}\n```",
-                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-                code_theme=code_theme,
-            )
-            lang_tag = (
-                ft.Text(value=lang, size=11, color=c.muted, font_family=FONT_MONO)
-                if lang else ft.Text(" ")
-            )
-            copied, set_copied = ft.use_state(False)
-            copy_btn = ft.IconButton(
-                icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
-                icon_size=14,
-                tooltip="已复制" if copied else "复制代码",
-                padding=6,
-                style=ft.ButtonStyle(
-                    shape=ft.RoundedRectangleBorder(radius=6),
-                    color=ft.Colors.GREEN if copied else c.muted,
-                ),
-                on_click=lambda e, txt=code: (
-                    page.run_task(_copy_code_to_clipboard, clipboard_ref, txt, set_copied)
-                    if page is not None and not copied else None
-                ),
-            )
+        code = line.segments[0].text if line.segments else ""
+        lang = line.lang or ""
+        page = ft.context.page
+        is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
+        code_theme = CodeTheme.ATOM_ONE_DARK if is_dark else CodeTheme.GITHUB
 
-            def _on_tap(e: ft.TapEvent):
-                pos = e.local_position
-                if pos is not None:
-                    offset = _hit_test_code(code, pos.x, pos.y, 14)
-                    activate(0, offset)
-                    return
-                activate(0)
+        # 语言选择下拉框（可搜索）：on_change_lang 按 line_idx 更新围栏语言
+        lang_dropdown = ft.Dropdown(
+            value=lang,
+            options=_lang_options(lang),
+            width=160,
+            text_size=12,
+            dense=True,
+            content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
+            border=ft.InputBorder.NONE,
+            fill_color=ft.Colors.TRANSPARENT,
+            enable_search=True,
+            editable=False,
+            on_select=lambda e: (
+                on_change_lang(line_idx, e.control.value or "")
+                if on_change_lang is not None and e.control.value is not None
+                else None
+            ),
+        )
 
-            header = ft.Row(
-                controls=[
-                    lang_tag,
-                    ft.Container(expand=True),
-                    copy_btn,
-                ],
-                spacing=6,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            )
-            content = ft.GestureDetector(
-                content=ft.Container(
-                    content=ft.Column([header, md], spacing=6),
-                    bgcolor=c.code_block_bg, border_radius=6, padding=12,
-                    ink=True,
+        # 复制按钮
+        copied, set_copied = ft.use_state(False)
+        copy_btn = ft.IconButton(
+            icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+            icon_size=14,
+            tooltip="已复制" if copied else "复制代码",
+            padding=6,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=6),
+                color=ft.Colors.GREEN if copied else c.muted,
+            ),
+            on_click=lambda e, txt=code: (
+                page.run_task(_copy_code_to_clipboard, clipboard_ref, txt, set_copied)
+                if page is not None and not copied else None
+            ),
+        )
+
+        # 行号 gutter 宽度按代码行数位数自适应，避免长代码块行号被挤压
+        line_count = max(1, code.count("\n") + 1)
+        digits = len(str(line_count))
+        gutter_width = max(48, 24 + digits * 12)
+        gutter_bg = ft.Colors.with_opacity(0.22 if is_dark else 0.04, c.text)
+        # 编辑器高度按行数自适应；on_change_code 在行数变化时触发重渲染以更新高度
+        editor_height = max(line_count * 20 + 16, 52)
+
+        editor = CodeEditor(
+            key=f"code-{line_idx}",
+            value=code,
+            language=_code_language(lang),
+            code_theme=code_theme,
+            gutter_style=GutterStyle(
+                width=gutter_width,
+                margin=0,
+                show_line_numbers=True,
+                show_errors=False,
+                show_folding_handles=False,
+                background_color=gutter_bg,
+                text_style=ft.TextStyle(
+                    font_family=FONT_MONO,
+                    size=11,
+                    color=c.muted,
                 ),
-                on_tap=_on_tap,
-            )
-        return _wrap_block(content, line, base, line_idx, on_click=_fallback_activate, is_current_line=is_current_line)
+            ),
+            text_style=ft.TextStyle(font_family=FONT_MONO, size=14, color=c.text),
+            padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+            height=editor_height,
+            read_only=False,
+            autofocus=False,
+            on_change=lambda e: (
+                on_change_code(line_idx, e.control.value)
+                if on_change_code is not None else None
+            ),
+            on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
+            on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
+        )
+        if code_field_ref is not None:
+            editor.ref = code_field_ref
+
+        header = ft.Row(
+            controls=[lang_dropdown, ft.Container(expand=True), copy_btn],
+            spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        content = ft.Container(
+            content=ft.Column([header, editor], spacing=4),
+            bgcolor=c.code_block_bg,
+            border_radius=6,
+            padding=ft.Padding.only(left=6, right=8, top=2, bottom=8),
+        )
+        # 代码块作为独立编辑岛屿，行间空白点击仅更新 cursor_line（不进入 active 系统）
+        return _wrap_block(
+            content, line, base, line_idx,
+            on_click=(lambda e: on_code_focus(line_idx)) if on_code_focus is not None else None,
+            is_current_line=is_current_line,
+        )
 
     # ============ 块级公式 ============
     if line.block_type == BlockType.MATH:

@@ -29,7 +29,6 @@ from styles import (
     block_text_size,
     only_border,
 )
-from views.code_block_view import CodeBlockEditor
 from views.line_view import LineView, _hit_test_tap
 from views.table_view import TableView
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
@@ -240,6 +239,13 @@ def MarkdownEditor(
     # _on_key_down/_on_key_up 用 key 名做兜底同步。用于 tab 分支判断 Ctrl+Tab，
     # 避免代码块/表格内 Ctrl+Tab 同时触发缩进与标签切换。
     ctrl_pressed_ref = ft.use_ref(False)
+    # 代码块聚焦行索引：CodeEditor 是始终可编辑的独立岛屿（不纳入 active/draft 系统），
+    # 此 ref 跟踪当前聚焦的代码块行，供 KeyDispatcher 在代码编辑时跳过全局导航/剪贴板
+    # 键，交由 CodeEditor 原生处理（Tab 缩进、方向键、Backspace、复制等）。
+    code_focus_ref = ft.use_ref(None)
+    # 代码块行数变化计数器：on_change_code 仅在代码行数变化时递增触发重渲染，
+    # 以更新 CodeEditor 高度；普通字符输入走原地变更不重渲染（避免光标跳动）。
+    code_height_version, set_code_height_version = ft.use_state(0)
 
     # 渲染后显式聚焦激活段 TextField：SelectionArea 内点击 span 触发的
     # autofocus 因手势竞争不可靠，用 use_effect 在渲染提交后调用 focus() 确保聚焦。
@@ -921,20 +927,47 @@ def MarkdownEditor(
             table_cell_idx=table_cell_idx,
         )
 
-    code_editor = CodeBlockEditor(
-        get_active=lambda: active,
-        get_line=lambda li: document.lines[li] if 0 <= li < len(document.lines) else None,
-        draft_ref=draft_ref,
-        cursor_ref=cursor_ref,
-        active_field_ref=active_field_ref,
-        selection_text_ref=selection_text_ref,
-        clipboard_ref=clipboard_ref,
-        set_draft=_set_draft,
-        mark_dirty=mark_dirty,
-        commit_active=lambda: commit_active(draft_ref.current),
-        suppress_blur=_set_suppress_blur,
-        deactivate=lambda: set_active(None),
-    )
+    # ---- 代码块始终可编辑（CodeEditor 独立岛屿）----
+    # on_change_code：原地更新行模型（不触发 observable 重渲染，避免光标跳动），
+    # 仅在代码行数变化时递增 code_height_version 触发重渲染以更新编辑器高度。
+    # 历史撤销：on_code_focus 推一次基线快照，on_code_blur 标记可推，单次聚焦会话合并为一步。
+    def on_change_code(li: int, value: str) -> None:
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type != BlockType.CODE:
+            return
+        old = line.segments[0].text if line.segments else ""
+        if old == value:
+            return
+        # 原地变更：segments[0].text/raw + line.raw 同步，不重解析、不触发 observable
+        if line.segments:
+            line.segments[0].text = value
+            line.segments[0].raw = value
+        line.raw = f"```{line.lang}\n{value}\n```"
+        # 历史基线（每次聚焦会话首次变更时推一次，后续合并）
+        _maybe_push_draft_history()
+        # dirty 仅在首次设置（document.dirty 已为 True 时跳过，避免逐键重渲染）
+        if not document.dirty:
+            mark_dirty()
+        # 行数变化时重渲染以更新 CodeEditor 高度（稳定 key 保证光标不跳）
+        if value.count("\n") != old.count("\n"):
+            set_code_height_version(code_height_version + 1)
+
+    def on_code_focus(li: int) -> None:
+        code_focus_ref.current = li
+        set_cursor_line(li)
+        # 推一次聚焦会话的撤销基线（若上一会话 blur 已置 pending）
+        _maybe_push_draft_history()
+
+    def on_code_blur(li: int) -> None:
+        if code_focus_ref.current == li:
+            code_focus_ref.current = None
+        # 标记下次变更需推新历史步（合并本次会话的所有编辑为一步）
+        undo_push_pending.current = True
+        # 确保 dirty 已落盘（原地变更可能只设过一次）
+        if not document.dirty:
+            mark_dirty()
 
     def _on_raw_draft_change(value: str):
         _maybe_push_draft_history()
@@ -1286,7 +1319,12 @@ def MarkdownEditor(
             new_raw = content
         parser.reparse_line(line, new_raw)
         mark_dirty()
-        _goto(li, seg_idx=_first_content_seg(document.lines[li]), cursor_at=-1)
+        if block_type == BlockType.CODE:
+            # 代码块为始终可编辑的 CodeEditor 独立岛屿，不进入 active/draft 系统；
+            # 仅更新 cursor_line 供状态栏定位，用户点击代码块即可直接编辑。
+            set_cursor_line(li)
+        else:
+            _goto(li, seg_idx=_first_content_seg(document.lines[li]), cursor_at=-1)
 
     def _commit_for_block(line: Line, draft_val: str):
         """块切换前提交当前段级 draft（避免丢失）。
@@ -1454,31 +1492,29 @@ def MarkdownEditor(
         mark_dirty()
 
     # ---- 代码块语言修改 ----
-    def change_lang(new_lang: str):
-        """代码块编辑态：修改语言类型，同步更新围栏首行。"""
-        if active is None:
-            return
-        _push_history()
-        undo_push_pending.current = True
-        li = active
+    def change_lang(li: int, new_lang: str):
+        """代码块：修改语言类型，同步更新围栏首行并触发重渲染以重新高亮。
+
+        代码块始终可编辑（不走 active/draft），直接按 line_idx 操作行模型；
+        语言切换需重渲染以更新 CodeEditor.language 属性（重新语法高亮）。
+        """
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
         if line.block_type != BlockType.CODE:
             return
-        # li == active，draft 即当前编辑草稿；保持与原逻辑一致
-        code = draft_ref.current
+        _push_history()
+        undo_push_pending.current = True
+        code = line.segments[0].text if line.segments else ""
         line.lang = new_lang
-        full = f"```{new_lang}\n{code}\n```" if code else f"```{new_lang}\n```"
+        line.raw = f"```{new_lang}\n{code}\n```" if code else f"```{new_lang}\n```"
         try:
-            parser.reparse_line(line, full)
+            parser.reparse_line(line, line.raw)
         except Exception:
             return
+        # 触发重渲染：CodeEditor.language 属性需重新下发以重新高亮
+        set_code_height_version(code_height_version + 1)
         mark_dirty()
-
-    def suppress_blur_for_lang():
-        """语言输入框聚焦时设置 suppress_blur，防止代码框 blur 退出编辑态。"""
-        suppress_blur.current = True
 
     def suppress_blur_for_click():
         """点击编辑行右侧空白时设置 suppress_blur，防止 TextField blur 退出编辑态。"""
@@ -2016,11 +2052,7 @@ def MarkdownEditor(
             jump_to_line=jump_to,
             toggle_raw=toggle_raw,
             toggle_focus_mode=toggle_focus_mode,
-            exit_code_block=code_editor.exit,
-            handle_tab_in_code=code_editor.tab,
-            handle_backspace_in_code=code_editor.backspace,
-            handle_delete_in_code=code_editor.delete,
-            handle_enter_in_code=code_editor.enter,
+            code_focus_ref=code_focus_ref,
             get_cursor_row_col=_get_cursor_row_col,
             outward_sel=outward_sel,
             shift_pressed_ref=shift_pressed_ref,
@@ -2131,8 +2163,10 @@ def MarkdownEditor(
                     toc_entries=toc_entries,
                     on_jump_to=jump_to,
                     on_change_lang=change_lang,
-                    on_lang_focus=suppress_blur_for_lang,
                     on_suppress_blur=suppress_blur_for_click,
+                    on_change_code=on_change_code,
+                    on_code_focus=on_code_focus,
+                    on_code_blur=on_code_blur,
                     initial_cursor=cursor_pos if is_act else -1,
                     nav_seq=nav_seq if is_act else 0,
                     field_ref=active_field_ref if is_act else None,
@@ -2243,38 +2277,22 @@ def MarkdownEditor(
             shift_pressed_ref.current = True
         if key.startswith("control"):
             ctrl_pressed_ref.current = True
-        # 兼容旧代码：用 shift_pressed_ref 替代失效的 e.shift
-        shift = shift_pressed_ref.current
-        ctrl = False  # KeyDownEvent 无 ctrl 字段；Ctrl 组合键由 page.on_keyboard_event 处理
+        # 代码块为始终可编辑的 CodeEditor 独立岛屿：active 为 None（代码不走 active
+        # 系统），此处直接返回，Tab/Backspace/Enter/方向键均由 CodeEditor 原生处理，
+        # 全局冲突键由 KeyDispatcher.handle 的 code_focus_ref 守卫跳过。
         if active is None:
             return
-        if key == "tab" and active is not None and not ctrl_pressed_ref.current:
+        shift = shift_pressed_ref.current
+        if key == "tab" and not ctrl_pressed_ref.current:
             li = active
             if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
                 _table_tab(-1 if shift else 1)
                 return
-        if key in ("enter", "numpad enter") and active is not None:
+        if key in ("enter", "numpad enter"):
             li = active
             if 0 <= li < len(document.lines) and document.lines[li].block_type == BlockType.TABLE:
                 _table_enter()
                 return
-        li = active
-        if not (0 <= li < len(document.lines)):
-            return
-        line = document.lines[li]
-        if line.block_type != BlockType.CODE:
-            return
-        if key in ("enter", "numpad enter") and ctrl:
-            code_editor.exit()
-        elif key == "escape":
-            code_editor.exit()
-        elif key == "tab" and not ctrl_pressed_ref.current:
-            # Ctrl+Tab 由 KeyDispatcher 顶部拦截为标签切换，此处跳过缩进
-            code_editor.tab(-1 if shift else 1)
-        elif key == "backspace":
-            code_editor.backspace()
-        elif key in ("enter", "numpad enter"):
-            code_editor.enter()
 
     def _on_key_up(e):
         """跟踪 Shift 释放：Flet 0.86.2 KeyUpEvent 仅 key 字段，无修饰键。

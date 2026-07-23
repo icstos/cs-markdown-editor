@@ -65,13 +65,11 @@ class EditorActions:
     jump_to_line: Callable[[int], None]
     toggle_raw: Callable[[], None]
     toggle_focus_mode: Callable[[], None]
-    exit_code_block: Callable[[], None]
 
-    # ---- 代码块内部键处理 ----
-    handle_tab_in_code: Callable[[int], None]
-    handle_backspace_in_code: Callable[[], None]
-    handle_delete_in_code: Callable[[], None]
-    handle_enter_in_code: Callable[[], None]
+    # ---- 代码块（始终可编辑 CodeEditor 独立岛屿）----
+    # 当前聚焦的代码块行索引 | None。KeyDispatcher 据此在代码编辑时跳过全局导航/
+    # 剪贴板键，交由 CodeEditor 原生处理 Tab/Backspace/方向键/复制等。
+    code_focus_ref: ft.Ref
 
     # ---- 状态栏 ----
     get_cursor_row_col: Callable[[], tuple[int, int]]

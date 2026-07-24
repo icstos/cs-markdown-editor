@@ -63,6 +63,10 @@ def _display_text(seg: Segment) -> str:
         # raw 可能含缩进空格，先 lstrip 再判断 marker
         raw = seg.raw.lstrip()
         if raw and raw[0] in "-*+":
+            # 任务列表项（- [ ] / - [x]）→ 空（Checkbox 替代）
+            rest = raw[1:].lstrip()
+            if rest[:3] in ("[ ]", "[x]", "[X]"):
+                return ""
             return "•  "
         return raw
     if seg.seg_type in _PREFIX_SEGTYPES:
@@ -336,16 +340,17 @@ def raw_to_visible_spans(
     base_size: int,
     cursor_raw_offset: int | None = None,
     heading_level: int = 0,
+    skip_seg0: bool = False,
 ) -> list[ft.TextSpan]:
-    """把一行的 segments 渲染为可见 TextSpan 列表（拼接后 == line.raw）。
+    """把一行的 segments 渲染为可见 TextSpan 列表（Typora 式 WYSIWYG）。
 
-    Typora 式渲染（用于激活行 Stack 底层 Text）：
-    - 语法标记（**、*、`、~~、==、^、~、$、[]()）默认透明（光标在段外）
-    - 光标落在某段范围内时，该段所有标记变灰可见
+    - 光标不在段内：标记完全折叠（零宽度），仅显示 _display_text 内容
+      （标题 # 前缀消失、无序列表 - 渲染为 •、行内 ** ` 等标记不占位）
+    - 光标在段内：逐 piece 渲染，标记变灰可见（Typora 式最小语法）
     - 内容部分按 segment_style 渲染（含标题级别覆盖、列表圆点色阶）
-    - 整段文本拼接 == line.raw，与透明 TextField.value 字符级对齐
+    - skip_seg0=True：跳过第一段（任务行用 Checkbox 替代前缀）
 
-    cursor_raw_offset=None 表示无光标信息，所有标记透明。
+    cursor_raw_offset=None 表示无光标（浏览态），所有段标记折叠。
     """
     c = _current_colors()
     spans: list[ft.TextSpan] = []
@@ -353,9 +358,13 @@ def raw_to_visible_spans(
     seg_count = len(line.segments)
 
     for seg_idx, seg in enumerate(line.segments):
-        pieces = _split_seg_for_display(seg)
         seg_start = raw_offset
         seg_end = raw_offset + len(seg.raw)
+
+        # 任务行跳过前缀段（Checkbox 替代）
+        if skip_seg0 and seg_idx == 0:
+            raw_offset = seg_end
+            continue
         is_last = seg_idx == seg_count - 1
 
         # 光标是否在本段范围内（末段含右端点，其余段左闭右开）
@@ -405,34 +414,32 @@ def raw_to_visible_spans(
                     bgcolor=base_style.bgcolor,
                 )
 
-        for text, is_marker in pieces:
-            if not text:
-                continue
-            if is_marker:
-                # 标记：透明（光标不在段内）/灰色（光标在段内）
-                marker_color = c.muted if cursor_in_seg else ft.Colors.TRANSPARENT
-                style = ft.TextStyle(
-                    size=base_style.size,
-                    weight=base_style.weight,
-                    color=marker_color,
-                    italic=base_style.italic,
-                    font_family=base_style.font_family,
-                )
-                spans.append(ft.TextSpan(text=text, style=style))
-            else:
-                spans.append(ft.TextSpan(text=text, style=base_style))
+        if cursor_in_seg:
+            # 光标在段内：逐 piece 渲染，标记变灰可见（Typora 式最小语法）
+            pieces = _split_seg_for_display(seg)
+            for text, is_marker in pieces:
+                if not text:
+                    continue
+                if is_marker:
+                    style = ft.TextStyle(
+                        size=base_style.size,
+                        weight=base_style.weight,
+                        color=c.muted,
+                        italic=base_style.italic,
+                        font_family=base_style.font_family,
+                    )
+                    spans.append(ft.TextSpan(text=text, style=style))
+                else:
+                    spans.append(ft.TextSpan(text=text, style=base_style))
+        else:
+            # 光标不在段内：标记折叠，仅显示 _display_text（零宽度标记）
+            display = _display_text(seg)
+            if display:
+                spans.append(ft.TextSpan(text=display, style=base_style))
+            # display 为空时不添加 span（标题 # /引用 > 前缀完全消失）
 
         raw_offset = seg_end
 
-    # 兜底：CODE/MATH 围栏块的 segment 只含内容（不含 $$/``` 围栏），
-    # segments 拼接 != line.raw。这些块不使用 ActiveLineView（保留 CodeEditor），
-    # 但为防止误调用导致拼接不一致，回退为单个 TextSpan(line.raw)。
-    joined = "".join(s.text for s in spans)
-    if joined != line.raw:
-        return [ft.TextSpan(
-            text=line.raw,
-            style=ft.TextStyle(size=base_size, color=c.text, font_family=FONT_MAIN),
-        )]
     return spans
 
 

@@ -5,14 +5,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EditorSnapshot:
-    """编辑器可恢复状态。"""
+    """编辑器可恢复状态（Stack 双层光标级架构）。"""
 
     markdown: str
-    active: int | None  # line_idx | None
-    active_seg: int | None  # seg_idx | None（段级编辑）
-    draft: str
-    cursor_base: int
-    cursor_extent: int
+    cursor_li: int | None  # 激活行号 | None（浏览态）
+    cursor_off: int  # 行级 raw 偏移 0..len(line.raw)
     raw_mode: bool
     raw_draft: str
 

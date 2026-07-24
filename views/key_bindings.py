@@ -225,13 +225,13 @@ class KeyDispatcher:
             )
             if actions is not None and not code_focused and not table_focused:
                 selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
-                if actions.active is None and selection_fmt is not None:
+                if actions.cursor_li is None and selection_fmt is not None:
                     selection_fmt(_INLINE_COMBO_MAP[combo], combo)
                 else:
                     actions.apply_inline_format(_INLINE_COMBO_MAP[combo])
             return
 
-        layer = "edit" if actions is not None and actions.active is not None else "browse"
+        layer = "edit" if actions is not None and actions.cursor_li is not None else "browse"
         shortcuts = self._shortcut_mgr.get(layer)
 
         if layer == "edit" and actions is not None:
@@ -242,7 +242,7 @@ class KeyDispatcher:
         if (
             norm == "backspace"
             and actions is not None
-            and actions.active is None
+            and actions.cursor_li is None
             and not actions.raw_mode
         ):
             plain = actions.selection_text_ref.current or ""
@@ -400,14 +400,14 @@ class KeyDispatcher:
                 if actions is not None:
                     actions.undo()
             elif combo == "ctrl+c":
-                if actions is None or actions.active is None:
+                if actions is None or actions.cursor_li is None:
                     page.run_task(self._do_copy)
             elif combo == "ctrl+x":
-                if actions is None or actions.active is None:
+                if actions is None or actions.cursor_li is None:
                     page.run_task(self._do_cut)
             elif combo == "ctrl+v":
-                if actions is not None and actions.active is not None:
-                    self._paste_old_draft.current = actions.draft
+                if actions is not None and actions.cursor_li is not None:
+                    self._paste_old_draft.current = ""
                     page.run_task(self._do_paste_check)
             return
         # edit 层
@@ -427,24 +427,15 @@ class KeyDispatcher:
         elif matches(combo, shortcuts.get("toggle_sidebar", "escape")):
             cb["toggle_sidebar"]()
         elif combo == "ctrl+c":
-            if actions is None or actions.active is None:
+            if actions is None or actions.cursor_li is None:
                 page.run_task(self._do_copy)
         elif combo == "ctrl+x":
-            if actions is None or actions.active is None:
+            # 光标级架构无段内选区剪切：浏览态走 _do_cut，编辑态无 outward_sel 时不处理
+            if actions is None or actions.cursor_li is None:
                 page.run_task(self._do_cut)
-            elif actions.handle_segment_cut_sync is not None:
-                cur = actions.cursor_ref.current
-                if cur.base != cur.extent:
-                    # 段内选区剪切：同步捕获选区+剪切+提交（必须在原生 TextField
-                    # 剪切前执行，避免 on_change_draft 更新 draft_ref 后 cursor_ref
-                    # 仍为旧选区导致双份剪切），再异步写入剪贴板
-                    selected = actions.handle_segment_cut_sync()
-                    if selected and actions.handle_segment_cut_clipboard is not None:
-                        page.run_task(actions.handle_segment_cut_clipboard, selected)
-                # 无选区：不拦截，交由 TextField 原生剪切（剪切整段等场景）
         elif combo == "ctrl+v":
-            if actions is not None and actions.active is not None:
-                self._paste_old_draft.current = actions.draft
+            if actions is not None and actions.cursor_li is not None:
+                self._paste_old_draft.current = ""
                 page.run_task(self._do_paste_check)
 
     # ---- 剪贴板异步操作 ----

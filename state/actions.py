@@ -66,6 +66,7 @@ class EditorActions:
     toggle_raw: Callable[[], None]
     toggle_focus_mode: Callable[[], None]
     set_block: Callable[[BlockType, int], None]  # 切换当前行块类型（Ctrl+0~6 标题级别）
+    apply_inline_format: Callable[[str], None]  # 行内格式快捷键入口（bold/italic/highlight/strike/code/link）
 
     # ---- 代码块（始终可编辑 CodeEditor 独立岛屿）----
     # 当前聚焦的代码块行索引 | None。KeyDispatcher 据此在代码编辑时跳过全局导航/

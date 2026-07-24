@@ -51,6 +51,17 @@ def _combo(e) -> str:
     return "+".join(parts + [key])
 
 
+# 行内格式快捷键 → 动作名映射（Ctrl+B/I/U/Shift+S/`/K）
+_INLINE_COMBO_MAP: dict[str, str] = {
+    "ctrl+b": "bold",
+    "ctrl+i": "italic",
+    "ctrl+u": "highlight",
+    "ctrl+shift+s": "strike",
+    "ctrl+`": "code",
+    "ctrl+k": "link",
+}
+
+
 class KeyDispatcher:
     """键盘事件分发器：浏览态 / 编辑态两层快捷键 + 编辑态光标导航。
 
@@ -322,6 +333,22 @@ class KeyDispatcher:
                     actions.set_block(BlockType.PARAGRAPH)
                 else:
                     actions.set_block(BlockType.HEADING, digit)
+            return
+        # 行内格式快捷键（Ctrl+B/I/U/Shift+S/`/K）：编辑态包裹选区或插入空语法。
+        # 代码块/表格聚焦时跳过（交由原生 TextField）。浏览态无 active 时静默返回。
+        if combo in _INLINE_COMBO_MAP:
+            code_focused = (
+                actions is not None
+                and getattr(actions, "code_focus_ref", None) is not None
+                and actions.code_focus_ref.current is not None
+            )
+            table_focused = (
+                actions is not None
+                and getattr(actions, "table_focus_ref", None) is not None
+                and actions.table_focus_ref.current is not None
+            )
+            if actions is not None and not code_focused and not table_focused:
+                actions.apply_inline_format(_INLINE_COMBO_MAP[combo])
             return
         if layer == "browse":
             if matches(combo, shortcuts.get("save", "ctrl+s")):

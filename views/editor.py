@@ -45,6 +45,7 @@ _WRAP_MAP: dict[SegType, str] = {
     SegType.EMPHASIS: "*",
     SegType.CODESPAN: "`",
     SegType.STRIKE: "~~",
+    SegType.HIGHLIGHT: "==",
 }
 
 # 特殊块（CODE/MATH/HR/TOC/TABLE）：自管理独立岛屿，不参与跨段/跨行光标导航，
@@ -1467,23 +1468,9 @@ def MarkdownEditor(
                 new_seg_raw = seg_raw[:base] + wrap + selected + wrap + seg_raw[extent:]
                 cursor_at = base + len(wrap)
         else:
-            # 无选区：切换激活段格式
-            seg = line.segments[seg_idx]
-            if seg.seg_type == seg_type:
-                # 解裹
-                inner = (
-                    seg_raw[len(wrap):-len(wrap)]
-                    if len(seg_raw) >= 2 * len(wrap)
-                    else seg_raw
-                )
-                new_seg_raw = inner
-                cursor_at = max(0, extent - len(wrap))
-            elif seg.seg_type == SegType.TEXT:
-                # 包裹
-                new_seg_raw = wrap + seg_raw + wrap
-                cursor_at = extent + len(wrap)
-            else:
-                return
+            # 无选区：插入空语法标记（如 **|**），光标落在两标记之间
+            new_seg_raw = seg_raw[:extent] + wrap + wrap + seg_raw[extent:]
+            cursor_at = extent + len(wrap)
 
         # 段级：重构整行 raw = before + new_seg_raw + after，reparse
         full_raw = _reconstruct_line_raw(line, seg_idx, new_seg_raw)
@@ -1527,17 +1514,9 @@ def MarkdownEditor(
             new_seg_raw = seg_raw[:base] + f"[{selected}](url)" + seg_raw[extent:]
             cursor_at = base + 1
         else:
-            # 无选区：切换激活段格式
-            seg = line.segments[seg_idx]
-            if seg.seg_type == SegType.LINK:
-                # 解裹为纯文本
-                new_seg_raw = seg.text
-                cursor_at = 0
-            elif seg.seg_type == SegType.TEXT:
-                new_seg_raw = f"[{seg.text}](url)"
-                cursor_at = len(seg.text) + 3  # 落在 ) 前
-            else:
-                return
+            # 无选区：插入空链接语法 [](url)，光标落在 [ 后准备输入链接文本
+            new_seg_raw = seg_raw[:extent] + "[](url)" + seg_raw[extent:]
+            cursor_at = extent + 1
 
         # 段级：重构整行 raw，reparse，重新定位段
         full_raw = _reconstruct_line_raw(line, seg_idx, new_seg_raw)
@@ -1546,6 +1525,28 @@ def MarkdownEditor(
         before_raw_len = sum(len(line.segments[i].raw) for i in range(seg_idx))
         new_seg, new_offset = _locate_seg_by_raw_offset(line, before_raw_len + cursor_at)
         _goto(li, seg_idx=new_seg, cursor_at=new_offset)
+
+    # ---- 行内格式快捷键入口（供 KeyDispatcher 调用）----
+    _INLINE_FMT_MAP: dict[str, SegType] = {
+        "bold": SegType.STRONG,
+        "italic": SegType.EMPHASIS,
+        "highlight": SegType.HIGHLIGHT,
+        "strike": SegType.STRIKE,
+        "code": SegType.CODESPAN,
+    }
+
+    def apply_inline_format(fmt: str):
+        """行内格式快捷键统一入口。
+
+        fmt: bold/italic/highlight/strike/code/link。有选区包裹选区，无选区
+        插入空语法标记（toggle_inline/toggle_link 内部处理）。无激活段时静默返回。
+        """
+        if active is None:
+            return
+        if fmt == "link":
+            toggle_link()
+        elif fmt in _INLINE_FMT_MAP:
+            toggle_inline(_INLINE_FMT_MAP[fmt])
 
     # ---- 任务列表项：切换勾选状态 ----
     def toggle_task(li: int):
@@ -2124,6 +2125,7 @@ def MarkdownEditor(
             toggle_raw=toggle_raw,
             toggle_focus_mode=toggle_focus_mode,
             set_block=set_block,
+            apply_inline_format=apply_inline_format,
             code_focus_ref=code_focus_ref,
             table_focus_ref=table_focus_ref,
             get_cursor_row_col=_get_cursor_row_col,
@@ -2291,6 +2293,7 @@ def MarkdownEditor(
                         on_hr=lambda: set_block(BlockType.HR),
                         on_bold=lambda: toggle_inline(SegType.STRONG),
                         on_italic=lambda: toggle_inline(SegType.EMPHASIS),
+                        on_highlight=lambda: toggle_inline(SegType.HIGHLIGHT),
                         on_code=lambda: toggle_inline(SegType.CODESPAN),
                         on_link=toggle_link,
                         on_strike=lambda: toggle_inline(SegType.STRIKE),

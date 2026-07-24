@@ -49,7 +49,10 @@ def _parse_table_lines(
     seen_header = False
     while i < len(lines) and lines[i].block_type == BlockType.TABLE:
         cells = [c.strip() for c in lines[i].raw.strip().strip("|").split("|")]
-        if all(_ALIGN_RE.fullmatch(c or "---") for c in cells):
+        # 分隔行判定：单元格必须非空且匹配 :?-{3,}:?。原先 `c or "---"` 会把空
+        # 单元格回退成 "---"，导致新增的空数据行 |  |  | 被误判为分隔行，从而
+        # 不进入 row_indices，表格渲染时丢失该行（"增加行按钮无效"的根因）。
+        if all(c and _ALIGN_RE.fullmatch(c) for c in cells):
             aligns = cells
             sep_idx = i
         elif not seen_header:

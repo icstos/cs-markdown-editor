@@ -17,7 +17,7 @@ from typing import Callable
 
 import flet as ft
 
-from models import BlockType, Document, Line, SegType
+from models import BlockType, Document, Line, Segment, SegType
 import parser
 from services.history import EditHistory, EditorSnapshot
 from state.actions import EditorActions
@@ -1231,10 +1231,14 @@ def MarkdownEditor(
             return start, i - 1
 
         def _find_sep_line(start: int) -> int:
-            """找到表格的分隔行索引（第二行）。"""
+            """找到表格的分隔行索引（第二行）。
+
+            单元格必须非空且匹配 :?-{3,}:? 才算分隔行（避免空数据行被误判，
+            与 table_view._parse_table_lines 判定保持一致）。
+            """
             if start + 1 < len(lines) and lines[start + 1].block_type == BlockType.TABLE:
                 cells = [c.strip() for c in lines[start + 1].raw.strip().strip("|").split("|")]
-                if all(_ALIGN_RE_TABLE.fullmatch(c or "---") for c in cells):
+                if all(c and _ALIGN_RE_TABLE.fullmatch(c) for c in cells):
                     return start + 1
             return start + 1
 
@@ -1242,7 +1246,10 @@ def MarkdownEditor(
             after_li = params["after_li"]
             col_count = params["col_count"]
             new_raw = "| " + " | ".join([""] * col_count) + " |"
-            new_line = parser.parse_markdown(new_raw).lines[0]
+            # 直接构造 TABLE 行，不走 parser.parse_markdown（单行表格行无分隔行
+            # 跟随时，parser 会误识别为 PARAGRAPH，导致新增行不渲染到表格中）
+            new_line = Line(block_type=BlockType.TABLE, raw=new_raw)
+            new_line.segments = [Segment(SegType.TEXT, new_raw, new_raw)]
             lines.insert(after_li + 1, new_line)
             document.lines = lines
             mark_dirty()

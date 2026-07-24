@@ -542,15 +542,24 @@ def TableView(
                     padding=ft.Padding.symmetric(horizontal=10, vertical=8),
                     border_radius=6,
                 )
+                # 用 DataCell.on_tap 而非 GestureDetector 包裹：DataCell 的 on_tap
+                # 由 Flutter InkWell 拦截，命中区域覆盖整个单元格（不受 content
+                # 尺寸影响）；GestureDetector 只命中 inner Container（Text+padding），
+                # 空单元格 Text 为 " " 极窄，几乎无法点击进入编辑。
                 content = ft.ContextMenu(
-                    content=ft.GestureDetector(
-                        content=inner,
-                        on_tap=lambda e, li=source_li, ci=ci: _start_edit(li, ci),
-                        mouse_cursor=ft.MouseCursor.CLICK,
-                    ),
+                    content=inner,
                     secondary_items=_cell_context_items(source_li, ci, is_header=False),
                 )
-            cells.append(ft.DataCell(content=content))
+            cells.append(
+                ft.DataCell(
+                    content=content,
+                    # 编辑态不绑 on_tap：避免点击当前编辑单元格时重复触发
+                    # _start_edit 导致 TextField 重建（key 变化）、光标跳动。
+                    on_tap=None if is_editing else (
+                        lambda e, li=source_li, ci=ci: _start_edit(li, ci)
+                    ),
+                )
+            )
         data_rows.append(
             ft.DataRow(
                 cells=cells,

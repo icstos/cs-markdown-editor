@@ -16,7 +16,7 @@ from typing import Any
 
 import flet as ft
 
-from models import Line
+from models import BlockType, Line
 
 
 @dataclass
@@ -65,6 +65,7 @@ class EditorActions:
     jump_to_line: Callable[[int], None]
     toggle_raw: Callable[[], None]
     toggle_focus_mode: Callable[[], None]
+    set_block: Callable[[BlockType, int], None]  # 切换当前行块类型（Ctrl+0~6 标题级别）
 
     # ---- 代码块（始终可编辑 CodeEditor 独立岛屿）----
     # 当前聚焦的代码块行索引 | None。KeyDispatcher 据此在代码编辑时跳过全局导航/

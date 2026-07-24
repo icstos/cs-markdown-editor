@@ -2123,6 +2123,7 @@ def MarkdownEditor(
             jump_to_line=jump_to,
             toggle_raw=toggle_raw,
             toggle_focus_mode=toggle_focus_mode,
+            set_block=set_block,
             code_focus_ref=code_focus_ref,
             table_focus_ref=table_focus_ref,
             get_cursor_row_col=_get_cursor_row_col,

@@ -298,6 +298,31 @@ class KeyDispatcher:
         layer: str,
     ) -> None:
         cb = self._app_callbacks
+        # Ctrl+0~6：切换当前行标题级别（0=普通段落，1~6=H1~H6），浏览/编辑两态均生效。
+        # 代码块/表格聚焦时跳过（避免把代码块/表格行误转为标题），return 阻止后续判定。
+        if combo in ("ctrl+0", "ctrl+1", "ctrl+2", "ctrl+3",
+                     "ctrl+4", "ctrl+5", "ctrl+6"):
+            code_focused = (
+                actions is not None
+                and getattr(actions, "code_focus_ref", None) is not None
+                and actions.code_focus_ref.current is not None
+            )
+            table_focused = (
+                actions is not None
+                and getattr(actions, "table_focus_ref", None) is not None
+                and actions.table_focus_ref.current is not None
+            )
+            if (
+                actions is not None
+                and not code_focused
+                and not table_focused
+            ):
+                digit = int(combo[-1])
+                if digit == 0:
+                    actions.set_block(BlockType.PARAGRAPH)
+                else:
+                    actions.set_block(BlockType.HEADING, digit)
+            return
         if layer == "browse":
             if matches(combo, shortcuts.get("save", "ctrl+s")):
                 page.run_task(cb["save"])

@@ -1242,6 +1242,18 @@ def MarkdownEditor(
                     return start + 1
             return start + 1
 
+        def _rebuild_table_line(idx: int, new_raw: str) -> None:
+            """用 new_raw 重建表格行为新 Line 对象。
+
+            on_table_op 里的 lines 是 document.lines 的浅拷贝，元素为同一批 Line。
+            原地改 line.raw 不改变元素引用，document.lines = lines 赋值时
+            observable 可能判定列表未变化而不触发重渲染（add_col 等操作"不即时
+            生效"的根因）。重建为新 Line 对象确保元素引用变化，可靠触发重渲染。
+            """
+            new_line = Line(block_type=BlockType.TABLE, raw=new_raw)
+            new_line.segments = [Segment(SegType.TEXT, new_raw, new_raw)]
+            lines[idx] = new_line
+
         if op == "add_row":
             after_li = params["after_li"]
             col_count = params["col_count"]
@@ -1270,10 +1282,7 @@ def MarkdownEditor(
             if 0 <= li < len(lines):
                 cells = _table_cells(lines[li])
                 new_raw = _join_row([""] * len(cells))
-                lines[li].raw = new_raw
-                if lines[li].segments:
-                    lines[li].segments[0].text = new_raw
-                    lines[li].segments[0].raw = new_raw
+                _rebuild_table_line(li, new_raw)
                 document.lines = lines
                 mark_dirty()
         elif op == "add_col":
@@ -1286,10 +1295,7 @@ def MarkdownEditor(
                     cells.insert(col_idx, "---")
                 else:
                     cells.insert(col_idx, "")
-                lines[i].raw = _join_row(cells)
-                if lines[i].segments:
-                    lines[i].segments[0].text = lines[i].raw
-                    lines[i].segments[0].raw = lines[i].raw
+                _rebuild_table_line(i, _join_row(cells))
             document.lines = lines
             mark_dirty()
         elif op == "delete_col":
@@ -1303,10 +1309,7 @@ def MarkdownEditor(
                 cells = _table_cells(lines[i])
                 if col_idx < len(cells):
                     del cells[col_idx]
-                lines[i].raw = _join_row(cells)
-                if lines[i].segments:
-                    lines[i].segments[0].text = lines[i].raw
-                    lines[i].segments[0].raw = lines[i].raw
+                _rebuild_table_line(i, _join_row(cells))
             document.lines = lines
             mark_dirty()
         elif op == "set_align":
@@ -1319,10 +1322,7 @@ def MarkdownEditor(
                 cells = _table_cells(lines[sep_li])
                 if col_idx < len(cells):
                     cells[col_idx] = marker
-                lines[sep_li].raw = _join_row(cells)
-                if lines[sep_li].segments:
-                    lines[sep_li].segments[0].text = lines[sep_li].raw
-                    lines[sep_li].segments[0].raw = lines[sep_li].raw
+                _rebuild_table_line(sep_li, _join_row(cells))
                 document.lines = lines
                 mark_dirty()
 

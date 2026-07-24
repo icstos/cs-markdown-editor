@@ -737,6 +737,131 @@ def compute_markdown_from_text(lines: list[Line], plain_text: str) -> str:
     return compute_markdown_from_selections(lines, selections)
 
 
+def apply_inline_format_to_selections(
+    lines: list[Line], selections: dict[int, tuple[int, int]], wrap: str, kind: str
+) -> tuple[list[Line], int, int, int]:
+    """对已匹配选区执行 Typora 式行内格式化，返回 (新行列表, 光标行索引, 光标段索引, 段内偏移)。
+
+    kind: 'wrap' 为普通包裹（** / * / == / ~~ / ``），'link' 为 [text](url)。
+    """
+    if not selections:
+        return lines, 0, 0, 0
+
+    sorted_lines = sorted(selections.keys())
+    first_li, last_li = sorted_lines[0], sorted_lines[-1]
+    new_lines = list(lines)
+
+    def _wrap_text(seg: Segment, text: str) -> str:
+        if kind == "link":
+            return f"[{text}](url)"
+        return f"{wrap}{text}{wrap}"
+
+    for li in range(first_li, last_li + 1):
+        if li >= len(new_lines) or li not in selections:
+            continue
+        line = new_lines[li]
+        base, extent = selections[li]
+        start, end = min(base, extent), max(base, extent)
+        if start == end:
+            continue
+
+        rebuilt: list[Segment] = []
+        for seg, seg_start, seg_end, text in _iter_seg_offsets(line):
+            if seg_end <= start or seg_start >= end:
+                rebuilt.append(seg)
+                continue
+            sel_start = max(0, start - seg_start)
+            sel_end = min(len(text), end - seg_start)
+            if sel_start > 0:
+                prefix_text = text[:sel_start]
+                rebuilt.append(Segment(SegType.TEXT, seg.raw[:sel_start], prefix_text))
+            selected_text = text[sel_start:sel_end]
+            rebuilt.append(Segment(SegType.TEXT, _wrap_text(seg, selected_text), selected_text))
+            if sel_end < len(text):
+                suffix_text = text[sel_end:]
+                rebuilt.append(Segment(SegType.TEXT, seg.raw[-len(suffix_text):], suffix_text))
+        if rebuilt:
+            line.segments = rebuilt
+            line.raw = "".join(s.raw for s in rebuilt)
+            reparse_line(line, line.raw)
+
+    cursor_li = first_li
+    cursor_si = 0
+    cursor_offset = 0
+    return new_lines, cursor_li, cursor_si, cursor_offset
+
+
+def apply_inline_format_to_selections(
+    lines: list[Line],
+    selections: dict[int, tuple[int, int]],
+    wrap: str,
+    kind: str,
+) -> tuple[list[Line], int, int, int]:
+    """对选区应用行内格式，返回 (新行列表, 光标行索引, 光标段索引, 段内偏移)。
+
+    kind:
+    - wrap: 普通包裹格式（bold/italic/highlight/strike/code）
+    - link: 链接格式，选区变为 [text](url)
+    """
+    if not selections:
+        return lines, 0, 0, 0
+
+    sorted_lines = sorted(selections.keys())
+    first_li, last_li = sorted_lines[0], sorted_lines[-1]
+    new_lines = list(lines)
+
+    def _wrap_selected(text: str) -> str:
+        if kind == "link":
+            return f"[{text}](url)"
+        return f"{wrap}{text}{wrap}"
+
+    if first_li == last_li:
+        li = first_li
+        line = new_lines[li]
+        base, extent = selections[li]
+        start, end = min(base, extent), max(base, extent)
+        rebuilt = []
+        cursor_raw = 0
+        for seg, seg_start, seg_end, text in _iter_seg_offsets(line):
+            if seg_end <= start or seg_start >= end:
+                rebuilt.append(seg.raw)
+                continue
+            sel_start = max(0, start - seg_start)
+            sel_end = min(len(text), end - seg_start)
+            if sel_start > 0:
+                rebuilt.append(seg.raw[:sel_start])
+            selected = text[sel_start:sel_end]
+            wrapped = _wrap_selected(selected)
+            rebuilt.append(wrapped)
+            cursor_raw += len(seg.raw[:sel_start]) + (1 if kind == "link" else len(wrap))
+            if sel_end < len(text):
+                rebuilt.append(seg.raw[sel_end:])
+        full_raw = "".join(rebuilt)
+        reparse_line(line, full_raw)
+        return new_lines, li, 0, cursor_raw
+
+    # 多行：仅简单按行分别格式化各自选区，保留原行结构
+    for li in sorted_lines:
+        line = new_lines[li]
+        base, extent = selections[li]
+        start, end = min(base, extent), max(base, extent)
+        rebuilt = []
+        for seg, seg_start, seg_end, text in _iter_seg_offsets(line):
+            if seg_end <= start or seg_start >= end:
+                rebuilt.append(seg.raw)
+                continue
+            sel_start = max(0, start - seg_start)
+            sel_end = min(len(text), end - seg_start)
+            if sel_start > 0:
+                rebuilt.append(seg.raw[:sel_start])
+            selected = text[sel_start:sel_end]
+            rebuilt.append(_wrap_selected(selected))
+            if sel_end < len(text):
+                rebuilt.append(seg.raw[sel_end:])
+        reparse_line(line, "".join(rebuilt))
+    return new_lines, first_li, 0, 0
+
+
 def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]]) -> tuple[list[Line], int, int, int]:
     """删除选中内容，返回 (新行列表, 光标行索引, 光标段索引, 段内偏移)。
 

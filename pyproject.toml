@@ -12,8 +12,8 @@ dependencies = [
     "flet>=0.86.2",
     "mistune>=3.3.4",
     "pillow>=12.3.0",
-    "flet-code-editor",
-    "flet-datatable2",
+    "flet-code-editor>=0.86.2",
+    "flet-datatable2>=0.86.2",
 ]
 
 [project.scripts]
@@ -24,7 +24,7 @@ package = false
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP"]

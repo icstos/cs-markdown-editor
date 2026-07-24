@@ -12,7 +12,7 @@
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 
 import flet as ft
 
@@ -207,6 +207,28 @@ class KeyDispatcher:
             return
         if norm == "pagedown" and actions is not None:
             actions.page_down()
+            return
+
+        # 行内格式快捷键优先级必须高于浏览态全局快捷键：
+        # 这样鼠标选中文本后按 Ctrl+B/I/U/Shift+S/`/K 不会被
+        # 侧边栏切换、聚焦模式等浏览态快捷键抢先消费。
+        if combo in _INLINE_COMBO_MAP:
+            code_focused = (
+                actions is not None
+                and getattr(actions, "code_focus_ref", None) is not None
+                and actions.code_focus_ref.current is not None
+            )
+            table_focused = (
+                actions is not None
+                and getattr(actions, "table_focus_ref", None) is not None
+                and actions.table_focus_ref.current is not None
+            )
+            if actions is not None and not code_focused and not table_focused:
+                selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
+                if actions.active is None and selection_fmt is not None:
+                    selection_fmt(_INLINE_COMBO_MAP[combo], combo)
+                else:
+                    actions.apply_inline_format(_INLINE_COMBO_MAP[combo])
             return
 
         layer = "edit" if actions is not None and actions.active is not None else "browse"
@@ -481,5 +503,18 @@ class KeyDispatcher:
             return
         try:
             actions.handle_paste(text, self._paste_old_draft.current)
+        except Exception:
+            return
+
+    async def _do_inline_format_selection(self, fmt: str) -> None:
+        await asyncio.sleep(0.01)
+        actions = self._actions_ref.current
+        if actions is None:
+            return
+        selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
+        if selection_fmt is None:
+            return
+        try:
+            selection_fmt(fmt, fmt)
         except Exception:
             return

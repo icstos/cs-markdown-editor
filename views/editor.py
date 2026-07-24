@@ -1426,6 +1426,42 @@ def MarkdownEditor(
         mark_dirty()
 
     # ---- 工具栏：行内格式切换 ----
+    def _apply_outward_wrap(wrap: str, is_link: bool = False):
+        """渲染态 outward 选区包裹行内格式（仅同段选区）。
+
+        行内格式不合法跨段，跨段选区静默跳过。包裹后保持渲染态（仅清除选区，
+        不进入编辑态），符合 Typora 渲染态选中即包裹的行为。
+        """
+        sel = outward_sel_ref.current
+        if sel is None:
+            return
+        a_li, a_off, b_li, b_off = sel
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        if a_li != b_li:
+            return  # 跨段选区：行内格式不合法
+        if not (0 <= a_li < len(document.lines)):
+            return
+        line = document.lines[a_li]
+        if _nav_blocked(line):
+            return
+        raw = _line_raw(line)
+        a_off = max(0, min(a_off, len(raw)))
+        b_off = max(a_off, min(b_off, len(raw)))
+        selected = raw[a_off:b_off]
+        _push_history()
+        undo_push_pending.current = True
+        if is_link:
+            new_raw = raw[:a_off] + f"[{selected}](url)" + raw[b_off:]
+        else:
+            new_raw = raw[:a_off] + wrap + selected + wrap + raw[b_off:]
+        parser.reparse_line(line, new_raw)
+        new_lines = list(document.lines)
+        new_lines[a_li] = line
+        document.lines = new_lines
+        mark_dirty()
+        _set_outward_sel(None)
+
     def _toggle_seg(seg_type: SegType):
         """通用行内格式切换（段级）：有选区包裹/解裹段内选区；无选区切换光标所在段。
 
@@ -1434,6 +1470,11 @@ def MarkdownEditor(
         （reparse 可能改变段数与边界，需重新查找）。
         """
         if active is None:
+            # 渲染态：outward 选区包裹（仅同段选区有效）
+            if outward_sel_ref.current is not None:
+                w = _WRAP_MAP.get(seg_type)
+                if w is not None:
+                    _apply_outward_wrap(w)
             return
         _push_history()
         undo_push_pending.current = True
@@ -1492,6 +1533,9 @@ def MarkdownEditor(
         再用行级偏移重新定位光标所在段。
         """
         if active is None:
+            # 渲染态：outward 选区包裹为链接（仅同段选区有效）
+            if outward_sel_ref.current is not None:
+                _apply_outward_wrap("", is_link=True)
             return
         _push_history()
         undo_push_pending.current = True
@@ -1538,11 +1582,10 @@ def MarkdownEditor(
     def apply_inline_format(fmt: str):
         """行内格式快捷键统一入口。
 
-        fmt: bold/italic/highlight/strike/code/link。有选区包裹选区，无选区
-        插入空语法标记（toggle_inline/toggle_link 内部处理）。无激活段时静默返回。
+        fmt: bold/italic/highlight/strike/code/link。编辑态有选区包裹选区、
+        无选区插入空语法；渲染态有 outward 选区时包裹同段选区。
+        toggle_inline/toggle_link 内部统一处理 active/outward_sel 两态。
         """
-        if active is None:
-            return
         if fmt == "link":
             toggle_link()
         elif fmt in _INLINE_FMT_MAP:
@@ -1651,6 +1694,49 @@ def MarkdownEditor(
         except Exception:
             return
         _commit_selection_delete(selections)
+
+    def apply_inline_format_to_selection(fmt: str, combo: str):
+        """渲染态选中文本的 Typora 式行内格式化。"""
+        plain_text = selection_text_ref.current or ""
+        if not plain_text:
+            apply_inline_format(fmt)
+            return
+        try:
+            selections = parser.match_text_to_selections(document.lines, plain_text)
+        except Exception:
+            apply_inline_format(fmt)
+            return
+        if not selections:
+            apply_inline_format(fmt)
+            return
+        wrap_kind = {
+            "bold": ("**", "wrap"),
+            "italic": ("*", "wrap"),
+            "highlight": ("==", "wrap"),
+            "strike": ("~~", "wrap"),
+            "code": ("`", "wrap"),
+            "link": ("[]", "link"),
+        }.get(fmt)
+        if wrap_kind is None:
+            apply_inline_format(fmt)
+            return
+        _push_history()
+        undo_push_pending.current = True
+        try:
+            new_lines, cursor_li, cursor_si, cursor_offset = parser.apply_inline_format_to_selections(
+                document.lines, selections, wrap_kind[0], wrap_kind[1]
+            )
+        except Exception:
+            apply_inline_format(fmt)
+            return
+        document.lines = new_lines
+        mark_dirty()
+        if 0 <= cursor_li < len(document.lines):
+            line = document.lines[cursor_li]
+            if cursor_offset < 0 or cursor_offset > len(line.raw):
+                cursor_offset = 0
+            target_seg, target_off = _locate_seg_by_raw_offset(line, cursor_offset)
+            _goto(cursor_li, seg_idx=target_seg, cursor_at=target_off)
 
     def on_selection_area_change(e):
         selection_text_ref.current = e.data if e.data else ""
@@ -2116,6 +2202,7 @@ def MarkdownEditor(
             handle_paste=handle_paste,
             handle_cut=handle_cut,
             handle_delete_selection=handle_delete_selection,
+            apply_inline_format_to_selection=apply_inline_format_to_selection,
             compute_markdown_from_text=lambda text: (
                 parser.compute_markdown_from_text(document.lines, text)
             ),
@@ -2359,10 +2446,28 @@ def MarkdownEditor(
             if key == "escape":
                 table_nav_ref.current("escape")
                 return
-        # 代码块为始终可编辑的 CodeEditor 独立岛屿：active 为 None（代码不走 active
-        # 系统），此处直接返回，Tab/Backspace/Enter/方向键均由 CodeEditor 原生处理，
-        # 全局冲突键由 KeyDispatcher.handle 的 code_focus_ref 守卫跳过。
+        # 渲染态 SelectionArea：Ctrl+B/I/U/Shift+S/`/K 需要在这里先消费，
+        # 否则 active=None 会直接 return，导致 page.on_keyboard_event 之外的
+        # 键盘链路看起来“没有反应”。
         if active is None:
+            if ctrl_pressed_ref.current:
+                combo = "ctrl+shift+s" if shift_pressed_ref.current and key == "s" else None
+                if combo is None:
+                    combo = f"ctrl+{key}" if key else None
+                if combo in ("ctrl+b", "ctrl+i", "ctrl+u", "ctrl+shift+s", "ctrl+`", "ctrl+k"):
+                    if nav_ref is not None and nav_ref.current is not None:
+                        fmt = {
+                            "ctrl+b": "bold",
+                            "ctrl+i": "italic",
+                            "ctrl+u": "highlight",
+                            "ctrl+shift+s": "strike",
+                            "ctrl+`": "code",
+                            "ctrl+k": "link",
+                        }[combo]
+                        apply_fn = getattr(nav_ref.current, "apply_inline_format_to_selection", None)
+                        if apply_fn is not None:
+                            apply_fn(fmt, combo)
+                            return
             return
 
     def _on_key_up(e):

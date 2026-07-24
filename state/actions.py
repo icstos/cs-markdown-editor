@@ -57,6 +57,7 @@ class EditorActions:
     handle_paste: Callable[[str, str], None]
     handle_cut: Callable[[str], Any]  # async
     handle_delete_selection: Callable[[str], None]
+    apply_inline_format_to_selection: Callable[[str, str], None]
     compute_markdown_from_text: Callable[[str], str]
 
     # ---- 全局动作 ----

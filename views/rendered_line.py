@@ -14,9 +14,17 @@
 - 空行：渲染单个空格 TextSpan，可承载光标
 - 任务列表项：Checkbox + 内容 Text（光标 overlay 叠在内容 Text 上）
 - 图片行：ft.Image 列表（不承载光标）
+
+依赖项：
+- models：BlockType / Line / SegType
+- styles：FONT_MAIN / _current_colors / block_text_size / block_weight
+- utils.segment_helpers：PREFIX_SEGTYPES（段类型常量）
+- utils.text_layout：image_fit_size（图片尺寸测量）
+- views.pixel_layout：_line_raw_offsets_x / hit_test_line_x_raw（行内 X 偏移与命中）
+- views.segment_view：raw_to_visible_spans / selection_highlight_bg（段渲染）
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 import flet as ft
 
@@ -26,11 +34,11 @@ from styles import (
     _current_colors,
     block_text_size,
     block_weight,
-    image_fit_size,
 )
+from utils.segment_helpers import PREFIX_SEGTYPES
+from utils.text_layout import image_fit_size
 from views.pixel_layout import _line_raw_offsets_x, hit_test_line_x_raw
 from views.segment_view import (
-    _PREFIX_SEGTYPES,
     raw_to_visible_spans,
     selection_highlight_bg,
 )
@@ -39,7 +47,7 @@ from views.segment_view import (
 def _has_visible_text(line: Line) -> bool:
     """是否有可见文本或前缀段。"""
     for s in line.segments:
-        if s.text or s.seg_type in _PREFIX_SEGTYPES:
+        if s.text or s.seg_type in PREFIX_SEGTYPES:
             return True
     return False
 
@@ -378,7 +386,7 @@ def _spans_with_selection(
     for seg_idx, seg in enumerate(line.segments):
         seg_start = raw_offset
         seg_end = raw_offset + len(seg.raw)
-        is_prefix = seg.seg_type in _PREFIX_SEGTYPES
+        is_prefix = seg.seg_type in PREFIX_SEGTYPES
 
         if skip_prefix and is_prefix and seg_idx == 0:
             raw_offset = seg_end
@@ -410,8 +418,7 @@ def _gray_marker_spans(seg, base: int, heading_level: int) -> list[ft.TextSpan]:
 
     简化处理：构造一个单段行调用 raw_to_visible_spans。
     """
-    from models import Line as _Line, BlockType as _BT
-    tmp = _Line(block_type=_BT.PARAGRAPH, raw=seg.raw, segments=[seg])
+    tmp = Line(block_type=BlockType.PARAGRAPH, raw=seg.raw, segments=[seg])
     return raw_to_visible_spans(tmp, base, cursor_raw_offset=len(seg.raw), heading_level=heading_level)
 
 

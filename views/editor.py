@@ -15,19 +15,25 @@
   → 渲染层 Text 显示新内容，TextField 重新定位到新光标位置
 
 围栏岛屿（CODE/TABLE/MATH/HR/TOC）：自管理独立可编辑控件，不进入 Stack。
+
+依赖项：
+- models / parser / styles（数据与样式）
+- core.actions / core.cursor / core.history（编辑器核心状态容器）
+- utils.segment_helpers.WRAP_SYNTAX（行内格式包裹标记，统一来源）
+- views.line_view / views.table_view / views.toolbar（子视图）
 """
 
 import os
 import re
-from typing import Callable
+from collections.abc import Callable
 
 import flet as ft
 
+from core.actions import EditorActions
+from core.cursor import CursorState
+from core.history import EditHistory, EditorSnapshot
 from models import BlockType, Document, Line, Segment, SegType
 import parser
-from services.history import EditHistory, EditorSnapshot
-from state.actions import EditorActions
-from state.cursor import CursorState
 from styles import (
     FONT_MAIN,
     FONT_MONO,
@@ -35,23 +41,15 @@ from styles import (
     block_text_size,
     only_border,
 )
+from utils.segment_helpers import WRAP_SYNTAX
 from views.line_view import LineView
 from views.table_view import TableView, _join_row
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
 
 
-def _noop():
+def _noop() -> None:
     pass
 
-
-# 行内格式包裹语法
-_WRAP_MAP: dict[SegType, str] = {
-    SegType.STRONG: "**",
-    SegType.EMPHASIS: "*",
-    SegType.CODESPAN: "`",
-    SegType.STRIKE: "~~",
-    SegType.HIGHLIGHT: "==",
-}
 
 # 围栏块：自管理独立岛屿，不参与光标导航/合并
 _FENCE_BLOCKS = (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC, BlockType.TABLE)
@@ -262,9 +260,7 @@ def MarkdownEditor(
         清空方式：set_clear_value_seq(+1) 触发 use_effect([clear_value_seq])，
         在重渲染后异步执行 field.value="" + update()。
         """
-        import sys
         state = input_session_ref.current
-        print(f"[IME-DEBUG] _end_input_session called! session={state}", file=sys.stderr, flush=True)
         if state["li"] >= 0 and state["start_off"] >= 0:
             # 同步 cursor_off 到最新位置（handle_char_input 中未更新的部分）
             new_off = state["start_off"] + len(state["last_value"])
@@ -336,10 +332,6 @@ def MarkdownEditor(
         - 不调用 set_cursor_off/set_cursor_line（避免重渲染打断 IME 组合态）
         - cursor_off state 在 _end_input_session 中统一同步
         """
-        import sys
-        state_before = input_session_ref.current
-        print(f"[IME-DEBUG] on_change: value={repr(value)}, cursor_li={cursor_li}, cursor_off={cursor_off}, session={state_before}", file=sys.stderr, flush=True)
-
         if cursor_li is None or not value:
             return
         li = cursor_li
@@ -359,7 +351,6 @@ def MarkdownEditor(
             # 此时 value 已在文档中，不需要再次插入，只需恢复会话状态即可
             off = cursor_off
             if off + len(value) <= len(raw) and raw[off:off + len(value)] == value:
-                print(f"[IME-DEBUG] DEDUP: value={repr(value)} already in document at off={off}, skipping", file=sys.stderr, flush=True)
                 state["li"] = li
                 state["start_off"] = off
                 state["last_value"] = value
@@ -846,7 +837,7 @@ def MarkdownEditor(
             }.get(fmt)
             if seg_type is None:
                 return
-            wrap = _WRAP_MAP.get(seg_type, "")
+            wrap = WRAP_SYNTAX.get(seg_type, ("", ""))[0]
             new_raw = raw[:off] + wrap + wrap + raw[off:]
             parser.reparse_line(line, new_raw)
             mark_dirty()
@@ -886,7 +877,7 @@ def MarkdownEditor(
             }.get(fmt)
             if seg_type is None:
                 return
-            wrap = _WRAP_MAP.get(seg_type, "")
+            wrap = WRAP_SYNTAX.get(seg_type, ("", ""))[0]
             new_raw = raw[:a_off] + wrap + selected + wrap + raw[b_off:]
             new_off = a_off + len(wrap)
         parser.reparse_line(line, new_raw)

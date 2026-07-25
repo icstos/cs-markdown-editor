@@ -22,7 +22,7 @@ IME 友好策略（key = li + nav_seq）：
 - cursor_h：光标高度 = base_size（与文字同高，视觉贴合）
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 import flet as ft
 
@@ -60,7 +60,6 @@ def cursor_text_field(
     on_selection_change: Callable | None = None,
     field_ref: ft.Ref | None = None,
     nav_seq: int = 0,
-    debug: bool = False,
 ) -> ft.TextField:
     """构造透明光标 TextField（Stack 顶层绝对定位）。
 
@@ -76,7 +75,6 @@ def cursor_text_field(
       on_selection_change：光标位置变化回调（用于跟踪 selection）
       field_ref：TextField 引用（editor 端 use_effect 调 focus()）
       nav_seq：仅撤销/重做等强制重建场景递增；同 li 输入不递增以保持 IME 组合态
-      debug：开发期加半透明红色背景肉眼校准光标位置
 
     key 策略（IME 友好）：
       key = f"cursor-field-li-{li}-seq-{nav_seq}"
@@ -146,8 +144,4 @@ def cursor_text_field(
         kwargs["on_selection_change"] = on_selection_change
     if field_ref is not None:
         kwargs["ref"] = field_ref
-    if debug:
-        # 开发期肉眼校准：半透明红色背景显示 TextField 实际占位
-        kwargs["filled"] = True
-        kwargs["fill_color"] = ft.Colors.with_opacity(0.3, ft.Colors.RED)
     return ft.TextField(**kwargs)

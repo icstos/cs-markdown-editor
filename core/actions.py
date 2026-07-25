@@ -1,12 +1,18 @@
 """编辑器对外动作集合：替代 nav_ref.current = {20+ 字符串 key} 大字典。
 
-行为约束（来自 memory Hard Constraints）：
+依赖项：
+- 标准库 collections.abc、dataclasses、typing
+- flet（ft.Ref 类型）
+- models（BlockType、Line）
+
+对外接口：EditorActions。
+
+行为约束（来自项目 memory Hard Constraints）：
 - main.py 的 on_key 通过 actions.move_left() 等属性访问（替代 nav["move_left"]()）
 - 必填字段在 dataclass 构造时即校验，缺失立即报错（替代静默失败）
-- 字段集合对应 main.py on_key / KeyDispatcher 中所有 actions.xxx 访问点
 - cursor_ref 为 ft.Ref[CursorState]：main.py 通过 actions.cursor_ref.current.base
-  / .extent 实时读取光标位置（这些值在 on_selection_change 中直接修改 cursor_ref.current，
-  非 set_state 触发，不能用渲染期快照字段，否则越界判断会读到 stale 值）。
+  / .extent 实时读取光标位置（这些值在 on_selection_change 中直接修改，非
+  set_state 触发，不能用渲染期快照字段）
 
 Stack 双层光标级架构（Typora 式 WYSIWYG）：
 - cursor_li / cursor_off 替代旧的 active / active_seg / draft 三状态
@@ -72,7 +78,7 @@ class EditorActions:
     toggle_raw: Callable[[], None]
     toggle_focus_mode: Callable[[], None]
     set_block: Callable[[BlockType, int], None]  # 切换当前行块类型（Ctrl+0~6 标题级别）
-    apply_inline_format: Callable[[str], None]  # 行内格式快捷键入口（bold/italic/highlight/strike/code/link）
+    apply_inline_format: Callable[[str], None]  # 行内格式快捷键入口
 
     # ---- 代码块（始终可编辑 CodeEditor 独立岛屿）----
     code_focus_ref: ft.Ref

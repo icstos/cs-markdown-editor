@@ -9,6 +9,11 @@
 - actions.cursor_ref.current.base / .extent / .draft_len 实时读取光标位置
   （这些值在 on_selection_change 中直接修改，非 set_state 触发，不能用渲染期快照）。
 - _combo 为模块级函数；matches 复用 services.shortcuts.matches。
+
+依赖项：
+- models.BlockType（块类型判断）
+- core.actions.EditorActions（编辑器动作集合类型注解）
+- services.shortcuts.ShortcutManager / matches（快捷键匹配）
 """
 
 import asyncio
@@ -16,9 +21,9 @@ from collections.abc import Callable
 
 import flet as ft
 
+from core.actions import EditorActions
 from models import BlockType
 from services.shortcuts import ShortcutManager, matches
-from state.actions import EditorActions
 
 
 def _combo(e) -> str:
@@ -69,6 +74,15 @@ class KeyDispatcher:
     page.on_keyboard_event = dispatcher.handle 直接绑定，无需 on_key_ref 中转。
     """
 
+    # 原生编辑控件聚焦时需放行的纯导航键（无修饰键）
+    _NATIVE_NAV_KEYS = frozenset({
+        "backspace", "delete", "enter", "tab", "home", "end",
+        "pageup", "pagedown",
+        "arrowleft", "arrowright", "arrowup", "arrowdown",
+    })
+    # 原生编辑控件聚焦时需放行的剪贴板组合键
+    _NATIVE_CLIPBOARD_COMBO = frozenset({"ctrl+c", "ctrl+x", "ctrl+v", "ctrl+a"})
+
     def __init__(
         self,
         shortcut_mgr: ShortcutManager,
@@ -85,6 +99,23 @@ class KeyDispatcher:
         self._page_ref = page_ref
         self._paste_old_draft = paste_old_draft
         self._app_callbacks = app_callbacks
+
+    # ---- 共享工具 ----
+    @staticmethod
+    def _native_field_focused(actions: EditorActions | None) -> bool:
+        """代码块 CodeEditor 或表格 TableView 的原生编辑控件是否聚焦。
+
+        聚焦时文本编辑键与剪贴板组合交由原生控件处理，跳过全局导航/选区/剪贴板逻辑。
+        """
+        if actions is None:
+            return False
+        code_ref = getattr(actions, "code_focus_ref", None)
+        if code_ref is not None and code_ref.current is not None:
+            return True
+        table_ref = getattr(actions, "table_focus_ref", None)
+        if table_ref is not None and table_ref.current is not None:
+            return True
+        return False
 
     # ---- 主入口 ----
     def handle(self, e) -> None:
@@ -105,43 +136,16 @@ class KeyDispatcher:
         if actions is not None and getattr(actions, "ctrl_pressed_ref", None) is not None:
             actions.ctrl_pressed_ref.current = bool(e.ctrl)
 
-        # 代码块 CodeEditor 聚焦时：文本编辑键（无修饰键）与剪贴板组合交由 CodeEditor
-        # 原生处理（Tab 缩进、方向键移动、Backspace、Ctrl+C 复制等），跳过全局导航/
-        # 选区/剪贴板逻辑，避免与代码编辑器内置行为冲突。全局快捷键（Ctrl+S/Z、
-        # Ctrl+Tab 切换等）仍正常处理（不在跳过清单内）。
-        if (
-            actions is not None
-            and getattr(actions, "code_focus_ref", None) is not None
-            and actions.code_focus_ref.current is not None
-        ):
+        # 代码块 CodeEditor / 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板
+        # 组合交由原生控件处理（Tab 缩进、方向键移动、Backspace、Ctrl+C 复制等），
+        # 跳过全局导航/选区/剪贴板逻辑避免冲突。全局快捷键（Ctrl+S/Z、Ctrl+Tab 切换
+        # 等）不在跳过清单内，仍正常处理。表格的 Tab/Escape 由 editor.py 的 _on_key_down
+        # 通过 table_nav_ref 路由到 TableView 单元格导航逻辑。
+        if self._native_field_focused(actions):
             if not (e.ctrl or e.meta or e.alt):
-                if norm in (
-                    "backspace", "delete", "enter", "tab", "home", "end",
-                    "pageup", "pagedown",
-                    "arrowleft", "arrowright", "arrowup", "arrowdown",
-                ):
+                if norm in self._NATIVE_NAV_KEYS:
                     return
-            if combo in ("ctrl+c", "ctrl+x", "ctrl+v", "ctrl+a"):
-                return
-
-        # 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板组合交由 TableView
-        # 内部 TextField 原生处理（方向键移动光标、Backspace 删除、Ctrl+C 复制等），
-        # Tab/Escape 由 editor.py 的 _on_key_down 通过 table_nav_ref 路由到 TableView
-        # 的单元格导航逻辑。跳过全局导航/选区/剪贴板逻辑，避免与表格编辑冲突。
-        # 全局快捷键（Ctrl+S/Z、Ctrl+Tab 切换等）仍正常处理。
-        if (
-            actions is not None
-            and getattr(actions, "table_focus_ref", None) is not None
-            and actions.table_focus_ref.current is not None
-        ):
-            if not (e.ctrl or e.meta or e.alt):
-                if norm in (
-                    "backspace", "delete", "enter", "tab", "home", "end",
-                    "pageup", "pagedown",
-                    "arrowleft", "arrowright", "arrowup", "arrowdown",
-                ):
-                    return
-            if combo in ("ctrl+c", "ctrl+x", "ctrl+v", "ctrl+a"):
+            if combo in self._NATIVE_CLIPBOARD_COMBO:
                 return
 
         # 向外选区激活时（active is None, outward_sel is not None）：
@@ -213,17 +217,7 @@ class KeyDispatcher:
         # 这样鼠标选中文本后按 Ctrl+B/I/U/Shift+S/`/K 不会被
         # 侧边栏切换、聚焦模式等浏览态快捷键抢先消费。
         if combo in _INLINE_COMBO_MAP:
-            code_focused = (
-                actions is not None
-                and getattr(actions, "code_focus_ref", None) is not None
-                and actions.code_focus_ref.current is not None
-            )
-            table_focused = (
-                actions is not None
-                and getattr(actions, "table_focus_ref", None) is not None
-                and actions.table_focus_ref.current is not None
-            )
-            if actions is not None and not code_focused and not table_focused:
+            if actions is not None and not self._native_field_focused(actions):
                 selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
                 if actions.cursor_li is None and selection_fmt is not None:
                     selection_fmt(_INLINE_COMBO_MAP[combo], combo)
@@ -335,21 +329,7 @@ class KeyDispatcher:
         # 代码块/表格聚焦时跳过（避免把代码块/表格行误转为标题），return 阻止后续判定。
         if combo in ("ctrl+0", "ctrl+1", "ctrl+2", "ctrl+3",
                      "ctrl+4", "ctrl+5", "ctrl+6"):
-            code_focused = (
-                actions is not None
-                and getattr(actions, "code_focus_ref", None) is not None
-                and actions.code_focus_ref.current is not None
-            )
-            table_focused = (
-                actions is not None
-                and getattr(actions, "table_focus_ref", None) is not None
-                and actions.table_focus_ref.current is not None
-            )
-            if (
-                actions is not None
-                and not code_focused
-                and not table_focused
-            ):
+            if actions is not None and not self._native_field_focused(actions):
                 digit = int(combo[-1])
                 if digit == 0:
                     actions.set_block(BlockType.PARAGRAPH)
@@ -359,17 +339,7 @@ class KeyDispatcher:
         # 行内格式快捷键（Ctrl+B/I/U/Shift+S/`/K）：编辑态包裹选区或插入空语法。
         # 代码块/表格聚焦时跳过（交由原生 TextField）。浏览态无 active 时静默返回。
         if combo in _INLINE_COMBO_MAP:
-            code_focused = (
-                actions is not None
-                and getattr(actions, "code_focus_ref", None) is not None
-                and actions.code_focus_ref.current is not None
-            )
-            table_focused = (
-                actions is not None
-                and getattr(actions, "table_focus_ref", None) is not None
-                and actions.table_focus_ref.current is not None
-            )
-            if actions is not None and not code_focused and not table_focused:
+            if actions is not None and not self._native_field_focused(actions):
                 actions.apply_inline_format(_INLINE_COMBO_MAP[combo])
             return
         if layer == "browse":
@@ -494,18 +464,5 @@ class KeyDispatcher:
             return
         try:
             actions.handle_paste(text, self._paste_old_draft.current)
-        except Exception:
-            return
-
-    async def _do_inline_format_selection(self, fmt: str) -> None:
-        await asyncio.sleep(0.01)
-        actions = self._actions_ref.current
-        if actions is None:
-            return
-        selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
-        if selection_fmt is None:
-            return
-        try:
-            selection_fmt(fmt, fmt)
         except Exception:
             return

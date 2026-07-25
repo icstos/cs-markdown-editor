@@ -8,7 +8,14 @@
 行高模型：text_height = block_text_size * line_height；普通行 padding 2+2
 （与 _wrap_block 的 top=2/bottom=2 一致）。
 行内 X：逐段用 measure_text_width 累加。光标不在段内时标记折叠（零宽度），
-仅 _display_text 内容占像素宽度；光标在段内时标记变灰可见并占宽度。
+仅 display_text 内容占像素宽度；光标在段内时标记变灰可见并占宽度。
+
+依赖项：
+- models：BlockType / Line / SegType / Segment
+- styles：FONT_MAIN / FONT_MONO / block_text_size
+- utils.segment_helpers：MONO_SEGTYPES / PREFIX_SEGTYPES / display_text /
+  split_seg_for_display（段类型常量与显示拆分）
+- utils.text_layout：measure_text_width（文本像素宽度测量）
 """
 
 from __future__ import annotations
@@ -16,13 +23,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from models import BlockType, Line, SegType, Segment
-from styles import (
-    FONT_MAIN,
-    FONT_MONO,
-    block_text_size,
-    measure_text_width,
+from styles import FONT_MAIN, FONT_MONO, block_text_size
+from utils.segment_helpers import (
+    MONO_SEGTYPES,
+    PREFIX_SEGTYPES,
+    display_text,
+    split_seg_for_display,
 )
-from views.segment_view import _MONO_SEGTYPES, _PREFIX_SEGTYPES, _display_text, _split_seg_for_display
+from utils.text_layout import measure_text_width
 
 # 普通行垂直 padding（_wrap_block 的 top=2, bottom=2）
 _PAD_V = 2.0
@@ -158,7 +166,7 @@ def _seg_font_metrics(seg: Segment, base: int) -> tuple[str, int]:
     codespan/inline_math 用 FONT_MONO + base-1；其余用 FONT_MAIN + base。
     weight 不影响 advance（Pillow getlength 不考虑 weight），与 Skia 基本一致。
     """
-    if seg.seg_type in _MONO_SEGTYPES:
+    if seg.seg_type in MONO_SEGTYPES:
         return (FONT_MONO, max(base - 1, 12))
     return (FONT_MAIN, base)
 
@@ -170,7 +178,7 @@ def _line_raw_offsets_x(
 
     raw_offsets_x[i] = 光标在 raw 偏移 i 处的 X（相对文字左起点）。
 
-    - cursor_raw_offset=None（浏览态）：所有段标记折叠，仅 _display_text 占宽度。
+    - cursor_raw_offset=None（浏览态）：所有段标记折叠，仅 display_text 占宽度。
       标题 # /引用 > 前缀零宽度；无序列表 - 渲染为 • 占宽度；行内 ** ` 等标记零宽度。
     - cursor_raw_offset=int（激活行）：光标所在段逐字符测量 raw（含标记宽度），
       其余段标记折叠。保证光标 X 与渲染层 TextSpan 对齐。
@@ -194,7 +202,7 @@ def _line_raw_offsets_x(
 
         font, size = _seg_font_metrics(seg, base)
         seg_raw_len = len(seg.raw)
-        is_prefix = seg.seg_type in _PREFIX_SEGTYPES
+        is_prefix = seg.seg_type in PREFIX_SEGTYPES
 
         if cursor_in_seg:
             # 光标在段内：逐字符测量 raw（含标记，标记变灰可见占宽度）
@@ -203,7 +211,7 @@ def _line_raw_offsets_x(
                 offsets.append(acc)
         elif is_prefix:
             # 前缀段（光标不在段内）：display_text 宽度（•  / N. / 空）
-            display = _display_text(seg)
+            display = display_text(seg)
             display_w = measure_text_width(display, font, size) if display else 0.0
             seg_start_x = acc
             for i in range(seg_raw_len):
@@ -212,7 +220,7 @@ def _line_raw_offsets_x(
                 offsets.append(acc)
         else:
             # 行内段（光标不在段内）：逐 piece 测量，标记零宽度、内容逐字符测量
-            pieces = _split_seg_for_display(seg)
+            pieces = split_seg_for_display(seg)
             for text, is_marker in pieces:
                 if not text:
                     continue

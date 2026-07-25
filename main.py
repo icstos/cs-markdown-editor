@@ -4,18 +4,29 @@
 - 声明式渲染：page.render(App)
 - 文档状态上抛到 App 层，便于 New / Open / Save
 - 段级编辑、Typora 式实时渲染由 views/editor 负责
+
+依赖项：
+- parser：Markdown 解析
+- models：Document
+- config.settings / config.sample：默认设置与示例文档
+- services.shortcuts：快捷键管理
+- services.file_io：文件读写
+- styles：主题与排版常量
+- views.*：UI 组件（编辑器 / 标签栏 / 侧边栏 / 状态栏 / 设置弹层 / 快捷键分发）
 """
 
 import asyncio
 import json
 import os
-import re
 
 import flet as ft
 
 import parser
-from models import BlockType, Document
-from services.shortcuts import DEFAULT_SHORTCUTS, ShortcutManager
+from config.sample import SAMPLE_MD
+from config.settings import DEFAULT_SETTINGS, load_settings, save_settings
+from models import Document
+from services.file_io import read_text, write_text
+from services.shortcuts import ShortcutManager
 from styles import FONT_MAIN, get_colors, only_border
 from views.editor import MarkdownEditor
 from views.key_bindings import KeyDispatcher
@@ -24,195 +35,9 @@ from views.sidebar import Sidebar
 from views.status_bar import StatusBar
 from views.tab_bar import ConfirmCloseDialog, TabBar
 
-_SAMPLE = r"""# Markdown 编辑器
-
-基于 Flet 0.86.2 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
-
-## 特性
-- 所见即所得
-
-# 测试
-### 行内元素
-- **加粗**、*斜体*、`行内代码`、~~删除线~~、[链接](https://flet.dev)、$a=b+c$
-测试，**加粗**，*斜==体==*，***加粗且斜体***,~~删除文本~~ ==高亮==
-测试，**加粗**，*斜体*，***加粗且斜体***
-行内代码: `import os`
-
-- ==高亮==
-- 上标：x^2^
-- 下标：x~3~
-
-### 标题
-# 一级标题
-## 二级*标题*
-### 三级标题
-#### 四级标题
-##### 五级标题
-###### 六级标题
-
-- 段级编辑：点击任意段即显示其最小语法，其余保持渲染样式
-- 三级状态：文档 / 行 / 文本段
-- 支持 `代码块`、列表、引用、分隔线
-- 水平分割线
-
-链接：[百度](http://www.baidu.com)
-
-$$
-x = \dfrac{-b \pm \sqrt{b^2 - 4ac}}{2a} 
-$$
-
-
-#### 列表
-
-- 无序**列表1**
-- 无序*列表2*
-  - 无序列表3
-  - 无序列表4
-    - 无序列表**5**
-
-
-1. 第一步
-2. 第二步
-   1. 子步骤1
-   2. 子步骤2
-3. 第三步
-
-嵌套列表
-> 这是一段引用文字，左侧有边框、文字柔和。
-> 引用，块注释
->
-> > 双层引用（嵌套引用）
-
-
-
-> 引用 **加粗**
-> > 双层引用，**加粗**
-
-
-
-### 复选框
-- [x] 已完成事项
-- [ ] 待办事项 1
-- [ ] 待办事项 2
-- [ ] 复选框1
-- [ ] 复选框2
-    - [x] 复选框*2-1*
-
-#### 图片
-
-- 本地图
-![大图](assets/images/big.png)
-
-![百度](https://www.baidu.com/img/PCtm_d9c8750bed0b3c7d089fa7d55720d6cf.png)
-
-### 代码块
-
-```python
-import os
-
-def greet(name: str) -> str:
-    return f"hello, {name}"
-```
-
-### 无语言标记的代码块
-```
-这是没有语言标记的代码块
-可以包含任意内容
-```
-
-#### 表格
-
-| 标题             |       标题       |             标题 |
-| :--------------- | :--------------: | ---------------: |
-| 居左测试文本     |   居中测试文本   |     居右测试文本 |
-| 居左测试文本 1   |  居中测试文本 2  |   居右测试文本 3 |
-| 居左测试文本 11  | 居中测试文本 22  |  居右测试文本 33 |
-| 居左测试文本 111 | 居中测试文本 222 | 居右测试文本 333 |
-
-### 目录
-[toc]
-
-### 水平分割线
-
----
-
-点击任意位置开始编辑。
-
-## 英文
-This is a **bold** text and this is *italic*. Here's some `inline code`.
-
-"""
-
-
-def _read_file(path: str) -> str:
-    with open(path, encoding="utf-8") as f:
-        return f.read()
-
-
-def _write_file(path: str, text: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
-
 
 def _file_name(path: str | None) -> str:
     return os.path.basename(path) if path else "未命名.md"
-
-
-_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
-
-_DEFAULT_SETTINGS = {
-    "content_max_width": 920,
-    "content_padding": 36,
-    "content_padding_top": 24,
-    "show_footer": True,
-    "body_font_size": 16,
-    "line_height": 1.6,
-    "font_family": "Alibaba",
-    "auto_save": False,
-    "remember_focus_mode": False,
-    "show_toolbar": True,
-    "show_line_numbers": False,
-    "code_theme_dark": "ATOM_ONE_DARK",
-    "code_theme_light": "GITHUB",
-    "export_format": "html",
-    "sidebar_open": False,
-    "sidebar_panel": "files",
-    "sidebar_width": 256,
-    "recent_files": [],
-    "shortcuts": {k: dict(v) for k, v in DEFAULT_SHORTCUTS.items()},
-}
-
-
-
-def _load_settings() -> dict:
-    try:
-        with open(_SETTINGS_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            merged = dict(_DEFAULT_SETTINGS)
-            merged.update(data)
-            # 深合并 shortcuts：保留用户自定义键位，同时补齐新增默认项
-            # （避免老 settings.json 缺少 close_tab/next_tab/prev_tab 等新键）
-            user_sc = data.get("shortcuts", {})
-            merged_sc: dict = {}
-            if isinstance(user_sc, dict):
-                for layer, def_layer in _DEFAULT_SETTINGS["shortcuts"].items():
-                    merged_sc[layer] = {**def_layer, **user_sc.get(layer, {})}
-            else:
-                merged_sc = {k: dict(v) for k, v in _DEFAULT_SETTINGS["shortcuts"].items()}
-            merged["shortcuts"] = merged_sc
-            return merged
-    except Exception:
-        pass
-    return dict(_DEFAULT_SETTINGS)
-
-
-def _save_settings(settings: dict) -> None:
-    try:
-        with open(_SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
 
 
 @ft.component
@@ -220,7 +45,7 @@ def App():
     # 多文档标签：每个 tab 持有 {document, file_path, dirty}；active_index 指向当前标签
     tabs, set_tabs = ft.use_state(
         lambda: [
-            {"document": parser.parse_markdown(_SAMPLE), "file_path": None, "dirty": False}
+            {"document": parser.parse_markdown(SAMPLE_MD), "file_path": None, "dirty": False}
         ]
     )
     active_index, set_active_index = ft.use_state(0)
@@ -228,7 +53,7 @@ def App():
     confirm_close, set_confirm_close = ft.use_state(None)  # 待确认关闭的 tab index | None
     # 亮/暗主题模式
     theme_mode, set_theme_mode = ft.use_state(ft.ThemeMode.LIGHT)
-    settings, set_settings = ft.use_state(_load_settings)
+    settings, set_settings = ft.use_state(load_settings)
     settings_open, set_settings_open = ft.use_state(False)
     settings_tab, set_settings_tab = ft.use_state("edit")
     shortcut_focus, set_shortcut_focus = ft.use_state((None, None))
@@ -461,7 +286,7 @@ def App():
         next_settings = dict(settings)
         next_settings[key] = value
         set_settings(next_settings)
-        _save_settings(next_settings)
+        save_settings(next_settings)
         _apply_content_layout()
         if key == "shortcuts":
             layer, action = shortcut_mgr.first_conflict_target()
@@ -495,15 +320,15 @@ def App():
         page.run_task(_debounced_save)
 
     def reset_settings():
-        next_settings = dict(_DEFAULT_SETTINGS)
+        next_settings = dict(DEFAULT_SETTINGS)
         set_settings(next_settings)
-        _save_settings(next_settings)
+        save_settings(next_settings)
 
     def reset_shortcuts():
         next_settings = dict(settings)
-        next_settings["shortcuts"] = {k: dict(v) for k, v in DEFAULT_SHORTCUTS.items()}
+        next_settings["shortcuts"] = {k: dict(v) for k, v in DEFAULT_SETTINGS["shortcuts"].items()}
         set_settings(next_settings)
-        _save_settings(next_settings)
+        save_settings(next_settings)
         set_shortcut_focus((None, None))
         select_settings_tab("advanced")
         open_settings()
@@ -524,11 +349,11 @@ def App():
             path += ".json"
         try:
             payload = json.dumps(
-                settings.get("shortcuts", DEFAULT_SHORTCUTS),
+                settings.get("shortcuts", DEFAULT_SETTINGS["shortcuts"]),
                 ensure_ascii=False,
                 indent=2,
             )
-            _write_file(path, payload)
+            write_text(path, payload)
         except Exception as e:
             if page_ref.current is not None:
                 page_ref.current.open(ft.SnackBar(ft.Text(f"导出失败：{e}")))
@@ -548,14 +373,14 @@ def App():
         if not files:
             return
         try:
-            payload = _read_file(files[0].path)
+            payload = read_text(files[0].path)
             data = json.loads(payload)
             if not isinstance(data, dict):
                 raise ValueError("JSON 格式不正确")
             next_settings = dict(settings)
             next_settings["shortcuts"] = data
             set_settings(next_settings)
-            _save_settings(next_settings)
+            save_settings(next_settings)
             set_shortcut_focus((None, None))
         except Exception as e:
             if page_ref.current is not None:
@@ -590,7 +415,7 @@ def App():
                     set_session(session + 1)
                 return
         try:
-            text = _read_file(path)
+            text = read_text(path)
         except Exception as e:
             if page_ref.current is not None:
                 page_ref.current.open(ft.SnackBar(ft.Text(f"打开失败：{e}")))
@@ -695,7 +520,7 @@ def App():
                 path += ".md"
         text = parser.serialize(doc)
         try:
-            _write_file(path, text)
+            write_text(path, text)
         except Exception as e:
             if page_ref.current is not None:
                 page_ref.current.open(ft.SnackBar(ft.Text(f"保存失败：{e}")))
@@ -728,7 +553,7 @@ def App():
         if not path.lower().endswith(".html"):
             path += ".html"
         try:
-            _write_file(path, html)
+            write_text(path, html)
         except Exception as e:
             page_ref.current.open(ft.SnackBar(ft.Text(f"导出失败：{e}")))
             return

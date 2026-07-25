@@ -1,19 +1,21 @@
 """共享样式常量与段→TextStyle 映射。
 
-集中管理颜色与排版，保证视图层声明式、无散落的魔法数字。
-支持亮/暗双主题：get_colors(mode) 返回对应 Colors，_current_colors() 读取
-当前 page.theme_mode 自动取色，供渲染态函数与视图层使用。
+职责：
+- 主题配色（亮/暗两套 Colors、get_colors / _current_colors）
+- 块级排版（block_text_size / block_weight / list_color_level）
+- 段样式映射（segment_style / prefix_style）
+- 通用 Border 工具（only_border）
+
+依赖项：models（BlockType / SegType / Segment）、flet。
+对外接口：见每条 def 与模块顶层常量 FONT_MAIN / FONT_MONO。
+
+文本测量与图片尺寸相关功能已迁移至 utils/text_layout.py；
+本模块仅保留样式与配色职责，避免职责重叠。
 """
 
-import io
-import os
-import re
-import urllib.request
 from dataclasses import dataclass, field
 
 import flet as ft
-from PIL import Image as _PILImage
-from PIL import ImageFont as _PILImageFont
 
 from models import (
     BlockType,
@@ -273,117 +275,3 @@ def only_border(
         bottom=bottom or _NO_BORDER,
         left=left or _NO_BORDER,
     )
-
-
-# ---------------------------------------------------------------------------
-# 文本宽度测量：基于本地字体精确计算像素宽度，用于编辑块宽度自适应。
-# 用 Pillow 的 FreeType 渲染器加载 .otf/.ttf，getlength 返回文本 advance 宽度，
-# 精度远高于"字符数 × 平均字宽"估算，能贴合 Flet 渲染逻辑像素。
-# ---------------------------------------------------------------------------
-
-_FONT_FILES = {
-    FONT_MAIN: os.path.join(
-        os.path.dirname(__file__), "assets", "fonts", "AlibabaPuHuiTi-3-55-Regular.otf"
-    ),
-    FONT_MONO: r"C:\Windows\Fonts\consola.ttf",  # 代码段等宽回退字体
-}
-_font_cache: dict[tuple[str, int], _PILImageFont.FreeTypeFont] = {}
-
-# CJK 与全角字符范围：当主字体（如 Consolas）不含这些字形时，Pillow getlength 报告
-# 的 advance 严重偏小，而 Flutter/Skia 会回退到系统 CJK 字体（宽度约 1em/字）。
-# 用此正则把文本切分为 CJK 片段与非 CJK 片段分别测量，贴合 Skia 回退行为。
-_CJK_RE = re.compile(
-    r"[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ufeff\uff00-\uffef]"
-)
-
-
-def _get_font(font_family: str, size: int) -> _PILImageFont.FreeTypeFont:
-    """按 (字体族, 字号) 缓存加载 ImageFont，避免重复磁盘 IO。"""
-    key = (font_family, size)
-    f = _font_cache.get(key)
-    if f is None:
-        path = _FONT_FILES.get(font_family)
-        try:
-            f = (
-                _PILImageFont.truetype(path, size)
-                if path
-                else _PILImageFont.load_default()
-            )
-        except OSError:
-            f = _PILImageFont.load_default()
-        _font_cache[key] = f
-    return f
-
-
-def measure_text_width(text: str, font_family: str, size: int) -> float:
-    """测量文本在指定字体/字号下的像素宽度。
-
-    返回值约为 Flet 逻辑像素宽度（桌面端 1.0 缩放下与渲染一致）。
-
-    字体回退处理：当请求字体（如 Consolas 等宽体）不含 CJK/全角字形时，
-    Pillow getlength 报告的 advance 严重偏小，而 Flutter/Skia 渲染会回退到
-    系统 CJK 字体（宽度约 1em/字）。此处将文本按 CJK 边界切分，CJK 片段改用
-    主中文字体测量，非 CJK 片段仍用原字体，二者求和贴合 Skia 实际渲染宽度。
-    """
-    if not text:
-        return 0.0
-    # 主中文字体已含 CJK 字形，无需切分；仅对非主字体做回退测量
-    if font_family == FONT_MAIN or not _CJK_RE.search(text):
-        return _get_font(font_family, size).getlength(text)
-
-    total = 0.0
-    pos = 0
-    for m in _CJK_RE.finditer(text):
-        if m.start() > pos:
-            total += _get_font(font_family, size).getlength(text[pos:m.start()])
-        total += _get_font(FONT_MAIN, size).getlength(m.group())
-        pos = m.end()
-    if pos < len(text):
-        total += _get_font(font_family, size).getlength(text[pos:])
-    return total
-
-
-# ---------------------------------------------------------------------------
-# 图片尺寸读取与缩放：用 Pillow 读取图片真实像素尺寸，按最大边等比例缩放。
-# - 大图（宽或高 > max_size）：缩放到最大边 = max_size
-# - 小图：返回实际尺寸
-# - 无法读取：返回 (None, None)，交由 ft.Image 自适应
-# 结果按 src 缓存，避免每次渲染重复 IO / 网络请求。
-# ---------------------------------------------------------------------------
-
-_IMG_MAX = 500  # 图片最大边长（像素）
-_img_size_cache: dict[str, tuple[int, int] | None] = {}
-
-
-def _read_image_size(src: str) -> tuple[int, int] | None:
-    """读取图片真实 (width, height)。本地路径直接打开；URL 下载后解析。"""
-    try:
-        if src.startswith(("http://", "https://")):
-            with urllib.request.urlopen(src, timeout=5) as resp:
-                data = resp.read()
-            img = _PILImage.open(io.BytesIO(data))
-        else:
-            img = _PILImage.open(src)
-        return img.size
-    except Exception:
-        return None
-
-
-def image_fit_size(src: str, max_size: int = _IMG_MAX) -> tuple[int | None, int | None]:
-    """返回图片在 UI 中应使用的 (width, height)。
-
-    大图等比例缩放到最大边 = max_size；小图保持原尺寸；读取失败返回 (None, None)。
-    """
-    if src not in _img_size_cache:
-        _img_size_cache[src] = _read_image_size(src)
-    size = _img_size_cache[src]
-    if size is None:
-        return None, None
-    w, h = size
-    if w <= max_size and h <= max_size:
-        return w, h
-    if w >= h:
-        ratio = max_size / w
-        return max_size, round(h * ratio)
-    ratio = max_size / h
-    return round(w * ratio), max_size

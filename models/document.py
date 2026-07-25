@@ -1,12 +1,24 @@
 """文档状态模型：三级状态管理（文档 / 行 / 文本段）。
 
+依赖项：
+- 标准库 dataclasses、enum
+- flet（@ft.observable 装饰器）
+
+对外接口：
+- SegType：段（Span）类型枚举（StrEnum）
+- BlockType：行（Block）类型枚举（StrEnum）
+- Segment：行内的一个子文本段（@ft.observable dataclass）
+- Line：文档中的一行（@ft.observable dataclass）
+- Document：整个文档（@ft.observable dataclass）
+
+设计要点：
 - Segment：行内的一个子文本段，对应最小可编辑单元（一段纯文本、加粗、斜体、
   行内代码、链接、图片，以及块级前缀如 `# `、`- `、`> `）。
 - Line：文档中的一行，持有块类型与有序的 Segment 列表。
 - Document：整个文档，持有行列表与文件元信息。
 
-三者均用 `@ft.observable` 装饰，字段变更会自动触发依赖组件重绘，符合
-UI = f(state) 的声明式范式。
+三者均用 @ft.observable 装饰，字段变更会自动触发依赖组件重绘，
+符合 UI = f(state) 的声明式范式。
 
 段类型与块类型使用 StrEnum（Python 3.11+）分组管理，兼顾类型安全与字符串兼容。
 """
@@ -62,43 +74,68 @@ class BlockType(StrEnum):
 @dataclass
 @ft.observable
 class Segment:
-    """行内的一个子文本段。"""
+    """行内的一个子文本段。
+
+    seg_type：段类型
+    raw：该段的原生 Markdown 源码，如 "**world**"
+    text：渲染显示文本，如 "world"
+    url：链接/图片地址
+    level：heading 级别 / 列表缩进
+    marks：组合格式标记（SegType 元组），如 (EMPHASIS, STRONG) 表示 ***加粗斜体***
+    """
 
     seg_type: SegType = SegType.TEXT
-    raw: str = ""  # 该段的原生 Markdown 源码，如 "**world**"
-    text: str = ""  # 渲染显示文本，如 "world"
-    url: str = ""  # 链接/图片地址
-    level: int = 0  # heading 级别 / 列表缩进
-    marks: tuple = ()  # 组合格式标记（SegType 元组），如 (EMPHASIS, STRONG) 表示 ***加粗斜体***
+    raw: str = ""
+    text: str = ""
+    url: str = ""
+    level: int = 0
+    marks: tuple = ()
 
     @staticmethod
     def text_seg(text: str) -> "Segment":
+        """快速构造纯文本段。"""
         return Segment(SegType.TEXT, text, text)
 
 
 @dataclass
 @ft.observable
 class Line:
-    """文档中的一行。"""
+    """文档中的一行。
+
+    block_type：块类型
+    raw：整行原生源码（序列化用）
+    segments：有序段列表
+    level：heading 级别 / 列表缩进
+    lang：代码块语言标识
+    ordered：有序列表标记
+    task：是否为任务列表项（- [ ] / - [x]）
+    checked：任务是否已勾选
+    """
 
     block_type: BlockType = BlockType.PARAGRAPH
-    raw: str = ""  # 整行原生源码（序列化用）
+    raw: str = ""
     segments: list[Segment] = field(default_factory=list)
-    level: int = 0  # heading 级别 / 列表缩进
-    lang: str = ""  # 代码块语言标识
-    ordered: bool = False  # 有序列表标记
-    task: bool = False  # 是否为任务列表项（- [ ] / - [x]）
-    checked: bool = False  # 任务是否已勾选
+    level: int = 0
+    lang: str = ""
+    ordered: bool = False
+    task: bool = False
+    checked: bool = False
 
     @property
     def is_blank(self) -> bool:
+        """是否为空行（块类型为 BLANK 或整行无可见内容）。"""
         return self.block_type == BlockType.BLANK or (not self.raw.strip())
 
 
 @dataclass
 @ft.observable
 class Document:
-    """整个文档。"""
+    """整个文档。
+
+    lines：行列表
+    file_path：关联的文件绝对路径（未保存时为 None）
+    dirty：是否有未保存修改
+    """
 
     lines: list[Line] = field(default_factory=list)
     file_path: str | None = None

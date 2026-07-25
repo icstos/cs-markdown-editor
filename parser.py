@@ -1,5 +1,25 @@
 """Markdown 与文档状态之间的双向转换。
 
+依赖项：
+- 标准库 re、copy
+- mistune（行内 AST 解析）
+- models（BlockType / Document / Line / SegType / Segment）
+- utils.segment_helpers（PREFIX_SEGTYPES / WRAP_SYNTAX / display_text）
+- utils.table_helpers（is_table_separator）
+
+对外接口：
+- parse_markdown(text: str) -> Document：解析 Markdown 文本
+- reparse_line(line: Line, new_raw: str | None = None) -> None：行重解析（编辑提交后）
+- staging_reparse(line: Line, new_raw: str) -> Line：返回新 Line（不修改原行）
+- segment_raw(segments: list[Segment]) -> str：段列表拼回行源码
+- line_to_raw(line: Line) -> str：行源码
+- serialize(doc: Document) -> str：文档序列化
+- to_html(text: str) -> str：Markdown 转 HTML
+- compute_markdown_from_text(lines, plain_text) -> str：选区纯文本转 Markdown
+- match_text_to_selections(lines, plain_text) -> dict：纯文本匹配选区
+- apply_inline_format_to_selections(lines, selections, wrap, kind) -> tuple
+- delete_selections(lines, selections) -> tuple
+
 设计要点：
 - 行级（Line）：按行扫描，识别块类型（标题 / 列表 / 引用 / 代码块 / 分隔线 / 段落）。
 - 段级（Segment）：块级前缀与行内内容统一抽象为 Segment 列表，从而让
@@ -8,13 +28,21 @@
   兼顾正确性与可维护性。
 - reparse_line：编辑某段后，由各段 raw 拼接出整行源码，再重新解析行内结构，
   保证模型始终一致（UI = f(state)）。
+
+冗余治理：
+- 删除重复定义的 apply_inline_format_to_selections（原 line 740-791，被 line 794+ 覆盖）
+- _PREFIX_SEGTYPES / _WRAP_SYNTAX / _seg_display_text / _is_table_separator
+  迁移到 utils/segment_helpers.py 与 utils/table_helpers.py，本模块改为导入
 """
 
+import copy
 import re
 
 import mistune
 
 from models import BlockType, Document, Line, SegType, Segment
+from utils.segment_helpers import PREFIX_SEGTYPES, WRAP_SYNTAX, display_text
+from utils.table_helpers import is_table_separator
 
 # 行内解析器：启用删除线/高亮/上下标插件，支持组合语法 ***加粗斜体*** 等
 _INLINE_PLUGINS = ["strikethrough", "mark", "superscript", "subscript"]
@@ -36,9 +64,6 @@ _RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)
 _RE_MATH_FENCE = re.compile(r"^\$\$\s*$")  # 块级公式围栏：$$ 独占一行开/闭
 _RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")
 _RE_TOC = re.compile(r"^\[toc\]\s*$", re.IGNORECASE)
-
-# ---- 块级前缀段类型 ----
-_PREFIX_SEGTYPES = (SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX)
 
 
 # ---------------------------------------------------------------------------
@@ -382,17 +407,8 @@ def _split_code_block(raw: str) -> tuple[str, str]:
     return lang, body
 
 
-def _is_table_separator(raw: str) -> bool:
-    cells = [c.strip() for c in raw.strip().strip("|").split("|")]
-    if len(cells) < 2:
-        return False
-    for cell in cells:
-        if not re.fullmatch(r":?-{3,}:?", cell):
-            return False
-    return True
-
-
 def _is_table_row(raw: str) -> bool:
+    """表格数据行判定：含 | 且首尾为 |。"""
     return "|" in raw and raw.strip().startswith("|") and raw.strip().endswith("|")
 
 
@@ -438,7 +454,7 @@ def parse_markdown(text: str) -> Document:
             doc.lines.append(line)
             i = j + 1
             continue
-        if _is_table_row(raw) and i + 1 < n and _is_table_separator(lines_src[i + 1]):
+        if _is_table_row(raw) and i + 1 < n and is_table_separator(lines_src[i + 1]):
             table_lines = [raw]
             j = i + 2
             while j < n and _is_table_row(lines_src[j]) and lines_src[j].strip():
@@ -515,7 +531,6 @@ def staging_reparse(line: Line, new_raw: str) -> Line:
     安全性：reparse_line 对 line.segments 是赋值新 list（line.segments = ...），
     不会修改原 line.segments 中的 Segment 对象。浅拷贝（copy.copy）足够隔离。
     """
-    import copy
     staging = copy.copy(line)        # 浅拷贝：line.segments 引用仍指向原 list
     staging.segments = []            # reparse_line 会赋新 list，原 line.segments 不受影响
     reparse_line(staging, new_raw)
@@ -540,56 +555,6 @@ def to_html(text: str) -> str:
 # ---------------------------------------------------------------------------
 # 选区 → Markdown 源码
 # ---------------------------------------------------------------------------
-# 行内格式包裹语法
-_WRAP_SYNTAX: dict[SegType, tuple[str, str]] = {
-    SegType.STRONG: ("**", "**"),
-    SegType.EMPHASIS: ("*", "*"),
-    SegType.CODESPAN: ("`", "`"),
-    SegType.STRIKE: ("~~", "~~"),
-    SegType.HIGHLIGHT: ("==", "=="),
-    SegType.SUPERSCRIPT: ("^", "^"),
-    SegType.SUBSCRIPT: ("~", "~"),
-}
-
-
-def _seg_display_text(seg: Segment) -> str:
-    """段的显示文本（与 segment_view._display_text 一致）。"""
-    if seg.seg_type == SegType.HEADING_PREFIX:
-        return ""  # 渲染态不显示 # 前缀
-    if seg.seg_type == SegType.QUOTE_PREFIX:
-        return ""  # 渲染态不显示 > 前缀，引用由左边框区分
-    if seg.seg_type == SegType.LIST_PREFIX:
-        # 无序列表标记渲染为圆点；有序列表保留 "N. " 形式
-        # raw 可能含缩进空格，先 lstrip 再判断 marker
-        raw = seg.raw.lstrip()
-        if raw and raw[0] in "-*+":
-            return "•  "
-        return raw
-    if seg.seg_type in _PREFIX_SEGTYPES:
-        return seg.raw
-    if seg.seg_type == SegType.IMAGE:
-        return seg.text or "🖼"
-    if seg.seg_type == SegType.LINK:
-        return seg.text or seg.url or "链接"
-    return seg.text
-
-
-def _iter_seg_offsets(line: Line):
-    """逐段 yield (seg, seg_start, seg_end)，seg_end = seg_start + len(display_text)。
-
-    compute_markdown_from_selections 与 delete_selections 共享此迭代逻辑，
-    统一"按展示偏移定位段"的边界处理。
-    """
-    offset = 0
-    for seg in line.segments:
-        text = _seg_display_text(seg)
-        yield seg, offset, offset + len(text), text
-        offset += len(text)
-
-
-def _line_display_len(line: Line) -> int:
-    """整行展示文本长度（所有段 display_text 拼接）。"""
-    return sum(len(_seg_display_text(s)) for s in line.segments)
 
 
 def _wrap_partial(seg: Segment, selected_text: str) -> str:
@@ -602,14 +567,14 @@ def _wrap_partial(seg: Segment, selected_text: str) -> str:
     st = seg.seg_type
     # 组合格式：marks 多于一项时按外→内嵌套
     if seg.marks and len(seg.marks) > 1:
-        pre = "".join(_WRAP_SYNTAX[m][0] for m in seg.marks if m in _WRAP_SYNTAX)
+        pre = "".join(WRAP_SYNTAX[m][0] for m in seg.marks if m in WRAP_SYNTAX)
         post = "".join(
-            _WRAP_SYNTAX[m][1] for m in reversed(seg.marks) if m in _WRAP_SYNTAX
+            WRAP_SYNTAX[m][1] for m in reversed(seg.marks) if m in WRAP_SYNTAX
         )
         return f"{pre}{selected_text}{post}"
     # 单一包裹器行内格式
-    if st in _WRAP_SYNTAX:
-        pre, post = _WRAP_SYNTAX[st]
+    if st in WRAP_SYNTAX:
+        pre, post = WRAP_SYNTAX[st]
         return f"{pre}{selected_text}{post}"
     # 链接 / 图片 / 行内公式
     if st == SegType.LINK:
@@ -620,6 +585,24 @@ def _wrap_partial(seg: Segment, selected_text: str) -> str:
         return f"${selected_text}$"
     # 纯文本 / 前缀段：直接返回选中文本
     return selected_text
+
+
+def _iter_seg_offsets(line: Line):
+    """逐段 yield (seg, seg_start, seg_end, text)，seg_end = seg_start + len(display_text)。
+
+    compute_markdown_from_selections 与 delete_selections 共享此迭代逻辑，
+    统一"按展示偏移定位段"的边界处理。
+    """
+    offset = 0
+    for seg in line.segments:
+        text = display_text(seg)
+        yield seg, offset, offset + len(text), text
+        offset += len(text)
+
+
+def _line_display_len(line: Line) -> int:
+    """整行展示文本长度（所有段 display_text 拼接）。"""
+    return sum(len(display_text(s)) for s in line.segments)
 
 
 def compute_markdown_from_selections(
@@ -683,7 +666,7 @@ def match_text_to_selections(
     text = plain_text.replace("\r\n", "\n").replace("\r", "\n")
 
     line_texts = [
-        "".join(_seg_display_text(seg) for seg in line.segments) for line in lines
+        "".join(display_text(seg) for seg in line.segments) for line in lines
     ]
 
     # 情况1：剪贴板含换行符 → 按行匹配
@@ -735,60 +718,6 @@ def compute_markdown_from_text(lines: list[Line], plain_text: str) -> str:
     """从 SelectionArea 复制的纯文本计算 Markdown 源码。"""
     selections = match_text_to_selections(lines, plain_text)
     return compute_markdown_from_selections(lines, selections)
-
-
-def apply_inline_format_to_selections(
-    lines: list[Line], selections: dict[int, tuple[int, int]], wrap: str, kind: str
-) -> tuple[list[Line], int, int, int]:
-    """对已匹配选区执行 Typora 式行内格式化，返回 (新行列表, 光标行索引, 光标段索引, 段内偏移)。
-
-    kind: 'wrap' 为普通包裹（** / * / == / ~~ / ``），'link' 为 [text](url)。
-    """
-    if not selections:
-        return lines, 0, 0, 0
-
-    sorted_lines = sorted(selections.keys())
-    first_li, last_li = sorted_lines[0], sorted_lines[-1]
-    new_lines = list(lines)
-
-    def _wrap_text(seg: Segment, text: str) -> str:
-        if kind == "link":
-            return f"[{text}](url)"
-        return f"{wrap}{text}{wrap}"
-
-    for li in range(first_li, last_li + 1):
-        if li >= len(new_lines) or li not in selections:
-            continue
-        line = new_lines[li]
-        base, extent = selections[li]
-        start, end = min(base, extent), max(base, extent)
-        if start == end:
-            continue
-
-        rebuilt: list[Segment] = []
-        for seg, seg_start, seg_end, text in _iter_seg_offsets(line):
-            if seg_end <= start or seg_start >= end:
-                rebuilt.append(seg)
-                continue
-            sel_start = max(0, start - seg_start)
-            sel_end = min(len(text), end - seg_start)
-            if sel_start > 0:
-                prefix_text = text[:sel_start]
-                rebuilt.append(Segment(SegType.TEXT, seg.raw[:sel_start], prefix_text))
-            selected_text = text[sel_start:sel_end]
-            rebuilt.append(Segment(SegType.TEXT, _wrap_text(seg, selected_text), selected_text))
-            if sel_end < len(text):
-                suffix_text = text[sel_end:]
-                rebuilt.append(Segment(SegType.TEXT, seg.raw[-len(suffix_text):], suffix_text))
-        if rebuilt:
-            line.segments = rebuilt
-            line.raw = "".join(s.raw for s in rebuilt)
-            reparse_line(line, line.raw)
-
-    cursor_li = first_li
-    cursor_si = 0
-    cursor_offset = 0
-    return new_lines, cursor_li, cursor_si, cursor_offset
 
 
 def apply_inline_format_to_selections(
@@ -862,7 +791,9 @@ def apply_inline_format_to_selections(
     return new_lines, first_li, 0, 0
 
 
-def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]]) -> tuple[list[Line], int, int, int]:
+def delete_selections(
+    lines: list[Line], selections: dict[int, tuple[int, int]]
+) -> tuple[list[Line], int, int, int]:
     """删除选中内容，返回 (新行列表, 光标行索引, 光标段索引, 段内偏移)。
 
     selections: {line_idx: (base_offset, extent_offset)}
@@ -898,7 +829,7 @@ def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]])
             # 找到第一个非前缀段作为光标段，偏移为段首（剪切位置）
             cursor_si = 0
             for i, seg in enumerate(new_lines[cursor_li].segments):
-                if seg.seg_type not in _PREFIX_SEGTYPES:
+                if seg.seg_type not in PREFIX_SEGTYPES:
                     cursor_si = i
                     break
             cursor_offset = 0
@@ -996,10 +927,10 @@ def delete_selections(lines: list[Line], selections: dict[int, tuple[int, int]])
     # 保留首行的块级前缀段（HEADING_PREFIX / LIST_PREFIX / QUOTE_PREFIX）
     prefix_seg = None
     for seg in first_line.segments:
-        if seg.seg_type in _PREFIX_SEGTYPES:
+        if seg.seg_type in PREFIX_SEGTYPES:
             prefix_seg = seg
             break
-    if prefix_seg is not None and not any(s.seg_type in _PREFIX_SEGTYPES for s in merged_segments):
+    if prefix_seg is not None and not any(s.seg_type in PREFIX_SEGTYPES for s in merged_segments):
         merged_segments = [prefix_seg] + merged_segments
         # 前缀段插入到头部，光标段索引+1
         cursor_si += 1

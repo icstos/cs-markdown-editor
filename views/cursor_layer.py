@@ -7,8 +7,13 @@
 - strut_style 与渲染层 Text 共用同一实例，强制行高一致，保证光标 baseline
   与渲染层文字 baseline 像素级对齐
 - 通过 Stack 内绝对定位（left/top）将光标摆到渲染层的字符间隙像素位置
-- value="" 永远为空：每次输入后由 editor 端 set_nav_seq(+1) 触发 key 重建，
-  Flet 销毁旧控件创建新控件，内部状态自动重置为空
+- value="" 始终为空（构造值）：输入后由 editor 端 use_effect([cursor_off])
+  异步清空 Flutter 端内部 value，为下次输入做准备
+
+IME 友好策略（key = li + nav_seq）：
+- 同行输入：li/nav_seq 均不变 → key 不变 → 不重建 → IME 组合态保持
+- 切换行：li 变 → key 变 → 重建（旧行释放 TextField，新行创建）
+- 撤销/重做：nav_seq 变 → key 变 → 重建（强制刷新内部状态）
 
 定位参数（由 LineLayoutCache.cursor_px 计算）：
 - cursor_px_x：光标 X（相对 Stack 左上角 = 文字左起点）
@@ -42,6 +47,7 @@ def make_strut(base_size: int, line_height: float, font_family: str = FONT_MAIN)
 
 def cursor_text_field(
     *,
+    li: int,
     cursor_px_x: float,
     cursor_px_y: float = 0.0,
     line_height_px: float,
@@ -59,6 +65,7 @@ def cursor_text_field(
     """构造透明光标 TextField（Stack 顶层绝对定位）。
 
     参数：
+      li：光标所在行号（key 主体，切换行才重建控件，保持 IME 连接）
       cursor_px_x/cursor_px_y：Stack 内光标像素位置（来自 LineLayoutCache.cursor_px）
       line_height_px：Stack 高度 = base * line_height，TextField 高度同此
       base_size：基础字号（与渲染层 Text 一致）
@@ -68,8 +75,21 @@ def cursor_text_field(
       on_focus/on_blur：聚焦/失焦回调
       on_selection_change：光标位置变化回调（用于跟踪 selection）
       field_ref：TextField 引用（editor 端 use_effect 调 focus()）
-      nav_seq：递增触发 key 重建以清空内部状态
+      nav_seq：仅撤销/重做等强制重建场景递增；同 li 输入不递增以保持 IME 组合态
       debug：开发期加半透明红色背景肉眼校准光标位置
+
+    key 策略（IME 友好）：
+      key = f"cursor-field-li-{li}-seq-{nav_seq}"
+      - 同行输入：li/nav_seq 均不变 → key 不变 → 不重建 → IME 组合态保持
+      - 切换行：li 变 → key 变 → 重建（合理，旧行释放 TextField）
+      - 撤销/重做：nav_seq 变 → key 变 → 重建（强制刷新内部状态）
+      输入后 value 清空由 editor 端 _end_input_session 异步执行（光标移动时触发）。
+
+    value 属性策略（IME 关键）：
+      不设置 value 属性！让 Flet 不参与 value 同步。
+      若设置 value=""，每次重渲染 Flet 会将 value="" 同步到 Flutter 端，
+      重置 TextField 内部 value，打断 IME composing region。
+      不设置 value → Flutter 端 value 完全由 IME/键盘管理 → 组合态保持。
 
     宽度策略：
       设为 2px 仅承载光标闪烁（渲染层负责显示文字，TextField 文字透明不可见）。
@@ -77,10 +97,14 @@ def cursor_text_field(
     """
     c = _current_colors()
     kwargs: dict = {
-        # key 变化触发 Flet 销毁旧控件创建新控件，内部 value 自动清空
-        "key": f"cursor-field-{nav_seq}",
-        "value": "",
-        "autofocus": True,
+        # key = li + nav_seq：同行输入不重建（保 IME），切行/撤销时重建
+        "key": f"cursor-field-li-{li}-seq-{nav_seq}",
+        # 不设置 value 属性！避免 Flet 重渲染时同步 value="" 打断 IME 组合态。
+        # Flutter 端 TextField 的 value 完全由 IME/键盘管理。
+        # 清空 value 由 editor 端 _end_input_session 在光标移动时异步执行。
+        # 不设 autofocus！autofocus 在每次重渲染时都会发送到 Flutter，导致
+        # TextField 重新聚焦，IME 重新触发 on_change（双发问题的根因）。
+        # 聚焦由 editor 端 use_effect([cursor_li]) 在切行时异步执行。
         "multiline": False,
         "min_lines": 1,
         "max_lines": 1,

@@ -158,6 +158,7 @@ def _cursor_overlay(
     line_height: float,
     cursor_off: int,
     content_width: float | None,
+    li: int,
     nav_seq: int,
     field_ref: ft.Ref | None,
     on_change: Callable[[str], None],
@@ -167,6 +168,8 @@ def _cursor_overlay(
     on_selection_change: Callable | None,
 ) -> ft.TextField:
     """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off。
+
+    li 传入 cursor_text_field 作为 key 主体，保证同行输入不重建控件（IME 友好）。
 
     任务行：Checkbox 替代了前缀，text_ctrl 只渲染内容（skip_prefix=True），
     cursor_overlay 在内容 Text 的 Stack 内，需减去前缀宽度使光标 X 相对内容起点。
@@ -183,6 +186,7 @@ def _cursor_overlay(
             cursor_px_x -= offsets_x[prefix_len]
     line_height_px = base * line_height
     return cursor_text_field(
+        li=li,
         cursor_px_x=cursor_px_x,
         cursor_px_y=0.0,
         line_height_px=line_height_px,
@@ -205,6 +209,7 @@ def LineView(
     *,
     cursor_li: int | None = None,
     cursor_off: int = 0,
+    cursor_ref: ft.Ref | None = None,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
     content_width: float | None = None,
@@ -239,10 +244,27 @@ def LineView(
     ctrl_pressed_ref: ft.Ref | None = None,
     on_hit_test_x: Callable[[int, float], int] | None = None,
 ) -> ft.Control:
-    """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。"""
+    """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
+
+    cursor_ref：激活行的光标位置 ref（CursorState）。
+    handle_char_input 中不调用 set_cursor_off（避免重渲染打断 IME），
+    光标位置仅由 cursor_ref.current.base 跟踪。
+    LineView 通过 cursor_ref 读取最新光标位置，计算光标像素坐标。
+    parser.reparse_line 触发的重渲染会重新调用 LineView，此时读取
+    cursor_ref.current.base 获取最新光标位置，实现光标实时跟随。
+    """
     c = _current_colors()
     base = block_text_size(line.block_type, line.level)
     is_active = cursor_li == line_idx and cursor_li is not None
+
+    # 激活行：优先使用 cursor_ref.current.base（IME 组合期间最新位置）
+    # cursor_off state 在 IME 组合期间不更新（避免重渲染打断 IME），
+    # 仅在 _end_input_session 中同步。cursor_ref 实时跟踪最新位置。
+    effective_cursor_off = cursor_off
+    if is_active and cursor_ref is not None and cursor_ref.current is not None:
+        ref_off = getattr(cursor_ref.current, "base", None)
+        if ref_off is not None and ref_off >= 0:
+            effective_cursor_off = ref_off
 
     # ============ 代码块（始终可编辑 CodeEditor 独立岛屿）============
     if line.block_type == BlockType.CODE:
@@ -296,13 +318,13 @@ def LineView(
         return _wrap_block(content, line, base, line_idx, is_current_line=is_current_line)
 
     # ============ 普通文本行（段落/标题/列表/引用/空行）：RenderedLine + Stack ============
-    cursor_off_val = cursor_off if is_active else None
+    cursor_off_val = effective_cursor_off if is_active else None
     overlay = None
     if is_active and on_cursor_change is not None:
         overlay = _cursor_overlay(
-            line, base, line_height, cursor_off, content_width, nav_seq, field_ref,
-            on_cursor_change, on_cursor_submit, on_cursor_focus, on_cursor_blur,
-            on_selection_change,
+            line, base, line_height, effective_cursor_off, content_width, line_idx, nav_seq,
+            field_ref, on_cursor_change, on_cursor_submit, on_cursor_focus,
+            on_cursor_blur, on_selection_change,
         )
 
     inner = RenderedLine(

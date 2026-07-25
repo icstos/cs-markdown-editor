@@ -2,12 +2,13 @@
 
 架构（Typora 式 WYSIWYG 光标级实时渲染）：
 - 非激活行：RenderedLine 纯渲染（语法标记透明）
-- 激活行：ft.Stack([RenderedLine, cursor_text_field])，光标 TextField 始终 value=""
-  每个字符输入即时渲染到文档，光标像素级对齐渲染层文字间隙
+- 激活行：ft.Stack([RenderedLine, cursor_text_field])，光标 TextField 不设 value 属性
+  （IME 友好），由 editor 端 use_effect 异步清空；每个字符输入即时渲染到文档，
+  光标像素级对齐渲染层文字间隙
 - 围栏岛屿（CODE/MATH/HR/TOC）：保留独立分支，不进入 Stack
   CODE 用 CodeEditor 始终可编辑；MATH/HR/TOC 视图态渲染
 
-状态由 editor.py 驱动：cursor_li/cursor_off/nav_seq。本文件只负责渲染 + 命中。
+状态由 editor.py 驱动：cursor_li/cursor_off/nav_seq/cursor_ref。本文件只负责渲染 + 命中。
 """
 
 import asyncio
@@ -199,6 +200,7 @@ def _cursor_overlay(
         on_selection_change=on_selection_change,
         field_ref=field_ref,
         nav_seq=nav_seq,
+        content_width=content_width,
     )
 
 

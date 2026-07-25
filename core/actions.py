@@ -18,8 +18,10 @@ Stack 双层光标级架构（Typora 式 WYSIWYG）：
 - cursor_li / cursor_off 替代旧的 active / active_seg / draft 三状态
 - cursor_li=None 表示浏览态（无激活行）；int 表示光标在某行
 - cursor_off 为行级 raw 偏移 0..len(line.raw)
-- nav_seq 每次输入/导航递增，触发 cursor_text_field 的 key 重建以清空内部 value
-- 透明 cursor_text_field 始终 value=""，每个字符输入即时渲染到文档（无段级编辑态）
+- nav_seq 仅撤销/重做递增，强制 cursor_text_field key 重建以刷新内部状态；
+  同行输入不递增以保持 IME 组合态
+- 透明 cursor_text_field 不设 value 属性（IME 友好），value 清空由 editor 端
+  use_effect 异步执行；每个字符输入即时渲染到文档（无段级编辑态）
 """
 
 from collections.abc import Awaitable, Callable
@@ -45,7 +47,7 @@ class EditorActions:
     raw_mode: bool
     cursor_ref: ft.Ref  # ft.Ref[CursorState]：实时光标位置（main.py 读 .current.base/.extent）
     selection_text_ref: ft.Ref
-    nav_seq: int  # 触发 cursor_text_field key 重建以清空内部 value
+    nav_seq: int  # 撤销/重做时递增以强制 cursor_text_field key 重建
 
     # ---- 行间光标导航 ----
     move_left: Callable[[], None]

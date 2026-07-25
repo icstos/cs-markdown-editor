@@ -4,11 +4,10 @@
 对外接口：CursorState。
 
 行为约束（来自项目 memory Hard Constraints）：
-- cursor_base / cursor_extent 必须用 ft.use_ref(CursorState()) 而非 state，
-  避免 on_selection_change 触发重渲染导致光标跳动
-- delete_core 用 len(draft_ref.current) 判段尾而非 CursorState.draft_len
-  （on_selection_change 不可靠，draft_len 仅作安全网）
-- on_change_draft 同步更新 CursorState.draft_len 作为安全网
+- base / extent 必须用 ft.use_ref(CursorState()) 而非 state，避免重渲染打断 IME
+- base/extent 在 _set_cursor 与 handle_char_input 中通过 reset() 同步更新
+- line_view 与 backspace_core/delete_core 通过 cursor_ref.current.base 读取
+  IME 期间最新光标位置（cursor_off state 在 IME 期间不更新）
 """
 
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ class CursorState:
     """TextField 光标位置镜像（ref 而非 state）。
 
     base/extent：当前选区起止偏移（无选区时 base == extent）
-    draft_len：当前编辑段文本长度（安全网，避免 on_selection_change 不可靠）
+    draft_len：行 raw 总长度，用于光标越界钳制
     """
 
     base: int = 0

@@ -8,10 +8,11 @@
 编辑流（光标级，无段级编辑态，IME 友好）：
 - 点击渲染层 → hit_test(x) → raw_off → set_cursor(li, off) → 重渲染
   → use_effect 调 cursor_field.focus() → 透明 TextField 聚焦，光标在像素位置闪烁
-- 输入字符 → TextField.on_change(value) → handle_char_input
-  → line.raw 插入 value → parser.reparse_line → set_cursor(off+len(value))
+- 输入字符 → TextField.on_change(value) → handle_char_input（3 分支：ignore/replace/append）
+  → line.raw 插入 value → parser.reparse_line → cursor_ref.reset(off+len(value))
   → 不递增 nav_seq（key 基于 li+nav_seq，同行输入 key 不变 → 不重建 → IME 保持）
-  → use_effect([cursor_off]) 异步清空 TextField 内部 value → 准备下次输入
+  → 不调用 set_cursor_off（避免重渲染打断 IME），cursor_off 在 _end_input_session 同步
+  → use_effect([clear_value_seq]) 异步清空 TextField 内部 value → 准备下次输入
   → 渲染层 Text 显示新内容，TextField 重新定位到新光标位置
 
 围栏岛屿（CODE/TABLE/MATH/HR/TOC）：自管理独立可编辑控件，不进入 Stack。
@@ -25,9 +26,15 @@
 
 import os
 import re
+import sys
 from collections.abc import Callable
 
 import flet as ft
+
+
+def _dbg_log(msg: str) -> None:
+    """临时调试日志：handle_char_input 调用追踪。验证后删除。"""
+    print(f"[IME_DBG] {msg}", file=sys.stderr, flush=True)
 
 from core.actions import EditorActions
 from core.cursor import CursorState
@@ -143,7 +150,8 @@ def MarkdownEditor(
     cursor_field_ref = ft.use_ref(None)  # 透明 cursor TextField 引用
     # IME 输入会话：on_change 期间不清空 TextField value，用"增量式"编辑同步文档
     # value 从 "w"→"wq"→"你"（IME 组合），文档中对应文本同步替换
-    input_session_ref = ft.use_ref({"li": -1, "start_off": -1, "last_value": "", "virtual_raw": None})
+    # li/start_off/last_value 三字段足够；reparse_line 后 line.raw 已同步，无需 virtual_raw
+    input_session_ref = ft.use_ref({"li": -1, "start_off": -1, "last_value": ""})
     # value 清空序列号：_end_input_session 递增 → use_effect 触发清空 TextField value
     # 不在 _end_input_session 中直接 page.run_task（可能不及时），用 use_effect 确保
     # 在重渲染后执行（cursor_text_field 不设 value 属性，重渲染不同步 value，仅 use_effect 清空）
@@ -247,26 +255,20 @@ def MarkdownEditor(
 
     # ============ 核心光标函数 ============
     def _end_input_session():
-        """结束 IME 输入会话：同步 cursor_off state + 重置状态 + 清空 value。
+        """结束 IME 输入会话：同步 cursor_off + 重置状态 + 触发清空 value。
 
-        在光标移动、切换行、Enter、Backspace 等时机调用。
-        此时 IME 组合已结束（或被取消），清空 value 安全。
-        输入期间（handle_char_input 连续调用）不清空 value，保持 IME 组合态。
+        仅从 _set_cursor 调用（li 变化/off 不连续/None）。此时 IME 组合已结束，
+        清空 value 安全。use_effect([clear_value_seq]) 在重渲染后异步清空 TextField。
 
-        同步 cursor_off：handle_char_input 中不调用 set_cursor_off（避免重渲染
-        打断 IME），光标位置仅由 cursor_ref 跟踪。会话结束时统一同步到 state，
-        确保后续操作（点击、方向键、撤销/重做）使用正确的光标位置。
-
-        清空方式：set_clear_value_seq(+1) 触发 use_effect([clear_value_seq])，
-        在重渲染后异步执行 field.value="" + update()。
+        同步 cursor_off：handle_char_input 中不调用 set_cursor_off（避免重渲染打断
+        IME），光标位置仅由 cursor_ref 跟踪。会话结束时统一同步到 state，确保后续
+        操作（点击、方向键、撤销/重做）使用正确的光标位置。
         """
         state = input_session_ref.current
         if state["li"] >= 0 and state["start_off"] >= 0:
-            # 同步 cursor_off 到最新位置（handle_char_input 中未更新的部分）
-            new_off = state["start_off"] + len(state["last_value"])
-            set_cursor_off(new_off)
+            set_cursor_off(state["start_off"] + len(state["last_value"]))
             set_cursor_line(state["li"])
-        input_session_ref.current = {"li": -1, "start_off": -1, "last_value": "", "virtual_raw": None}
+        input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
         set_clear_value_seq(clear_value_seq + 1)
 
     def _set_cursor(li: int | None, off: int = 0, *, clear_preferred: bool = True):
@@ -321,19 +323,34 @@ def MarkdownEditor(
         _ensure_visible(li)
 
     def handle_char_input(value: str):
-        """字符输入：增量式编辑（IME 友好，不破坏组合态）。
+        """字符输入：增量式编辑（IME 友好，3 分支模型）。
 
-        核心策略：
-        - 始终更新文档（调用 reparse_line），英文/中文输入均生效
-        - virtual_raw 跟踪"如果调用了 reparse_line 后 raw 会变成什么"，
-          作为下次 on_change 计算的基准（避免 line.raw 与 last_value 不同步）
-        - value == last_value 守卫：重渲染导致 on_change 重发同值时跳过（双发防护）
-        - 重复检测：新会话启动时检查 value 是否已在文档中（会话被异常重置时的双发防护）
-        - 不调用 set_cursor_off/set_cursor_line（避免重渲染打断 IME 组合态）
-        - cursor_off state 在 _end_input_session 中统一同步
+        分支：
+        - ignore: value == last_value（重发）或 last_value 包含 value（删除由 backspace 处理）
+        - replace: IME 组合完成（value 含非 ASCII 且 last_value 全 ASCII），替换 [start_off, end_off]
+        - append: 在 end_off 处插入增量（value 以 last_value 为前缀；或上次已提交非 ASCII 后起新组合）
+
+        不调用 set_cursor_off（避免重渲染打断 IME），cursor_off state 在 _end_input_session
+        中统一同步；cursor_ref 实时跟踪最新位置供 backspace_core/delete_core 读取。
+        reparse_line 后 line.raw 已同步，无需 virtual_raw 跟踪。
+
+        IME 翻倍修正（修复 Windows 五笔/拼音输入重复 bug）：
+        Windows 输入法在某些 TextField 配置下会出现 composing text 完美翻倍
+        （value = X + X，如 'wqwq'、'你你'）。在入口处检测此模式并取前半部分修正。
         """
         if cursor_li is None or not value:
             return
+
+        # IME 翻倍修正：value = X + X 模式时取 X
+        # （Windows 五笔/拼音 composing text 完美翻倍 bug）
+        # 仅当长度 >= 2 且偶数，且前半 == 后半时触发
+        if len(value) >= 2 and len(value) % 2 == 0:
+            half = len(value) // 2
+            if value[:half] == value[half:]:
+                original = value
+                value = value[:half]
+                _dbg_log(f"  -> [IME_FIX] 翻倍修正: {original!r} -> {value!r}")
+
         li = cursor_li
         if not (0 <= li < len(document.lines)):
             return
@@ -343,77 +360,71 @@ def MarkdownEditor(
 
         state = input_session_ref.current
 
-        # 检查是否需要开始新会话（首次输入或会话已结束）
+        # 临时调试日志（验证 IME 重复输入 bug 后删除）
+        _dbg_log(
+            f"on_change value={value!r} li={li} "
+            f"state.li={state.get('li')} start_off={state.get('start_off')} "
+            f"last_value={state.get('last_value')!r} cursor_off={cursor_off} "
+            f"raw={_line_raw(line)!r}"
+        )
+
+        # 新会话启动（首次输入或会话已结束）
         if state["li"] != li or state["start_off"] < 0:
             raw = _line_raw(line)
-            # 重复检测：如果 value 已经在文档的 cursor_off 位置，说明是会话被
-            # 异常重置后的双发 on_change（reparse_line 触发重渲染导致 session 丢失）
-            # 此时 value 已在文档中，不需要再次插入，只需恢复会话状态即可
             off = cursor_off
+            # 安全网：value 已在文档中（切行时 use_effect 异步清空窗口期 IME 重发）
             if off + len(value) <= len(raw) and raw[off:off + len(value)] == value:
-                state["li"] = li
-                state["start_off"] = off
-                state["last_value"] = value
-                state["virtual_raw"] = raw
+                state["li"], state["start_off"], state["last_value"] = li, off, value
                 cursor_ref.current.reset(off + len(value), len(raw))
+                _dbg_log(f"  -> 安全网拦截（value 已在文档中）")
                 return
             _maybe_push_history()
             state["li"] = li
             state["start_off"] = cursor_off
             state["last_value"] = ""
-            state["virtual_raw"] = raw
 
         start_off = state["start_off"]
         last_value = state["last_value"]
 
+        # 分支 1: ignore（无变化 / 删除由 backspace_core 处理）
         if value == last_value:
-            return  # 无变化（重渲染导致 on_change 重发同值时跳过）
+            _dbg_log(f"  -> 分支1 ignore (value == last_value)")
+            return
+        if last_value and last_value.startswith(value):
+            _dbg_log(f"  -> 分支1 ignore (last_value.startswith(value))")
+            return
 
-        # 使用 virtual_raw 作为计算基准（确保与 last_value 同步）
-        raw = state["virtual_raw"] if state["virtual_raw"] is not None else _line_raw(line)
+        raw = _line_raw(line)  # reparse_line 后 line.raw 已同步，无需 virtual_raw
         end_off = start_off + len(last_value)
 
-        if value.startswith(last_value):
-            # 追加了字符：在 end_off 处插入增量
-            new_part = value[len(last_value):]
-            if end_off <= len(raw):
-                new_raw = raw[:end_off] + new_part + raw[end_off:]
-            else:
-                new_raw = raw + new_part
-        elif last_value.startswith(value):
-            # 删除了字符：不处理（由 backspace_core/delete_core 处理）
-            state["last_value"] = value
-            return
-        elif (
+        # 分支 2: replace（IME 组合完成：value 含非 ASCII，last_value 全 ASCII）
+        is_ime_compose = (
             last_value
-            and any(ord(c) > 127 for c in last_value)
-            and all(ord(c) < 128 for c in value)
-        ):
-            # 新的 IME 组合开始：
-            # last_value 含非 ASCII（上次已提交的中文），value 全 ASCII（新编码首字符）
-            # 保留 last_value 在文档中，从 last_value 之后开始新会话，追加 value
-            new_start_off = start_off + len(last_value)
-            state["start_off"] = new_start_off
-            state["last_value"] = ""
-            start_off = new_start_off
-            last_value = ""
-            end_off = start_off
-            new_raw = raw[:end_off] + value + raw[end_off:]
+            and any(ord(c) > 127 for c in value)
+            and all(ord(c) < 128 for c in last_value)
+        )
+        if is_ime_compose:
+            new_raw = raw[:start_off] + value + raw[end_off:]
+            _dbg_log(f"  -> 分支2 replace: new_raw={new_raw!r}")
+        # 分支 3: append（在 end_off 处插入增量）
         else:
-            # IME 组合完成或完全替换：用 value 替换 [start_off, end_off]
-            if end_off <= len(raw):
-                new_raw = raw[:start_off] + value + raw[end_off:]
+            if value.startswith(last_value):
+                new_part = value[len(last_value):]
+                _dbg_log(f"  -> 分支3 append (startswith): new_part={new_part!r}")
             else:
-                new_raw = raw[:start_off] + value + raw[start_off:]
+                # 上次为已提交非 ASCII，本次为新组合：提交 last_value，起新会话
+                new_part = value
+                state["start_off"] = end_off
+                start_off = end_off
+                _dbg_log(f"  -> 分支3 append (新会话): new_part={new_part!r} new_start_off={start_off}")
+            new_raw = raw[:end_off] + new_part + raw[end_off:]
 
         state["last_value"] = value
-        state["virtual_raw"] = new_raw  # 更新 virtual_raw 供下次 on_change 使用
         new_off = start_off + len(value)
         cursor_ref.current.reset(new_off, len(new_raw))
-
-        # 始终更新文档并触发重渲染
         parser.reparse_line(line, new_raw)
         mark_dirty()
+        _dbg_log(f"  -> 完成: new_raw={new_raw!r} new_off={new_off}")
 
     def handle_paste(clip_text: str, old_draft: str = ""):
         """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。"""
@@ -464,14 +475,16 @@ def MarkdownEditor(
         line = document.lines[li]
         if _is_fence(line):
             return
-        if cursor_off > 0:
+        # 用 cursor_ref.current.base（IME 期间实时更新），不用 cursor_off state（IME 期间过时）
+        off = cursor_ref.current.base if cursor_ref.current else cursor_off
+        if off > 0:
             # 删光标前一个字符
             _maybe_push_history()
             raw = _line_raw(line)
-            new_raw = raw[:cursor_off - 1] + raw[cursor_off:]
+            new_raw = raw[:off - 1] + raw[off:]
             parser.reparse_line(line, new_raw)
             mark_dirty()
-            _set_cursor(li, cursor_off - 1)
+            _set_cursor(li, off - 1)
         elif li > 0:
             # 行首：与前一行合并
             prev = document.lines[li - 1]
@@ -503,12 +516,14 @@ def MarkdownEditor(
         if _is_fence(line):
             return
         raw = _line_raw(line)
-        if cursor_off < len(raw):
+        # 用 cursor_ref.current.base（IME 期间实时更新），不用 cursor_off state（IME 期间过时）
+        off = cursor_ref.current.base if cursor_ref.current else cursor_off
+        if off < len(raw):
             _maybe_push_history()
-            new_raw = raw[:cursor_off] + raw[cursor_off + 1:]
+            new_raw = raw[:off] + raw[off + 1:]
             parser.reparse_line(line, new_raw)
             mark_dirty()
-            _set_cursor(li, cursor_off)
+            _set_cursor(li, off)
         elif li < len(document.lines) - 1:
             # 行尾：与下一行合并
             nxt = document.lines[li + 1]

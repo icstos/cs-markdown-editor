@@ -7,8 +7,8 @@
 - strut_style 与渲染层 Text 共用同一实例，强制行高一致，保证光标 baseline
   与渲染层文字 baseline 像素级对齐
 - 通过 Stack 内绝对定位（left/top）将光标摆到渲染层的字符间隙像素位置
-- value="" 始终为空（构造值）：输入后由 editor 端 use_effect([cursor_off])
-  异步清空 Flutter 端内部 value，为下次输入做准备
+- 不设置 value 属性（避免 Flet 重渲染同步 value 打断 IME 组合态）；由 editor 端
+  use_effect([clear_value_seq]) 在重渲染后异步清空 Flutter 端内部 value
 
 IME 友好策略（key = li + nav_seq）：
 - 同行输入：li/nav_seq 均不变 → key 不变 → 不重建 → IME 组合态保持
@@ -60,6 +60,7 @@ def cursor_text_field(
     on_selection_change: Callable | None = None,
     field_ref: ft.Ref | None = None,
     nav_seq: int = 0,
+    content_width: float | None = None,
 ) -> ft.TextField:
     """构造透明光标 TextField（Stack 顶层绝对定位）。
 
@@ -69,12 +70,13 @@ def cursor_text_field(
       line_height_px：Stack 高度 = base * line_height，TextField 高度同此
       base_size：基础字号（与渲染层 Text 一致）
       line_height：行高倍数（与渲染层一致）
-      on_change(value)：输入回调，value 为 TextField 当前值（应仅 1 字符或空）
+      on_change(value)：输入回调，value 为 TextField 当前完整值（IME 期间可能多字符）
       on_submit(value)：Enter 回调
       on_focus/on_blur：聚焦/失焦回调
       on_selection_change：光标位置变化回调（用于跟踪 selection）
       field_ref：TextField 引用（editor 端 use_effect 调 focus()）
       nav_seq：仅撤销/重做等强制重建场景递增；同 li 输入不递增以保持 IME 组合态
+      content_width：行内容最大宽度（用于计算 TextField 右边界，IME 友好宽度）
 
     key 策略（IME 友好）：
       key = f"cursor-field-li-{li}-seq-{nav_seq}"
@@ -89,11 +91,17 @@ def cursor_text_field(
       重置 TextField 内部 value，打断 IME composing region。
       不设置 value → Flutter 端 value 完全由 IME/键盘管理 → 组合态保持。
 
-    宽度策略：
-      设为 2px 仅承载光标闪烁（渲染层负责显示文字，TextField 文字透明不可见）。
-      IME 组合态候选框可能被裁切（Phase 1 接受），Phase 2 改为撑满剩余宽度。
+    宽度策略（IME 修复）：
+      从光标位置撑到行尾（right=0 或 width=content_width - cursor_px_x），
+      确保 IME 有足够空间管理组合文本。极窄（2px）TextField 会导致 Windows
+      五笔/拼音输入法组合文本重复翻倍的 bug。
     """
     c = _current_colors()
+    # 宽度：从光标位置到行尾（IME 需要足够宽度，否则 Windows 输入法会重复输入）
+    if content_width is not None and content_width > cursor_px_x:
+        w = content_width - cursor_px_x
+    else:
+        w = 200.0  # 保底宽度
     kwargs: dict = {
         # key = li + nav_seq：同行输入不重建（保 IME），切行/撤销时重建
         "key": f"cursor-field-li-{li}-seq-{nav_seq}",
@@ -124,10 +132,10 @@ def cursor_text_field(
         "cursor_width": 2,
         "cursor_height": base_size,
         "show_cursor": True,
-        # Stack 内绝对定位
+        # Stack 内绝对定位：从光标位置撑到行尾（IME 友好宽度）
         "left": cursor_px_x,
         "top": cursor_px_y,
-        "width": 2,  # 极窄承载光标；IME Phase 2 撑满
+        "width": w,
         "height": line_height_px,
         "dense": True,
         "shift_enter": False,

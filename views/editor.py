@@ -26,15 +26,9 @@
 
 import os
 import re
-import sys
 from collections.abc import Callable
 
 import flet as ft
-
-
-def _dbg_log(msg: str) -> None:
-    """临时调试日志：handle_char_input 调用追踪。验证后删除。"""
-    print(f"[IME_DBG] {msg}", file=sys.stderr, flush=True)
 
 from core.actions import EditorActions
 from core.cursor import CursorState
@@ -347,9 +341,7 @@ def MarkdownEditor(
         if len(value) >= 2 and len(value) % 2 == 0:
             half = len(value) // 2
             if value[:half] == value[half:]:
-                original = value
                 value = value[:half]
-                _dbg_log(f"  -> [IME_FIX] 翻倍修正: {original!r} -> {value!r}")
 
         li = cursor_li
         if not (0 <= li < len(document.lines)):
@@ -360,14 +352,6 @@ def MarkdownEditor(
 
         state = input_session_ref.current
 
-        # 临时调试日志（验证 IME 重复输入 bug 后删除）
-        _dbg_log(
-            f"on_change value={value!r} li={li} "
-            f"state.li={state.get('li')} start_off={state.get('start_off')} "
-            f"last_value={state.get('last_value')!r} cursor_off={cursor_off} "
-            f"raw={_line_raw(line)!r}"
-        )
-
         # 新会话启动（首次输入或会话已结束）
         if state["li"] != li or state["start_off"] < 0:
             raw = _line_raw(line)
@@ -376,7 +360,6 @@ def MarkdownEditor(
             if off + len(value) <= len(raw) and raw[off:off + len(value)] == value:
                 state["li"], state["start_off"], state["last_value"] = li, off, value
                 cursor_ref.current.reset(off + len(value), len(raw))
-                _dbg_log(f"  -> 安全网拦截（value 已在文档中）")
                 return
             _maybe_push_history()
             state["li"] = li
@@ -388,10 +371,8 @@ def MarkdownEditor(
 
         # 分支 1: ignore（无变化 / 删除由 backspace_core 处理）
         if value == last_value:
-            _dbg_log(f"  -> 分支1 ignore (value == last_value)")
             return
         if last_value and last_value.startswith(value):
-            _dbg_log(f"  -> 分支1 ignore (last_value.startswith(value))")
             return
 
         raw = _line_raw(line)  # reparse_line 后 line.raw 已同步，无需 virtual_raw
@@ -405,18 +386,15 @@ def MarkdownEditor(
         )
         if is_ime_compose:
             new_raw = raw[:start_off] + value + raw[end_off:]
-            _dbg_log(f"  -> 分支2 replace: new_raw={new_raw!r}")
         # 分支 3: append（在 end_off 处插入增量）
         else:
             if value.startswith(last_value):
                 new_part = value[len(last_value):]
-                _dbg_log(f"  -> 分支3 append (startswith): new_part={new_part!r}")
             else:
                 # 上次为已提交非 ASCII，本次为新组合：提交 last_value，起新会话
                 new_part = value
                 state["start_off"] = end_off
                 start_off = end_off
-                _dbg_log(f"  -> 分支3 append (新会话): new_part={new_part!r} new_start_off={start_off}")
             new_raw = raw[:end_off] + new_part + raw[end_off:]
 
         state["last_value"] = value
@@ -424,7 +402,6 @@ def MarkdownEditor(
         cursor_ref.current.reset(new_off, len(new_raw))
         parser.reparse_line(line, new_raw)
         mark_dirty()
-        _dbg_log(f"  -> 完成: new_raw={new_raw!r} new_off={new_off}")
 
     def handle_paste(clip_text: str, old_draft: str = ""):
         """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。"""

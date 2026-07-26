@@ -53,6 +53,22 @@ from views.toolbar import Toolbar, _btn, _divider as _tb_divider
 _reparse_atomic = parser.reparse_line_atomic
 
 
+def _make_stable_cb(ref: ft.Ref, key: str):
+    """创建稳定回调包装器：从 ref.current[key] 读取最新闭包并调用。
+
+    配合 ft.use_callback([], []) 使用：首次渲染产出包装器，后续渲染返回缓存引用。
+    包装器捕获 ref（use_ref 稳定对象），每次调用读取 ref.current[key] 即最新闭包。
+    避免 editor 每次重渲染时闭包重建导致 ft.memo 误判所有 LineView 变化。
+    """
+
+    def wrapper(*args, **kwargs):
+        cb = ref.current.get(key) if ref.current else None
+        if cb is not None:
+            return cb(*args, **kwargs)
+
+    return wrapper
+
+
 def _noop() -> None:
     pass
 
@@ -2072,23 +2088,88 @@ def MarkdownEditor(
             clear_outward_sel=clear_outward_sel,
         )
 
-    # ============ TOC 条目 ============
-    toc_entries = [
-        (
-            i,
-            line.level,
-            "".join(
+    # ============ TOC 条目（use_memo 稳定化：签名不变则引用不变，避免 ft.memo 误判）============
+    _toc_sig = "|".join(
+        f"{i}:{l.level}:{l.raw}"
+        for i, l in enumerate(document.lines)
+        if l.block_type == BlockType.HEADING
+    )
+
+    def _build_toc():
+        return [
+            (
+                i,
+                line.level,
+                "".join(
+                    s.text for s in line.segments if s.seg_type != SegType.HEADING_PREFIX
+                ).strip(),
+            )
+            for i, line in enumerate(document.lines)
+            if line.block_type == BlockType.HEADING
+            and "".join(
                 s.text for s in line.segments if s.seg_type != SegType.HEADING_PREFIX
-            ).strip(),
-        )
-        for i, line in enumerate(document.lines)
-        if line.block_type == BlockType.HEADING
-        and "".join(
-            s.text for s in line.segments if s.seg_type != SegType.HEADING_PREFIX
-        ).strip()
-    ]
+            ).strip()
+        ]
+
+    toc_entries = ft.use_memo(_build_toc, [_toc_sig])
 
     content_width = content_max_width - 2 * content_padding
+
+    # ============ 回调稳定化（ref + use_memo([])）============
+    # editor 每次重渲染时闭包重建，若直接传给 LineView 会导致 ft.memo 浅比较
+    # 误判所有行变化并重渲染。此处用 ref 持有最新闭包，use_memo([]) 产出稳定引用。
+    _cb_ref = ft.use_ref({})
+    _cb_ref.current = {
+        "on_tap": _on_tap_line,
+        "on_pan_start": on_extend_outward,
+        "on_pan_update": on_extend_outward,
+        "on_toggle_task": toggle_task,
+        "on_change_code": on_change_code,
+        "on_code_focus": on_code_focus,
+        "on_code_blur": on_code_blur,
+        "on_change_lang": change_lang,
+        "on_change_math": on_change_math,
+        "on_math_focus": on_math_focus,
+        "on_math_blur": on_math_blur,
+        "on_jump_to": jump_to,
+        "on_line_size_change": on_line_size_change,
+        "on_extend_outward": on_extend_outward,
+        "on_clear_outward": clear_outward_sel,
+        "on_hit_test_x": _hit_test_line_x,
+        "on_hit_test_xy": _hit_test_xy,
+        "on_double_tap": _select_word_at,
+    }
+    # use_memo([]) 首次渲染创建稳定包装器，后续渲染返回缓存引用。
+    # 包装器捕获 _cb_ref（use_ref 稳定对象），每次调用读 ref.current[key] 即最新闭包。
+    _STABLE_CB_KEYS = (
+        "on_tap", "on_pan_start", "on_pan_update", "on_toggle_task",
+        "on_change_code", "on_code_focus", "on_code_blur", "on_change_lang",
+        "on_change_math", "on_math_focus", "on_math_blur", "on_jump_to",
+        "on_line_size_change", "on_extend_outward", "on_clear_outward",
+        "on_hit_test_x", "on_hit_test_xy", "on_double_tap",
+    )
+    _stable_cbs = ft.use_memo(
+        lambda: {k: _make_stable_cb(_cb_ref, k) for k in _STABLE_CB_KEYS},
+        [],
+    )
+    s_on_tap = _stable_cbs["on_tap"]
+    s_on_pan_start = _stable_cbs["on_pan_start"]
+    s_on_pan_update = _stable_cbs["on_pan_update"]
+    s_on_toggle_task = _stable_cbs["on_toggle_task"]
+    s_on_change_code = _stable_cbs["on_change_code"]
+    s_on_code_focus = _stable_cbs["on_code_focus"]
+    s_on_code_blur = _stable_cbs["on_code_blur"]
+    s_on_change_lang = _stable_cbs["on_change_lang"]
+    s_on_change_math = _stable_cbs["on_change_math"]
+    s_on_math_focus = _stable_cbs["on_math_focus"]
+    s_on_math_blur = _stable_cbs["on_math_blur"]
+    s_on_jump_to = _stable_cbs["on_jump_to"]
+    s_on_line_size_change = _stable_cbs["on_line_size_change"]
+    s_on_extend_outward = _stable_cbs["on_extend_outward"]
+    s_on_clear_outward = _stable_cbs["on_clear_outward"]
+    s_on_hit_test_x = _stable_cbs["on_hit_test_x"]
+    s_on_hit_test_xy = _stable_cbs["on_hit_test_xy"]
+    s_on_double_tap = _stable_cbs["on_double_tap"]
 
     # ============ 行视图列表 ============
     line_controls = []
@@ -2147,32 +2228,32 @@ def MarkdownEditor(
                     on_cursor_change=handle_char_input if is_act else None,
                     on_cursor_submit=on_submit if is_act else None,
                     on_cursor_blur=on_blur if is_act else None,
-                    on_tap=_on_tap_line,
-                    on_pan_start=on_extend_outward,
-                    on_pan_update=on_extend_outward,
-                    on_toggle_task=toggle_task,
-                    on_change_code=on_change_code,
-                    on_code_focus=on_code_focus,
-                    on_code_blur=on_code_blur,
-                    on_change_lang=change_lang,
+                    on_tap=s_on_tap,
+                    on_pan_start=s_on_pan_start,
+                    on_pan_update=s_on_pan_update,
+                    on_toggle_task=s_on_toggle_task,
+                    on_change_code=s_on_change_code,
+                    on_code_focus=s_on_code_focus,
+                    on_code_blur=s_on_code_blur,
+                    on_change_lang=s_on_change_lang,
                     # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态 TextField
                     is_math_editing=(math_focus_li == i),
-                    on_change_math=on_change_math,
-                    on_math_focus=on_math_focus,
-                    on_math_blur=on_math_blur,
+                    on_change_math=s_on_change_math,
+                    on_math_focus=s_on_math_focus,
+                    on_math_blur=s_on_math_blur,
                     math_field_ref=math_field_ref,
                     clipboard_ref=clipboard_ref,
                     toc_entries=toc_entries,
-                    on_jump_to=jump_to,
-                    on_line_size_change=on_line_size_change,
+                    on_jump_to=s_on_jump_to,
+                    on_line_size_change=s_on_line_size_change,
                     outward_range=_line_highlight_range(i),
-                    on_extend_outward=on_extend_outward,
-                    on_clear_outward=clear_outward_sel,
+                    on_extend_outward=s_on_extend_outward,
+                    on_clear_outward=s_on_clear_outward,
                     shift_pressed_ref=shift_pressed_ref,
                     ctrl_pressed_ref=ctrl_pressed_ref,
-                    on_hit_test_x=_hit_test_line_x,
-                    on_hit_test_xy=_hit_test_xy,
-                    on_double_tap=_select_word_at,
+                    on_hit_test_x=s_on_hit_test_x,
+                    on_hit_test_xy=s_on_hit_test_xy,
+                    on_double_tap=s_on_double_tap,
                 )
             )
         i += 1

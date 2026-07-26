@@ -224,6 +224,21 @@ def RenderedLine(
             return (target_li, 999999)
         return (target_li, 0)
 
+    def _tap_raw_off(pos) -> int:
+        """点击命中 raw_off：优先用 LineLayoutCache 精确命中（缓存 offsets），
+        回退到 _hit_raw_off（重算 measure_text_offsets）。
+
+        on_hit_test_xy 用缓存 offsets（cursor_raw_offset=None 浏览态），
+        对非激活行完全准确；激活行标记可见但偏差仅标记宽度（1-3px），可接受。
+        """
+        if pos is None:
+            return 0
+        if on_hit_test_xy is not None:
+            result = on_hit_test_xy(line_idx, pos.x, pos.y)
+            if result is not None:
+                return result[1] if isinstance(result, tuple) else result
+        return _hit_raw_off(pos.x)
+
     def _on_double_tap_down(e: ft.TapEvent):
         """双击选词：命中 raw_off 后回调 on_double_tap(li, raw_off)。
 
@@ -236,7 +251,7 @@ def RenderedLine(
         if on_double_tap is None:
             return
         pos = e.local_position
-        raw_off = _hit_raw_off(pos.x) if pos is not None else 0
+        raw_off = _tap_raw_off(pos) if pos is not None else 0
         on_double_tap(line_idx, raw_off)
 
     def _on_tap(e: ft.TapEvent):
@@ -247,7 +262,8 @@ def RenderedLine(
             if on_tap is not None:
                 on_tap(line_idx, _line_raw_len(line))
             return
-        raw_off = _hit_raw_off(pos.x)
+        # 优先使用 LineLayoutCache 精确命中（避免每次点击重算 measure_text_offsets）
+        raw_off = _tap_raw_off(pos)
         # Ctrl+Click 链接 → 打开（Typora 式）
         if _open_link_if_ctrl(e, line, raw_off, ctrl_pressed_ref):
             return
@@ -380,7 +396,7 @@ def RenderedLine(
 
         md = ft.Markdown(
             value=content_raw,
-            selectable=True,
+            selectable=False,
             extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
             soft_line_break=True,
             latex_style=ft.TextStyle(size=p_size, color=c.math_fg),

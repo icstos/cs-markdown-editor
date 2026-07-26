@@ -279,6 +279,8 @@ def LineView(
     shift_pressed_ref: ft.Ref | None = None,
     ctrl_pressed_ref: ft.Ref | None = None,
     on_hit_test_x: Callable[[int, float], int] | None = None,
+    on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
+    on_double_tap: Callable[[int, int], None] | None = None,
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
@@ -395,6 +397,8 @@ def LineView(
         shift_pressed_ref=shift_pressed_ref,
         ctrl_pressed_ref=ctrl_pressed_ref,
         on_hit_test_x=on_hit_test_x,
+        on_hit_test_xy=on_hit_test_xy,
+        on_double_tap=on_double_tap,
     )
     return _wrap_block(
         inner, line, base, line_idx,

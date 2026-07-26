@@ -173,6 +173,9 @@ def MarkdownEditor(
     # 用于精确累加计算滚动偏移，避免估算偏差导致大纲跳转/光标导航落点不准。
     # build_controls_on_demand 下未构建的行无缓存，回退到 _estimate_line_height 估算。
     line_heights_ref = ft.use_ref({})
+    # LineLayoutCache 缓存：跨行拖拽选区精确命中（Y 二分 + 行内 X）。
+    # 惰性构建（首次 pan 事件触发），行数变化时失效（_reset_line_heights 同步清空）。
+    layout_cache_ref = ft.use_ref(None)
     # 记忆列：垂直导航时记录的行级 raw 偏移
     preferred_col_ref = ft.use_ref(None)
     # SelectionArea 当前选中的纯文本
@@ -215,7 +218,7 @@ def MarkdownEditor(
         return EditorSnapshot(
             markdown=md,
             cursor_li=cursor_li,
-            cursor_off=cursor_off,
+            cursor_off=_cursor_base(),
             raw_mode=raw_mode,
             raw_draft=raw_draft,
         )
@@ -240,7 +243,7 @@ def MarkdownEditor(
             line_idx=li,
             raw=before_raw,
             cursor_li=cursor_li,
-            cursor_off=cursor_off,
+            cursor_off=_cursor_base(),
             raw_mode=raw_mode,
             raw_draft=raw_draft,
         ))
@@ -262,7 +265,7 @@ def MarkdownEditor(
                 line_idx=li,
                 raw=cur_raw,
                 cursor_li=cursor_li,
-                cursor_off=cursor_off,
+                cursor_off=_cursor_base(),
                 raw_mode=raw_mode,
                 raw_draft=raw_draft,
             )
@@ -383,6 +386,19 @@ def MarkdownEditor(
             preferred_col_ref.current = None
         cursor_ref.current.reset(off, raw_len)
 
+    def _cursor_base(raw_len: int | None = None) -> int:
+        """IME 实时光标偏移（ref 优先，回退 state；可选钳制到 raw_len）。
+
+        对齐 backspace_core / delete_core / on_submit 已有模式：IME 输入期间
+        cursor_off state 不更新（避免重渲染打断 IME），仅 cursor_ref.current.base
+        实时跟踪。所有操作函数读取光标位置必须走此辅助函数，否则输入字符后立即
+        按快捷键会用到旧 cursor_off，导致操作位置错位。
+        """
+        base = cursor_ref.current.base if cursor_ref.current else cursor_off
+        if raw_len is not None:
+            base = max(0, min(base, raw_len))
+        return base
+
     def _on_tap_line(li: int, raw_off: int):
         """渲染层点击：定位光标到 (li, raw_off)。"""
         if not (0 <= li < len(document.lines)):
@@ -501,7 +517,7 @@ def MarkdownEditor(
         _push_history()
         undo_push_pending.current = True
         raw = _line_raw(line)
-        off = cursor_off
+        off = _cursor_base(len(raw))  # IME 实时光标，避免输入后立即 Ctrl+V 粘贴位置错位
         parts = clip_text.split("\n")
         if len(parts) == 1:
             new_raw = raw[:off] + parts[0] + raw[off:]
@@ -677,8 +693,9 @@ def MarkdownEditor(
             return
         if _is_fence(document.lines[li]):
             return
-        if cursor_off > 0:
-            _set_cursor(li, cursor_off - 1)
+        off = _cursor_base(len(_line_raw(document.lines[li])))
+        if off > 0:
+            _set_cursor(li, off - 1)
         elif li > 0:
             prev = document.lines[li - 1]
             if _is_fence(prev):
@@ -696,8 +713,9 @@ def MarkdownEditor(
         if _is_fence(document.lines[li]):
             return
         raw = _line_raw(document.lines[li])
-        if cursor_off < len(raw):
-            _set_cursor(li, cursor_off + 1)
+        off = _cursor_base(len(raw))
+        if off < len(raw):
+            _set_cursor(li, off + 1)
         elif li < len(document.lines) - 1:
             nxt = document.lines[li + 1]
             if _is_fence(nxt):
@@ -725,10 +743,11 @@ def MarkdownEditor(
             content_start = len(line.segments[0].raw)
         raw_len = len(_line_raw(line))
         content_start = min(content_start, raw_len)
-        # Smart Home 三态判定
-        if cursor_off == 0:
+        # Smart Home 三态判定（用 IME 实时光标位置）
+        off = _cursor_base(raw_len)
+        if off == 0:
             pass  # 已在行首
-        elif cursor_off == content_start:
+        elif off == content_start:
             _set_cursor(cursor_li, 0)
         else:
             _set_cursor(cursor_li, content_start)
@@ -776,7 +795,7 @@ def MarkdownEditor(
         if cursor_li is None:
             return
         if preferred_col_ref.current is None:
-            preferred_col_ref.current = cursor_off
+            preferred_col_ref.current = _cursor_base()
         col = preferred_col_ref.current
         target_line = document.lines[target_li]
         if _is_fence(target_line):
@@ -846,10 +865,11 @@ def MarkdownEditor(
             # 普通段落：Tab 插入 4 空格
             if delta > 0:
                 raw = _line_raw(line)
-                new_raw = raw[:cursor_off] + "    " + raw[cursor_off:]
+                off = _cursor_base(len(raw))  # IME 实时光标，避免输入后立即 Tab 位置错位
+                new_raw = raw[:off] + "    " + raw[off:]
                 _reparse_atomic(line, new_raw)
                 mark_dirty()
-                _set_cursor(li, cursor_off + 4)
+                _set_cursor(li, off + 4)
 
     # ============ 块操作 ============
     def new_line_after(li: int):
@@ -926,7 +946,7 @@ def MarkdownEditor(
         _push_history()
         undo_push_pending.current = True
         raw = _line_raw(line)
-        off = cursor_off
+        off = _cursor_base(len(raw))  # IME 实时光标，避免输入后立即 Ctrl+B 位置错位
         if fmt == "link":
             new_raw = raw[:off] + "[](url)" + raw[off:]
             _reparse_atomic(line, new_raw)
@@ -1363,11 +1383,13 @@ def MarkdownEditor(
     def _extend_outward_step(step_fn) -> None:
         current = outward_sel_ref.current
         if cursor_li is not None and current is None:
-            # 从光标起始
-            new_pos = step_fn(cursor_li, cursor_off)
+            # 从光标起始（用 _cursor_base 取 IME 实时光标，避免输入后立即
+            # Shift+方向键起始选区位置错位）
+            base = _cursor_base()
+            new_pos = step_fn(cursor_li, base)
             if new_pos is None:
                 return
-            src_li, src_off = cursor_li, cursor_off
+            src_li, src_off = cursor_li, base
             suppress_blur.current = True
             set_cursor_li(None)
             _set_outward_sel((src_li, src_off, new_pos[0], new_pos[1]))
@@ -1383,11 +1405,98 @@ def MarkdownEditor(
     def clear_outward_sel() -> None:
         _set_outward_sel(None)
 
+    def _select_word_at(li: int, raw_off: int) -> None:
+        r"""双击选词：VSCode 风格词边界（同类别连续区间）。
+
+        字符类别：
+        - word：\w + CJK（连续 CJK 视为一个词，VSCode 行为）
+        - space：\s
+        - punct：其他（标点、Markdown 语法字符等）
+
+        从 raw_off 向左右扩展到同类边界，构造 outward_sel。
+        退出光标编辑态（set_cursor_li(None)），与拖拽选区路径一致。
+        """
+        if not (0 <= li < len(document.lines)):
+            return
+        raw = _line_raw(document.lines[li])
+        if not raw:
+            return
+        n = len(raw)
+        off = max(0, min(raw_off, n))
+        # 围栏行不参与选词
+        if _is_fence(document.lines[li]):
+            return
+
+        def _char_kind(ch: str) -> str:
+            if ch.isspace():
+                return "space"
+            # CJK 统一表意文字 + 日韩文：连续视为一词（VSCode 风格）
+            cp = ord(ch)
+            if (
+                0x4E00 <= cp <= 0x9FFF  # CJK 统一表意
+                or 0x3040 <= cp <= 0x30FF  # 平假名 + 片假名
+                or 0xAC00 <= cp <= 0xD7AF  # 韩文音节
+                or 0x3400 <= cp <= 0x4DBF  # CJK 扩展 A
+                or 0xF900 <= cp <= 0xFAFF  # CJK 兼容表意
+            ):
+                return "cjk"
+            if ch.isalnum() or ch == "_":
+                return "word"
+            return "punct"
+
+        kind = _char_kind(raw[off]) if off < n else "punct"
+        # 空白字符不选（VSCode 行为：双击空白不选中），改为选最近的非空字符
+        if kind == "space":
+            # 向左找首个非空
+            left = off
+            while left > 0 and raw[left - 1].isspace():
+                left -= 1
+            if left > 0 and not raw[left - 1].isspace():
+                left -= 1
+                kind = _char_kind(raw[left])
+                off = left
+            else:
+                # 向右找首个非空
+                right = off
+                while right < n and raw[right].isspace():
+                    right += 1
+                if right < n:
+                    off = right
+                    kind = _char_kind(raw[off])
+                else:
+                    return  # 整行全空白，不选
+        # 同类向左扩展
+        start = off
+        if kind == "cjk":
+            # CJK：连续 CJK 视为一词，但遇到 word 类别也合并（中英混排词）
+            while start > 0 and _char_kind(raw[start - 1]) in ("cjk", "word"):
+                start -= 1
+        elif kind == "word":
+            while start > 0 and _char_kind(raw[start - 1]) in ("cjk", "word"):
+                start -= 1
+        else:  # punct
+            while start > 0 and _char_kind(raw[start - 1]) == "punct":
+                start -= 1
+        # 同类向右扩展
+        end = off + 1
+        if kind in ("cjk", "word"):
+            while end < n and _char_kind(raw[end]) in ("cjk", "word"):
+                end += 1
+        else:  # punct
+            while end < n and _char_kind(raw[end]) == "punct":
+                end += 1
+        # 退出光标编辑态，设为 outward_sel
+        if cursor_li is not None:
+            suppress_blur.current = True
+            set_cursor_li(None)
+        _set_outward_sel((li, start, li, end))
+
     def on_extend_outward(target_li: int, target_off: int) -> None:
         if outward_sel_ref.current is None:
             if cursor_li is not None:
-                # 从光标起始
-                src_li, src_off = cursor_li, cursor_off
+                # 从光标起始（用 _cursor_base 取 IME 实时光标，避免输入后立即
+                # Shift+点击起始选区位置错位）
+                src_li, src_off = cursor_li, _cursor_base()
                 suppress_blur.current = True
                 set_cursor_li(None)
                 _set_outward_sel((src_li, src_off, target_li, target_off))
@@ -1632,6 +1741,42 @@ def MarkdownEditor(
         base = block_text_size(line.block_type, line.level)
         return hit_test_line_x(line, x, base)
 
+    def _get_layout_cache():
+        """惰性构建 LineLayoutCache：跨行拖拽精确命中。
+
+        首次 pan 事件触发构建，行数变化时由 _reset_line_heights 清空（置 None），
+        下次 pan 事件重新构建。典型文档（数百行）单次构建约 10-30ms，可接受。
+        """
+        if layout_cache_ref.current is None:
+            from views.pixel_layout import LineLayoutCache
+            layout_cache_ref.current = LineLayoutCache(
+                document.lines, content_width, line_height
+            )
+        return layout_cache_ref.current
+
+    def _hit_test_xy(anchor_li: int, x: float, y: float) -> tuple[int, int] | None:
+        """跨行拖拽精确命中：LineLayoutCache.hit_test 透传。
+
+        anchor_li：拖拽起始行（pan 事件来源行的 line_idx）
+        x/y：GestureDetector 局部坐标（相对 anchor_li 行内容左上角）
+
+        坐标系换算：
+        - LineLayoutCache 的 Y 是整文档坐标（top=0 = 文档第一行顶）
+        - GestureDetector 局部 Y 是相对 anchor_li 行内容顶
+        - 加上 anchor_li 的 layout.text_top 即得到整文档 Y
+        - 同理 X 加上 anchor_li 的 left_pad 得到整文档 X
+
+        返回 (target_li, target_raw_off) | None（cache 未就绪或越界）
+        """
+        cache = _get_layout_cache()
+        layout = cache.get(anchor_li)
+        if layout is None:
+            return None
+        # GestureDetector 局部坐标 → 整文档坐标
+        doc_x = x + layout.left_pad
+        doc_y = y + layout.text_top
+        return cache.hit_test(doc_x, doc_y)
+
     def _page_rows() -> int:
         viewport = viewport_h_ref.current or 600
         return max(1, int(viewport / (body_font_size * line_height + 4)))
@@ -1724,8 +1869,10 @@ def MarkdownEditor(
     # ============ use_effect：文档行数变化时清空行高缓存 ============
     # 插入/删除整行会让 line_idx 错位，旧缓存的高度会对应到错误的行。
     # 行数不变的单行内容编辑由 on_size_change 自动更新对应条目，无需清空。
+    # 同时清空 layout_cache_ref（LineLayoutCache 行号映射也会错位）。
     def _reset_line_heights():
         line_heights_ref.current = {}
+        layout_cache_ref.current = None
 
     ft.use_effect(_reset_line_heights, [len(document.lines)])
 
@@ -1894,6 +2041,8 @@ def MarkdownEditor(
                     shift_pressed_ref=shift_pressed_ref,
                     ctrl_pressed_ref=ctrl_pressed_ref,
                     on_hit_test_x=_hit_test_line_x,
+                    on_hit_test_xy=_hit_test_xy,
+                    on_double_tap=_select_word_at,
                 )
             )
         i += 1

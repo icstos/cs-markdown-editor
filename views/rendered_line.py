@@ -126,6 +126,8 @@ def RenderedLine(
     shift_pressed_ref: ft.Ref | None = None,
     ctrl_pressed_ref: ft.Ref | None = None,
     on_hit_test_x: Callable[[int, float], int] | None = None,
+    on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
+    on_double_tap: Callable[[int, int], None] | None = None,
 ) -> ft.Control:
     """渲染层行组件（Stack 底层）。
 
@@ -135,7 +137,10 @@ def RenderedLine(
       on_tap(li, raw_off)：点击命中回调
       on_pan_start/on_pan_update(li, raw_off)：拖拽选区回调
       outward_range：本行向外选区高亮 (start_off, end_off)
-      on_hit_test_x(li, x)：跨行拖拽时用同一 x 列定位目标行偏移
+      on_hit_test_x(li, x)：跨行拖拽时用同一 x 列定位目标行偏移（按 base 等高估算）
+      on_hit_test_xy(li, x, y)：跨行拖拽精确命中（LineLayoutCache.hit_test 透传），
+        优先于 on_hit_test_x 使用，解决标题/普通/列表混合行高不一致的估算偏差
+      on_double_tap(li, raw_off)：双击选词回调（VSCode 风格词边界）
 
     返回：内层 content（GestureDetector 包裹），由 line_view.py 外层包 _wrap_block。
     """
@@ -186,9 +191,20 @@ def RenderedLine(
         return hit_test_line_x_raw(offsets, x)
 
     def _pan_target_off(pos) -> tuple[int, int]:
-        """根据 pan 坐标估算 (target_li, target_off)。跨行用 y 估算。"""
+        """根据 pan 坐标估算 (target_li, target_off)。跨行用 y 估算。
+
+        优先调用 on_hit_test_xy（LineLayoutCache 精确命中：Y 二分 + 行内 X），
+        解决标题/普通/列表/引用混合行高不一致时 round(y/base*lh) 估算偏差。
+        无 on_hit_test_xy 时回退到原等高估算 + on_hit_test_x。
+        """
         if pos is None:
             return (line_idx, 0)
+        # 优先：精确命中（LineLayoutCache.hit_test 透传）
+        if on_hit_test_xy is not None:
+            result = on_hit_test_xy(line_idx, pos.x, pos.y)
+            if result is not None:
+                return result
+        # 回退：按 base * line_height 等高估算行号
         _line_h = base * line_height
         line_dy = round(pos.y / _line_h) if _line_h > 0 else 0
         target_li = line_idx + line_dy
@@ -200,6 +216,21 @@ def RenderedLine(
         if line_dy < 0:
             return (target_li, 999999)
         return (target_li, 0)
+
+    def _on_double_tap_down(e: ft.TapEvent):
+        """双击选词：命中 raw_off 后回调 on_double_tap(li, raw_off)。
+
+        用 on_double_tap_down 而非 on_double_tap：后者用 ControlEventHandler
+        不携带位置信息，前者用 TapEvent 带 local_position。
+        VSCode 风格词边界由 editor.py 的 _select_word_at 实现（同类别连续区间）。
+        Flet 双击会先触发 on_tap（定位光标）再触发 on_double_tap_down（选词），
+        视觉上有短暂光标→选区闪烁，与 VSCode 行为一致。
+        """
+        if on_double_tap is None:
+            return
+        pos = e.local_position
+        raw_off = _hit_raw_off(pos.x) if pos is not None else 0
+        on_double_tap(line_idx, raw_off)
 
     def _on_tap(e: ft.TapEvent):
         pos = e.local_position
@@ -248,6 +279,7 @@ def RenderedLine(
         return ft.GestureDetector(
             content=content, on_tap=_on_tap,
             on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
+            on_double_tap_down=_on_double_tap_down,
         )
 
     # ============ 任务列表项 ============
@@ -274,6 +306,7 @@ def RenderedLine(
                 ft.GestureDetector(
                     content=text_area, on_tap=_on_tap,
                     on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
+                    on_double_tap_down=_on_double_tap_down,
                 ),
             ],
             wrap=True, spacing=Spacing.SM, run_spacing=0,
@@ -322,6 +355,7 @@ def RenderedLine(
     return ft.GestureDetector(
         content=content, on_tap=_on_tap,
         on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
+        on_double_tap_down=_on_double_tap_down,
     )
 
 

@@ -1254,22 +1254,18 @@ def MarkdownEditor(
 
         return ft.Container(
             expand=True,
-            alignment=ft.Alignment.TOP_CENTER,
+            alignment=ft.Alignment.TOP_LEFT,
             bgcolor=c.bg,
             padding=ft.Padding.symmetric(horizontal=content_padding, vertical=content_padding_top),
-            content=ft.Container(
-                content=ft.TextField(
-                    value=raw_draft,
-                    multiline=True,
-                    min_lines=20,
-                    border=ft.InputBorder.NONE,
-                    text_size=body_font_size,
-                    text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
-                    on_change=lambda e: _on_raw_change(e.control.value),
-                    expand=True,
-                ),
-                width=content_max_width,
-                alignment=ft.Alignment.TOP_LEFT,
+            content=ft.TextField(
+                value=raw_draft,
+                multiline=True,
+                min_lines=20,
+                border=ft.InputBorder.NONE,
+                text_size=body_font_size,
+                text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
+                on_change=lambda e: _on_raw_change(e.control.value),
+                expand=True,
             ),
         )
 
@@ -2154,6 +2150,7 @@ def MarkdownEditor(
         autofocus=True,
         on_key_down=_on_key_down,
         on_key_up=_on_key_up,
+        expand=True,
         content=ft.Column(
             controls=[
                 _tool_area(),
@@ -2163,22 +2160,22 @@ def MarkdownEditor(
                     expand=True,
                     on_change=on_selection_area_change,
                     content=ft.Container(
-                        content=ft.Container(
-                            content=ft.ListView(
-                                ref=list_view_ref,
-                                controls=line_controls,
-                                expand=True,
-                                spacing=0,
-                                auto_scroll=False,
-                                build_controls_on_demand=True,
-                                cache_extent=800,
-                                on_scroll=_on_scroll,
-                            ),
-                            width=content_max_width,
-                            alignment=ft.Alignment.TOP_LEFT,
+                        content=ft.Column(
+                            ref=list_view_ref,
+                            controls=line_controls,
+                            expand=True,
+                            spacing=0,
+                            # 用 Column(scroll=AUTO) 替代 ListView：
+                            # Column 底层是 SingleChildScrollView，首次布局即测量
+                            # 所有子项高度，maxScrollExtent 精确且稳定。
+                            # ListView 用 RenderSliverList，滚动时动态测量可见
+                            # 子项并累积计算 maxScrollExtent，行高不一致导致
+                            # 不同位置累积值微调→滚动条长度抖动。
+                            scroll=ft.ScrollMode.AUTO,
+                            on_scroll=_on_scroll,
                         ),
                         expand=True,
-                        alignment=ft.Alignment.TOP_CENTER,
+                        alignment=ft.Alignment.TOP_LEFT,
                         bgcolor=c.bg,
                         padding=ft.Padding.symmetric(
                             horizontal=content_padding, vertical=content_padding_top

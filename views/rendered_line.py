@@ -471,10 +471,15 @@ def _maybe_stack(
 
     Stack 高度 = text_height = base * line_height（与 cursor_text_field 一致）。
     cursor_overlay 已由调用方设置 left/top（相对 Stack 左上角 = 文字左起点）。
+
+    高度一致性：无论是否激活，Text 都设 height=text_h，确保光标移动时
+    行高不变（非激活行 Text 高度 vs 激活行 Stack 高度一致），
+    避免总高度波动导致滚动条长度抖动。
     """
+    text_h = base * line_height
+    text_ctrl.height = text_h  # 强制 Text 高度 = base * line_height
     if cursor_overlay is None:
         return text_ctrl
-    text_h = base * line_height
     # Stack 宽度：撑满可用区域（content_width 或自动）
     stack_w = content_width if content_width is not None else float("inf")
     return ft.Stack(

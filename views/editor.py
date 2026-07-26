@@ -729,20 +729,24 @@ def MarkdownEditor(
             undo_push_pending.current = True
             new_level = max(0, (line.level or 0) + delta)
             indent_sp = " " * new_level
-            prefix = line.segments[0].raw if line.segments else "- "
-            body = prefix.lstrip()
-            if m := re.match(r"^([-*+])\s+\[[ xX]\]\s+(.*)$", body):
-                new_prefix = f"{indent_sp}{m.group(1)} [{'x' if line.checked else ' '}] "
-                content = m.group(2)
-            elif m := re.match(r"^([-*+])\s+(.*)$", body):
-                new_prefix = f"{indent_sp}{m.group(1)} "
-                content = m.group(2)
-            elif m := re.match(r"^(\d+)\.\s+(.*)$", body):
-                new_prefix = f"{indent_sp}{m.group(1)}. "
-                content = m.group(2)
+            # 从前缀段提取列表标记符号
+            prefix_raw = line.segments[0].raw if line.segments else "- "
+            # 从整行获取完整内容（排除前缀）
+            content = _inline_content(line)
+            # 从前缀中提取标记类型
+            body = prefix_raw.lstrip()
+            if line.task:
+                marker_match = re.match(r"^([-*+])\s+", body)
+                marker = marker_match.group(1) if marker_match else "-"
+                new_prefix = f"{indent_sp}{marker} [{'x' if line.checked else ' '}] "
+            elif line.block_type == BlockType.LIST_O:
+                num_match = re.match(r"^(\d+)\.\s+", body)
+                num = num_match.group(1) if num_match else "1"
+                new_prefix = f"{indent_sp}{num}. "
             else:
-                new_prefix = f"{indent_sp}- "
-                content = body
+                marker_match = re.match(r"^([-*+])\s+", body)
+                marker = marker_match.group(1) if marker_match else "-"
+                new_prefix = f"{indent_sp}{marker} "
             new_raw = new_prefix + content
             _reparse_atomic(line, new_raw)
             mark_dirty()
@@ -916,13 +920,15 @@ def MarkdownEditor(
         line = document.lines[li]
         line.checked = not line.checked
         # 重建 raw 以反映勾选状态
-        prefix = line.segments[0].raw if line.segments else "- "
-        body = prefix.lstrip()
-        if m := re.match(r"^([-*+])\s+\[[ xX]\]\s+(.*)$", body):
-            new_prefix = f"{' ' * (line.level or 0)}{m.group(1)} [{'x' if line.checked else ' '}] "
-            new_raw = new_prefix + m.group(2)
-            _reparse_atomic(line, new_raw)
-            mark_dirty()
+        prefix_raw = line.segments[0].raw if line.segments else "- "
+        content = _inline_content(line)
+        body = prefix_raw.lstrip()
+        marker_match = re.match(r"^([-*+])\s+", body)
+        marker = marker_match.group(1) if marker_match else "-"
+        new_prefix = f"{' ' * (line.level or 0)}{marker} [{'x' if line.checked else ' '}] "
+        new_raw = new_prefix + content
+        _reparse_atomic(line, new_raw)
+        mark_dirty()
 
     def change_lang(li: int, new_lang: str):
         if not (0 <= li < len(document.lines)):

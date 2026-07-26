@@ -182,7 +182,8 @@ def MarkdownEditor(
     ctrl_pressed_ref = ft.use_ref(False)
     # 代码块 / 表格聚焦
     code_focus_ref = ft.use_ref(None)
-    code_height_version, set_code_height_version = ft.use_state(0)
+    code_edit_snapshot = ft.use_ref(None)  # 代码块聚焦时的快照，用于失焦时推入历史
+    code_edit_changed = ft.use_ref(False)  # 代码块编辑会话是否有变化
     table_focus_ref = ft.use_ref(None)
     table_nav_ref = ft.use_ref(None)
 
@@ -949,14 +950,14 @@ def MarkdownEditor(
         line.segments[0].text = value
         line.segments[0].raw = value
         line.raw = f"```{line.lang}\n{value}\n```"
-        _maybe_push_history()
+        # 代码块编辑防抖：第一次修改时将快照推入历史，整个编辑会话只占一个撤销条目
+        # 这样即使在代码块聚焦时按 Ctrl+Z 也能正常撤销
+        if not code_edit_changed.current and code_edit_snapshot.current is not None:
+            if not restoring.current:
+                history_ref.current.push(code_edit_snapshot.current)
+        code_edit_changed.current = True
         if not document.dirty:
             mark_dirty()
-        # 行数变化时触发重渲染以更新 CodeEditor 高度
-        old_lines = old_text.count("\n") + 1
-        new_lines = value.count("\n") + 1
-        if old_lines != new_lines:
-            set_code_height_version(code_height_version + 1)
 
     def on_code_focus(li: int) -> None:
         code_focus_ref.current = li
@@ -964,10 +965,17 @@ def MarkdownEditor(
         if cursor_li is not None:
             suppress_blur.current = True
             set_cursor_li(None)
+        # 保存聚焦时的快照，用于失焦时与修改前比较
+        code_edit_snapshot.current = _make_snapshot()
+        code_edit_changed.current = False
 
     def on_code_blur(li: int) -> None:
         if code_focus_ref.current == li:
             code_focus_ref.current = None
+        # 代码块失焦时：清理状态
+        # 注意：快照已在第一次修改时推入历史，此处不再重复推入
+        code_edit_snapshot.current = None
+        code_edit_changed.current = False
 
     # ============ 表格 ============
     def _table_cells(line: Line) -> list[str]:

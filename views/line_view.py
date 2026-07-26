@@ -69,22 +69,26 @@ _COMMON_LANGS: list[tuple[str, str]] = [
 def _code_language(lang: str | None) -> CodeLanguage:
     """把 markdown 围栏语言标识映射为 CodeEditor 的 CodeLanguage 枚举。"""
     if not lang:
-        return CodeLanguage.PYTHON
+        return CodeLanguage.PLAINTEXT
     key = lang.strip().replace("-", "_").replace(" ", "").upper()
     aliases = {
         "JS": "JAVASCRIPT",
         "TS": "TYPESCRIPT",
         "PY": "PYTHON",
         "C++": "CPP",
-        "C#": "C_SHARP",
+        "C#": "CS",
         "SH": "SHELL",
         "BASH": "SHELL",
         "ZSH": "SHELL",
-        "YAML": "YML",
-        "CSHARP": "C_SHARP",
+        "CSHARP": "CS",
+        "PLAIN": "PLAINTEXT",
+        "TEXT": "PLAINTEXT",
+        "TXT": "PLAINTEXT",
+        "NONE": "PLAINTEXT",
+        "PLAINTEXT": "PLAINTEXT",
     }
     key = aliases.get(key, key)
-    return getattr(CodeLanguage, key, CodeLanguage.PYTHON)
+    return getattr(CodeLanguage, key, CodeLanguage.PLAINTEXT)
 
 
 def _lang_options(current_lang: str) -> list[ft.DropdownOption]:
@@ -378,7 +382,17 @@ def _render_code_block(
     code_field_ref: ft.Ref | None,
     is_current_line: bool,
 ) -> ft.Control:
-    """代码块分支：CodeEditor 始终可编辑独立岛屿。"""
+    """代码块分支：CodeEditor 始终可编辑独立岛屿（Typora/VSCode 风格）。
+
+    特性：
+    - 动态高度：通过 on_size_change 回调自适应内容高度
+    - 语法高亮：基于 CodeTheme（GitHub/Atom One Dark）
+    - 行号显示：紧凑行号区，宽度自适应
+    - 自动补全：启用 autocomplete=True
+    - 语言选择：下拉框支持搜索
+    - 折叠支持：点击折叠按钮可折叠代码块
+    - 精致视觉：代码块容器带阴影、主题适配
+    """
     c = _current_colors()
     code = line.segments[0].text if line.segments else ""
     lang = line.lang or ""
@@ -386,10 +400,15 @@ def _render_code_block(
     is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
     code_theme = CodeTheme.ATOM_ONE_DARK if is_dark else CodeTheme.GITHUB
 
+    # ---- 状态 ----
+    copied, set_copied = ft.use_state(False)
+    is_collapsed, set_collapsed = ft.use_state(False)
+
+    # ---- 语言选择器 ----
     lang_dropdown = ft.Dropdown(
         value=lang,
         options=_lang_options(lang),
-        width=160,
+        width=150,
         text_size=12,
         dense=True,
         content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
@@ -404,12 +423,12 @@ def _render_code_block(
         ),
     )
 
-    copied, set_copied = ft.use_state(False)
+    # ---- 复制按钮 ----
     copy_btn = ft.IconButton(
         icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
         icon_size=14,
         tooltip="已复制" if copied else "复制代码",
-        padding=Spacing.MD,
+        padding=ft.Padding.all(Spacing.MD),
         style=ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=Radius.MD),
             color=ft.Colors.GREEN if copied else c.muted,
@@ -420,16 +439,28 @@ def _render_code_block(
         ),
     )
 
+    # ---- 折叠按钮 ----
+    collapse_btn = ft.IconButton(
+        icon=ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
+        icon_size=14,
+        tooltip="展开" if is_collapsed else "折叠",
+        padding=ft.Padding.all(Spacing.MD),
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
+            color=c.muted,
+        ),
+        on_click=lambda e: set_collapsed(not is_collapsed),
+    )
+
+    # ---- 行号区宽度计算（含折叠手柄预留 20px）----
     line_count = max(1, code.count("\n") + 1)
     digits = len(str(line_count))
-    # 紧凑行号区：字号 11 + 等宽字体，每数字约 7-8px
-    # 1 位数字 ~32px，2 位 ~40px，3 位 ~48px（原为 56/68/80）
-    gutter_width = max(28, 12 + digits * 8) + Spacing.SM
-    gutter_bg = ft.Colors.with_opacity(0.22 if is_dark else 0.04, c.text)
-    editor_height = max(line_count * 20 + 16, 52)
+    gutter_width = max(56, 20 + digits * 10 + 20 + Spacing.SM)
+    gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.03, c.text)
 
+    # ---- CodeEditor ----
     editor = CodeEditor(
-        key=f"code-{line_idx}",
+        key=f"code-{line_idx}-{digits}",
         value=code,
         language=_code_language(lang),
         code_theme=code_theme,
@@ -438,15 +469,16 @@ def _render_code_block(
             margin=Spacing.XS,
             show_line_numbers=True,
             show_errors=False,
-            show_folding_handles=False,
+            show_folding_handles=True,
             background_color=gutter_bg,
             text_style=ft.TextStyle(font_family=FONT_MONO, size=11, color=c.muted),
         ),
         text_style=ft.TextStyle(font_family=FONT_MONO, size=14, color=c.text),
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.MD),
-        height=editor_height,
+        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+        height=0 if is_collapsed else None,
         read_only=False,
         autofocus=False,
+        autocomplete=True,
         on_change=lambda e: (
             on_change_code(line_idx, e.control.value)
             if on_change_code is not None else None
@@ -457,18 +489,81 @@ def _render_code_block(
     if code_field_ref is not None:
         editor.ref = code_field_ref
 
+    # ---- 头部工具栏 ----
     header = ft.Row(
-        controls=[lang_dropdown, ft.Container(expand=True), copy_btn],
-        spacing=Spacing.MD,
+        controls=[
+            collapse_btn,
+            lang_dropdown,
+            ft.Container(expand=True),
+            ft.Text(
+                value=f"{line_count} 行",
+                size=11,
+                color=c.muted,
+                font_family=FONT_MONO,
+            ),
+            copy_btn,
+        ],
+        spacing=Spacing.SM,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
+
+    # ---- 折叠时显示摘要 ----
+    preview_text = code.split("\n")[0][:60] + ("…" if len(code.split("\n")[0]) > 60 else "")
+    collapsed_preview = ft.Container(
+        content=ft.Row(
+            controls=[
+                ft.Text(
+                    value=preview_text or "(空代码块)",
+                    size=12,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    expand=True,
+                ),
+                ft.Text(
+                    value=f"{line_count} 行",
+                    size=11,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                ),
+            ],
+            spacing=Spacing.MD,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+        bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
+        border_radius=Radius.MD,
+    )
+
+    # ---- 主内容 ----
+    main_content = ft.Column(
+        controls=[
+            header,
+            collapsed_preview if is_collapsed else editor,
+        ],
+        spacing=Spacing.XS,
+    )
+
+    # ---- 代码块容器 ----
+    border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
     content = ft.Container(
-        content=ft.Column([header, editor], spacing=Spacing.SM),
+        content=main_content,
         bgcolor=c.code_block_bg,
         border_radius=Radius.MD,
-        padding=ft.Padding.only(left=Spacing.MD, right=Spacing.LG, top=Spacing.XS, bottom=Spacing.LG),
+        padding=ft.Padding.only(
+            left=Spacing.MD, right=Spacing.MD,
+            top=Spacing.XS, bottom=Spacing.SM
+        ),
         shadow=card_shadow(Elevation.LOW, is_dark),
+        border=only_border(
+            top=ft.BorderSide(1, border_color),
+            bottom=ft.BorderSide(1, border_color),
+            left=ft.BorderSide(1, border_color),
+            right=ft.BorderSide(1, border_color),
+        ),
     )
+
     return _wrap_block(
         content, line, line_idx,
         on_click=(lambda e: on_code_focus(line_idx)) if on_code_focus is not None else None,

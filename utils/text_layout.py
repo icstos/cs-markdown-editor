@@ -73,8 +73,19 @@ _char_width_cache: dict[tuple[str, str, int], float] = {}
 def _get_hb_font(font_family: str, size: int) -> tuple[_hb.Font, int] | None:
     """按 (字体族, 字号) 缓存加载 HarfBuzz Font；Face 仅解析一次。
 
-    scale = size * upem 使 advance 为整数（避免 26.6 定点舍入误差）；
-    ot_font_set_funcs 启用 GSUB/GPOS 整形（kern/liga/calt 等），与 Skia 一致。
+    核心算法原理：
+    - scale = size * upem：HarfBuzz 内部用 26.6 定点（int32 << 6）存储 advance，
+      字体原始 advance 单位为「设计单位 / upem」。若 scale = size，x_advance 会
+      经过 /64 二次舍入（如 575 设计单位 × 16 / 64 = 143.75 → 截断 143）；
+      改用 scale = size × upem 后，x_advance = 设计单位 × size（upem 倍整数），
+      消除 26.6 定点舍入误差，与 Skia 的 FreeType+HarfBuzz 计算路径完全一致。
+    - ot_font_set_funcs：默认 Font 未绑定 OpenType 字形数据回调，shape 只能产
+      .notdef（advance=0）。该函数注入 hmtx/glyf/CFF 读取器，使 shape 能查
+      hmtx（横向 advance）、GSUB（连字替换如 fi→ﬁ）、GPOS（kerning 位置调整），
+      与 Skia 在 Flutter TextPainter 中的整形配置一致。
+    - guess_segment_properties 由调用方在 Buffer 上设置（推断 script/direction），
+      否则 GSUB/GPOS 不应用（缺脚本标签无法查表）。
+
     返回 (Font, upem) 或 None（字体文件缺失时）。
     """
     key = (font_family, size)
@@ -91,7 +102,9 @@ def _get_hb_font(font_family: str, size: int) -> tuple[_hb.Font, int] | None:
         _hb_faces[font_family] = face
     font = _hb.Font(face)
     upem = face.upem
+    # scale = size × upem：使 x_advance 为「设计单位 × size」整数，消除 26.6 定点舍入
     font.scale = (size * upem, size * upem)
+    # 注入 OpenType 字形读取器：启用 hmtx/GSUB/GPOS 整形（kern/liga/calt）
     _hb.ot_font_set_funcs(font)
     _hb_fonts[key] = (font, upem)
     return (font, upem)
@@ -100,9 +113,17 @@ def _get_hb_font(font_family: str, size: int) -> tuple[_hb.Font, int] | None:
 def _hb_shape_width(text: str, font_family: str, size: int) -> float:
     """用 HarfBuzz 整形 text，返回像素 advance 总宽（含 Flet letter_spacing 补偿）。
 
-    scale = size*upem 下 x_advance 为设计单位 × size（整数），除以 upem 得像素宽度，
-    与 Skia 在相同字号下的渲染 advance 一致；再按字形数加 _FLET_DEFAULT_LETTER_SPACING
-    补偿 Flet Text 默认 letter_spacing=0.25（每字形含末字形都加 0.25px）。
+    核心算法原理：
+    - 单位还原：scale = size × upem 下 x_advance 单位为「设计单位 × size」（upem 倍
+      整数），除以 upem 还原为「设计单位 × size / upem」= 像素宽度（因为字体设计
+      单位 = 1/upem em，size px = 1 em，故 设计单位 × size / upem = 像素）。
+      与 Skia 在同字号下渲染 advance 一致（同走 FreeType+HarfBuzz）。
+    - letter_spacing 末字形补偿：Flutter TextPainter 对每个字形（含末字形）的
+      advance 都加 letterSpacing（text width = Σ(advance + letterSpacing)）。
+      实验验证：'1' 单字符 Flet 渲染 9.45 = HB advance 9.20 + 0.25（末字形也加）。
+      故补偿项为 len(positions) × 0.25，而非 (len-1) × 0.25。
+    - 连字影响：'fi' 整形为单字形时 positions 长度为 1，比逐字符测量少加 0.25px，
+      这与 Skia 渲染一致（连字整体作为一个 advance 单元）。
     """
     pair = _get_hb_font(font_family, size)
     if pair is None:
@@ -110,20 +131,30 @@ def _hb_shape_width(text: str, font_family: str, size: int) -> float:
     font, upem = pair
     buf = _hb.Buffer()
     buf.add_str(text)
-    buf.guess_segment_properties()
-    _hb.shape(font, buf)
+    buf.guess_segment_properties()  # 推断 script/direction/language，启用 GSUB/GPOS
+    _hb.shape(font, buf)  # 整形：应用 GSUB 替换 + GPOS 位置调整，输出字形序列
     positions = buf.glyph_positions
+    # x_advance 单位还原：设计单位 × size → 像素（除以 upem）
     raw_advance = sum(p.x_advance for p in positions) / upem
-    # 每个字形（含末字形）都加 0.25px letter_spacing，与 Flet/Skia 渲染对齐
+    # 末字形也加 0.25px：Flutter TextPainter 对所有字形 advance 加 letterSpacing
     return raw_advance + len(positions) * _FLET_DEFAULT_LETTER_SPACING
 
 
 def _measure_uncached(text: str, font_family: str, size: int) -> float:
     """无缓存测量：FONT_MAIN 或无 CJK 时直接整形；否则按 CJK 边界切分回退主中文字体。
 
-    CJK 回退与原 Pillow 实现一致：请求字体（如 Consolas）不含 CJK 字形时，
-    HarfBuzz 报告 .notdef（advance=0），而 Skia 渲染回退到系统 CJK 字体（约 1em/字）。
-    此处将 CJK 片段改用 FONT_MAIN 测量，贴合 Skia 实际渲染宽度。
+    核心算法原理（CJK 回退）：
+    - 缺字现象：请求字体（如 Consolas）不含 CJK 字形时，HarfBuzz 输出 .notdef
+      （glyph id=0），其 advance 通常为字体 cmap 中 .notdef 的宽度（多为 0 或
+      一固定值），与实际渲染宽度严重不符。
+    - Skia 渲染回退：Flutter 的 TextPainter 在 FontCollection 中查找字形时，若
+      主字体缺失会按 fallback 链回退到系统 CJK 字体（Microsoft YaHei 等），
+      CJK 字符实际渲染宽度约 1em（size px）。
+    - 切分策略：按 _CJK_RE 边界将文本切为「非 CJK 段 + CJK 段」交替序列，
+      非 CJK 段用请求字体整形（捕获拉丁字符间 kerning），CJK 段统一用 FONT_MAIN
+      （Alibaba，含完整 CJK 字形）测量，模拟 Skia 回退行为。
+    - 段间 kerning 损失：CJK 与拉丁字符之间通常无 GPOS kerning 表，实验验证
+      '中1文2' HB 切分累加 = Flet 渲染（差 4×0.25 letter_spacing 补偿后归零）。
     """
     if font_family == FONT_MAIN or not _CJK_RE.search(text):
         return _hb_shape_width(text, font_family, size)
@@ -131,10 +162,13 @@ def _measure_uncached(text: str, font_family: str, size: int) -> float:
     pos = 0
     for m in _CJK_RE.finditer(text):
         if m.start() > pos:
+            # 非 CJK 段：用请求字体整形（保留拉丁字符间 kerning）
             total += _hb_shape_width(text[pos:m.start()], font_family, size)
+        # CJK 段：换主中文字体测量（模拟 Skia 字体回退）
         total += _hb_shape_width(m.group(), FONT_MAIN, size)
         pos = m.end()
     if pos < len(text):
+        # 尾部非 CJK 段
         total += _hb_shape_width(text[pos:], font_family, size)
     return total
 
@@ -165,13 +199,22 @@ def measure_text_width(text: str, font_family: str, size: int) -> float:
 def measure_text_offsets(text: str, font_family: str, size: int) -> list[float]:
     """整形 text 返回逐字符光标 X 偏移（len(text)+1 个，与 Skia 渲染像素级一致）。
 
-    返回 offsets[i] = 光标在字符偏移 i 处的 X（相对文本起点，含 kerning/连字）。
-    比「逐字符 measure_text_width 累加」更准：后者不捕获字符间 kerning（如 "AV"
-    整形宽度比 A+V 单字宽度和小 1.12px），导致光标在含 kerning 的文本上偏移。
-
-    实现：HarfBuzz 整形整段文本后，按 glyph cluster（字符→字形映射）二分查找
-    每个字符偏移对应的字形边界，取其前累计 advance。连字内部光标吸附到连字边界
-    （标准行为）。RTL 文本假设簇单调（本编辑器以 LTR/CJK 为主）。
+    核心算法原理：
+    - offsets[i] = 光标在字符偏移 i 处的 X（相对文本起点，含 kerning/连字）。
+    - 为什么不能用「逐字符 measure_text_width 累加」：后者对每个字符单独整形，
+      丢失字符间 GPOS kerning（如 "AV" 整形宽度 18.30 比 A 单字 9.55 + V 单字
+      8.75 = 18.30 → 实际有 kerning 调整 -0.0；但 "AVAIL" 中 V→A 有 kerning
+      +10.67-8.75=+1.92，逐字符累加会偏 1.92px）。cluster 级一次整形整段文本，
+      完整捕获所有 kerning/连字位置调整。
+    - cluster 概念：HarfBuzz 整形后每个字形记录 info.cluster = 该字形覆盖的
+      起始字符偏移。1 字符 → 1 字形时 cluster 即字符索引；连字（如 "fi"→ﬁ）
+      多字符 → 1 字形时 cluster = 起始字符索引；变音符号组合时多字形共享 cluster。
+    - 二分查找：对字符偏移 i，找「首个 cluster >= i 的字形位置 lo」，光标 X =
+      glyph_cum[lo]（该字形前的累计 advance）。详见 _hb_cluster_offsets。
+    - 连字光标吸附：'fi' 整形为 1 字形（cluster=0）时，char_off=0/1 都映射到
+      glyph_cum[0]=0，char_off=2 映射到 glyph_cum[1]。光标在 'fi' 中间无法停留
+      （标准行为：连字内部不可插入光标，左右键跳过整个连字）。
+    - RTL 假设簇单调递增：本编辑器以 LTR/CJK 为主，未处理 RTL 复杂情况。
     """
     if not text:
         return [0.0]
@@ -182,16 +225,19 @@ def measure_text_offsets(text: str, font_family: str, size: int) -> list[float]:
     if font_family == FONT_MAIN or not _CJK_RE.search(text):
         return _hb_cluster_offsets(text, font_family, size)
     # 混合 CJK：逐段整形后按段拼接偏移（CJK 段用 FONT_MAIN，非 CJK 段用原字体）
+    # 各段独立整形，段间累计 acc 拼接，模拟 Skia 分段回退渲染
     offsets: list[float] = [0.0]
-    acc = 0.0
+    acc = 0.0  # 段间累计 X 偏移
     pos = 0
     for m in _CJK_RE.finditer(text):
         if m.start() > pos:
+            # 非 CJK 段：原字体整形，偏移叠加到 acc 上
             sub = text[pos:m.start()]
             sub_off = _hb_cluster_offsets(sub, font_family, size)
-            for o in sub_off[1:]:
+            for o in sub_off[1:]:  # 跳过 sub_off[0]=0（已含在 acc 中）
                 offsets.append(acc + o)
             acc += sub_off[-1]
+        # CJK 段：换主中文字体整形
         sub = m.group()
         sub_off = _hb_cluster_offsets(sub, FONT_MAIN, size)
         for o in sub_off[1:]:
@@ -199,6 +245,7 @@ def measure_text_offsets(text: str, font_family: str, size: int) -> list[float]:
         acc += sub_off[-1]
         pos = m.end()
     if pos < len(text):
+        # 尾部非 CJK 段
         sub = text[pos:]
         sub_off = _hb_cluster_offsets(sub, font_family, size)
         for o in sub_off[1:]:
@@ -210,9 +257,26 @@ def measure_text_offsets(text: str, font_family: str, size: int) -> list[float]:
 def _hb_cluster_offsets(text: str, font_family: str, size: int) -> list[float]:
     """HarfBuzz 整形单段文本，返回 cluster 级光标偏移（不含 CJK 回退切分）。
 
-    每个字形 advance 加 _FLET_DEFAULT_LETTER_SPACING（0.25px）补偿 Flet Text 默认
-    letter_spacing=0.25——Skia 渲染时每个字形（含末字形）都加 0.25px，与字符 advance
-    线性叠加，故按字形数补偿即可对齐。
+    核心算法原理（cluster 二分查找）：
+    - cluster 是 HarfBuzz 标记的「字符→字形」映射索引。整形后每个字形 info.cluster
+      记录该字形覆盖的起始字符偏移（UTF-8 字节偏移，但 uharfbuzz 的 add_str 已转
+      为码点偏移）。例：
+        * "abc" 1:1 整形：clusters=[0,1,2]，3 字形各覆盖 1 字符
+        * "fi" 连字（GSUB liga）整为 1 字形：clusters=[0]，1 字形覆盖 2 字符
+        * "á" 组合（a + U+0301）整为 2 字形共享 cluster：clusters=[0,0]
+    - glyph_cum[i] = 第 i 个字形前的累计 advance（含 letter_spacing 补偿）。
+      i 范围 0..len(positions)，glyph_cum[0]=0，glyph_cum[-1]=文本总宽。
+    - 二分查找语义：对字符偏移 i，找「首个 cluster >= i 的字形位置 lo」，
+      光标 X = glyph_cum[lo]。原理：cluster[j] >= i 表示字形 j 覆盖的字符范围
+      起点在 i 处或之后，即字形 j 是「光标在 i 处时遇到的第一个字形」，光标应
+      位于该字形之前（其前累计 advance）。
+    - 边界处理：
+        * i=0：lo=0（首字形前），光标在文本起点
+        * i=len(text)：lo=len(clusters)（所有字形之后），光标在文本末尾
+        * 连字内部：'fi' clusters=[0]，i=1 时找 cluster>=1 → lo=1（=len），
+          glyph_cum[1]=连字总宽，光标在 'fi' 末尾（中间不可停留）
+    - letter_spacing 补偿：每个字形 advance 加 0.25px（含末字形），与 _hb_shape_width
+      保持一致，否则 cluster 偏移与总宽不匹配。
     """
     pair = _get_hb_font(font_family, size)
     if pair is None:
@@ -220,21 +284,24 @@ def _hb_cluster_offsets(text: str, font_family: str, size: int) -> list[float]:
     font, upem = pair
     buf = _hb.Buffer()
     buf.add_str(text)
-    buf.guess_segment_properties()
-    _hb.shape(font, buf)
+    buf.guess_segment_properties()  # 推断 script/direction/language
+    _hb.shape(font, buf)  # 整形：输出 glyph_infos（含 cluster）+ glyph_positions（含 x_advance）
     infos = buf.glyph_infos
     positions = buf.glyph_positions
     # 累计 advance：glyph_cum[i] = 第 i 个字形前的累计 X（含 letter_spacing 补偿）
+    # 注意：每个字形 advance 加 0.25px（Flutter TextPainter 行为，含末字形）
     glyph_cum = [0.0]
     acc = 0.0
     for p in positions:
         acc += p.x_advance / upem + _FLET_DEFAULT_LETTER_SPACING
         glyph_cum.append(acc)
+    # clusters[j] = 字形 j 覆盖的起始字符偏移（单调非递减，因为 LTR/CJK 整形）
     clusters = [info.cluster for info in infos]
     n = len(text)
-    # 对每个字符偏移 i，二分找首个 cluster >= i 的字形，光标 X = 其前累计 advance
+    # 对每个字符偏移 i，二分找首个 cluster >= i 的字形位置 lo，光标 X = glyph_cum[lo]
     offsets = [0.0] * (n + 1)
     for char_off in range(n + 1):
+        # 标准库 bisect_left 等价实现：在 clusters 中找首个 >= char_off 的位置
         lo, hi = 0, len(clusters)
         while lo < hi:
             mid = (lo + hi) // 2

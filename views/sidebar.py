@@ -190,6 +190,21 @@ def _list_item(
     )
 
 
+def _outline_color_bar(level: int, c) -> ft.Control:
+    """大纲级别色条：3px 宽细竖线，颜色复用 styles.heading_colors（红橙绿青蓝紫）。
+
+    替代 H1~H6 文字徽章，视觉更清爽；同级别条目左对齐到同一缩进位置，
+    色条颜色一眼区分标题级别。
+    """
+    color = c.heading_colors.get(level, c.muted)
+    return ft.Container(
+        width=1,
+        height=14,
+        bgcolor=color,
+        border_radius=2,
+    )
+
+
 # ---- 面板渲染 ----
 
 
@@ -345,18 +360,31 @@ def _render_outline_panel(
     on_jump_to_line: Callable[[int], None],
     c,
 ) -> ft.Control:
-    """大纲面板：标题按级别缩进，点击跳转。"""
+    """大纲面板：标题按级别缩进，左侧细竖线色条着色，点击跳转。
+
+    同级别条目左对齐到同一缩进位置（(lvl-1)*14 + Spacing.XL）；
+    色条颜色对应 heading_colors（红橙绿青蓝紫），一眼区分标题级别。
+    H1/H2 文本加粗以突出主要章节。
+    """
     if not toc_entries:
         return _empty_hint("文档无标题", c)
     items = [
         _list_item(
-            ft.Text(
-                value=text,
-                size=12,
-                color=c.text,
-                font_family=FONT_MAIN,
-                max_lines=1,
-                overflow=ft.TextOverflow.ELLIPSIS,
+            ft.Row(
+                controls=[
+                    _outline_color_bar(lvl, c),
+                    ft.Text(
+                        value=text,
+                        size=12,
+                        color=c.text,
+                        font_family=FONT_MAIN,
+                        weight=ft.FontWeight.W_600 if lvl <= 2 else ft.FontWeight.NORMAL,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                        expand=True,
+                    ),
+                ],
+                spacing=Spacing.MD,
             ),
             c,
             on_click=lambda e, li=li: on_jump_to_line(li),

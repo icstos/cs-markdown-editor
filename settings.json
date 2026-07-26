@@ -15,7 +15,7 @@
   "export_format": "html",
   "sidebar_open": true,
   "sidebar_panel": "outline",
-  "sidebar_width": 180,
+  "sidebar_width": 181,
   "recent_files": [
     "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\README.md"
@@ -35,7 +35,11 @@
       "focus_mode": "ctrl+shift+k",
       "close_tab": "ctrl+w",
       "next_tab": "ctrl+tab",
-      "prev_tab": "ctrl+shift+tab"
+      "prev_tab": "ctrl+shift+tab",
+      "copy": "ctrl+c",
+      "cut": "ctrl+x",
+      "paste": "ctrl+v",
+      "select_all": "ctrl+a"
     },
     "edit": {
       "save": "ctrl+s",
@@ -50,7 +54,11 @@
       "format_highlight": "ctrl+u",
       "format_strike": "ctrl+shift+s",
       "format_code": "ctrl+`",
-      "format_link": "ctrl+k"
+      "format_link": "ctrl+k",
+      "copy": "ctrl+c",
+      "cut": "ctrl+x",
+      "paste": "ctrl+v",
+      "select_all": "ctrl+a"
     }
   }
 }

@@ -1426,8 +1426,13 @@ def MarkdownEditor(
         except Exception:
             pass
 
-    async def _safe_scroll_to(li: int):
-        """异步滚动：Flet 的 scroll_to 是协程，需 await。"""
+    async def _safe_scroll_to(li: int, to_top: bool = False):
+        """异步滚动：Flet 的 scroll_to 是协程，需 await。
+
+        Args:
+            li: 目标行索引
+            to_top: True=滚动到视口顶部（大纲跳转），False=仅在不可见时滚动（光标导航）
+        """
         if list_view_ref.current is None:
             return
         try:
@@ -1437,12 +1442,17 @@ def MarkdownEditor(
             target_y = li * (base * line_height + 4)
             viewport = viewport_h_ref.current or 600
             cur = scroll_offset_ref.current
-            if target_y < cur + 40:
-                await list_view_ref.current.scroll_to(target_y - 40, duration=100)
-            elif target_y > cur + viewport - base * line_height - 40:
-                await list_view_ref.current.scroll_to(
-                    target_y - viewport + base * line_height + 80, duration=100
-                )
+            if to_top:
+                top_padding = 48
+                target_scroll = max(0, target_y - top_padding)
+                await list_view_ref.current.scroll_to(target_scroll, duration=200)
+            else:
+                if target_y < cur + 40:
+                    await list_view_ref.current.scroll_to(target_y - 40, duration=100)
+                elif target_y > cur + viewport - base * line_height - 40:
+                    await list_view_ref.current.scroll_to(
+                        target_y - viewport + base * line_height + 80, duration=100
+                    )
         except Exception:
             pass
 
@@ -1502,7 +1512,7 @@ def MarkdownEditor(
             _set_cursor(li, 0)
         page = ft.context.page
         if page is not None:
-            page.run_task(_safe_scroll_to, li)
+            page.run_task(_safe_scroll_to, li, to_top=True)
 
     def _get_cursor_row_col() -> tuple[int, int]:
         if cursor_li is not None and 0 <= cursor_li < len(document.lines):

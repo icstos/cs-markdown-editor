@@ -56,17 +56,6 @@ def _combo(e) -> str:
     return "+".join(parts + [key])
 
 
-# 行内格式快捷键 → 动作名映射（Ctrl+B/I/U/Shift+S/`/K）
-_INLINE_COMBO_MAP: dict[str, str] = {
-    "ctrl+b": "bold",
-    "ctrl+i": "italic",
-    "ctrl+u": "highlight",
-    "ctrl+shift+s": "strike",
-    "ctrl+`": "code",
-    "ctrl+k": "link",
-}
-
-
 class KeyDispatcher:
     """键盘事件分发器：浏览态 / 编辑态两层快捷键 + 编辑态光标导航。
 
@@ -92,6 +81,9 @@ class KeyDispatcher:
         paste_old_draft: ft.Ref,
         app_callbacks: dict[str, Callable[[], None]],
         # 期望键：save / new / open / toggle_sidebar / toggle_theme / open_settings
+        capturing: tuple = (None, None),
+        on_capture: Callable[[str, str, str], None] | None = None,
+        on_cancel_capture: Callable[[], None] | None = None,
     ):
         self._shortcut_mgr = shortcut_mgr
         self._actions_ref = actions_ref
@@ -99,6 +91,11 @@ class KeyDispatcher:
         self._page_ref = page_ref
         self._paste_old_draft = paste_old_draft
         self._app_callbacks = app_callbacks
+        # 捕获模式：(layer, action_id) | (None, None)。非空时 handle 顶部拦截，
+        # 把下一个组合键经 on_capture 写入配置并退出捕获，不走常规分发。
+        self._capturing = capturing
+        self._on_capture = on_capture
+        self._on_cancel_capture = on_cancel_capture
 
     # ---- 共享工具 ----
     @staticmethod
@@ -122,6 +119,27 @@ class KeyDispatcher:
         combo = _combo(e)
         key = e.key or ""
         norm = key.replace(" ", "").lower()
+
+        # 捕获模式：设置页"修改"按钮触发，捕获下一个组合键写入配置。
+        # 优先级最高，拦截所有按键不走常规分发。
+        if self._capturing != (None, None) and self._on_capture is not None:
+            layer, action_id = self._capturing
+            if not combo:
+                # 纯修饰键（单按 Ctrl/Shift/Alt），等待完整组合
+                return
+            if norm == "escape":
+                # Esc 取消捕获
+                if self._on_cancel_capture is not None:
+                    self._on_cancel_capture()
+                return
+            if norm == "backspace":
+                # Backspace 清空绑定
+                self._on_capture(layer, action_id, "")
+                return
+            # 捕获到组合键，写入并退出
+            self._on_capture(layer, action_id, combo)
+            return
+
         actions: EditorActions | None = self._actions_ref.current
 
         # 用 KeyboardEvent.shift 可靠同步 Shift 状态到 shift_pressed_ref。
@@ -232,13 +250,15 @@ class KeyDispatcher:
         # 行内格式快捷键优先级必须高于浏览态全局快捷键：
         # 这样鼠标选中文本后按 Ctrl+B/I/U/Shift+S/`/K 不会被
         # 侧边栏切换、聚焦模式等浏览态快捷键抢先消费。
-        if combo in _INLINE_COMBO_MAP:
+        # combo→fmt_name 映射从 ShortcutManager 动态读取（用户自定义键位生效）。
+        inline_map = self._shortcut_mgr.inline_format_combos()
+        if combo in inline_map:
             if actions is not None and not self._native_field_focused(actions):
                 selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
                 if actions.cursor_li is None and selection_fmt is not None:
-                    selection_fmt(_INLINE_COMBO_MAP[combo], combo)
+                    selection_fmt(inline_map[combo], combo)
                 else:
-                    actions.apply_inline_format(_INLINE_COMBO_MAP[combo])
+                    actions.apply_inline_format(inline_map[combo])
             return
 
         # Ctrl+A 全选：两层均生效，原生控件聚焦时放行交由原生处理
@@ -359,11 +379,13 @@ class KeyDispatcher:
                 else:
                     actions.set_block(BlockType.HEADING, digit)
             return
-        # 行内格式快捷键（Ctrl+B/I/U/Shift+S/`/K）：编辑态包裹选区或插入空语法。
+        # 行内格式快捷键：编辑态包裹选区或插入空语法。
         # 代码块/表格聚焦时跳过（交由原生 TextField）。浏览态无 active 时静默返回。
-        if combo in _INLINE_COMBO_MAP:
+        # combo→fmt_name 从 ShortcutManager 动态读取（用户自定义键位生效）。
+        inline_map = self._shortcut_mgr.inline_format_combos()
+        if combo in inline_map:
             if actions is not None and not self._native_field_focused(actions):
-                actions.apply_inline_format(_INLINE_COMBO_MAP[combo])
+                actions.apply_inline_format(inline_map[combo])
             return
         if layer == "browse":
             if matches(combo, shortcuts.get("save", "ctrl+s")):

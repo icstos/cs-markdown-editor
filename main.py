@@ -57,6 +57,9 @@ def App():
     settings_open, set_settings_open = ft.use_state(False)
     settings_tab, set_settings_tab = ft.use_state("edit")
     shortcut_focus, set_shortcut_focus = ft.use_state((None, None))
+    # 快捷键捕获模式：(layer, action_id) | (None, None)。设置页点"修改"时置为
+    # (layer, action_id)，KeyDispatcher 顶部拦截下一个组合键经 _on_capture 写入配置。
+    capturing, set_capturing = ft.use_state((None, None))
     # 导航接口：editor 把光标状态与导航函数写入此 ref，App 的 on_key 据此分发
     nav_ref = ft.use_ref(None)
 
@@ -273,9 +276,12 @@ def App():
         set_settings_open(True)
 
     def close_settings():
+        set_capturing((None, None))
         set_settings_open(False)
 
     def select_settings_tab(tab: str):
+        # 切 tab 时退出捕获模式，避免遗留捕获态
+        set_capturing((None, None))
         set_settings_tab(tab)
 
     # ShortcutManager：无状态读取器，每次渲染重建。update_setting 通过 lambda
@@ -291,6 +297,16 @@ def App():
         if key == "shortcuts":
             layer, action = shortcut_mgr.first_conflict_target()
             set_shortcut_focus((layer, action))
+
+    # 快捷键捕获回调：KeyDispatcher 在捕获模式下捕获到组合键后调用。
+    # 通过 dispatcher_ref 同步链路，此处引用的 shortcut_mgr 总是当次渲染的最新实例。
+    def _on_capture(layer: str, action_id: str, combo: str):
+        # combo="" 表示清空绑定（Backspace）
+        shortcut_mgr.update(layer, action_id, combo)
+        set_capturing((None, None))
+
+    def _on_cancel_capture():
+        set_capturing((None, None))
 
     def _autosave_enabled_for(tab) -> bool:
         return bool(settings.get("auto_save", False)) and bool(tab and tab["file_path"])
@@ -563,6 +579,10 @@ def App():
     # page.on_keyboard_event 的 KeyboardEvent 直接提供 ctrl/meta 修饰键状态
     # 粘贴前的 draft 快照（供 handle_paste 做 diff 定位粘贴位置）
     paste_old_draft = ft.use_ref("")
+    # dispatcher_ref：渲染期同步赋值最新 dispatcher，_handler 通过 ref 读取。
+    # 修复 use_effect(_bind_keyboard, []) 空依赖导致 _handler 闭包捕获首次渲染
+    # dispatcher 的过期问题——改快捷键后新键位才能立即生效（无需重启）。
+    dispatcher_ref = ft.use_ref(None)
 
     # KeyDispatcher：替代 on_key 闭包。持有 shortcut_mgr + nav_ref 引用，
     # editor.py 每次渲染写入最新 EditorActions 后 dispatcher 读到的就是最新值，
@@ -584,7 +604,12 @@ def App():
             "next_tab": lambda: _cycle_tab(1),
             "prev_tab": lambda: _cycle_tab(-1),
         },
+        capturing=capturing,
+        on_capture=_on_capture,
+        on_cancel_capture=_on_cancel_capture,
     )
+    # 渲染期同步：每次重渲染把最新 dispatcher 写入 ref，_handler 即可读到最新值
+    dispatcher_ref.current = dispatcher
 
     def _bind_keyboard():
         page = ft.context.page
@@ -593,8 +618,12 @@ def App():
             return lambda: None
 
         def _handler(e):
+            # 通过 ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例
+            d = dispatcher_ref.current
+            if d is None:
+                return
             try:
-                dispatcher.handle(e)
+                d.handle(e)
             except Exception:
                 return
 
@@ -625,6 +654,9 @@ def App():
         on_reset_shortcuts=reset_shortcuts,
         on_import=lambda: page_ref.current.run_task(import_shortcuts),
         on_export=lambda: page_ref.current.run_task(export_shortcuts),
+        capturing=capturing,
+        on_capture_click=lambda layer, action_id: set_capturing((layer, action_id)),
+        on_cancel_capture_click=lambda: set_capturing((None, None)),
     )
 
     sidebar_open = settings.get("sidebar_open", False)

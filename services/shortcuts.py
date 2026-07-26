@@ -126,6 +126,18 @@ ACTION_REGISTRY: list[ActionDef] = [
 
 _LAYERS = ("browse", "edit")
 
+# 行内格式动作 id 列表（与 ACTION_REGISTRY 中 format_* 对应）。
+# 用于动态构建 combo→fmt_name 映射，替代 key_bindings.py 的硬编码 _INLINE_COMBO_MAP。
+# fmt_name = action_id[len("format_"):]，与 EditorActions.apply_inline_format 入参一致。
+_INLINE_FORMAT_ACTIONS: tuple[str, ...] = (
+    "format_bold",
+    "format_italic",
+    "format_highlight",
+    "format_strike",
+    "format_code",
+    "format_link",
+)
+
 
 def normalize(combo: str) -> str:
     """规范化快捷键字符串：去空格、小写、ctrl+comma → ctrl+,。"""
@@ -173,6 +185,22 @@ class ShortcutManager:
 
     def actions_for_layer(self, layer: str) -> list[ActionDef]:
         return [a for a in ACTION_REGISTRY if a.scope in ("both", layer)]
+
+    def inline_format_combos(self) -> dict[str, str]:
+        """返回 {normalize(combo): fmt_name}，从 edit 层配置动态构建。
+
+        替代 key_bindings.py 中硬编码的 _INLINE_COMBO_MAP：用户在设置页修改
+        format_bold 等键位后，此处读取最新配置，行内格式快捷键随之生效。
+        fmt_name = action_id[len("format_"):]（如 "format_bold" → "bold"），
+        与 EditorActions.apply_inline_format 入参一致。未绑定的动作不包含在结果中。
+        """
+        edit = self.get("edit")
+        result: dict[str, str] = {}
+        for action_id in _INLINE_FORMAT_ACTIONS:
+            combo = edit.get(action_id, "")
+            if combo:
+                result[normalize(combo)] = action_id[len("format_"):]
+        return result
 
     # ---- 修改 ----
     def update(self, layer: str, action: str, combo: str):

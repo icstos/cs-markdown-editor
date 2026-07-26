@@ -615,7 +615,10 @@ def MarkdownEditor(
         if _is_fence(line):
             return
         raw = _line_raw(line)
-        off = cursor_off
+        # 用 cursor_ref.current.base（IME 期间实时更新），不用 cursor_off state（IME 期间过时）
+        # 否则输入字符后立即按 Enter，cursor_off 仍是输入前的旧位置，导致从输入文本前方换行
+        off = cursor_ref.current.base if cursor_ref.current else cursor_off
+        off = max(0, min(off, len(raw)))
         before = raw[:off]
         after = raw[off:]
 

@@ -17,8 +17,8 @@
   "sidebar_panel": "files",
   "sidebar_width": 181,
   "recent_files": [
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\README.md",
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md"
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\README.md"
   ],
   "shortcuts": {
     "browse": {
@@ -39,7 +39,8 @@
       "copy": "ctrl+c",
       "cut": "ctrl+x",
       "paste": "ctrl+v",
-      "select_all": "ctrl+a"
+      "select_all": "ctrl+a",
+      "format_math_block": "ctrl+shift+m"
     },
     "edit": {
       "save": "ctrl+s",
@@ -55,6 +56,8 @@
       "format_strike": "ctrl+shift+s",
       "format_code": "ctrl+`",
       "format_link": "ctrl+k",
+      "format_inline_math": "ctrl+m",
+      "format_math_block": "ctrl+shift+m",
       "copy": "ctrl+c",
       "cut": "ctrl+x",
       "paste": "ctrl+v",

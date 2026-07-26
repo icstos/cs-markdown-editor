@@ -977,14 +977,15 @@ def MarkdownEditor(
 
     # ============ 行内格式（光标级包裹）============
     def apply_inline_format(fmt: str):
-        """行内格式快捷键：有 outward 选区包裹同段选区；否则在光标处插入空语法。
+        """行内格式快捷键：有 outward 选区包裹/取消同段选区；否则在光标处插入空语法。
 
-        fmt: bold/italic/highlight/strike/code/link
+        fmt: bold/italic/highlight/strike/code/link/inline_math
         """
-        # 渲染态 outward 选区：包裹同段选区
+        # 优先处理 outward 选区（无论浏览态还是编辑态）：toggle 包裹/取消
+        if outward_sel_ref.current is not None:
+            _apply_outward_wrap(fmt)
+            return
         if cursor_li is None:
-            if outward_sel_ref.current is not None:
-                _apply_outward_wrap(fmt)
             return
         li = cursor_li
         if not (0 <= li < len(document.lines)):
@@ -1019,7 +1020,13 @@ def MarkdownEditor(
             _set_cursor(li, off + len(wrap))  # 光标落在两标记之间
 
     def _apply_outward_wrap(fmt: str):
-        """渲染态 outward 选区包裹行内格式（仅同段选区）。"""
+        """渲染态 outward 选区 toggle 行内格式（仅同段选区）。
+
+        Typora 式 toggle：
+        - 选区已包裹同类型标记 → 取消标记（unwrap），保持选区
+        - 选区未包裹 → 添加标记（wrap），保持选区（选内容，不含标记）
+        - 再次按下快捷键即可 toggle 回来
+        """
         sel = outward_sel_ref.current
         if sel is None:
             return
@@ -1037,32 +1044,74 @@ def MarkdownEditor(
         a_off = max(0, min(a_off, len(raw)))
         b_off = max(a_off, min(b_off, len(raw)))
         selected = raw[a_off:b_off]
+        if not selected:
+            return  # 空选区不操作
+
         _push_history()
         undo_push_pending.current = True
+
         if fmt == "link":
+            # 链接格式不 toggle，直接包裹
             new_raw = raw[:a_off] + f"[{selected}](url)" + raw[b_off:]
-            new_off = a_off + 1
+            _reparse_atomic(line, new_raw)
+            new_lines = list(document.lines)
+            new_lines[a_li] = line
+            document.lines = new_lines
+            mark_dirty()
+            # 选区保持在链接文本上（不含 [ ](url)）
+            _set_outward_sel((a_li, a_off + 1, a_li, a_off + 1 + len(selected)))
+            set_nav_seq(nav_seq + 1)
+            return
+
+        seg_type = {
+            "bold": SegType.STRONG,
+            "italic": SegType.EMPHASIS,
+            "highlight": SegType.HIGHLIGHT,
+            "strike": SegType.STRIKE,
+            "code": SegType.CODESPAN,
+            "inline_math": SegType.INLINE_MATH,
+        }.get(fmt)
+        if seg_type is None:
+            return
+        wrap_open, wrap_close = WRAP_SYNTAX.get(seg_type, ("", ""))
+        ol, cl = len(wrap_open), len(wrap_close)
+
+        # ---- toggle 检测：选区是否已被同类型标记包裹 ----
+        # Case A: 标记紧贴选区外侧（选区 = 纯内容，如 **|selected|**）
+        case_a = (
+            a_off >= ol
+            and raw[a_off - ol:a_off] == wrap_open
+            and b_off + cl <= len(raw)
+            and raw[b_off:b_off + cl] == wrap_close
+        )
+        # Case B: 标记在选区两端内侧（选区 = 标记+内容+标记，如 |**selected**|）
+        case_b = (
+            selected.startswith(wrap_open)
+            and selected.endswith(wrap_close)
+            and len(selected) >= ol + cl
+        )
+
+        if case_a:
+            # Unwrap：移除外侧标记，选区平移到去标记后的内容
+            new_raw = raw[:a_off - ol] + selected + raw[b_off + cl:]
+            new_sel = (a_li, a_off - ol, a_li, b_off - ol)
+        elif case_b:
+            # Unwrap：移除内侧标记，选区收缩到纯内容
+            inner = selected[ol:len(selected) - cl] if cl else selected[ol:]
+            new_raw = raw[:a_off] + inner + raw[b_off:]
+            new_sel = (a_li, a_off, a_li, a_off + len(inner))
         else:
-            seg_type = {
-                "bold": SegType.STRONG,
-                "italic": SegType.EMPHASIS,
-                "highlight": SegType.HIGHLIGHT,
-                "strike": SegType.STRIKE,
-                "code": SegType.CODESPAN,
-                "inline_math": SegType.INLINE_MATH,
-            }.get(fmt)
-            if seg_type is None:
-                return
-            wrap = WRAP_SYNTAX.get(seg_type, ("", ""))[0]
-            new_raw = raw[:a_off] + wrap + selected + wrap + raw[b_off:]
-            new_off = a_off + len(wrap)
+            # Wrap：添加标记，选区保持在内容上（不含标记）
+            new_raw = raw[:a_off] + wrap_open + selected + wrap_close + raw[b_off:]
+            new_sel = (a_li, a_off + ol, a_li, a_off + ol + len(selected))
+
         _reparse_atomic(line, new_raw)
         new_lines = list(document.lines)
         new_lines[a_li] = line
         document.lines = new_lines
         mark_dirty()
-        _set_outward_sel(None)
-        _set_cursor(a_li, new_off)
+        _set_outward_sel(new_sel)
+        set_nav_seq(nav_seq + 1)
 
     # ============ 任务列表 ============
     def toggle_task(li: int):
@@ -2336,25 +2385,8 @@ def MarkdownEditor(
             if key == "escape":
                 table_nav_ref.current("escape")
                 return
-        # 渲染态行内格式快捷键
-        if cursor_li is None:
-            if ctrl_pressed_ref.current:
-                combo = "ctrl+shift+s" if shift_pressed_ref.current and key == "s" else None
-                if combo is None:
-                    combo = f"ctrl+{key}" if key else None
-                if combo in ("ctrl+b", "ctrl+i", "ctrl+u", "ctrl+shift+s", "ctrl+`", "ctrl+k"):
-                    if nav_ref is not None and nav_ref.current is not None:
-                        fmt = {
-                            "ctrl+b": "bold",
-                            "ctrl+i": "italic",
-                            "ctrl+u": "highlight",
-                            "ctrl+shift+s": "strike",
-                            "ctrl+`": "code",
-                            "ctrl+k": "link",
-                        }[combo]
-                        nav_ref.current.apply_inline_format_to_selection(fmt, combo)
-                        return
-            return
+        # 行内格式快捷键由 KeyDispatcher 统一分发（支持自定义键位、原生控件聚焦检测），
+        # 此处不再重复分发——避免双重触发导致 toggle wrap→unwrap 抵消（闪烁后无效果）。
 
     def _on_key_up(e):
         key = (getattr(e, "key", "") or "").lower()

@@ -12,6 +12,7 @@ dependencies = [
     "flet>=0.86.2",
     "mistune>=3.3.4",
     "pillow>=12.3.0",
+    "uharfbuzz>=0.40.0",
     "flet-code-editor>=0.86.2",
     "flet-datatable2>=0.86.2",
 ]

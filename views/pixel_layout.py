@@ -7,15 +7,16 @@
 
 行高模型：text_height = block_text_size * line_height；普通行 padding 2+2
 （与 _wrap_block 的 top=2/bottom=2 一致）。
-行内 X：逐段用 measure_text_width 累加。光标不在段内时标记折叠（零宽度），
-仅 display_text 内容占像素宽度；光标在段内时标记变灰可见并占宽度。
+行内 X：逐段用 measure_text_offsets（HarfBuzz cluster 级整形，与 Skia 同引擎）
+累加。光标不在段内时标记折叠（零宽度），仅 display_text 内容占像素宽度；
+光标在段内时标记变灰可见并占宽度。
 
 依赖项：
 - models：BlockType / Line / SegType / Segment
 - styles：FONT_MAIN / FONT_MONO / block_text_size
 - utils.segment_helpers：MONO_SEGTYPES / PREFIX_SEGTYPES / display_text /
   split_seg_for_display（段类型常量与显示拆分）
-- utils.text_layout：measure_text_width（文本像素宽度测量）
+- utils.text_layout：measure_text_offsets（cluster 级光标偏移）/ measure_text_width（文本像素宽度）
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from utils.segment_helpers import (
     display_text,
     split_seg_for_display,
 )
-from utils.text_layout import measure_text_width
+from utils.text_layout import measure_text_offsets, measure_text_width
 
 # 普通行垂直 padding（_wrap_block 的 top=2, bottom=2）
 _PAD_V = 2.0
@@ -180,8 +181,9 @@ def _line_raw_offsets_x(
 
     - cursor_raw_offset=None（浏览态）：所有段标记折叠，仅 display_text 占宽度。
       标题 # /引用 > 前缀零宽度；无序列表 - 渲染为 • 占宽度；行内 ** ` 等标记零宽度。
-    - cursor_raw_offset=int（激活行）：光标所在段逐字符测量 raw（含标记宽度），
-      其余段标记折叠。保证光标 X 与渲染层 TextSpan 对齐。
+    - cursor_raw_offset=int（激活行）：光标所在段用 measure_text_offsets 做
+      cluster 级整形测量 raw（含标记宽度，捕获 kerning），其余段标记折叠。
+      保证光标 X 与渲染层 TextSpan 像素级对齐（HarfBuzz 与 Skia 同引擎）。
     """
     offsets: list[float] = [0.0]
     acc = 0.0
@@ -205,10 +207,14 @@ def _line_raw_offsets_x(
         is_prefix = seg.seg_type in PREFIX_SEGTYPES
 
         if cursor_in_seg:
-            # 光标在段内：逐字符测量 raw（含标记，标记变灰可见占宽度）
-            for ch in seg.raw:
-                acc += measure_text_width(ch, font, size)
-                offsets.append(acc)
+            # 光标在段内：cluster 级整形 raw（含标记，标记变灰可见占宽度）。
+            # 用 measure_text_offsets 而非逐字符累加：捕获字符间 kerning，
+            # 与 Skia 渲染层 TextSpan 像素级对齐（修复 AV/ID: 等含 kerning 文本偏移）。
+            seg_offsets = measure_text_offsets(seg.raw, font, size)
+            seg_start_x = acc
+            for i in range(1, len(seg_offsets)):
+                offsets.append(seg_start_x + seg_offsets[i])
+            acc = seg_start_x + seg_offsets[-1]
         elif is_prefix:
             # 前缀段（光标不在段内）：display_text 宽度（•  / N. / 空）
             display = display_text(seg)
@@ -219,7 +225,7 @@ def _line_raw_offsets_x(
                     acc = seg_start_x + display_w
                 offsets.append(acc)
         else:
-            # 行内段（光标不在段内）：逐 piece 测量，标记零宽度、内容逐字符测量
+            # 行内段（光标不在段内）：逐 piece 测量，标记零宽度、内容 cluster 级整形
             pieces = split_seg_for_display(seg)
             for text, is_marker in pieces:
                 if not text:
@@ -228,19 +234,17 @@ def _line_raw_offsets_x(
                     for _ in text:
                         offsets.append(acc)
                 else:
-                    for ch in text:
-                        acc += measure_text_width(ch, font, size)
-                        offsets.append(acc)
+                    piece_offsets = measure_text_offsets(text, font, size)
+                    piece_start_x = acc
+                    for i in range(1, len(piece_offsets)):
+                        offsets.append(piece_start_x + piece_offsets[i])
+                    acc = piece_start_x + piece_offsets[-1]
 
         raw_offset = seg_end
 
     # 兜底：segments 拼接 != line.raw（围栏块 CODE/MATH 无围栏标记）
     if len(offsets) - 1 != len(line.raw):
-        offsets = [0.0]
-        acc = 0.0
-        for ch in line.raw:
-            acc += measure_text_width(ch, FONT_MAIN, base)
-            offsets.append(acc)
+        offsets = measure_text_offsets(line.raw, FONT_MAIN, base)
     return offsets
 
 

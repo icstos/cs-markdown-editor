@@ -31,6 +31,10 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "close_tab": "ctrl+w",
         "next_tab": "ctrl+tab",
         "prev_tab": "ctrl+shift+tab",
+        "copy": "ctrl+c",
+        "cut": "ctrl+x",
+        "paste": "ctrl+v",
+        "select_all": "ctrl+a",
     },
     "edit": {
         "save": "ctrl+s",
@@ -46,6 +50,10 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "format_strike": "ctrl+shift+s",
         "format_code": "ctrl+`",
         "format_link": "ctrl+k",
+        "copy": "ctrl+c",
+        "cut": "ctrl+x",
+        "paste": "ctrl+v",
+        "select_all": "ctrl+a",
     },
 }
 
@@ -106,6 +114,14 @@ ACTION_REGISTRY: list[ActionDef] = [
     ActionDef("format_code", "行内代码", "edit", "行内格式", "选中文本包裹 `，无选中插入空标记。", {"edit": "ctrl+`"}),
     ActionDef("format_link", "链接", "edit", "行内格式", "选中文本包裹为 [text](url)，无选中插入空链接。", {"edit": "ctrl+k"}),
     ActionDef("format_strike", "删除线", "edit", "行内格式", "选中文本包裹 ~~，无选中插入空标记。", {"edit": "ctrl+shift+s"}),
+    ActionDef("copy", "复制", "both", "编辑", "复制选区文本到剪贴板。",
+              {"browse": "ctrl+c", "edit": "ctrl+c"}),
+    ActionDef("cut", "剪切", "both", "编辑", "复制选区文本到剪贴板并删除选中内容。",
+              {"browse": "ctrl+x", "edit": "ctrl+x"}),
+    ActionDef("paste", "粘贴", "both", "编辑", "在光标处插入剪贴板内容，多行自动拆分。",
+              {"browse": "ctrl+v", "edit": "ctrl+v"}),
+    ActionDef("select_all", "全选", "both", "编辑", "选中整个文档内容。",
+              {"browse": "ctrl+a", "edit": "ctrl+a"}),
 ]
 
 _LAYERS = ("browse", "edit")

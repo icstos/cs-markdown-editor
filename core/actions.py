@@ -102,4 +102,6 @@ class EditorActions:
     extend_outward_down: Callable[[], None] | None = None
     handle_outward_cut: Callable[[], Awaitable[None]] | None = None  # async
     handle_outward_delete: Callable[[], None] | None = None
+    handle_outward_copy: Callable[[], Awaitable[None]] | None = None  # Ctrl+C：复制 outward_sel 选区文本
     clear_outward_sel: Callable[[], None] | None = None
+    select_all: Callable[[], None] | None = None  # Ctrl+A：全选文档

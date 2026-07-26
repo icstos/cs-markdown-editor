@@ -149,18 +149,34 @@ class KeyDispatcher:
                 return
 
         # 向外选区激活时（active is None, outward_sel is not None）：
-        # 优先路由 BackSpace/Delete/Ctrl+X/Escape/Shift+Arrow 到 outward handlers，
+        # 优先路由 BackSpace/Delete/Ctrl+C/Ctrl+X/Ctrl+V/Escape/Shift+Arrow 到 outward handlers，
         # 绕过 layer 判定（此时 layer=browse 会误路由到 SelectionArea 删除分支）
         if (
             actions is not None
             and actions.outward_sel is not None
             and not actions.raw_mode
         ):
+            browse_sc = self._shortcut_mgr.get("browse")
+            # Ctrl+C：复制 outward_sel 选区文本（不删除）
+            if matches(combo, browse_sc.get("copy", "ctrl+c")):
+                if actions.handle_outward_copy is not None:
+                    page = self._page_ref.current
+                    if page is not None:
+                        page.run_task(actions.handle_outward_copy)
+                return
+            # Ctrl+V：先删除选区，再在删除点粘贴
+            if matches(combo, browse_sc.get("paste", "ctrl+v")):
+                actions.handle_outward_delete()
+                self._paste_old_draft.current = ""
+                page = self._page_ref.current
+                if page is not None:
+                    page.run_task(self._do_paste_check)
+                return
             if norm in ("backspace", "delete"):
                 if actions.handle_outward_delete is not None:
                     actions.handle_outward_delete()
                 return
-            if combo == "ctrl+x":
+            if matches(combo, browse_sc.get("cut", "ctrl+x")):
                 if actions.handle_outward_cut is not None:
                     page = self._page_ref.current
                     if page is not None:
@@ -223,6 +239,13 @@ class KeyDispatcher:
                     selection_fmt(_INLINE_COMBO_MAP[combo], combo)
                 else:
                     actions.apply_inline_format(_INLINE_COMBO_MAP[combo])
+            return
+
+        # Ctrl+A 全选：两层均生效，原生控件聚焦时放行交由原生处理
+        if matches(combo, browse_sc.get("select_all", "ctrl+a")):
+            if actions is not None and not self._native_field_focused(actions):
+                if actions.select_all is not None:
+                    actions.select_all()
             return
 
         layer = "edit" if actions is not None and actions.cursor_li is not None else "browse"
@@ -369,13 +392,13 @@ class KeyDispatcher:
             elif matches(combo, shortcuts.get("undo", "ctrl+z")):
                 if actions is not None:
                     actions.undo()
-            elif combo == "ctrl+c":
+            elif matches(combo, shortcuts.get("copy", "ctrl+c")):
                 if actions is None or actions.cursor_li is None:
                     page.run_task(self._do_copy)
-            elif combo == "ctrl+x":
+            elif matches(combo, shortcuts.get("cut", "ctrl+x")):
                 if actions is None or actions.cursor_li is None:
                     page.run_task(self._do_cut)
-            elif combo == "ctrl+v":
+            elif matches(combo, shortcuts.get("paste", "ctrl+v")):
                 if actions is not None and actions.cursor_li is not None:
                     self._paste_old_draft.current = ""
                     page.run_task(self._do_paste_check)
@@ -396,14 +419,14 @@ class KeyDispatcher:
                 actions.toggle_raw()
         elif matches(combo, shortcuts.get("toggle_sidebar", "escape")):
             cb["toggle_sidebar"]()
-        elif combo == "ctrl+c":
+        elif matches(combo, shortcuts.get("copy", "ctrl+c")):
             if actions is None or actions.cursor_li is None:
                 page.run_task(self._do_copy)
-        elif combo == "ctrl+x":
+        elif matches(combo, shortcuts.get("cut", "ctrl+x")):
             # 光标级架构无段内选区剪切：浏览态走 _do_cut，编辑态无 outward_sel 时不处理
             if actions is None or actions.cursor_li is None:
                 page.run_task(self._do_cut)
-        elif combo == "ctrl+v":
+        elif matches(combo, shortcuts.get("paste", "ctrl+v")):
             if actions is not None and actions.cursor_li is not None:
                 self._paste_old_draft.current = ""
                 page.run_task(self._do_paste_check)

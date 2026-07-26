@@ -623,12 +623,32 @@ def MarkdownEditor(
             _ensure_visible(li + 1)
 
     def move_home():
-        """Home：跳到行首（raw 偏移 0）。"""
+        """Smart Home（VSCode 式）：先跳内容首（跳过前缀），再跳行首（raw 0）。
+
+        - 光标在内容中 → 跳到内容首（# / - / > 等前缀之后）
+        - 光标在内容首 → 跳到行首（raw 0，前缀之前）
+        - 光标在行首 → 不动
+        """
         if cursor_li is None:
             return
         if _is_fence(document.lines[cursor_li]):
             return
-        _set_cursor(cursor_li, 0)
+        line = document.lines[cursor_li]
+        # 计算 content_start：跳过 HEADING_PREFIX / LIST_PREFIX / QUOTE_PREFIX 段 0
+        content_start = 0
+        if line.segments and line.segments[0].seg_type in (
+            SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX,
+        ):
+            content_start = len(line.segments[0].raw)
+        raw_len = len(_line_raw(line))
+        content_start = min(content_start, raw_len)
+        # Smart Home 三态判定
+        if cursor_off == 0:
+            pass  # 已在行首
+        elif cursor_off == content_start:
+            _set_cursor(cursor_li, 0)
+        else:
+            _set_cursor(cursor_li, content_start)
         _ensure_visible(cursor_li)
 
     def move_end():
@@ -1343,6 +1363,58 @@ def MarkdownEditor(
                 pass
         _delete_raw_range(a_li, a_off, b_li, b_off)
 
+    async def handle_outward_copy() -> None:
+        """Ctrl+C：复制 outward_sel 选区文本到剪贴板（不删除）。
+
+        复用 handle_outward_cut 的文本提取逻辑，但跳过 _delete_raw_range。
+        """
+        sel = outward_sel_ref.current
+        if sel is None:
+            return
+        a_li, a_off, b_li, b_off = sel
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        try:
+            if a_li == b_li:
+                if not (0 <= a_li < len(document.lines)):
+                    return
+                text = _line_raw(document.lines[a_li])[a_off:b_off]
+            else:
+                if not (0 <= a_li < len(document.lines) and 0 <= b_li < len(document.lines)):
+                    return
+                parts = [_line_raw(document.lines[a_li])[a_off:]]
+                for i in range(a_li + 1, b_li):
+                    parts.append(_line_raw(document.lines[i]))
+                parts.append(_line_raw(document.lines[b_li])[:b_off])
+                text = "\n".join(parts)
+        except Exception:
+            text = ""
+        clipboard = clipboard_ref.current if clipboard_ref is not None else None
+        if clipboard is not None and text:
+            try:
+                await clipboard.set(text)
+            except Exception:
+                pass
+
+    def select_all() -> None:
+        """Ctrl+A：全选文档（outward_sel 跨越整个文档）。"""
+        if not document.lines:
+            return
+        last_li = len(document.lines) - 1
+        last_line = document.lines[last_li]
+        # 末行为围栏块时全选到其行首（围栏块不参与 raw 选区）
+        last_off = 0 if _is_fence(last_line) else len(_line_raw(last_line))
+        # 起始行若为围栏块，从下一非围栏行开始
+        start_li = 0
+        while start_li < last_li and _is_fence(document.lines[start_li]):
+            start_li += 1
+        if start_li >= last_li and _is_fence(document.lines[start_li]):
+            return  # 全文档均为围栏块，无可选文本
+        if cursor_li is not None:
+            suppress_blur.current = True
+            set_cursor_li(None)
+        _set_outward_sel((start_li, 0, last_li, last_off))
+
     # ============ 滚动 / 导航 ============
     def _on_scroll(e):
         try:
@@ -1516,6 +1588,8 @@ def MarkdownEditor(
             handle_delete_selection=handle_delete_selection,
             apply_inline_format_to_selection=apply_inline_format_to_selection,
             compute_markdown_from_text=compute_markdown_from_text,
+            handle_outward_copy=handle_outward_copy,
+            select_all=select_all,
             undo=undo,
             redo=redo,
             jump_to_line=jump_to,

@@ -1,28 +1,26 @@
 # Markdown 编辑器
 
-基于 [Flet](https://flet.dev) 0.86.2 声明式组件与 [mistune](https://mistune.lepture.com/) 实时解析，参考 [Typora](https://typora.io/) 的段级所见即所得（WYSIWYG）编辑体验。
+基于 [Flet](https://flet.dev) 0.86.2 声明式组件与 [mistune](https://mistune.lepture.com/) 实时解析，对标 [Typora](https://typora.io/) 的**光标级所见即所得（WYSIWYG）**编辑体验。
 
-点击任意段即显示其最小 Markdown 语法，其余保持渲染样式——这是与传统「源码 / 预览」双栏编辑器最大的不同。
+采用 **Stack 双层架构**：底层渲染层始终以渲染样式呈现 Markdown，顶层透明 TextField 承载光标与输入。每个字符输入即时渲染到文档，光标与渲染层文字像素级对齐——彻底消除传统「源码 / 预览」双栏割裂与「段级编辑」的语法噪声跳变。
 
 ## 特性
 
-### 编辑体验
+### 沉浸式编辑体验
 
-- **多文档标签页**：顶部标签栏支持并行编辑多个文档，显示文件名，未保存修改标星号 `*`；新建 / 关闭 / 切换标签，关闭未保存文档时弹出确认对话框
-- **段级编辑**：点击行内任意段（加粗、斜体、行内代码、链接等）即切换到该段的原生 Markdown 编辑，其余段保持渲染样式
-- **标题整行编辑**：点击标题进入编辑态时，以整行原文（如 `### 我的标题`）在单个输入框中编辑，可直接增删 `#` 调整级别
-- **标题级别标识**：阅读态标题行左侧显示淡色 `H1`–`H6` 标记（等宽字体、muted 色），字号自适应对齐首行字形，不抢标题视觉
+- **光标级实时渲染**：点击任意位置即显示光标，输入字符立即融入渲染样式；语法标记（`#`、`**`、`` ` ``、`-`、`>` 等）在非激活段透明，仅光标所在段的最小语法标记变灰可见，对齐 Typora 最小语法噪声
+- **像素级光标对齐**：基于 HarfBuzz（与 Skia/Flutter 同引擎）整形测量文本 advance，光标 X 坐标与渲染层 TextSpan 像素级贴合；Flet 默认 letter_spacing 已补偿
+- **IME 友好**：透明 TextField 不设 `value` 属性，由 `use_effect` 异步清空内部值；同行输入 `key` 不变（基于 `li + nav_seq`），保持 IME 组合态不被重渲染打断
+- **多文档标签页**：顶部标签栏支持并行编辑多个文档，未保存修改标星号 `*`；新建 / 关闭 / 切换标签，关闭未保存文档时弹出确认对话框；右键菜单支持「关闭 / 关闭其他 / 关闭全部 / 复制路径」
 - **跨段光标导航**：方向键在段间 / 行间无缝移动，`Home` / `End` 跳转行首 / 行尾，`Ctrl+Home` / `Ctrl+End` 跳文档首末，`PageUp` / `PageDown` 翻页；上下方向键跨短行时记忆列偏移（VSCode 风格），点击命中按中点吸附到最近段边界
 - **行首 / 行尾合并**：`Backspace` 在行首与前一行合并，`Delete` 在行尾与下一行合并——所有行内块类型（标题 / 列表 / 引用 / 段落）行为一致，光标落在合并点
-- **向外选区**：`Shift+Click` 或 `Shift+方向键` 从编辑光标起始跨段 / 跨行选区，高亮覆盖范围；支持 `Ctrl+X` 剪切、`Backspace` / `Delete` 删除、`Escape` 取消
+- **向外选区**：`Shift+Click` 或 `Shift+方向键` 从编辑光标起始跨段 / 跨行选区，高亮覆盖范围；支持 `Ctrl+X` 剪切、`Backspace` / `Delete` 删除、`Escape` 取消、`Ctrl+C` 复制选区 raw 文本
 - **行内格式快捷键**：`Ctrl+B` 加粗、`Ctrl+I` 斜体、`Ctrl+U` 高亮、`Ctrl+Shift+S` 删除线、`` Ctrl+` `` 行内代码、`Ctrl+K` 链接；选中文本自动包裹对应语法，无选中插入空语法标记（光标落标记中间）；渲染态同段选区同样支持包裹
+- **URL 智能折叠**：链接 `[text](url)` 与图片 `![alt](url)` 的 URL 子段根据光标位置动态折叠——光标在文本/alt 段时 URL 折叠为零宽度（最小语法噪声），光标进入 URL 段时完整可见
 - **列表缩进**：`Tab` / `Shift+Tab` 在列表项内调整缩进级别
-- **撤销 / 重做**：`Ctrl+Z` / `Ctrl+Y`（或 `Ctrl+Shift+Z`），基于快照栈（固定容量 50）
+- **行级撤销快照**：单行编辑（字符输入 / backspace / delete / 行内格式包裹）使用 `LineEditSnapshot` 行级快照（内存 O(1)/操作），行结构变化（回车 / 行合并 / 多行粘贴）才使用全文快照；撤销栈固定容量 50，大文档不膨胀
 - **智能复制粘贴**：跨行复制自动还原为 Markdown 源码；多行粘贴自动拆分为新行
-- **智能剪切**：
-  - 渲染态：`Ctrl+X` 复制 Markdown 源码并删除选中内容
-  - 编辑态段内选区：`Ctrl+X` 立即提交剪切后的草稿到文档并重定位光标（同步执行，避免与原生 TextField 剪切竞态导致双份剪切）
-  - 向外选区：`Ctrl+X` 复制选区 raw 文本到剪贴板并删除选区内容
+- **智能剪切**：渲染态 `Ctrl+X` 复制 Markdown 源码并删除选中；编辑态段内选区同步提交剪切后草稿（避免与原生 TextField 剪切竞态导致双份剪切）；向外选区复制 raw 文本并删除选区
 - **原文模式**：一键切换到纯 Markdown 源码编辑
 - **设置面板**：编辑 / 外观 / 行为 / 快捷键 / 高级五个分区，可配置内容宽度、边距、字号、行高、字体、自动保存、专注模式、工具栏显隐、代码主题、导出格式等
 
@@ -31,13 +29,13 @@
 | 类型 | 说明 |
 |------|------|
 | 标题 H1–H6 | 六级字号与字重递进；阅读态隐藏 `#`，用颜色区分级别；`Ctrl+1`–`6` 切换级别、`Ctrl+0` 恢复段落 |
-| 无序 / 有序列表 | 嵌套缩进；无序列表圆点按层级着色（与标题共用色阶） |
+| 无序 / 有序列表 | 嵌套缩进；无序列表圆点 `•` 按层级着色（与标题共用色阶），有序保留数字 |
 | 任务列表 | `- [ ]` / `- [x]`，可点击复选框切换状态 |
 | 引用 | 支持多层嵌套，左侧竖线标识 |
-| 代码块 | 基于 flet-code-editor，语法高亮（亮色 GitHub / 暗色 One Dark）、行号（位数自适应）、语言选择下拉、可直接编辑；始终可编辑的独立岛屿 |
+| 代码块 | 基于 flet-code-editor，语法高亮（亮色 GitHub / 暗色 One Dark）、行号（位数自适应）、语言选择下拉、折叠、复制按钮、可直接编辑；始终可编辑的独立岛屿 |
 | 行间公式 | `$$...$$` |
 | 分隔线 | `---` / `***` / `___` |
-| 目录 | `[toc]` 块，点击条目跳转对应标题 |
+| 目录 | `[toc]` 块，点击条目跳转对应标题（带高亮脉冲反馈） |
 | 表格 | 基于 flet-datatable2，单击单元格编辑，行列增删、对齐设置、`Tab` / `Enter` 单元格导航、右键菜单；自管理独立岛屿 |
 
 ### 行内格式
@@ -51,21 +49,28 @@
 - **列表圆点**：嵌套层级复用标题色阶（每 2 空格一级）
 - **亮 / 暗主题**：工具栏一键切换，代码块高亮主题随主题联动
 - **向外选区高亮**：选区段注入半透明背景色（`link` 色 22% 不透明度），与激活行色调一致
+- **侧边栏开合动画**：宽度 200ms `EASE_OUT` 平滑过渡，`HARD_EDGE` 裁剪防溢出
+- **跳转高亮脉冲**：大纲 / 搜索 / TOC 点击跳转后目标行 300ms 淡蓝底脉冲反馈
+- **当前行高亮**：激活行左侧 3px `link` 色边条 + 半透明背景，编辑焦点清晰可辨
+- **行内代码 / 公式选区着色**：左键拖选时背景色随选区高亮变化
 
 ### 文件与导出
 
 - 新建 / 打开 / 保存（`.md` / `.markdown` / `.txt`）
 - 导出 HTML（mistune 渲染，含表格、脚注、任务列表等扩展）
+- 自动保存（可配置间隔，异步回写避免阻塞 UI）
+- 最近文件列表（侧边栏无 `file_path` 时显示）
 
 ## 技术栈
 
 | 依赖 | 用途 |
 |------|------|
-| [Flet](https://flet.dev) ≥ 0.86.2 | 声明式 GUI（`@ft.component` + `use_state` / `use_effect` + `@ft.observable`） |
-| [mistune](https://mistune.lepture.com/) ≥ 3.0 | 行内 AST 解析；HTML 导出（含 strikethrough / mark / 上下标 / 表格等插件） |
-| [Pillow](https://pillow.readthedocs.io/) ≥ 10.0 | 文本像素宽度测量（编辑块自适应）+ 图片尺寸读取与缩放 |
-| [flet-code-editor](https://pub.dev/packages/flet_code_editor) | 代码块语法高亮编辑（基于 flutter_code_editor，行号 / 高亮 / 语言切换） |
-| [flet-datatable2](https://pub.dev/packages/flet_datatable2) | 表格渲染与编辑（DataTable 扩展，固定表头 / 单元格编辑） |
+| [Flet](https://flet.dev) ≥ 0.86.2 | 声明式 GUI（`@ft.component` + `use_state` / `use_effect` + `@ft.observable` / `@ft.memo`） |
+| [mistune](https://mistune.lepture.com/) ≥ 3.3.4 | 行内 AST 解析；HTML 导出（含 strikethrough / mark / 上下标 / 表格等插件） |
+| [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) ≥ 0.40.0 | 文本整形测量（与 Skia/Flutter 同引擎，光标像素级对齐渲染层文字） |
+| [Pillow](https://pillow.readthedocs.io/) ≥ 12.3.0 | 图片尺寸读取与缩放 |
+| [flet-code-editor](https://pub.dev/packages/flet_code_editor) ≥ 0.86.2 | 代码块语法高亮编辑（基于 flutter_code_editor，行号 / 高亮 / 语言切换 / 折叠） |
+| [flet-datatable2](https://pub.dev/packages/flet_datatable2) ≥ 0.86.2 | 表格渲染与编辑（DataTable 扩展，固定表头 / 单元格编辑） |
 
 > **Python** ≥ 3.12（`pyproject.toml`）；模型层使用 `StrEnum`（3.11+ 特性）
 
@@ -81,7 +86,7 @@ python main.py
 或安装依赖后运行：
 
 ```bash
-pip install flet mistune pillow
+pip install flet mistune pillow uharfbuzz flet-code-editor flet-datatable2
 python main.py
 ```
 
@@ -93,6 +98,10 @@ cs-markdown-editor
 
 ## 快捷键
 
+所有快捷键均可在 **设置 → 快捷键** 中自定义：点击「修改」→ 按下新组合键 → 立即生效；`Esc` 取消、`Backspace` 清空。支持冲突检测、导入 / 导出方案、恢复默认。
+
+### 浏览态（无激活行）
+
 | 快捷键 | 功能 |
 |--------|------|
 | `Ctrl+N` | 新建文档 |
@@ -100,11 +109,22 @@ cs-markdown-editor
 | `Ctrl+S` | 保存文件 |
 | `Ctrl+W` | 关闭当前标签（脏标签走确认） |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | 切换到右 / 左标签（循环） |
-| `Ctrl+C` | 复制（非编辑态：自动还原为 Markdown 源码） |
-| `Ctrl+X` | 剪切（非编辑态：复制 Markdown 并删除选中内容；编辑态段内选区：立即提交并重定位光标；向外选区：复制 raw 文本并删除选区） |
-| `Ctrl+V` | 粘贴（编辑态：多行自动拆分） |
+| `Ctrl+C` | 复制（自动还原为 Markdown 源码） |
+| `Ctrl+X` | 剪切（复制 Markdown 并删除选中内容） |
+| `Ctrl+V` | 粘贴（多行自动拆分） |
+| `Ctrl+A` | 全选文档 |
 | `Ctrl+Z` | 撤销 |
 | `Ctrl+Y` / `Ctrl+Shift+Z` | 重做 |
+| `Ctrl+/` | 切换原文模式 |
+| `Ctrl+Shift+B` | 切换侧边栏 |
+| `Ctrl+Shift+L` | 切换亮 / 暗主题 |
+| `Ctrl+,` | 打开设置 |
+| `Ctrl+Shift+K` | 切换聚焦模式 |
+
+### 编辑态（光标在文档中）
+
+| 快捷键 | 功能 |
+|--------|------|
 | `Ctrl+0` | 当前行恢复为普通段落 |
 | `Ctrl+1` – `Ctrl+6` | 当前行为 H1–H6 标题 |
 | `Ctrl+B` | 加粗（选中包裹 `**`，无选中插入空标记 `**\|**`） |
@@ -113,27 +133,76 @@ cs-markdown-editor
 | `Ctrl+Shift+S` | 删除线（选中包裹 `~~`，无选中插入空标记） |
 | `` Ctrl+` `` | 行内代码（选中包裹 `` ` ``，无选中插入空标记） |
 | `Ctrl+K` | 链接（选中包裹 `[选区](url)`，无选中插入 `[](url)`） |
-| `Ctrl+/` | 切换原文模式 |
-| `Ctrl+Shift+B` | 切换侧边栏 |
-| `Ctrl+Shift+L` | 切换亮 / 暗主题 |
-| `Ctrl+,` | 打开设置 |
-| `Ctrl+Shift+K` | 切换聚焦模式 |
+| `Ctrl+Enter` | 切换原文模式 |
+| `Escape` | 切换侧边栏（无向外选区时） |
+| `Ctrl+S` / `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | 保存 / 撤销 / 重做（与浏览态一致） |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` / `Ctrl+A` | 剪贴板 / 全选（与浏览态一致） |
+
+### 光标导航（固定，不可自定义）
+
+| 快捷键 | 功能 |
+|--------|------|
+| `←` / `→` | 段间跨行移动（到边界时跳到相邻段；标题整行编辑时在行首 / 行尾跨行） |
+| `↑` / `↓` | 上下行移动（按行内逻辑偏移定位，跨短行记忆列） |
+| `Home` / `End` | 跳到行首 / 行尾 |
+| `Ctrl+Home` / `Ctrl+End` | 跳到文档首 / 末 |
+| `PageUp` / `PageDown` | 向上 / 下翻页 |
+| `Backspace` | 行首与前一行合并（删除换行符，光标落在合并点）；向外选区激活时删除选区 |
+| `Delete` | 行尾与下一行合并（删除换行符，光标落在合并点）；向外选区激活时删除选区 |
+| `Tab` / `Shift+Tab` | 列表项缩进 / 取消缩进；表格内单元格导航 |
+| `Enter` | 提交当前段并换行（列表自动续行；标题在光标处拆分为两行）；表格内移动到下行同列 |
 | `Shift+Click` | 从编辑光标起始向外选区（跨段 / 跨行）；渲染态同段选中可被行内格式快捷键包裹 |
 | `Shift+←` / `Shift+→` | 向左 / 右扩展向外选区（段边界时起始选区） |
 | `Shift+↑` / `Shift+↓` | 向上 / 下扩展向外选区 |
-| `←` / `→` | 段间跨行移动（到边界时跳到相邻段；标题整行编辑时在行首 / 行尾跨行） |
-| `↑` / `↓` | 上下行移动（按行内逻辑偏移定位，跨短行记忆列） |
-| `Home` / `End` | 跳到行首 / 行尾（`Ctrl+Home` / `Ctrl+End` 跳到文档首 / 末） |
-| `PageUp` / `PageDown` | 向上 / 下翻页 |
-| `Backspace` | 行首与前一行合并（删除换行符，光标落在合并点）；向外选区激活时删除选区 |
-| `Delete` | 行尾与下一行合并（删除换行符，光标落在合并点）；段尾非末段直接删除下一段首字符；向外选区激活时删除选区 |
-| `Tab` / `Shift+Tab` | 列表项缩进 / 取消缩进；表格内单元格导航 |
-| `Enter` | 提交当前段并换行（列表自动续行；标题在光标处拆分为两行）；表格内移动到下行同列 |
-| `Escape` | 取消向外选区（选区激活时）；编辑态切换侧边栏（无选区时）；表格退出编辑 |
 
-工具栏按钮提供 H1–H3、正文、列表、引用、代码块、分隔线，以及加粗、斜体、高亮、行内代码、链接、删除线等行内格式操作（tooltip 中标注了对应的快捷键提示）。
+工具栏按钮提供 H1–H3、正文、列表、引用、代码块、分隔线，以及加粗、斜体、高亮、行内代码、链接、删除线等行内格式操作，tooltip 动态显示当前绑定的快捷键。
 
 ## 架构设计
+
+### 分层架构
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  main.py            入口：App 组件、多文档标签、文件 IO、主题、│
+│                     侧边栏、状态栏、设置弹层组装              │
+├──────────────────────────────────────────────────────────────┤
+│  views/             声明式 Flet 视图组件                      │
+│    editor.py        编辑器根组件（Stack 双层状态编排）         │
+│    line_view.py     行视图（围栏岛屿 / RenderedLine + Stack）  │
+│    rendered_line.py 渲染层：TextSpan + GestureDetector 命中   │
+│    cursor_layer.py  透明光标 TextField（IME 友好）            │
+│    pixel_layout.py  像素布局缓存 + 命中测试                   │
+│    segment_view.py  段级 TextSpan 渲染                        │
+│    key_bindings.py  KeyDispatcher 键盘事件分发                │
+│    toolbar.py / sidebar.py / tab_bar.py / status_bar.py       │
+│    settings_dialog.py / table_view.py                         │
+├──────────────────────────────────────────────────────────────┤
+│  core/              编辑器核心状态                            │
+│    actions.py       EditorActions：editor → App 动作契约      │
+│    cursor.py        CursorState：光标位置镜像（ref 非 state）  │
+│    history.py       EditHistory：撤销/重做栈（混合快照）      │
+├──────────────────────────────────────────────────────────────┤
+│  services/          业务逻辑层                                │
+│    shortcuts.py     ShortcutManager：读取/更新/冲突检测       │
+│    file_io.py       read_text / write_text                    │
+├──────────────────────────────────────────────────────────────┤
+│  utils/             通用工具层（无项目内依赖）                │
+│    segment_helpers  段类型常量 / display_text / 段拆分        │
+│    text_layout      HarfBuzz 文本测量 / 图片尺寸              │
+│    table_helpers    表格行解析与拼接                          │
+│    file_helpers     文件名派生                                │
+├──────────────────────────────────────────────────────────────┤
+│  config/            配置层                                    │
+│    settings.py      DEFAULT_SETTINGS / load / save（深合并）  │
+│    sample.py        示例文档                                  │
+├──────────────────────────────────────────────────────────────┤
+│  models/            数据模型（@ft.observable）                │
+│    document.py      Segment / Line / Document 三级状态        │
+├──────────────────────────────────────────────────────────────┤
+│  parser.py          Markdown 解析：行级 / 段级 / 选区↔源码    │
+│  styles.py          主题配色 / 段→TextStyle / 排版常量        │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ### 三级状态模型
 
@@ -145,32 +214,95 @@ Document ─── Line ─── Segment
   └─ 整个文档（行列表 + 文件元信息）
 ```
 
-三者均用 `@ft.observable` 装饰，字段变更自动触发依赖组件重绘，符合 `UI = f(state)` 声明式范式。
+三者均用 `@ft.observable` 装饰，字段变更自动触发依赖组件重绘，符合 `UI = f(state)` 声明式范式。`models/` 是包，`__init__.py` 重新导出所有公共符号，保持 `from models import Document` 等引用兼容。
 
-### 段级编辑流程
-
-```
-点击段 → activate（提交上一段）→ on_change 更新 draft
-  → on_blur / on_submit 提交（reparse 该行）→ 重新渲染
-```
-
-**普通块**编辑态布局：`[前段 Text] + [激活段 TextField] + [后段 Text]`，仅激活段显示原生 Markdown。
-
-**标题块**例外：编辑态使用单个 `TextField` 承载整行 `line.raw`（含 `#` 前缀），提交时整行 `reparse_line`，阅读态仍按段渲染样式。
-
-**围栏块**（代码 / 公式）：使用 `CodeBlockEditor` 多行编辑，方向键在块内处理，`Backspace` / `Delete` 不触发行合并。
-
-### 向外选区状态模型
+### Stack 双层光标级架构
 
 ```
-outward_sel = (anchor_li, anchor_off, active_li, active_off) | None
+┌─────────────────────────────────────────────┐
+│  ft.Stack                                   │
+│  ┌───────────────────────────────────────┐  │
+│  │  底层：RenderedLine                    │  │
+│  │  - TextSpan 列表（raw_to_visible_spans）│  │
+│  │  - cursor_off=None：所有标记透明       │  │
+│  │  - cursor_off=int：光标段标记变灰可见  │  │
+│  │  - GestureDetector：点击/拖拽命中测试  │  │
+│  ├───────────────────────────────────────┤  │
+│  │  顶层：cursor_text_field（透明）       │  │
+│  │  - 全透明背景/边框/文字                │  │
+│  │  - StrutStyle 与底层共用（行高对齐）   │  │
+│  │  - Stack 内绝对定位 (cursor_px_x, 0)   │  │
+│  │  - 不设 value（IME 友好）              │  │
+│  └───────────────────────────────────────┘  │
+└─────────────────────────────────────────────┘
 ```
 
-- `*_off` 为行级 raw 偏移（段 raw 拼接后的逻辑偏移）
-- `Shift+Click` / `Shift+Arrow` 起始：从当前编辑光标（`cursor_ref.extent` + 段偏移）作为 anchor，扩展到目标点
-- 起始时 `set_active(None)` 退出编辑态，进入纯浏览态选区
-- 删除 / 剪切：`_delete_raw_range` 按 raw 偏移直接操作文本，跨行时合并边界行，`parser.reparse_line` 重解析
-- 光标落点：删除起点（`_locate_seg_by_raw_offset` 转 seg_idx + seg_offset）
+**编辑流（光标级，无段级编辑态，IME 友好）**：
+
+```
+点击渲染层 → hit_test(x, y) → (li, raw_off) → set_cursor(li, off) → 重渲染
+  → use_effect 调 cursor_field.focus() → 透明 TextField 聚焦，光标像素位置闪烁
+  → 输入字符 → TextField.on_change(value) → handle_char_input（ignore/replace/append）
+  → line.raw 插入 value → parser.reparse_line_atomic（原子化，1 次 observable 通知）
+  → cursor_ref.reset(off + len(value))  # 不递增 nav_seq，保持 IME 组合态
+  → use_effect([clear_value_seq]) 异步清空 TextField 内部 value → 准备下次输入
+  → 渲染层 Text 显示新内容，TextField 重新定位到新光标位置
+```
+
+**围栏岛屿**（CODE / TABLE / MATH / HR / TOC）：自管理独立可编辑控件，不进入 Stack。代码块用 `CodeEditor` 始终可编辑；表格用 `DataTable2` 单元格编辑；公式 / 分隔线 / TOC 视图态渲染。
+
+### 像素布局与命中测试（`views/pixel_layout.py`）
+
+```
+LineLayoutCache（每次渲染重建）
+  ├─ 逐行累加 Y：top / height / text_top / text_height
+  ├─ 逐段累加 X：raw_offsets_x[0..len(raw)]（相对文字左起点）
+  │   ├─ cursor_raw_offset=None（浏览态）：所有段标记折叠，仅 display_text 占宽度
+  │   └─ cursor_raw_offset=int（激活行）：光标段 measure_text_offsets 整形 raw
+  │      （含标记宽度，捕获 kerning），其余段标记折叠
+  ├─ cursor_px(li, off) → (x, y_in_stack, height)：光标像素位置
+  └─ hit_test(x, y) → (li, raw_offset)：先 y 二分定位行，再 x 中点吸附 + 折叠标记扫描
+```
+
+**光标在段内**：该段标记变灰可见占宽度（逐字符测量 raw）；其余段标记折叠。保证光标 X 与渲染层 TextSpan 像素级对齐（HarfBuzz 与 Skia 同引擎）。
+
+### EditorActions 数据契约
+
+`core/actions.py` 的 `EditorActions` dataclass 是 editor.py 每次渲染上抛给 App 层（main.py / key_bindings.py）的动作集合，替代旧的 `nav_ref` 字典。所有字段在构造时必填（缺失即报错），包含：
+
+- **当前状态**：`cursor_li` / `cursor_off` / `active_line` / `raw_mode` / `cursor_ref` / `selection_text_ref` / `nav_seq`
+- **光标导航**：`move_left` / `move_right` / `move_home` / `move_end` / `move_doc_start` / `move_doc_end` / `move_up` / `move_down` / `page_up` / `page_down`
+- **删除 / 缩进**：`backspace_core` / `delete_core` / `indent_or_outdent`
+- **剪贴板 / 选区**：`handle_paste` / `handle_cut` / `handle_delete_selection` / `apply_inline_format_to_selection` / `compute_markdown_from_text`
+- **向外选区**：`outward_sel` / `shift_pressed_ref` / `ctrl_pressed_ref` / `extend_outward_{left,right,up,down}` / `handle_outward_{cut,delete,copy}` / `clear_outward_sel` / `select_all`
+- **全局动作**：`undo` / `redo` / `jump_to_line` / `toggle_raw` / `toggle_focus_mode` / `set_block`（Ctrl+0~6 标题级别）/ `apply_inline_format`（Ctrl+B/I/U/… 行内格式）
+- **代码块 / 表格**：`code_focus_ref` / `table_focus_ref`（聚焦守卫）
+- **状态栏**：`get_cursor_row_col`
+
+### 撤销 / 重做（混合快照）
+
+```python
+Snapshot = EditorSnapshot | LineEditSnapshot
+
+@dataclass(frozen=True)
+class EditorSnapshot:    # 全文快照：行结构变化（回车 / 行合并 / 多行粘贴）
+    markdown: str
+    cursor_li: int | None
+    cursor_off: int
+    raw_mode: bool
+    raw_draft: str
+
+@dataclass(frozen=True)
+class LineEditSnapshot:  # 行级快照：单行编辑（字符输入 / backspace / 行内格式）
+    line_idx: int
+    raw: str
+    cursor_li: int | None
+    cursor_off: int
+    raw_mode: bool
+    raw_draft: str
+```
+
+`EditHistory` 固定容量 50，混合存储两种快照：单行编辑走 `LineEditSnapshot`（内存 O(1)/操作，大文档撤销栈不膨胀）；行结构变化走 `EditorSnapshot` 全文序列化。相邻相同快照去重。
 
 ### 键盘事件分发
 
@@ -178,99 +310,124 @@ outward_sel = (anchor_li, anchor_off, active_li, active_off) | None
 
 ```
 page.on_keyboard_event → KeyDispatcher.handle(e)
+  ├─ 快捷键捕获模式（capturing != (None, None) 时优先拦截，写入新组合键）
+  ├─ 原生编辑控件聚焦守卫（code_focus_ref / table_focus_ref → 放行导航 + 剪贴板键）
   ├─ 向外选区拦截块（outward_sel is not None 时优先路由）
   │   ├─ BackSpace / Delete → handle_outward_delete
   │   ├─ Ctrl+X → handle_outward_cut
+  │   ├─ Ctrl+C → handle_outward_copy
   │   ├─ Escape → clear_outward_sel
   │   ├─ Shift+Arrow → extend_outward_*
   │   └─ 非 Shift 方向键 → clear_outward_sel
-  ├─ layer 判定（active is not None → edit；否则 browse）
+  ├─ layer 判定（cursor_li is not None → edit；否则 browse）
   ├─ edit 层：_handle_edit_nav（导航键 + Shift+Arrow 起始 outward）
-  ├─ browse 层 BackSpace：handle_delete_selection（SelectionArea 选区）
+  ├─ browse 层 Backspace：handle_delete_selection（SelectionArea 选区）
   └─ _handle_shortcuts（save / new / open / copy / cut / paste / undo / redo …）
 ```
 
-**关键路由点**：向外选区激活时 `active is None` → `layer=browse`，若不拦截则 `_handle_edit_nav` 不被调用、BackSpace 误路由到 SelectionArea 删除分支。因此在 `handle` 顶部加拦截块，在 layer 判定前优先路由 outward_sel 相关键。
+**关键路由点**：向外选区激活时 `cursor_li is None` → `layer=browse`，若不拦截则 `_handle_edit_nav` 不被调用、Backspace 误路由到 SelectionArea 删除分支。因此在 `handle` 顶部加拦截块，在 layer 判定前优先路由 outward_sel 相关键。
 
-### EditorActions 数据契约
+### 快捷键自定义（捕获式）
 
-`state/actions.py` 的 `EditorActions` dataclass 是 editor.py 每次渲染上抛给 App 层（main.py / key_bindings.py）的动作集合，替代旧的 `nav_ref` 字典。所有字段在构造时必填（缺失即报错），包含：
+```
+设置 → 快捷键 tab → 点击「修改」
+  → set_capturing((layer, action_id))
+  → KeyDispatcher.handle 顶部拦截下一个组合键
+  → _on_capture(layer, action_id, combo)
+  → shortcut_mgr.update(layer, action_id, combo)
+  → set_capturing((None, None)) 退出捕获模式
+  → 改键立即生效（dispatcher_ref.current 每次渲染读取最新实例）
+```
 
-- 当前状态：`active` / `active_seg` / `draft` / `active_line` / `raw_mode` / `cursor_ref` / `selection_text_ref`
-- 光标导航：`move_left` / `move_right` / `move_home` / `move_end` / `move_line_start` / `move_line_end` / `move_up` / `move_down`
-- 删除 / 缩进：`backspace_core` / `delete_core` / `indent_or_outdent`
-- 剪贴板 / 选区：`handle_paste` / `handle_cut` / `handle_delete_selection` / `compute_markdown_from_text`
-- 向外选区：`outward_sel` / `shift_pressed_ref` / `extend_outward_{left,right,up,down}` / `handle_outward_cut` / `handle_outward_delete` / `handle_segment_cut_sync` / `handle_segment_cut_clipboard` / `clear_outward_sel`
-- 全局动作：`undo` / `redo` / `jump_to_line` / `toggle_raw` / `toggle_focus_mode` / `set_block`（Ctrl+0~6 标题级别）/ `apply_inline_format`（Ctrl+B/I/U/… 行内格式）
-- 代码块 / 表格：`code_focus_ref` / `table_focus_ref`（聚焦守卫）/ `handle_tab_in_code` / `handle_backspace_in_code` / `handle_delete_in_code` / `handle_enter_in_code`
-- 状态栏：`get_cursor_row_col`
+`dispatcher_ref` 解决空依赖 effect 闭包捕获首次 dispatcher 的 bug：每次渲染 `dispatcher_ref.current = dispatcher`，`_handler` 通过 ref 读取最新实例，改键后即时生效。`Esc` 取消捕获、`Backspace` 清空绑定。
 
 ### 文件结构
 
 ```
 cs-markdown-editor/
-├── main.py              # 入口：App 组件、多文档标签模型、文件操作、主题、侧边栏、状态栏组装
-├── models.py            # 数据模型：Segment / Line / Document（@ft.observable）
-├── parser.py            # Markdown 解析：行级 / 段级 / 选区↔源码 / HTML 导出
-├── styles.py            # 主题配色、段→TextStyle、标题字重、列表色阶、文本测量
-├── settings.json        # 用户设置（内容宽度、边距、字号、行高、主题、代码高亮等）
-├── pyproject.toml       # 项目元数据与依赖
+├── main.py                  # 入口：App 组件、多文档标签模型、文件操作、主题、侧边栏、状态栏组装
+├── parser.py                # Markdown 解析：行级 / 段级 / 选区↔源码 / HTML 导出
+├── styles.py                # 主题配色、段→TextStyle、标题字重、列表色阶、Border 工具
+├── settings.json            # 用户设置（内容宽度、边距、字号、行高、主题、代码高亮、快捷键等）
+├── pyproject.toml           # 项目元数据与依赖
 ├── assets/
 │   ├── fonts/
 │   │   └── AlibabaPuHuiTi-3-55-Regular.otf
-│   └── images/          # 示例图片等资源
+│   └── images/              # 示例图片等资源
+├── config/
+│   ├── settings.py          # DEFAULT_SETTINGS / load_settings / save_settings（深合并 shortcuts）
+│   └── sample.py            # 示例文档 SAMPLE_MD
+├── core/
+│   ├── actions.py           # EditorActions dataclass：editor → main/key_bindings 动作契约
+│   ├── cursor.py            # CursorState：base / extent / draft_len 光标状态
+│   └── history.py           # EditHistory：撤销/重做栈（EditorSnapshot | LineEditSnapshot）
+├── models/
+│   └── document.py          # Segment / Line / Document（@ft.observable）
 ├── services/
-│   ├── history.py       # 撤销 / 重做栈：EditorSnapshot 快照（固定容量 50）
-│   └── shortcuts.py     # 快捷键管理：ShortcutManager / matches / normalize / 冲突检测
-├── state/
-│   ├── actions.py       # EditorActions dataclass：editor → main/key_bindings 动作契约
-│   └── cursor.py        # CursorState：base / extent / draft_len 光标状态
+│   ├── shortcuts.py         # ShortcutManager：读取/更新/重置/冲突检测 + ACTION_REGISTRY
+│   └── file_io.py           # read_text / write_text
+├── utils/
+│   ├── segment_helpers.py   # PREFIX_SEGTYPES / MONO_SEGTYPES / WRAP_SYNTAX / display_text / split_seg_for_display
+│   ├── text_layout.py       # HarfBuzz measure_text_offsets / measure_text_width / image_fit_size
+│   ├── table_helpers.py     # 表格行解析与拼接、对齐正则
+│   └── file_helpers.py      # 文件名派生等文件工具
 └── views/
-    ├── editor.py        # 编辑器根组件：状态编排、光标导航、向外选区、撤销 / 重做、行内格式
-    ├── line_view.py     # 行视图：渲染态 TextSpan + 编辑态段级布局 + Shift+Click 检测 + 标题级别标识
-    ├── segment_view.py  # 段级渲染：TextSpan（渲染）/ TextField（编辑）+ 选区高亮
-    ├── key_bindings.py  # 键盘事件分发器：KeyDispatcher（浏览 / 编辑两层 + outward 拦截 + 代码块/表格守卫）
-    ├── table_view.py    # 表格视图：DataTable2 单元格编辑、行列增删、对齐、Tab/Enter 导航
-    ├── toolbar.py       # 格式工具栏：块级 / 行内按钮（含高亮）
-    ├── tab_bar.py       # 顶部多文档标签栏
-    ├── sidebar.py       # 侧边栏：文件树 / 大纲 / 搜索
-    ├── settings_dialog.py # 设置对话框：五分区配置面板
-    └── status_bar.py    # 状态栏：光标位置 / 文件信息
+    ├── editor.py            # 编辑器根组件：Stack 双层状态编排、光标导航、向外选区、撤销/重做、行内格式
+    ├── line_view.py         # 行视图：围栏岛屿分支 + RenderedLine + Stack + 跳转高亮
+    ├── rendered_line.py     # 渲染层：raw_to_visible_spans + GestureDetector 命中测试
+    ├── cursor_layer.py      # 透明光标 TextField（IME 友好，StrutStyle 行高对齐）
+    ├── pixel_layout.py      # LineLayoutCache：像素布局缓存 + cursor_px + hit_test
+    ├── segment_view.py      # 段级 TextSpan 渲染（含向外选区字符级高亮）
+    ├── key_bindings.py      # KeyDispatcher：浏览/编辑两层 + outward 拦截 + 快捷键捕获 + 原生控件守卫
+    ├── table_view.py        # 表格视图：DataTable2 单元格编辑、行列增删、对齐、Tab/Enter 导航
+    ├── toolbar.py           # 格式工具栏：块级/行内按钮，tooltip 动态显示自定义键位
+    ├── tab_bar.py           # 顶部多文档标签栏 + ConfirmCloseDialog + 右键菜单
+    ├── sidebar.py           # 侧边栏：文件树 / 大纲（点击跳转带高亮脉冲）/ 搜索
+    ├── settings_dialog.py   # 设置对话框：五分区配置面板 + 快捷键捕获式自定义
+    └── status_bar.py        # 状态栏：光标行列 / 段落数 / 词数 / 字符数 / 阅读时长
 ```
 
 ### 样式系统（`styles.py`）
 
 | 能力 | 说明 |
 |------|------|
-| `get_colors(mode)` | 亮 / 暗两套 `Colors` 配色 |
+| `Colors` dataclass | 亮 / 暗两套配色（bg / surface / text / muted / link / code_bg / heading_colors …） |
+| `get_colors(mode)` | 按 `ft.ThemeMode` 返回对应 `Colors` |
+| `_current_colors()` | 渲染期同步取色（与 `page.theme_mode` 一致） |
 | `heading_colors` | H1–H6 六级标题色（红橙绿青蓝紫） |
 | `block_text_size` | 标题字号阶梯 30 → 24 → 20 → 18 → 16 → 16 |
 | `block_weight` | 标题字重阶梯 W_800 → W_500 |
 | `list_color_level` | 列表缩进 → 1..6 色阶（`indent // 2 + 1`） |
 | `segment_style` | 行内段类型 → `TextStyle`，支持 `marks` 组合格式 |
-| `measure_text_width` | Pillow 字体测量，驱动编辑块宽度自适应 |
+| `only_border` | 单边 Border 工具（避免 `ft.border.all` 兼容性问题） |
+| `card_shadow` / `Elevation` / `Radius` / `Spacing` | 阴影 / 圆角 / 间距常量 |
 
 ### 关键设计决策
 
-- **`SelectionArea` 包裹 `Column`**：用 `ft.SelectionArea` + `Column(scroll=AUTO)` 而非 `ListView`，解决垂直拖拽选择手势冲突
-- **光标用 `ref` 而非 `state`**：`on_selection_change` 通过 `cursor_ref` 更新光标位置，避免输入时触发重渲染导致光标跳动
-- **`draft_ref` 同步镜像**：闭包 `draft` 在 `set_draft` 后到下次渲染前是 stale 的，持续 `Delete` / `Backspace` 时 `delete_core` / `backspace_core` 需立即读到最新草稿；`_set_draft` 同步更新 `draft_ref` + 排队 `set_draft`
-- **`applied_cursor` 拦截 stale 事件**：Flutter 聚焦时先触发 `on_focus`（设置正确光标），再触发 `on_selection_change`（段尾）；用 `applied_cursor` ref 识别并丢弃 stale 段尾事件，避免覆盖 `cursor_ref`
-- **`use_effect` 显式聚焦**：`SelectionArea` 内 `autofocus` 因手势竞争不可靠，用 `async use_effect` + `await field.focus()` 确保编辑态光标可见
-- **`nav_seq` 触发重建**：每次跨段导航递增 `nav_seq`，作为 TextField 的 `key` 强制重建以重新 `autofocus`
-- **延迟 blur（`pending_blur`）**：重渲染会导致旧 TextField 卸载触发 `on_blur`，覆盖 `set_active`；`on_blur` 用 `pending_blur` ref + `asyncio.sleep(0.05)` 延迟 deactivate，`_goto` / `on_submit` / `handle_paste` / `set_block` / `toggle_raw` 取消 `pending_blur` 保留编辑状态
-- **行首 / 行尾合并统一**：`Backspace` 在行首、`Delete` 在行尾对所有行内块类型（标题 / 列表 / 引用 / 段落）统一执行行合并，删除换行符并将光标定位到合并点；围栏块（代码 / 公式 / 分隔线 / 目录）不参与合并
-- **撤销快照**：`EditorSnapshot` 记录 Markdown 全文 + 激活段 + 草稿 + 光标位置 + 原文模式状态；`_push_history` 在结构性操作前入栈，`undo` / `redo` 弹出快照恢复
+- **Stack 双层架构**：底层 `RenderedLine` 渲染 + 顶层透明 `cursor_text_field` 输入，光标与渲染层文字像素级对齐；替代段级编辑态的 `[前段 Text] + [激活段 TextField] + [后段 Text]` 拼接布局
+- **光标用 `ref` 而非 `state`**：`cursor_ref` 在 `on_selection_change` 中直接修改 `base` / `extent`，避免输入时触发重渲染导致光标跳动；`cursor_off` state 仅在 `_end_input_session` 同步
+- **`nav_seq` 触发重建**：仅撤销/重做等强制重建场景递增，作为 `cursor_text_field` 的 `key` 一部分；同行输入 `nav_seq` 不变 → `key` 不变 → 不重建 → IME 组合态保持
+- **不设 `value` 属性**：透明 TextField 不设 `value`，避免 Flet 重渲染同步 value 打断 IME 组合态；由 `use_effect([clear_value_seq])` 在重渲染后异步清空 Flutter 端内部 value
+- **`StrutStyle` 强制行高**：渲染层 Text 与 cursor TextField 共用同一 `StrutStyle` 实例（`force_strut_height=True`），保证光标 baseline 与渲染层文字 baseline 像素级对齐
+- **HarfBuzz 整形测量**：替代 Pillow `getlength`（截断字形 advance，数字每字偏差 0.2px 累积导致光标重叠）；HarfBuzz 与 Skia 同引擎，光标像素级对齐渲染层 TextSpan
+- **letter_spacing 补偿**：Flet 0.86 `Text` 默认 `letter_spacing=0.25`（非 Flutter 标准 0.0），测量端按 0.25/字形补偿，否则光标偏移随字符数线性累积
+- **CJK 字体回退**：主字体不含 CJK 字形时按 CJK 边界切分，CJK 片段改用主中文字体测量，贴合 Skia 渲染回退行为
+- **行级撤销快照**：`LineEditSnapshot` 仅存单行 raw + 光标位置（内存 O(1)/操作），替代全文档序列化；行结构变化仍走 `EditorSnapshot` 全文快照
+- **URL 智能折叠**：`split_seg_for_display(seg, cursor_local)` 根据 `cursor_local` 控制 LINK/IMAGE 的 URL 子段可见性；`cursor_local=None` 返回非空供 `pixel_layout` 偏移测量，渲染层对 marker 零宽度处理
+- **原子化重解析**：高频编辑路径用 `reparse_line_atomic`（仅触发 1 次 observable 通知，替代 `reparse_line` 的 2-7 次）
+- **`ft.memo` 行级缓存**：`LineView` 用 `@ft.memo` 装饰，非激活行的 prop 集合稳定（`line` / `line_idx` / `content_width` / `line_height` + 版本号 prop + 回调），cursor 移动时仅旧激活行 + 新激活行 prop 变化，其余 N-2 行直接复用缓存
 - **块级前缀也是段**：`#`、`-`、`>` 统一抽象为 `Segment`；标题在阅读态隐藏前缀、编辑态整行原文
-- **主题同步渲染**：`App` 在渲染期间同步写入 `page.theme_mode`，保证子组件 `_current_colors()` 取色与切换一致
-- **向外选区路由拦截**：`outward_sel` 激活时 `active is None` → `layer=browse` → `_handle_edit_nav` 不被调用；在 `KeyDispatcher.handle` 顶部加拦截块，在 layer 判定前优先路由 BackSpace / Delete / Ctrl+X / Escape / Shift+Arrow 到 outward handlers
-- **Shift 键状态跟踪**：Flet 0.86.2 的 `TapEvent` 无修饰键字段、`KeyDownEvent` 无 ctrl / shift 字段；用 `KeyboardListener.on_key_down`（key=="shift" → True）+ `on_key_up`（key=="shift" → False）跟踪 Shift 状态，`shift_pressed_ref` 传给 LineView 检测 Shift+Click
-- **段内剪切同步执行**：`handle_segment_cut_sync` 同步捕获选区 + 剪切 + 提交（不通过 `page.run_task`），在原生 TextField 剪切前完成；原生剪切产生的 `on_change` 因值相等被 `on_change_draft` 去重跳过，避免「已剪切 draft + 旧光标选区」竞态导致双份剪切；剪贴板写入由 `handle_segment_cut_clipboard` 异步执行
+- **独立岛屿架构**：代码块（flet-code-editor）与表格（flet-datatable2）作为自管理独立岛屿，不走 active/draft 系统；内部自管编辑状态，通过 `on_change_*` 原地更新行模型避免频繁重渲染致光标跳动，仅在行数变化时触发重渲染更新高度
+- **代码块 / 表格聚焦守卫**：`code_focus_ref` / `table_focus_ref` 跟踪聚焦状态，`KeyDispatcher` 据此跳过全局导航 / 剪贴板键，交由原生 TextField 处理 Tab / Enter / Backspace / 方向键 / 复制
+- **结构操作重建新 Line 对象**：表格 `add_col` / `delete_col` / `set_align` 等原地修改 `lines[i].raw` 时，必须创建新 `Line` 对象替换，否则 `document.lines = lines` 浅拷贝元素引用不变，observable 判定未变化不触发重渲染
+- **渲染态选区包裹行内格式**：渲染态选中文字产生 `outward_sel` 而非 `active`，`toggle_inline` / `toggle_link` 在 `cursor_li is None` 时检查 `outward_sel_ref`，同段选区在 raw 两侧插入包裹标记并 `reparse_line`；跨段选区静默跳过
+- **段内剪切同步执行**：`handle_segment_cut_sync` 同步捕获选区 + 剪切 + 提交（不通过 `page.run_task`），在原生 TextField 剪切前完成；原生剪切产生的 `on_change` 因值相等被去重跳过，避免双份剪切竞态
 - **`EditorActions` 替代 `nav_ref` 字典**：旧 `nav_ref.current = {20+ 字符串 key}` 字典改为 `EditorActions` dataclass，必填字段构造时校验，避免 `nav.get("xxx")` 静默失败
-- **独立岛屿架构**：代码块（flet-code-editor）与表格（flet-datatable2）作为自管理独立岛屿，不走 active/draft 系统；内部自管编辑状态（edit_cell/edit_draft），通过 `on_change_*` 原地更新行模型避免频繁重渲染致光标跳动，仅在行数变化时触发重渲染更新高度
-- **代码块 / 表格聚焦守卫**：`code_focus_ref` / `table_focus_ref` 跟踪聚焦状态，`KeyDispatcher` 据此跳过全局导航 / 剪贴板键，交由原生 TextField 处理 Tab / Enter / Backspace / 方向键 / 复制；表格 `nav_guard_ref` 守卫阻止 Tab/Enter 导航时旧 TextField 卸载触发的 `on_blur` 误退出编辑
-- **结构操作重建新 Line 对象**：表格 `add_col` / `delete_col` / `set_align` 等原地修改 `lines[i].raw` 时，必须创建新 `Line` 对象替换（`_rebuild_table_line`），否则 `document.lines = lines` 浅拷贝元素引用不变，observable 判定未变化不触发重渲染（曾致 add_col 不即时生效）
-- **渲染态选区包裹行内格式**：渲染态（浏览态）选中文字产生 `outward_sel` 而非 `active`，`_toggle_seg` / `toggle_link` 在 `active is None` 时检查 `outward_sel_ref`，同段选区在 raw 两侧插入包裹标记并 `reparse_line`；跨段选区静默跳过（行内格式不合法跨段）；工具栏与快捷键统一走 `toggle_inline` / `toggle_link`，一处修复两处生效
+- **`dispatcher_ref` 防过期**：`ft.use_effect(_bind_keyboard, [])` 空依赖会捕获首次渲染的 dispatcher；用 `dispatcher_ref.current = dispatcher` 每次渲染同步，`_handler` 通过 ref 读取最新实例，改快捷键后即时生效
+- **主题同步渲染**：`App` 在渲染期间同步写入 `page.theme_mode`，保证子组件 `_current_colors()` 取色与切换一致
+- **侧边栏开合动画**：`Container` 包裹 `Sidebar`，宽度 200ms `EASE_OUT` 动画 + `HARD_EDGE` 裁剪防溢出
+- **跳转高亮脉冲**：`flash_li` state + `is_flash` prop 传入 `LineView._wrap_block`，淡蓝底 18% 不透明度 + 300ms `animate` 淡入淡出，1.2s 后自动清回 -1
+- **两步精准滚动**：大纲点击跳转先估算偏移触发目标行构建，再用 `on_size_change` 实测高度修正，首次点击即滚动到视口顶部
 
 ## 许可证
 

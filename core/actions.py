@@ -105,3 +105,4 @@ class EditorActions:
     handle_outward_copy: Callable[[], Awaitable[None]] | None = None  # Ctrl+C：复制 outward_sel 选区文本
     clear_outward_sel: Callable[[], None] | None = None
     select_all: Callable[[], None] | None = None  # Ctrl+A：全选文档
+    cut_current_line: Callable[[], Awaitable[None]] | None = None  # async：无选区时剪切当前行（VSCode 行为）

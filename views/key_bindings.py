@@ -445,9 +445,8 @@ class KeyDispatcher:
             if actions is None or actions.cursor_li is None:
                 page.run_task(self._do_copy)
         elif matches(combo, shortcuts.get("cut", "ctrl+x")):
-            # 光标级架构无段内选区剪切：浏览态走 _do_cut，编辑态无 outward_sel 时不处理
-            if actions is None or actions.cursor_li is None:
-                page.run_task(self._do_cut)
+            # 编辑态走 cut_current_line（剪切当前行），浏览态走 handle_cut（选区剪切）
+            page.run_task(self._do_cut)
         elif matches(combo, shortcuts.get("paste", "ctrl+v")):
             if actions is not None and actions.cursor_li is not None:
                 self._paste_old_draft.current = ""
@@ -479,11 +478,22 @@ class KeyDispatcher:
             return
 
     async def _do_cut(self) -> None:
-        """Ctrl+X：用 SelectionArea 选区文本计算 Markdown 覆盖剪贴板，并删除选中内容。"""
+        """Ctrl+X：有选区时剪切选区；无选区时剪切当前行（VSCode 行为）。"""
         await asyncio.sleep(0.05)
         actions = self._actions_ref.current
         if actions is None:
             return
+        # 编辑态（cursor_li is not None）：直接剪切当前行。
+        # 编辑态下 SelectionArea 不工作，selection_text_ref 可能有残留旧值，
+        # 不能据此判断有无选区——编辑态无行内选区，直接走 cut_current_line。
+        if actions.cursor_li is not None:
+            if actions.cut_current_line is not None:
+                try:
+                    await actions.cut_current_line()
+                except Exception:
+                    pass
+            return
+        # 浏览态：有 SelectionArea 选区文本时剪切选区
         plain = actions.selection_text_ref.current or ""
         if not plain:
             return

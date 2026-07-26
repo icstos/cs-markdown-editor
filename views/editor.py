@@ -1306,6 +1306,45 @@ def MarkdownEditor(
                 pass
         handle_delete_selection(plain_text)
 
+    async def cut_current_line():
+        """无选区时剪切当前行（VSCode 行为：Ctrl+X 剪切光标所在行）。
+
+        - 围栏块（代码/表格/公式/HR/TOC）不处理
+        - 唯一行：清空内容（保留空行）
+        - 多行：删除当前行，光标移到下一行（或末行删除则上一行）行首
+        """
+        li = cursor_li if cursor_li is not None else cursor_line
+        if li is None or not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if _is_fence(line):
+            return
+        raw = _line_raw(line)
+        _push_history()
+        undo_push_pending.current = True
+        # 复制行文本到剪贴板
+        clipboard = clipboard_ref.current if clipboard_ref is not None else None
+        if clipboard is not None and raw:
+            try:
+                md = parser.compute_markdown_from_text(document.lines, raw)
+                await clipboard.set(md or raw)
+            except Exception:
+                pass
+        # 删除当前行（或清空唯一行）
+        if len(document.lines) <= 1:
+            _reparse_atomic(line, "")
+        else:
+            document.lines = document.lines[:li] + document.lines[li + 1:]
+        mark_dirty()
+        # 光标移到新位置
+        new_li = min(li, len(document.lines) - 1)
+        if 0 <= new_li < len(document.lines):
+            _set_cursor(new_li, 0)
+            set_cursor_line(new_li)
+        else:
+            set_cursor_li(None)
+        set_nav_seq(nav_seq + 1)
+
     def apply_inline_format_to_selection(fmt: str, combo: str):
         """渲染态 SelectionArea 选区包裹行内格式。"""
         if outward_sel_ref.current is not None:
@@ -1928,6 +1967,7 @@ def MarkdownEditor(
             indent_or_outdent=indent_or_outdent,
             handle_paste=handle_paste,
             handle_cut=handle_cut,
+            cut_current_line=cut_current_line,
             handle_delete_selection=handle_delete_selection,
             apply_inline_format_to_selection=apply_inline_format_to_selection,
             compute_markdown_from_text=compute_markdown_from_text,

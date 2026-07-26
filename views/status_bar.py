@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import flet as ft
 
-from models import Document
+from models import BlockType, Document
 import parser
 from styles import FONT_MAIN, Spacing, get_colors, only_border
 
@@ -42,6 +42,13 @@ def StatusBar(
     md_text = parser.serialize(document)
     char_count = len(md_text)
     word_count = len(_WORD_RE.findall(md_text))
+    # 段落数：仅计非空段落行（不含标题/列表/引用/代码块/空行）
+    para_count = sum(
+        1 for ln in document.lines
+        if ln.block_type == BlockType.PARAGRAPH and (ln.raw or "").strip()
+    )
+    # 阅读时长：中文 300 字/分钟，最低 1 分钟
+    reading_min = max(1, round(word_count / 300)) if word_count > 0 else 0
     fname = _file_name(file_path)
 
     return ft.Container(
@@ -82,6 +89,13 @@ def StatusBar(
                 ),
                 ft.Container(width=Spacing.XXL),
                 ft.Text(
+                    value=f"{para_count} 段",
+                    size=12,
+                    color=c.muted,
+                    font_family=FONT_MAIN,
+                ),
+                ft.Container(width=Spacing.XXL),
+                ft.Text(
                     value=f"{word_count} 词",
                     size=12,
                     color=c.muted,
@@ -90,6 +104,13 @@ def StatusBar(
                 ft.Container(width=Spacing.XL),
                 ft.Text(
                     value=f"{char_count} 字符",
+                    size=12,
+                    color=c.muted,
+                    font_family=FONT_MAIN,
+                ),
+                ft.Container(width=Spacing.XL),
+                ft.Text(
+                    value=f"阅读 {reading_min} min" if reading_min > 0 else "阅读 0 min",
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,

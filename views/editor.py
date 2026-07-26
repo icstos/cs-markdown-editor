@@ -33,7 +33,7 @@ import flet as ft
 
 from core.actions import EditorActions
 from core.cursor import CursorState
-from core.history import EditHistory, EditorSnapshot
+from core.history import EditHistory, EditorSnapshot, LineEditSnapshot
 from models import BlockType, Document, Line, Segment, SegType
 import parser
 from styles import (
@@ -130,6 +130,7 @@ def MarkdownEditor(
     on_open_settings: Callable[[], None] | None = None,
     sidebar_open: bool = False,
     on_toggle_sidebar: Callable[[], None] | None = None,
+    shortcut_mgr=None,
 ):
     c = _current_colors()
     settings = settings or {}
@@ -185,6 +186,9 @@ def MarkdownEditor(
     outward_sel_ref = ft.use_ref(None)
     shift_pressed_ref = ft.use_ref(False)
     ctrl_pressed_ref = ft.use_ref(False)
+    # 跳转目标行脉冲高亮：jump_to 后置为目标行号，1.2s 后异步清回 -1
+    # LineView 据 is_flash=(flash_li==i) 渲染淡蓝底脉冲，重渲染 + animate 淡出
+    flash_li, set_flash_li = ft.use_state(-1)
     # 代码块 / 表格聚焦
     code_focus_ref = ft.use_ref(None)
     code_edit_snapshot = ft.use_ref(None)  # 代码块聚焦时的快照，用于失焦时推入历史
@@ -221,10 +225,71 @@ def MarkdownEditor(
             return
         history_ref.current.push(_make_snapshot())
 
-    def _restore_snapshot(snap: EditorSnapshot):
+    def _push_line_edit(li: int, before_raw: str):
+        """行级快照入栈：仅单行内容编辑（字符输入 / 单字删除 / 行内格式包裹）。
+
+        与 _push_history 一样受 undo_push_pending 门控：每个编辑组仅首次入栈，
+        组内后续编辑不入栈。撤销恢复到组前状态（before_raw + 光标位置）。
+        重做所需 after 状态由 undo() 时构造 current 快照捕获当前行 raw。
+        """
+        if restoring.current:
+            return
+        if not undo_push_pending.current:
+            return
+        history_ref.current.push(LineEditSnapshot(
+            line_idx=li,
+            raw=before_raw,
+            cursor_li=cursor_li,
+            cursor_off=cursor_off,
+            raw_mode=raw_mode,
+            raw_draft=raw_draft,
+        ))
+        undo_push_pending.current = False
+
+    def _current_for_undo_redo(top) -> object:
+        """构造当前状态快照，供 pop_undo/pop_redo 推入反向栈。
+
+        若栈顶为 LineEditSnapshot，构造同行 LineEditSnapshot（raw=当前行 raw），
+        这样重做（或撤销后重做）能恢复到当前行内容。否则用全文 _make_snapshot()。
+        """
+        if isinstance(top, LineEditSnapshot):
+            li = top.line_idx
+            if 0 <= li < len(document.lines):
+                cur_raw = _line_raw(document.lines[li])
+            else:
+                cur_raw = top.raw
+            return LineEditSnapshot(
+                line_idx=li,
+                raw=cur_raw,
+                cursor_li=cursor_li,
+                cursor_off=cursor_off,
+                raw_mode=raw_mode,
+                raw_draft=raw_draft,
+            )
+        return _make_snapshot()
+
+    def _restore_snapshot(snap):
         restoring.current = True
         suppress_blur.current = True
         try:
+            # 行级快照：仅 reparse 单行，不重建整个 document.lines
+            if isinstance(snap, LineEditSnapshot):
+                set_raw_mode(snap.raw_mode)
+                if snap.raw_mode:
+                    set_raw_draft(snap.raw_draft)
+                li = snap.line_idx
+                if 0 <= li < len(document.lines):
+                    _reparse_atomic(document.lines[li], snap.raw)
+                    mark_dirty()
+                    if snap.cursor_li is not None and 0 <= snap.cursor_li < len(document.lines):
+                        set_cursor_li(snap.cursor_li)
+                        set_cursor_off(snap.cursor_off)
+                        set_cursor_line(snap.cursor_li)
+                        set_nav_seq(nav_seq + 1)
+                    else:
+                        set_cursor_li(None)
+                return
+            # 全文快照：重建 document.lines
             set_raw_mode(snap.raw_mode)
             if snap.raw_mode:
                 set_raw_draft(snap.raw_draft)
@@ -245,12 +310,20 @@ def MarkdownEditor(
             undo_push_pending.current = True
 
     def undo():
-        prev = history_ref.current.pop_undo(_make_snapshot())
+        hist = history_ref.current
+        if not hist.undo:
+            return
+        current = _current_for_undo_redo(hist.undo[-1])
+        prev = hist.pop_undo(current)
         if prev is not None:
             _restore_snapshot(prev)
 
     def redo():
-        nxt = history_ref.current.pop_redo(_make_snapshot())
+        hist = history_ref.current
+        if not hist.redo:
+            return
+        current = _current_for_undo_redo(hist.redo[-1])
+        nxt = hist.pop_redo(current)
         if nxt is not None:
             _restore_snapshot(nxt)
 
@@ -372,7 +445,8 @@ def MarkdownEditor(
                 state["li"], state["start_off"], state["last_value"] = li, off, value
                 cursor_ref.current.reset(off + len(value), len(raw))
                 return
-            _maybe_push_history()
+            # 行级快照：IME 会话启动时入栈编辑前 raw，撤销恢复到组前状态
+            _push_line_edit(li, raw)
             state["li"] = li
             state["start_off"] = cursor_off
             state["last_value"] = ""
@@ -466,9 +540,9 @@ def MarkdownEditor(
         # 用 cursor_ref.current.base（IME 期间实时更新），不用 cursor_off state（IME 期间过时）
         off = cursor_ref.current.base if cursor_ref.current else cursor_off
         if off > 0:
-            # 删光标前一个字符
-            _maybe_push_history()
+            # 删光标前一个字符（行级快照）
             raw = _line_raw(line)
+            _push_line_edit(li, raw)
             new_raw = raw[:off - 1] + raw[off:]
             _reparse_atomic(line, new_raw)
             mark_dirty()
@@ -507,7 +581,8 @@ def MarkdownEditor(
         # 用 cursor_ref.current.base（IME 期间实时更新），不用 cursor_off state（IME 期间过时）
         off = cursor_ref.current.base if cursor_ref.current else cursor_off
         if off < len(raw):
-            _maybe_push_history()
+            # 删光标后一个字符（行级快照）
+            _push_line_edit(li, raw)
             new_raw = raw[:off] + raw[off + 1:]
             _reparse_atomic(line, new_raw)
             mark_dirty()
@@ -1594,9 +1669,17 @@ def MarkdownEditor(
             set_cursor_li(None)
         else:
             _set_cursor(li, 0)
+        # 跳转目标行脉冲高亮：置 flash_li 触发重渲染，1.2s 后异步清回 -1 淡出
+        set_flash_li(li)
         page = ft.context.page
         if page is not None:
             page.run_task(_safe_scroll_to, li, to_top=True)
+
+            async def _clear_flash():
+                await asyncio.sleep(1.2)
+                set_flash_li(-1)
+
+            page.run_task(_clear_flash)
 
     def _get_cursor_row_col() -> tuple[int, int]:
         if cursor_li is not None and 0 <= cursor_li < len(document.lines):
@@ -1781,6 +1864,7 @@ def MarkdownEditor(
                     content_width=content_width,
                     line_height=line_height,
                     is_current_line=is_act,
+                    is_flash=flash_li == i,
                     # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，
                     # ft.memo 浅比较 line 引用未变会误判未刷新。通过 raw 长度 + 段数
                     # 两个值变化触发 memo 检测，让屏幕刷新。
@@ -1835,6 +1919,7 @@ def MarkdownEditor(
                     ),
                     _tb_divider(),
                     Toolbar(
+                        shortcut_mgr=shortcut_mgr,
                         on_h1=lambda: set_block(BlockType.HEADING, 1),
                         on_h2=lambda: set_block(BlockType.HEADING, 2),
                         on_h3=lambda: set_block(BlockType.HEADING, 3),

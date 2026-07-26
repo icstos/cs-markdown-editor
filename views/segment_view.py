@@ -329,7 +329,9 @@ def raw_to_visible_spans(
 
         if cursor_in_seg:
             # 光标在段内：逐 piece 渲染，标记变灰可见（Typora 式最小语法）
-            pieces = split_seg_for_display(seg)
+            # 传入段内光标偏移，使 LINK/IMAGE 的 URL 仅在光标落于 URL 子段时可见
+            cursor_local = cursor_raw_offset - seg_start
+            pieces = split_seg_for_display(seg, cursor_local=cursor_local)
             for text, is_marker in pieces:
                 if not text:
                     continue

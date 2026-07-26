@@ -121,17 +121,29 @@ def _wrap_block(
     content: ft.Control, line: Line, base: int, line_idx: int | None = None,
     on_click: Callable | None = None,
     is_current_line: bool = False,
+    is_flash: bool = False,
     on_size_change: Callable[[int, float], None] | None = None,
 ) -> ft.Control:
-    """包一层块级容器：缩进、引用边框、当前行高亮。
+    """包一层块级容器：缩进、引用边框、当前行高亮、跳转脉冲高亮。
 
     on_click：挂到最外层 Container 的点击回调（padding 死区兜底）。
     on_size_change：行实际渲染高度上报回调，用于精确计算滚动偏移。
         回调签名为 (line_idx, height)；仅最外层 Container 绑定，避免
         内层引用/激活态包裹容器重复触发。
+    is_flash：跳转目标行脉冲高亮（淡蓝底，animate 300ms 淡入/淡出）。
+        与 is_current_line 可叠加：flash 更强且 1.2s 消失，current 持续。
     """
     c = _current_colors()
     pad_left = 0
+
+    if is_flash:
+        # 跳转脉冲高亮：淡蓝底，animate 使 flash_li 清回 -1 时 bgcolor 平滑淡出
+        content = ft.Container(
+            content=content,
+            bgcolor=ft.Colors.with_opacity(0.18, c.link),
+            border_radius=Radius.LG,
+            animate=ft.Animation(300, ft.AnimationCurve.EASE_OUT),
+        )
 
     if is_current_line:
         content = ft.Container(
@@ -231,6 +243,7 @@ def LineView(
     content_width: float | None = None,
     line_height: float = 1.6,
     is_current_line: bool = False,
+    is_flash: bool = False,
     # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，
     # ft.memo 浅比较 line 引用未变会误判未刷新。通过 raw 长度 + 段数
     # 两个值变化触发 memo 检测，让屏幕刷新。LineView 内部不读取这两个值。
@@ -299,7 +312,7 @@ def LineView(
         return _render_code_block(
             line, line_idx, base, content_width, clipboard_ref,
             on_change_code, on_code_focus, on_code_blur, on_change_lang,
-            code_field_ref, is_current_line, on_line_size_change,
+            code_field_ref, is_current_line, is_flash, on_line_size_change,
         )
 
     # ============ 块级公式 MATH（视图态 ft.Markdown）============
@@ -317,7 +330,7 @@ def LineView(
         )
         return _wrap_block(
             content, line, base, line_idx,
-            is_current_line=is_current_line, on_size_change=on_line_size_change,
+            is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
         )
 
     # ============ 分隔线 HR（视图态）============
@@ -329,7 +342,7 @@ def LineView(
         )
         return _wrap_block(
             content, line, base, line_idx,
-            is_current_line=is_current_line, on_size_change=on_line_size_change,
+            is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
         )
 
     # ============ 目录 [toc] ============
@@ -351,7 +364,7 @@ def LineView(
         )
         return _wrap_block(
             content, line, base, line_idx,
-            is_current_line=is_current_line, on_size_change=on_line_size_change,
+            is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
         )
 
     # ============ 普通文本行（段落/标题/列表/引用/空行）：RenderedLine + Stack ============
@@ -401,6 +414,7 @@ def _render_code_block(
     on_change_lang: Callable[[int, str], None] | None,
     code_field_ref: ft.Ref | None,
     is_current_line: bool,
+    is_flash: bool = False,
     on_line_size_change: Callable[[int, float], None] | None = None,
 ) -> ft.Control:
     """代码块分支：CodeEditor 始终可编辑独立岛屿（Typora/VSCode 风格）。
@@ -589,5 +603,6 @@ def _render_code_block(
         content, line, line_idx,
         on_click=(lambda e: on_code_focus(line_idx)) if on_code_focus is not None else None,
         is_current_line=is_current_line,
+        is_flash=is_flash,
         on_size_change=on_line_size_change,
     )

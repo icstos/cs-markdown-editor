@@ -87,13 +87,21 @@ def display_text(seg: Segment) -> str:
     return seg.text
 
 
-def split_seg_for_display(seg: Segment) -> list[tuple[str, bool]]:
-    """把段拆成 [(text, is_marker), ...]，拼接 == seg.raw。
+def split_seg_for_display(
+    seg: Segment, cursor_local: int | None = None
+) -> list[tuple[str, bool]]:
+    """把段拆成 [(text, is_marker), ...]，用于 Typora 式渲染态展示。
 
     is_marker=True 的部分在 Typora 模式下可透明/灰色切换；
     is_marker=False 的部分为内容，按段样式渲染。
 
-    与 segment_view._split_seg_for_display 行为完全一致。
+    cursor_local：光标在段内 raw 的偏移（0..len(raw)）；None=浏览态/偏移测量态。
+    LINK/IMAGE 的 URL 子段：
+    - cursor_local=None：URL 返回非空（marker），供 pixel_layout 偏移测量计数，
+      渲染层对 marker 零宽度处理，与 display_text 行为一致。
+    - cursor_local=int 且落在 URL 区间 [url_start, url_end)：URL 返回非空（灰色可见）。
+    - cursor_local=int 且不在 URL 区间：URL 返回空串（零宽度折叠），
+      对齐 Typora 最小语法噪声——光标在链接文本上时 URL 不显示。
     """
     raw = seg.raw
     if not raw:
@@ -119,7 +127,12 @@ def split_seg_for_display(seg: Segment) -> list[tuple[str, bool]]:
             idx = raw.index("](")
             text_part = raw[1:idx]
             url_part = raw[idx + 2:-1]
-            return [("[", True), (text_part, False), ("](", True), (url_part, True), (")", True)]
+            url_start = idx + 2
+            url_end = len(raw) - 1
+            # cursor_local=None：URL 非空（偏移测量）；int 时仅 URL 区间内可见
+            url_visible = cursor_local is None or (url_start <= cursor_local < url_end)
+            url_text = url_part if url_visible else ""
+            return [("[", True), (text_part, False), ("](", True), (url_text, True), (")", True)]
         return [(raw, False)]
 
     if t == SegType.IMAGE:
@@ -127,7 +140,11 @@ def split_seg_for_display(seg: Segment) -> list[tuple[str, bool]]:
             idx = raw.index("](")
             alt_part = raw[2:idx]
             url_part = raw[idx + 2:-1]
-            return [("![", True), (alt_part, False), ("](", True), (url_part, True), (")", True)]
+            url_start = idx + 2
+            url_end = len(raw) - 1
+            url_visible = cursor_local is None or (url_start <= cursor_local < url_end)
+            url_text = url_part if url_visible else ""
+            return [("![", True), (alt_part, False), ("](", True), (url_text, True), (")", True)]
         return [(raw, False)]
 
     marks = seg.marks or ()

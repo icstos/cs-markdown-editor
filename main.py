@@ -660,21 +660,29 @@ def App():
     )
 
     sidebar_open = settings.get("sidebar_open", False)
+    # 侧边栏：始终渲染 Sidebar，外层 Container 宽度动画 0↔sidebar_width，
+    # clip_behavior=HARD_EDGE 在收拢时裁剪内容，实现 VSCode 式平滑开合。
+    # 始终保持 Sidebar 挂载可保留内部状态（搜索词 / 文件过滤 / 滚动位置）。
+    sidebar_width = settings.get("sidebar_width", 256)
+    sidebar_container = ft.Container(
+        width=sidebar_width if sidebar_open else 0,
+        animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        content=Sidebar(
+            document=document,
+            file_path=file_path,
+            theme_mode=theme_mode,
+            settings=settings,
+            active_panel=settings.get("sidebar_panel", "files"),
+            on_change_panel=change_sidebar_panel,
+            on_open_file=_open_file_by_path,
+            on_jump_to_line=jump_to_line,
+            on_width_change=change_sidebar_width,
+        ),
+    )
     body = ft.Row(
         controls=[
-            Sidebar(
-                document=document,
-                file_path=file_path,
-                theme_mode=theme_mode,
-                settings=settings,
-                active_panel=settings.get("sidebar_panel", "files"),
-                on_change_panel=change_sidebar_panel,
-                on_open_file=_open_file_by_path,
-                on_jump_to_line=jump_to_line,
-                on_width_change=change_sidebar_width,
-            )
-            if sidebar_open
-            else ft.Container(width=0),
+            sidebar_container,
             MarkdownEditor(
                 key=str(session),
                 document=document,
@@ -692,6 +700,7 @@ def App():
                 on_open_settings=open_settings,
                 sidebar_open=sidebar_open,
                 on_toggle_sidebar=toggle_sidebar,
+                shortcut_mgr=shortcut_mgr,
             ),
         ],
         spacing=0,

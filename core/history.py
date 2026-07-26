@@ -28,19 +28,46 @@ class EditorSnapshot:
     raw_draft: str
 
 
+@dataclass(frozen=True)
+class LineEditSnapshot:
+    """行级编辑快照：单行 raw 恢复目标 + 光标恢复点。
+
+    适用：字符输入 / backspace / delete / 行内格式包裹等单行编辑。
+    不适用：行增删（on_submit / _delete_raw_range / handle_paste 多行），
+    这些仍用 EditorSnapshot 全文快照（行结构变化无法用单行表达）。
+
+    raw：恢复时 reparse 到 line_idx 行的 raw 文本。
+    - 在 undo 栈上：raw = 编辑前的 raw（撤销恢复到此）
+    - 在 redo 栈上：raw = 编辑后的 raw（重做恢复到此，由 undo() 时构造 current 捕获）
+
+    内存 O(1)/操作，大文档撤销栈不再存全文序列化。
+    """
+
+    line_idx: int
+    raw: str
+    cursor_li: int | None
+    cursor_off: int
+    raw_mode: bool
+    raw_draft: str
+
+
+# 快照联合类型（撤销 / 重做栈元素）
+Snapshot = EditorSnapshot | LineEditSnapshot
+
+
 class EditHistory:
-    """撤销 / 重做栈（固定容量）。
+    """撤销 / 重做栈（固定容量，混合行级 + 全文快照）。
 
     容量超限时丢弃最旧撤销项；新撤销入栈时清空重做栈。
-    相邻相同快照去重（push 时比较末项）。
+    相邻相同快照去重（push 时比较末项；两类快照字段不同永不相等，安全）。
     """
 
     def __init__(self, max_size: int = 50):
         self._max = max_size
-        self.undo: list[EditorSnapshot] = []
-        self.redo: list[EditorSnapshot] = []
+        self.undo: list[Snapshot] = []
+        self.redo: list[Snapshot] = []
 
-    def push(self, snap: EditorSnapshot) -> None:
+    def push(self, snap: Snapshot) -> None:
         """入栈撤销项；与末项相同则去重；超限丢弃最旧；清空重做栈。"""
         if self.undo and self.undo[-1] == snap:
             return
@@ -49,14 +76,14 @@ class EditHistory:
             self.undo.pop(0)
         self.redo.clear()
 
-    def pop_undo(self, current: EditorSnapshot) -> EditorSnapshot | None:
+    def pop_undo(self, current: Snapshot) -> Snapshot | None:
         """撤销：弹出末项，当前状态入重做栈。"""
         if not self.undo:
             return None
         self.redo.append(current)
         return self.undo.pop()
 
-    def pop_redo(self, current: EditorSnapshot) -> EditorSnapshot | None:
+    def pop_redo(self, current: Snapshot) -> Snapshot | None:
         """重做：弹出末项，当前状态入撤销栈。"""
         if not self.redo:
             return None

@@ -24,6 +24,7 @@
 - views.line_view / views.table_view / views.toolbar（子视图）
 """
 
+import asyncio
 import os
 import re
 from collections.abc import Callable
@@ -167,6 +168,10 @@ def MarkdownEditor(
     scroll_offset_ref = ft.use_ref(0.0)
     viewport_h_ref = ft.use_ref(0.0)
     max_scroll_ref = ft.use_ref(0.0)
+    # 行实际渲染高度缓存：{line_idx: height_px}，由 LineView 的 on_size_change 上报。
+    # 用于精确累加计算滚动偏移，避免估算偏差导致大纲跳转/光标导航落点不准。
+    # build_controls_on_demand 下未构建的行无缓存，回退到 _estimate_line_height 估算。
+    line_heights_ref = ft.use_ref({})
     # 记忆列：垂直导航时记录的行级 raw 偏移
     preferred_col_ref = ft.use_ref(None)
     # SelectionArea 当前选中的纯文本
@@ -1439,32 +1444,98 @@ def MarkdownEditor(
         except Exception:
             pass
 
+    def on_line_size_change(li: int, height: float):
+        """LineView on_size_change 回调：缓存行实际渲染高度。
+
+        容差 0.5px 内不更新，避免 layout 抖动引发无效写入。缓存供
+        _estimate_line_offset 精确累加滚动偏移，未命中的行回退到估算。
+        """
+        cache = line_heights_ref.current
+        if height > 0 and abs(cache.get(li, 0.0) - height) > 0.5:
+            cache[li] = height
+
+    def _estimate_line_height(li: int) -> float:
+        """估算单行渲染高度（px）。优先用 on_size_change 上报的实际高度。
+
+        未命中缓存（行未构建或已被销毁）时按块类型估算：
+        - CODE：头部工具栏 + 每代码行 + padding（多行内容必须计入）
+        - 其它：block_text_size × line_height + 上下 padding(2×Spacing.XS)
+        """
+        cache = line_heights_ref.current
+        cached = cache.get(li)
+        if cached is not None and cached > 0:
+            return cached
+        if not (0 <= li < len(document.lines)):
+            return body_font_size * line_height + 4
+        line = document.lines[li]
+        base = block_text_size(line.block_type, line.level)
+        if line.block_type == BlockType.CODE:
+            code = line.segments[0].text if line.segments else ""
+            code_lines = max(1, code.count("\n") + 1)
+            # 头部工具栏(~28) + 代码行(14×line_height) + 容器 padding(~12)
+            return 28 + code_lines * 14 * line_height + 12
+        # 普通行：字号 × 行高 + 上下 padding（Spacing.XS × 2 = 4）
+        return base * line_height + 4
+
+    def _estimate_line_offset(li: int) -> float:
+        """累加 0..li 行高，得到目标行顶部的 y 偏移（相对 ListView 内容起点）。
+
+        比旧的 li × (目标行字号 × line_height + 4) 估算准确得多：
+        - 各行按自身字号/块类型累加，而非统一用目标行字号
+        - 已构建行用实测高度，消除代码块/长段落换行/表格的估算偏差
+        """
+        return sum(_estimate_line_height(j) for j in range(li))
+
     async def _safe_scroll_to(li: int, to_top: bool = False):
         """异步滚动：Flet 的 scroll_to 是协程，需 await。
 
         Args:
             li: 目标行索引
             to_top: True=滚动到视口顶部（大纲跳转），False=仅在不可见时滚动（光标导航）
+
+        两步滚动（to_top=True 且目标行未构建时）：
+        build_controls_on_demand 下视口外的行尚未构建，无实测高度缓存。
+        第一步用估算 offset 滚动到目标附近，触发 ListView 构建目标行并经
+        on_size_change 上报实测高度到 line_heights_ref；等待一帧后第二步
+        用缓存中的实测高度重新累加 offset，精确滚到视口顶部。这样首次点击
+        大纲项即可贴顶，无需第二次点击。缓存已命中时一步到位。
         """
         if list_view_ref.current is None:
             return
         try:
-            base = block_text_size(
-                document.lines[li].block_type, document.lines[li].level
-            ) if 0 <= li < len(document.lines) else 16
-            target_y = li * (base * line_height + 4)
-            viewport = viewport_h_ref.current or 600
-            cur = scroll_offset_ref.current
+            top_padding = content_padding_top
             if to_top:
-                top_padding = 48
-                target_scroll = max(0, target_y - top_padding)
-                await list_view_ref.current.scroll_to(target_scroll, duration=200)
-            else:
-                if target_y < cur + 40:
-                    await list_view_ref.current.scroll_to(target_y - 40, duration=100)
-                elif target_y > cur + viewport - base * line_height - 40:
+                cache = line_heights_ref.current
+                already_built = cache.get(li, 0.0) > 0
+                est_y = _estimate_line_offset(li)
+                target_scroll = max(0, est_y - top_padding)
+                if already_built:
+                    # 缓存命中：目标行已构建，一步精确到位
+                    await list_view_ref.current.scroll_to(target_scroll, duration=200)
+                    return
+                # 缓存未命中：第一步估算滚动，触发目标行动态构建
+                await list_view_ref.current.scroll_to(target_scroll, duration=150)
+                # 等待 Flutter layout 完成 + on_size_change 上报实测高度
+                await asyncio.sleep(0.15)
+                # 第二步：用缓存中的实测高度重新累加，精确贴顶
+                precise_y = _estimate_line_offset(li)
+                precise_scroll = max(0, precise_y - top_padding)
+                if abs(precise_scroll - target_scroll) > 4:
                     await list_view_ref.current.scroll_to(
-                        target_y - viewport + base * line_height + 80, duration=100
+                        precise_scroll, duration=120
+                    )
+            else:
+                target_y = _estimate_line_offset(li)
+                target_h = _estimate_line_height(li)
+                viewport = viewport_h_ref.current or 600
+                cur = scroll_offset_ref.current
+                if target_y < cur + 40:
+                    await list_view_ref.current.scroll_to(
+                        max(0, target_y - 40), duration=100
+                    )
+                elif target_y + target_h > cur + viewport - 40:
+                    await list_view_ref.current.scroll_to(
+                        max(0, target_y + target_h - viewport + 40), duration=100
                     )
         except Exception:
             pass
@@ -1563,6 +1634,14 @@ def MarkdownEditor(
     # 同行内点击定位时 cursor_off 变化，需重新 focus 以保持光标可见
     # IME 安全：_set_cursor 已在光标偏移不连续时调用 _end_input_session()
     ft.use_effect(_focus_cursor_field, [cursor_li, cursor_off])
+
+    # ============ use_effect：文档行数变化时清空行高缓存 ============
+    # 插入/删除整行会让 line_idx 错位，旧缓存的高度会对应到错误的行。
+    # 行数不变的单行内容编辑由 on_size_change 自动更新对应条目，无需清空。
+    def _reset_line_heights():
+        line_heights_ref.current = {}
+
+    ft.use_effect(_reset_line_heights, [len(document.lines)])
 
     # ============ use_effect：清空 cursor TextField 内部 value ============
     # _end_input_session 通过 set_clear_value_seq(+1) 触发此 effect，
@@ -1721,6 +1800,7 @@ def MarkdownEditor(
                     clipboard_ref=clipboard_ref,
                     toc_entries=toc_entries,
                     on_jump_to=jump_to,
+                    on_line_size_change=on_line_size_change,
                     outward_range=_line_highlight_range(i),
                     on_extend_outward=on_extend_outward,
                     on_clear_outward=clear_outward_sel,

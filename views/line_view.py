@@ -121,10 +121,14 @@ def _wrap_block(
     content: ft.Control, line: Line, base: int, line_idx: int | None = None,
     on_click: Callable | None = None,
     is_current_line: bool = False,
+    on_size_change: Callable[[int, float], None] | None = None,
 ) -> ft.Control:
     """包一层块级容器：缩进、引用边框、当前行高亮。
 
     on_click：挂到最外层 Container 的点击回调（padding 死区兜底）。
+    on_size_change：行实际渲染高度上报回调，用于精确计算滚动偏移。
+        回调签名为 (line_idx, height)；仅最外层 Container 绑定，避免
+        内层引用/激活态包裹容器重复触发。
     """
     c = _current_colors()
     pad_left = 0
@@ -158,6 +162,8 @@ def _wrap_block(
     }
     if on_click is not None:
         kwargs["on_click"] = on_click
+    if on_size_change is not None and line_idx is not None:
+        kwargs["on_size_change"] = lambda e, li=line_idx: on_size_change(li, e.height)
     return ft.Container(**kwargs)
 
 
@@ -251,6 +257,8 @@ def LineView(
     # TOC
     toc_entries: list[tuple[int, int, str]] | None = None,
     on_jump_to: Callable[[int], None] | None = None,
+    # 行高上报：on_size_change 触发时回传 (line_idx, height)，用于精确滚动定位
+    on_line_size_change: Callable[[int, float], None] | None = None,
     # 向外选区
     outward_range: tuple[int, int] | None = None,
     on_extend_outward: Callable[[int, int], None] | None = None,
@@ -291,7 +299,7 @@ def LineView(
         return _render_code_block(
             line, line_idx, base, content_width, clipboard_ref,
             on_change_code, on_code_focus, on_code_blur, on_change_lang,
-            code_field_ref, is_current_line,
+            code_field_ref, is_current_line, on_line_size_change,
         )
 
     # ============ 块级公式 MATH（视图态 ft.Markdown）============
@@ -307,7 +315,10 @@ def LineView(
             padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             alignment=ft.Alignment.CENTER,
         )
-        return _wrap_block(content, line, base, line_idx, is_current_line=is_current_line)
+        return _wrap_block(
+            content, line, base, line_idx,
+            is_current_line=is_current_line, on_size_change=on_line_size_change,
+        )
 
     # ============ 分隔线 HR（视图态）============
     if line.block_type == BlockType.HR:
@@ -316,7 +327,10 @@ def LineView(
             padding=ft.Padding.symmetric(vertical=Spacing.LG),
             ink=True,
         )
-        return _wrap_block(content, line, base, line_idx, is_current_line=is_current_line)
+        return _wrap_block(
+            content, line, base, line_idx,
+            is_current_line=is_current_line, on_size_change=on_line_size_change,
+        )
 
     # ============ 目录 [toc] ============
     if line.block_type == BlockType.TOC:
@@ -335,7 +349,10 @@ def LineView(
             padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             bgcolor=c.code_bg, border_radius=Radius.MD,
         )
-        return _wrap_block(content, line, base, line_idx, is_current_line=is_current_line)
+        return _wrap_block(
+            content, line, base, line_idx,
+            is_current_line=is_current_line, on_size_change=on_line_size_change,
+        )
 
     # ============ 普通文本行（段落/标题/列表/引用/空行）：RenderedLine + Stack ============
     cursor_off_val = effective_cursor_off if is_active else None
@@ -366,7 +383,10 @@ def LineView(
         ctrl_pressed_ref=ctrl_pressed_ref,
         on_hit_test_x=on_hit_test_x,
     )
-    return _wrap_block(inner, line, base, line_idx, is_current_line=is_current_line)
+    return _wrap_block(
+        inner, line, base, line_idx,
+        is_current_line=is_current_line, on_size_change=on_line_size_change,
+    )
 
 
 def _render_code_block(
@@ -381,6 +401,7 @@ def _render_code_block(
     on_change_lang: Callable[[int, str], None] | None,
     code_field_ref: ft.Ref | None,
     is_current_line: bool,
+    on_line_size_change: Callable[[int, float], None] | None = None,
 ) -> ft.Control:
     """代码块分支：CodeEditor 始终可编辑独立岛屿（Typora/VSCode 风格）。
 
@@ -568,4 +589,5 @@ def _render_code_block(
         content, line, line_idx,
         on_click=(lambda e: on_code_focus(line_idx)) if on_code_focus is not None else None,
         is_current_line=is_current_line,
+        on_size_change=on_line_size_change,
     )

@@ -230,6 +230,84 @@ def _cursor_overlay(
     )
 
 
+def _render_math_block(
+    line: Line,
+    line_idx: int,
+    base: int,
+    content_width: float | None,
+    on_change_math: Callable[[int, str], None] | None,
+    on_math_focus: Callable[[int], None] | None,
+    on_math_blur: Callable[[int], None] | None,
+    math_field_ref: ft.Ref | None,
+    is_editing: bool,
+    is_current_line: bool,
+    is_flash: bool = False,
+    on_line_size_change: Callable[[int, float], None] | None = None,
+) -> ft.Control:
+    """公式块：浏览态 ft.Markdown 渲染 LaTeX；编辑态 TextField 显示源码。
+
+    双态切换由 editor 端 math_focus_li state 驱动（Typora 式：点击进入编辑，
+    失焦/点击外部回到渲染态）。左侧 math_fg 强调边框 + math_bg 底色，
+    与行内公式配色统一。
+    """
+    c = _current_colors()
+    formula = line.segments[0].text if line.segments else ""
+
+    if is_editing:
+        # 编辑态：多行 TextField + 等宽字体 + 公式源码着色
+        text_field = ft.TextField(
+            key=f"math-edit-{line_idx}",
+            value=formula,
+            multiline=True,
+            min_lines=2,
+            max_lines=10,
+            border=ft.InputBorder.NONE,
+            text_size=14,
+            text_style=ft.TextStyle(font_family=FONT_MONO, color=c.math_fg),
+            on_change=lambda e: on_change_math(line_idx, e.control.value)
+                if on_change_math else None,
+            on_focus=lambda e: on_math_focus(line_idx) if on_math_focus else None,
+            on_blur=lambda e: on_math_blur(line_idx) if on_math_blur else None,
+            expand=True,
+        )
+        if math_field_ref is not None:
+            text_field.ref = math_field_ref
+
+        header = ft.Row([
+            ft.Text("公式编辑", size=11, color=c.muted,
+                    font_family=FONT_MONO, weight=ft.FontWeight.W_600),
+            ft.Container(expand=True),
+            ft.Text("点击外部完成", size=11, color=c.muted),
+        ], spacing=Spacing.SM, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        content = ft.Container(
+            content=ft.Column([header, text_field], spacing=Spacing.XS),
+            bgcolor=c.math_bg, border_radius=Radius.MD, width=float("inf"),
+            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            border=only_border(left=ft.BorderSide(3, c.math_fg)),
+        )
+    else:
+        # 浏览态：ft.Markdown 渲染 LaTeX（ selectable 便于复制）
+        md = ft.Markdown(
+            value=f"$$\n{formula}\n$$",
+            selectable=True,
+            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+        )
+        content = ft.Container(
+            content=md, bgcolor=c.math_bg, border_radius=Radius.MD, width=float("inf"),
+            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            alignment=ft.Alignment.CENTER,
+            ink=True,
+            on_click=lambda e: on_math_focus(line_idx) if on_math_focus else None,
+        )
+
+    return _wrap_block(
+        content, line, base, line_idx,
+        is_current_line=is_current_line, is_flash=is_flash,
+        on_size_change=on_line_size_change,
+    )
+
+
 @ft.memo
 @ft.component
 def LineView(
@@ -266,6 +344,12 @@ def LineView(
     on_code_blur: Callable[[int], None] | None = None,
     code_field_ref: ft.Ref | None = None,
     on_change_lang: Callable[[int, str], None] | None = None,
+    # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，编辑态 TextField 编辑源码
+    is_math_editing: bool = False,
+    on_change_math: Callable[[int, str], None] | None = None,
+    on_math_focus: Callable[[int], None] | None = None,
+    on_math_blur: Callable[[int], None] | None = None,
+    math_field_ref: ft.Ref | None = None,
     clipboard_ref: ft.Ref | None = None,
     # TOC
     toc_entries: list[tuple[int, int, str]] | None = None,
@@ -317,22 +401,12 @@ def LineView(
             code_field_ref, is_current_line, is_flash, on_line_size_change,
         )
 
-    # ============ 块级公式 MATH（视图态 ft.Markdown）============
+    # ============ 块级公式 MATH（浏览态 ft.Markdown / 编辑态 TextField）============
     if line.block_type == BlockType.MATH:
-        formula = line.segments[0].text if line.segments else ""
-        md = ft.Markdown(
-            value=f"$$\n{formula}\n$$",
-            selectable=True,
-            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-        )
-        content = ft.Container(
-            content=md, bgcolor=c.math_bg, border_radius=Radius.MD, width=float("inf"),
-            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-            alignment=ft.Alignment.CENTER,
-        )
-        return _wrap_block(
-            content, line, base, line_idx,
-            is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
+        return _render_math_block(
+            line, line_idx, base, content_width,
+            on_change_math, on_math_focus, on_math_blur, math_field_ref,
+            is_math_editing, is_current_line, is_flash, on_line_size_change,
         )
 
     # ============ 分隔线 HR（视图态）============

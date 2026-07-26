@@ -100,7 +100,7 @@ class KeyDispatcher:
     # ---- 共享工具 ----
     @staticmethod
     def _native_field_focused(actions: EditorActions | None) -> bool:
-        """代码块 CodeEditor 或表格 TableView 的原生编辑控件是否聚焦。
+        """代码块 CodeEditor / 表格 TableView / 公式 TextField 的原生编辑控件是否聚焦。
 
         聚焦时文本编辑键与剪贴板组合交由原生控件处理，跳过全局导航/选区/剪贴板逻辑。
         """
@@ -111,6 +111,9 @@ class KeyDispatcher:
             return True
         table_ref = getattr(actions, "table_focus_ref", None)
         if table_ref is not None and table_ref.current is not None:
+            return True
+        math_ref = getattr(actions, "math_focus_ref", None)
+        if math_ref is not None and math_ref.current is not None:
             return True
         return False
 
@@ -378,6 +381,12 @@ class KeyDispatcher:
                     actions.set_block(BlockType.PARAGRAPH)
                 else:
                     actions.set_block(BlockType.HEADING, digit)
+            return
+        # Ctrl+Shift+M：将当前行切换为块级公式（浏览/编辑两态均生效）。
+        # 公式 TextField 聚焦时跳过（避免编辑公式时误触发行级转换）。
+        if matches(combo, shortcuts.get("format_math_block", "ctrl+shift+m")):
+            if actions is not None and not self._native_field_focused(actions):
+                actions.set_block(BlockType.MATH)
             return
         # 行内格式快捷键：编辑态包裹选区或插入空语法。
         # 代码块/表格聚焦时跳过（交由原生 TextField）。浏览态无 active 时静默返回。

@@ -40,6 +40,7 @@ WRAP_SYNTAX: dict[SegType, tuple[str, str]] = {
     SegType.HIGHLIGHT: ("==", "=="),
     SegType.SUPERSCRIPT: ("^", "^"),
     SegType.SUBSCRIPT: ("~", "~"),
+    SegType.INLINE_MATH: ("$", "$"),  # 行内公式 $...$
 }
 
 # split_seg_for_display 用的单字符包裹映射（key 为单一包裹器 SegType）

@@ -198,6 +198,15 @@ def MarkdownEditor(
     code_edit_changed = ft.use_ref(False)  # 代码块编辑会话是否有变化
     table_focus_ref = ft.use_ref(None)
     table_nav_ref = ft.use_ref(None)
+    # 块级公式聚焦：浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态 TextField
+    # math_focus_li 为 state 驱动条件渲染（view/edit 两态切换）；ref 镜像供
+    # KeyDispatcher._native_field_focused 判断是否放行原生编辑键。
+    math_focus_li, set_math_focus_li = ft.use_state(None)
+    math_focus_ref = ft.use_ref(None)
+    math_focus_ref.current = math_focus_li
+    math_field_ref = ft.use_ref(None)  # 公式 TextField 引用，use_effect 聚焦用
+    math_edit_snapshot = ft.use_ref(None)  # 公式聚焦时的快照，用于首次修改推历史
+    math_edit_changed = ft.use_ref(False)  # 公式编辑会话是否有变化
 
     outward_sel_ref.current = outward_sel
 
@@ -404,6 +413,9 @@ def MarkdownEditor(
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
+        # 点击非公式行时退出公式编辑态（公式 TextField 失焦自动回写）
+        if math_focus_li is not None and math_focus_li != li:
+            set_math_focus_li(None)
         # 围栏块点击：更新 cursor_line，不进入光标编辑（CODE/TABLE 有自己的编辑器）
         if _is_fence(line):
             set_cursor_line(li)
@@ -911,6 +923,8 @@ def MarkdownEditor(
             new_raw = "> " + content
         elif block_type == BlockType.CODE:
             new_raw = "```\n" + content + "\n```"
+        elif block_type == BlockType.MATH:
+            new_raw = f"$$\n{content}\n$$"
         elif block_type == BlockType.HR:
             new_raw = "---"
         else:
@@ -920,6 +934,14 @@ def MarkdownEditor(
         if block_type == BlockType.CODE:
             set_cursor_line(li)
             set_cursor_li(None)
+        elif block_type == BlockType.MATH:
+            # 公式块：退出光标编辑态，自动进入公式编辑态（Typora 式：插入后立即可输入）
+            set_cursor_line(li)
+            set_cursor_li(None)
+            math_edit_snapshot.current = _make_snapshot()
+            math_edit_changed.current = False
+            math_focus_ref.current = li
+            set_math_focus_li(li)
         elif block_type in (BlockType.HR, BlockType.TOC):
             set_cursor_line(li)
             set_cursor_li(None)
@@ -970,6 +992,7 @@ def MarkdownEditor(
                 "highlight": SegType.HIGHLIGHT,
                 "strike": SegType.STRIKE,
                 "code": SegType.CODESPAN,
+                "inline_math": SegType.INLINE_MATH,
             }.get(fmt)
             if seg_type is None:
                 return
@@ -1010,6 +1033,7 @@ def MarkdownEditor(
                 "highlight": SegType.HIGHLIGHT,
                 "strike": SegType.STRIKE,
                 "code": SegType.CODESPAN,
+                "inline_math": SegType.INLINE_MATH,
             }.get(fmt)
             if seg_type is None:
                 return
@@ -1095,6 +1119,47 @@ def MarkdownEditor(
         # 注意：快照已在第一次修改时推入历史，此处不再重复推入
         code_edit_snapshot.current = None
         code_edit_changed.current = False
+
+    # ============ 块级公式 ============
+    def on_change_math(li: int, value: str) -> None:
+        if not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if line.block_type != BlockType.MATH:
+            return
+        old_text = line.segments[0].text if line.segments else ""
+        if old_text == value:
+            return
+        # 更新公式源码：segments[0].text/raw 同步，line.raw 重建为 $$\n...\n$$
+        line.segments[0].text = value
+        line.segments[0].raw = value
+        line.raw = f"$$\n{value}\n$$"
+        # 公式编辑防抖：第一次修改时将快照推入历史，整个编辑会话只占一个撤销条目
+        if not math_edit_changed.current and math_edit_snapshot.current is not None:
+            if not restoring.current:
+                history_ref.current.push(math_edit_snapshot.current)
+        math_edit_changed.current = True
+        if not document.dirty:
+            mark_dirty()
+
+    def on_math_focus(li: int) -> None:
+        math_focus_ref.current = li
+        set_math_focus_li(li)
+        # 公式聚焦时退出光标编辑态
+        if cursor_li is not None:
+            suppress_blur.current = True
+            set_cursor_li(None)
+        # 保存聚焦时的快照，用于首次修改时推入历史
+        math_edit_snapshot.current = _make_snapshot()
+        math_edit_changed.current = False
+
+    def on_math_blur(li: int) -> None:
+        if math_focus_ref.current == li:
+            math_focus_ref.current = None
+        set_math_focus_li(None)
+        # 公式失焦时：清理状态（快照已在首次修改时推入历史）
+        math_edit_snapshot.current = None
+        math_edit_changed.current = False
 
     # ============ 表格 ============
     def _table_cells(line: Line) -> list[str]:
@@ -1937,6 +2002,17 @@ def MarkdownEditor(
 
     ft.use_effect(_clear_cursor_value, [clear_value_seq])
 
+    # ============ use_effect：聚焦公式 TextField ============
+    # math_focus_li 变化时聚焦公式编辑控件（点击或 set_block(MATH) 触发）。
+    async def _focus_math_field():
+        if math_focus_li is not None and math_field_ref.current is not None:
+            try:
+                await math_field_ref.current.focus()
+            except Exception:
+                pass
+
+    ft.use_effect(_focus_math_field, [math_focus_li])
+
     # ============ EditorActions 上报 ============
     active_line = (
         document.lines[cursor_li]
@@ -1982,6 +2058,7 @@ def MarkdownEditor(
             apply_inline_format=apply_inline_format,
             code_focus_ref=code_focus_ref,
             table_focus_ref=table_focus_ref,
+            math_focus_ref=math_focus_ref,
             get_cursor_row_col=_get_cursor_row_col,
             outward_sel=outward_sel,
             shift_pressed_ref=shift_pressed_ref,
@@ -2078,6 +2155,12 @@ def MarkdownEditor(
                     on_code_focus=on_code_focus,
                     on_code_blur=on_code_blur,
                     on_change_lang=change_lang,
+                    # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态 TextField
+                    is_math_editing=(math_focus_li == i),
+                    on_change_math=on_change_math,
+                    on_math_focus=on_math_focus,
+                    on_math_blur=on_math_blur,
+                    math_field_ref=math_field_ref,
                     clipboard_ref=clipboard_ref,
                     toc_entries=toc_entries,
                     on_jump_to=jump_to,
@@ -2127,11 +2210,13 @@ def MarkdownEditor(
                         on_quote=lambda: set_block(BlockType.QUOTE),
                         on_code_block=lambda: set_block(BlockType.CODE),
                         on_hr=lambda: set_block(BlockType.HR),
+                        on_math_block=lambda: set_block(BlockType.MATH),
                         on_bold=lambda: apply_inline_format("bold"),
                         on_italic=lambda: apply_inline_format("italic"),
                         on_highlight=lambda: apply_inline_format("highlight"),
                         on_code=lambda: apply_inline_format("code"),
                         on_link=lambda: apply_inline_format("link"),
+                        on_inline_math=lambda: apply_inline_format("inline_math"),
                         on_strike=lambda: apply_inline_format("strike"),
                     ),
                     ft.Container(expand=True),

@@ -35,6 +35,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "cut": "ctrl+x",
         "paste": "ctrl+v",
         "select_all": "ctrl+a",
+        "format_math_block": "ctrl+shift+m",
     },
     "edit": {
         "save": "ctrl+s",
@@ -50,6 +51,8 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "format_strike": "ctrl+shift+s",
         "format_code": "ctrl+`",
         "format_link": "ctrl+k",
+        "format_inline_math": "ctrl+m",
+        "format_math_block": "ctrl+shift+m",
         "copy": "ctrl+c",
         "cut": "ctrl+x",
         "paste": "ctrl+v",
@@ -107,12 +110,15 @@ ACTION_REGISTRY: list[ActionDef] = [
     ActionDef("format_list", "无序列表", "edit", "格式", "将当前行切换为无序列表。", {}),
     ActionDef("format_quote", "引用", "edit", "格式", "将当前行切换为引用块。", {}),
     ActionDef("format_code_block", "代码块", "edit", "格式", "将当前行切换为代码块。", {}),
+    ActionDef("format_math_block", "公式块", "both", "格式", "将当前行切换为块级公式（$$...$$），并进入编辑态。",
+              {"browse": "ctrl+shift+m", "edit": "ctrl+shift+m"}),
     ActionDef("format_hr", "分隔线", "edit", "格式", "将当前行切换为分隔线。", {}),
     ActionDef("format_bold", "加粗", "edit", "行内格式", "选中文本包裹 **，无选中插入空标记。", {"edit": "ctrl+b"}),
     ActionDef("format_italic", "斜体", "edit", "行内格式", "选中文本包裹 *，无选中插入空标记。", {"edit": "ctrl+i"}),
     ActionDef("format_highlight", "高亮", "edit", "行内格式", "选中文本包裹 ==，无选中插入空标记。", {"edit": "ctrl+u"}),
     ActionDef("format_code", "行内代码", "edit", "行内格式", "选中文本包裹 `，无选中插入空标记。", {"edit": "ctrl+`"}),
     ActionDef("format_link", "链接", "edit", "行内格式", "选中文本包裹为 [text](url)，无选中插入空链接。", {"edit": "ctrl+k"}),
+    ActionDef("format_inline_math", "行内公式", "edit", "行内格式", "选中文本包裹 $，无选中插入空标记。", {"edit": "ctrl+m"}),
     ActionDef("format_strike", "删除线", "edit", "行内格式", "选中文本包裹 ~~，无选中插入空标记。", {"edit": "ctrl+shift+s"}),
     ActionDef("copy", "复制", "both", "编辑", "复制选区文本到剪贴板。",
               {"browse": "ctrl+c", "edit": "ctrl+c"}),
@@ -136,6 +142,7 @@ _INLINE_FORMAT_ACTIONS: tuple[str, ...] = (
     "format_strike",
     "format_code",
     "format_link",
+    "format_inline_math",
 )
 
 

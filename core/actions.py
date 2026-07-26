@@ -94,6 +94,8 @@ class EditorActions:
     # ---- 向外选区（Shift+Click / Shift+Arrow / 拖拽 起始的跨行选区）----
     # outward_sel = (anchor_li, anchor_off, active_li, active_off) | None
     outward_sel: tuple | None = None
+    # ---- 块级公式（点击进入编辑态的独立岛屿）----
+    math_focus_ref: ft.Ref | None = None
     shift_pressed_ref: ft.Ref | None = None  # Shift 键状态（editor 内部跟踪）
     ctrl_pressed_ref: ft.Ref | None = None  # Ctrl 键状态（主同步源 KeyDispatcher.e.ctrl）
     extend_outward_left: Callable[[], None] | None = None

@@ -36,8 +36,10 @@ from styles import (
     _current_colors,
     block_text_size,
     block_weight,
+    list_color_level,
+    prefix_style,
 )
-from utils.segment_helpers import PREFIX_SEGTYPES
+from utils.segment_helpers import PREFIX_SEGTYPES, display_text
 from utils.text_layout import image_fit_size
 from views.pixel_layout import _line_raw_offsets_x, hit_test_line_x_raw
 from views.segment_view import (
@@ -52,6 +54,11 @@ def _has_visible_text(line: Line) -> bool:
         if s.text or s.seg_type in PREFIX_SEGTYPES:
             return True
     return False
+
+
+def _has_inline_math(line: Line) -> bool:
+    """行内是否含 INLINE_MATH 段（需 LaTeX 渲染）。"""
+    return any(s.seg_type == SegType.INLINE_MATH for s in line.segments)
 
 
 def _image_seg_indices(line: Line) -> list[int]:
@@ -345,6 +352,76 @@ def RenderedLine(
         return ft.Column(
             controls=img_controls, spacing=Spacing.SM,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    # ============ 含行内公式的行（浏览态用 ft.Markdown 渲染 LaTeX）============
+    # Typora 式：浏览态渲染真实数学符号，编辑态切换回 TextSpan 显示源码
+    # 剥离前缀段（#/列表/引用），仅内容用 ft.Markdown，避免 ft.Markdown
+    # 重复渲染列表标记/引用块级结构与 _wrap_block 冲突（列表标识异常 BUG 修复）
+    if cursor_off is None and outward_range is None and _has_inline_math(line):
+        prefix_seg = line.segments[0] if line.segments else None
+        if prefix_seg and prefix_seg.seg_type in PREFIX_SEGTYPES:
+            prefix_display = display_text(prefix_seg)
+            content_raw = line.raw[len(prefix_seg.raw):] if prefix_seg.raw else line.raw
+        else:
+            prefix_seg = None
+            prefix_display = ""
+            content_raw = line.raw
+
+        # 段落文字样式：标题行用标题字号/色阶，其余用 base
+        if heading_level > 0:
+            p_color = c.heading_colors.get(heading_level, c.text)
+            p_weight = block_weight(BlockType.HEADING, heading_level)
+            p_size = block_text_size(BlockType.HEADING, heading_level)
+        else:
+            p_color = c.text
+            p_weight = ft.FontWeight.NORMAL
+            p_size = base
+
+        md = ft.Markdown(
+            value=content_raw,
+            selectable=True,
+            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+            soft_line_break=True,
+            latex_style=ft.TextStyle(size=p_size, color=c.math_fg),
+            md_style_sheet=ft.MarkdownStyleSheet(
+                p_text_style=ft.TextStyle(
+                    size=p_size, color=p_color, weight=p_weight,
+                    font_family=FONT_MAIN, height=line_height,
+                ),
+            ),
+        )
+
+        if prefix_display:
+            # 列表前缀（• / 1. ）：Text + ft.Markdown 横排
+            prefix_st = prefix_style(prefix_seg, base)
+            if prefix_seg.seg_type == SegType.LIST_PREFIX:
+                raw_ls = prefix_seg.raw.lstrip()
+                if raw_ls and raw_ls[0] in "-*+":
+                    lvl = list_color_level(prefix_seg.level)
+                    prefix_st = ft.TextStyle(
+                        size=base, color=c.heading_colors.get(lvl, c.muted),
+                        weight=ft.FontWeight.BOLD,
+                    )
+            content = ft.Row(
+                controls=[
+                    ft.Text(
+                        spans=[ft.TextSpan(text=prefix_display, style=prefix_st)],
+                        style=ft.TextStyle(size=base, height=line_height),
+                    ),
+                    ft.Container(content=md, expand=True),
+                ],
+                spacing=0,
+                wrap=False,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            )
+        else:
+            content = md
+
+        return ft.GestureDetector(
+            content=content, on_tap=_on_tap,
+            on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
+            on_double_tap_down=_on_double_tap_down,
         )
 
     # ============ 普通块（段落 / 标题 / 列表 / 引用）============

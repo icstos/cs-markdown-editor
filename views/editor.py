@@ -38,6 +38,7 @@ import parser
 from styles import (
     FONT_MAIN,
     FONT_MONO,
+    Spacing,
     _current_colors,
     block_text_size,
     only_border,
@@ -46,6 +47,9 @@ from utils.segment_helpers import WRAP_SYNTAX
 from views.line_view import LineView
 from views.table_view import TableView, _join_row
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
+
+# 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知，替代 reparse_line 的 2-7 次）
+_reparse_atomic = parser.reparse_line_atomic
 
 
 def _noop() -> None:
@@ -189,7 +193,9 @@ def MarkdownEditor(
         set_outward_sel(value)
 
     def mark_dirty():
-        document.dirty = True
+        # 守卫：dirty 已为 True 时不再赋值，避免 True→True 触发额外 observable 通知
+        if not document.dirty:
+            document.dirty = True
         if on_dirty_change:
             on_dirty_change(True)
 
@@ -400,7 +406,7 @@ def MarkdownEditor(
         state["last_value"] = value
         new_off = start_off + len(value)
         cursor_ref.current.reset(new_off, len(new_raw))
-        parser.reparse_line(line, new_raw)
+        _reparse_atomic(line, new_raw)
         mark_dirty()
 
     def handle_paste(clip_text: str, old_draft: str = ""):
@@ -420,14 +426,14 @@ def MarkdownEditor(
         parts = clip_text.split("\n")
         if len(parts) == 1:
             new_raw = raw[:off] + parts[0] + raw[off:]
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
             suppress_blur.current = True
             _set_cursor(li, off + len(parts[0]))
         else:
             before = raw[:off]
             after = raw[off:]
-            parser.reparse_line(line, before + parts[0])
+            _reparse_atomic(line, before + parts[0])
             middle = [parser.parse_markdown(p).lines[0] for p in parts[1:-1]]
             last_raw = parts[-1] + after
             last_line = parser.parse_markdown(last_raw).lines[0]
@@ -459,7 +465,7 @@ def MarkdownEditor(
             _maybe_push_history()
             raw = _line_raw(line)
             new_raw = raw[:off - 1] + raw[off:]
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
             _set_cursor(li, off - 1)
         elif li > 0:
@@ -473,7 +479,7 @@ def MarkdownEditor(
             cur_raw = _line_raw(line)
             junction = len(prev_raw)
             merged = prev_raw + cur_raw
-            parser.reparse_line(prev, merged)
+            _reparse_atomic(prev, merged)
             document.lines = document.lines[:li] + document.lines[li + 1:]
             mark_dirty()
             suppress_blur.current = True
@@ -498,7 +504,7 @@ def MarkdownEditor(
         if off < len(raw):
             _maybe_push_history()
             new_raw = raw[:off] + raw[off + 1:]
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
             _set_cursor(li, off)
         elif li < len(document.lines) - 1:
@@ -510,7 +516,7 @@ def MarkdownEditor(
             undo_push_pending.current = True
             junction = len(raw)
             merged = raw + _line_raw(nxt)
-            parser.reparse_line(line, merged)
+            _reparse_atomic(line, merged)
             document.lines = document.lines[:li + 1] + document.lines[li + 2:]
             mark_dirty()
             suppress_blur.current = True
@@ -536,11 +542,11 @@ def MarkdownEditor(
         # 标题：before 空 → 清空前缀；否则分割成两行
         if line.block_type == BlockType.HEADING:
             if not before.strip():
-                parser.reparse_line(line, after.lstrip())
+                _reparse_atomic(line, after.lstrip())
                 mark_dirty()
                 _set_cursor(li, 0)
                 return
-            parser.reparse_line(line, before)
+            _reparse_atomic(line, before)
             new_line = parser.parse_markdown(after).lines[0]
             document.lines = document.lines[:li + 1] + [new_line] + document.lines[li + 1:]
             mark_dirty()
@@ -554,24 +560,24 @@ def MarkdownEditor(
                 stripped = after.lstrip()
                 if line.block_type == BlockType.QUOTE:
                     stripped = stripped.lstrip("> ")
-                parser.reparse_line(line, stripped)
+                _reparse_atomic(line, stripped)
                 mark_dirty()
                 _set_cursor(li, 0)
                 return
             if line.block_type == BlockType.LIST_UO and before.rstrip() in ("-", "*", "+"):
-                parser.reparse_line(line, after.lstrip())
+                _reparse_atomic(line, after.lstrip())
                 mark_dirty()
                 _set_cursor(li, 0)
                 return
             if line.block_type == BlockType.LIST_O and re.match(r"^\d+\.$", before.rstrip()):
-                parser.reparse_line(line, after.lstrip())
+                _reparse_atomic(line, after.lstrip())
                 mark_dirty()
                 _set_cursor(li, 0)
                 return
 
         # 默认：分割当前行，续行加列表/引用前缀
         cont_prefix = _next_line_raw(line)
-        parser.reparse_line(line, before)
+        _reparse_atomic(line, before)
         new_line = parser.parse_markdown(cont_prefix + after).lines[0]
         document.lines = document.lines[:li + 1] + [new_line] + document.lines[li + 1:]
         mark_dirty()
@@ -717,7 +723,7 @@ def MarkdownEditor(
                 new_prefix = f"{indent_sp}- "
                 content = body
             new_raw = new_prefix + content
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
             _set_cursor(li, len(new_prefix))
         elif line.block_type == BlockType.QUOTE:
@@ -726,7 +732,7 @@ def MarkdownEditor(
             new_level = max(1, (line.level or 1) + delta)
             content = _inline_content(line)
             new_raw = "> " * new_level + content
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
             _set_cursor(li, new_level * 2)
         else:
@@ -734,7 +740,7 @@ def MarkdownEditor(
             if delta > 0:
                 raw = _line_raw(line)
                 new_raw = raw[:cursor_off] + "    " + raw[cursor_off:]
-                parser.reparse_line(line, new_raw)
+                _reparse_atomic(line, new_raw)
                 mark_dirty()
                 _set_cursor(li, cursor_off + 4)
 
@@ -775,7 +781,7 @@ def MarkdownEditor(
             new_raw = "---"
         else:
             new_raw = content
-        parser.reparse_line(line, new_raw)
+        _reparse_atomic(line, new_raw)
         mark_dirty()
         if block_type == BlockType.CODE:
             set_cursor_line(li)
@@ -816,7 +822,7 @@ def MarkdownEditor(
         off = cursor_off
         if fmt == "link":
             new_raw = raw[:off] + "[](url)" + raw[off:]
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
             _set_cursor(li, off + 1)  # 光标落在 [ 后
         else:
@@ -831,7 +837,7 @@ def MarkdownEditor(
                 return
             wrap = WRAP_SYNTAX.get(seg_type, ("", ""))[0]
             new_raw = raw[:off] + wrap + wrap + raw[off:]
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
             _set_cursor(li, off + len(wrap))  # 光标落在两标记之间
 
@@ -872,7 +878,7 @@ def MarkdownEditor(
             wrap = WRAP_SYNTAX.get(seg_type, ("", ""))[0]
             new_raw = raw[:a_off] + wrap + selected + wrap + raw[b_off:]
             new_off = a_off + len(wrap)
-        parser.reparse_line(line, new_raw)
+        _reparse_atomic(line, new_raw)
         new_lines = list(document.lines)
         new_lines[a_li] = line
         document.lines = new_lines
@@ -894,7 +900,7 @@ def MarkdownEditor(
         if m := re.match(r"^([-*+])\s+\[[ xX]\]\s+(.*)$", body):
             new_prefix = f"{' ' * (line.level or 0)}{m.group(1)} [{'x' if line.checked else ' '}] "
             new_raw = new_prefix + m.group(2)
-            parser.reparse_line(line, new_raw)
+            _reparse_atomic(line, new_raw)
             mark_dirty()
 
     def change_lang(li: int, new_lang: str):
@@ -907,7 +913,7 @@ def MarkdownEditor(
         line.lang = new_lang
         code = line.segments[0].text if line.segments else ""
         full = f"```{new_lang}\n{code}\n```" if code else f"```{new_lang}\n```"
-        parser.reparse_line(line, full)
+        _reparse_atomic(line, full)
         mark_dirty()
 
     # ============ 代码块 ============
@@ -1284,7 +1290,7 @@ def MarkdownEditor(
                 line = document.lines[start_li]
                 cur_raw = _line_raw(line)
                 new_raw = cur_raw[:start_off] + cur_raw[end_off:]
-                parser.reparse_line(line, new_raw)
+                _reparse_atomic(line, new_raw)
                 new_lines = list(document.lines)
             else:
                 if not (0 <= start_li < len(document.lines) and 0 <= end_li < len(document.lines)):
@@ -1292,7 +1298,7 @@ def MarkdownEditor(
                 start_line = document.lines[start_li]
                 end_line = document.lines[end_li]
                 merged = _line_raw(start_line)[:start_off] + _line_raw(end_line)[end_off:]
-                parser.reparse_line(start_line, merged)
+                _reparse_atomic(start_line, merged)
                 new_lines = document.lines[:start_li + 1] + document.lines[end_li + 1:]
         except Exception:
             return
@@ -1577,6 +1583,12 @@ def MarkdownEditor(
                     on_table_blur=on_table_blur,
                     table_nav_ref=table_nav_ref,
                     is_current_line=table_start <= cursor_line <= table_end,
+                    # 版本号触发 prop：lines 列表与首行 raw 长度变化时触发 memo 刷新
+                    lines_version=len(document.lines),
+                    first_line_raw_version=(
+                        len(document.lines[table_start].raw)
+                        if 0 <= table_start < len(document.lines) else 0
+                    ),
                 )
             )
         else:
@@ -1585,14 +1597,18 @@ def MarkdownEditor(
                     key=f"line-{i}",
                     line=line,
                     line_idx=i,
-                    cursor_li=cursor_li,
-                    cursor_off=cursor_off,
+                    cursor_off=cursor_off if is_act else None,
                     cursor_ref=cursor_ref if is_act else None,
                     nav_seq=nav_seq if is_act else 0,
                     field_ref=cursor_field_ref if is_act else None,
                     content_width=content_width,
                     line_height=line_height,
                     is_current_line=is_act,
+                    # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，
+                    # ft.memo 浅比较 line 引用未变会误判未刷新。通过 raw 长度 + 段数
+                    # 两个值变化触发 memo 检测，让屏幕刷新。
+                    line_raw_version=len(line.raw) if line.raw else 0,
+                    line_seg_count=len(line.segments),
                     on_cursor_change=handle_char_input if is_act else None,
                     on_cursor_submit=on_submit if is_act else None,
                     on_cursor_blur=on_blur if is_act else None,
@@ -1631,7 +1647,7 @@ def MarkdownEditor(
         return ft.Container(
             bgcolor=ft.Colors.with_opacity(0.96, c.toolbar_bg),
             border=only_border(bottom=ft.BorderSide(1, c.border)),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             content=ft.Row(
                 controls=[
                     ft.PopupMenuButton(
@@ -1672,7 +1688,7 @@ def MarkdownEditor(
                     ),
                     _btn(ft.Icons.SETTINGS, "设置  Ctrl+,", on_open_settings or _noop),
                 ],
-                spacing=6,
+                spacing=Spacing.MD,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
         )
@@ -1733,12 +1749,14 @@ def MarkdownEditor(
                     on_change=on_selection_area_change,
                     content=ft.Container(
                         content=ft.Container(
-                            content=ft.Column(
+                            content=ft.ListView(
                                 ref=list_view_ref,
                                 controls=line_controls,
                                 expand=True,
                                 spacing=0,
-                                scroll=ft.ScrollMode.AUTO,
+                                auto_scroll=False,
+                                build_controls_on_demand=True,
+                                cache_extent=800,
                                 on_scroll=_on_scroll,
                             ),
                             width=content_max_width,

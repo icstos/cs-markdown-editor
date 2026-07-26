@@ -31,6 +31,8 @@ import flet as ft
 from models import BlockType, Line, SegType
 from styles import (
     FONT_MAIN,
+    Radius,
+    Spacing,
     _current_colors,
     block_text_size,
     block_weight,
@@ -274,7 +276,7 @@ def RenderedLine(
                     on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
                 ),
             ],
-            wrap=True, spacing=4, run_spacing=0,
+            wrap=True, spacing=Spacing.SM, run_spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
@@ -295,10 +297,10 @@ def RenderedLine(
                             ft.Text(value=seg.text or seg.url or "图片", color=c.muted,
                                     size=base - 1, font_family=FONT_MAIN),
                         ],
-                        spacing=8, alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=Spacing.LG, alignment=ft.MainAxisAlignment.CENTER,
                     ),
-                    padding=ft.Padding.symmetric(horizontal=16, vertical=12),
-                    bgcolor=c.code_block_bg, border_radius=6,
+                    padding=ft.Padding.symmetric(horizontal=Spacing.XXL, vertical=Spacing.XL),
+                    bgcolor=c.code_block_bg, border_radius=Radius.MD,
                     alignment=ft.Alignment.CENTER,
                 ),
             }
@@ -308,7 +310,7 @@ def RenderedLine(
                 kw["height"] = h
             img_controls.append(ft.Container(content=ft.Image(**kw), ink=True))
         return ft.Column(
-            controls=img_controls, spacing=4,
+            controls=img_controls, spacing=Spacing.SM,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
 

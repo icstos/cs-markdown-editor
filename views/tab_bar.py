@@ -18,7 +18,7 @@ from collections.abc import Callable
 
 import flet as ft
 
-from styles import FONT_MAIN, get_colors, only_border
+from styles import FONT_MAIN, Elevation, Radius, Spacing, card_shadow, get_colors, only_border
 
 _DIRTY_COLOR = "#FF9F0A"  # 未保存修改星号色（亮暗通用警示橙）
 
@@ -55,8 +55,8 @@ def TabBar(
             style=ft.ButtonStyle(
                 color=color,
                 bgcolor=ft.Colors.with_opacity(0.0, c.text),
-                padding=2,
-                shape=ft.RoundedRectangleBorder(radius=6),
+                padding=Spacing.XS,
+                shape=ft.RoundedRectangleBorder(radius=Radius.MD),
             ),
         )
 
@@ -123,7 +123,7 @@ def TabBar(
             border=only_border(bottom=bottom_border),
             on_click=_on_tab_click,
             on_hover=_on_tab_hover,
-            padding=ft.Padding.only(left=12, right=6, top=6, bottom=6),
+            padding=ft.Padding.only(left=Spacing.XL, right=Spacing.MD, top=Spacing.MD, bottom=Spacing.MD),
             content=ft.Row(
                 controls=[
                     ft.Text(
@@ -151,7 +151,7 @@ def TabBar(
                         close_color,
                     ),
                 ],
-                spacing=4,
+                spacing=Spacing.SM,
                 tight=True,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -168,7 +168,7 @@ def TabBar(
     new_btn = ft.Container(
         bgcolor=c.toolbar_bg,
         border=only_border(bottom=ft.BorderSide(2, ft.Colors.TRANSPARENT)),
-        padding=ft.Padding.symmetric(horizontal=4, vertical=4),
+        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.SM),
         content=_btn_icon(
             ft.Icons.ADD,
             "新建标签  Ctrl+N",
@@ -180,7 +180,7 @@ def TabBar(
     return ft.Container(
         bgcolor=c.toolbar_bg,
         border=only_border(bottom=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.only(left=4, right=4, top=0, bottom=0),
+        padding=ft.Padding.only(left=Spacing.SM, right=Spacing.SM, top=0, bottom=0),
         content=ft.Row(
             controls=[
                 ft.Row(
@@ -210,6 +210,7 @@ def ConfirmCloseDialog(
 ):
     """关闭脏标签确认弹层（Stack overlay 模式）。"""
     c = get_colors(theme_mode)
+    is_dark = theme_mode == ft.ThemeMode.DARK
 
     def _text_btn(label: str, on_click: Callable, color: str) -> ft.Control:
         return ft.TextButton(
@@ -226,14 +227,9 @@ def ConfirmCloseDialog(
         content=ft.Container(
             width=440,
             bgcolor=c.toolbar_bg,
-            border_radius=12,
-            padding=24,
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=24,
-                color=ft.Colors.with_opacity(0.18, ft.Colors.BLACK),
-                offset=ft.Offset(0, 8),
-            ),
+            border_radius=Radius.XL,
+            padding=Spacing.XXXL,
+            shadow=card_shadow(Elevation.DIALOG, is_dark),
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -251,17 +247,17 @@ def ConfirmCloseDialog(
                                 font_family=FONT_MAIN,
                             ),
                         ],
-                        spacing=10,
+                        spacing=Spacing.XL,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Container(height=4),
+                    ft.Container(height=Spacing.SM),
                     ft.Text(
                         value=f"「{file_name}」包含未保存的修改，关闭前是否保存？",
                         size=13,
                         color=c.muted,
                         font_family=FONT_MAIN,
                     ),
-                    ft.Container(height=16),
+                    ft.Container(height=Spacing.XXL),
                     ft.Row(
                         controls=[
                             ft.Container(expand=True),
@@ -274,7 +270,7 @@ def ConfirmCloseDialog(
                                 bgcolor=c.link,
                             ),
                         ],
-                        spacing=8,
+                        spacing=Spacing.LG,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],

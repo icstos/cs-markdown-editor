@@ -12,7 +12,7 @@ import flet as ft
 
 from models import Document
 import parser
-from styles import FONT_MAIN, get_colors, only_border
+from styles import FONT_MAIN, Spacing, get_colors, only_border
 
 # 中英文词数统计正则：英文连续字母数字下划线算一词，中文每字算一词
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -47,7 +47,7 @@ def StatusBar(
     return ft.Container(
         bgcolor=ft.Colors.with_opacity(0.03, c.text),
         border=only_border(top=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         content=ft.Row(
             controls=[
                 ft.IconButton(
@@ -57,7 +57,7 @@ def StatusBar(
                     icon_size=16,
                     style=ft.ButtonStyle(
                         color=c.link if sidebar_open else c.muted,
-                        padding=4,
+                        padding=Spacing.SM,
                     ),
                 ),
                 ft.Icon(
@@ -80,14 +80,14 @@ def StatusBar(
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=16),
+                ft.Container(width=Spacing.XXL),
                 ft.Text(
                     value=f"{word_count} 词",
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=12),
+                ft.Container(width=Spacing.XL),
                 ft.Text(
                     value=f"{char_count} 字符",
                     size=12,

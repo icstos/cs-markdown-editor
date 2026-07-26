@@ -9,7 +9,7 @@ from collections.abc import Callable
 import flet as ft
 
 from services.shortcuts import ShortcutManager
-from styles import get_colors
+from styles import Elevation, Radius, Spacing, card_shadow, get_colors
 
 _SECTIONS = {
     "edit": ("编辑", "调整编辑区布局与写作行为。"),
@@ -52,6 +52,7 @@ def SettingsDialog(
     快捷键更新直接通过 shortcut_mgr.update(layer, action, combo) 调用，内部回调 on_update。
     """
     c = get_colors(theme_mode)
+    is_dark = theme_mode == ft.ThemeMode.DARK
     current_title, current_desc = _SECTIONS.get(tab, _SECTIONS["edit"])
 
     return ft.Container(
@@ -63,13 +64,8 @@ def SettingsDialog(
             width=1020,
             height=720,
             bgcolor=c.toolbar_bg,
-            border_radius=18,
-            shadow=ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=24,
-                color=ft.Colors.with_opacity(0.18, ft.Colors.BLACK),
-                offset=ft.Offset(0, 8),
-            ),
+            border_radius=Radius.XXXL,
+            shadow=card_shadow(Elevation.DIALOG, is_dark),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             content=ft.Row(
                 spacing=0,
@@ -78,11 +74,11 @@ def SettingsDialog(
                     ft.Container(width=1, bgcolor=c.border),
                     ft.Container(
                         expand=True,
-                        padding=24,
+                        padding=Spacing.XXXL,
                         content=ft.Column(
                             controls=[
                                 _header(current_title, current_desc, c, on_close),
-                                ft.Container(height=8),
+                                ft.Container(height=Spacing.LG),
                                 _panel(tab, settings, theme_mode, shortcut_focus,
                                        shortcut_mgr, on_update, on_reset_shortcuts,
                                        on_import, on_export),
@@ -102,18 +98,18 @@ def _sidebar(c, tab: str, on_select_tab, on_reset_all) -> ft.Control:
     return ft.Container(
         width=250,
         bgcolor=ft.Colors.with_opacity(0.18, c.border),
-        padding=20,
+        padding=Spacing.XXL,
         content=ft.Column(
             expand=True,
             controls=[
                 ft.Text("设置", size=22, weight=ft.FontWeight.W_700),
                 ft.Text("Typora 风格的可配置中心", size=12, color=c.muted),
-                ft.Container(height=18),
+                ft.Container(height=Spacing.XXL),
                 *[_tab_button(t, label, icon, c, tab, on_select_tab) for t, label, icon in _TAB_ICONS],
                 ft.Container(expand=True),
                 ft.TextButton("恢复默认", on_click=lambda e: on_reset_all()),
             ],
-            spacing=8,
+            spacing=Spacing.LG,
         ),
     )
 
@@ -121,16 +117,16 @@ def _sidebar(c, tab: str, on_select_tab, on_reset_all) -> ft.Control:
 def _tab_button(t: str, label: str, icon: str, c, current_tab: str, on_select_tab) -> ft.Control:
     active = current_tab == t
     return ft.Container(
-        border_radius=10,
+        border_radius=Radius.XL,
         bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
-        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         content=ft.Row(
             controls=[
                 ft.Icon(icon=icon, size=16,
                         color=c.link if active else c.muted),
                 ft.TextButton(label, on_click=lambda e: on_select_tab(t)),
             ],
-            spacing=8,
+            spacing=Spacing.LG,
         ),
     )
 
@@ -143,7 +139,7 @@ def _header(title: str, desc: str, c, on_close) -> ft.Control:
                     ft.Text(title, size=20, weight=ft.FontWeight.W_700),
                     ft.Text(desc, size=12, color=c.muted),
                 ],
-                spacing=2,
+                spacing=Spacing.XS,
             ),
             ft.Container(expand=True),
             ft.IconButton(icon=ft.Icons.CLOSE, on_click=lambda e: on_close()),
@@ -186,7 +182,7 @@ def _edit_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft.Contr
                 ft.Switch(label="显示底部状态栏", value=settings["show_footer"],
                           on_change=lambda e: on_update("show_footer", e.control.value)),
             ],
-            spacing=12,
+            spacing=Spacing.XL,
         ),
     )
 
@@ -214,7 +210,7 @@ def _appearance_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft
                               ["GITHUB", "ATOM_ONE_LIGHT", "VS2015"],
                               lambda v: on_update("code_theme_light", v)),
             ],
-            spacing=12,
+            spacing=Spacing.XL,
         ),
     )
 
@@ -240,7 +236,7 @@ def _behavior_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft.C
                               ["html", "pdf", "md"],
                               lambda v: on_update("export_format", v)),
             ],
-            spacing=12,
+            spacing=Spacing.XL,
         ),
     )
 
@@ -263,7 +259,7 @@ def _shortcuts_panel(theme_mode: ft.ThemeMode) -> ft.Control:
                 ft.Text("常用快捷键", size=14, weight=ft.FontWeight.W_600),
                 *[ft.Text(h, size=12, color=c.text) for h in hints],
             ],
-            spacing=8,
+            spacing=Spacing.LG,
         ),
     )
 
@@ -286,7 +282,7 @@ def _advanced_panel(
                                 ft.Text("统一查看并管理浏览态 / 编辑态动作、默认键位与冲突状态。",
                                         size=12, color=c.muted),
                             ],
-                            spacing=2,
+                            spacing=Spacing.XS,
                             expand=True,
                         ),
                         ft.Container(expand=True),
@@ -295,7 +291,7 @@ def _advanced_panel(
                         ft.TextButton("恢复默认快捷键", on_click=lambda e: on_reset_shortcuts()),
                     ]
                 ),
-                ft.Container(height=6),
+                ft.Container(height=Spacing.MD),
                 ft.Row(
                     controls=[
                         ft.Container(
@@ -309,29 +305,29 @@ def _advanced_panel(
                             ),
                         ),
                     ],
-                    spacing=10,
+                    spacing=Spacing.XL,
                 ),
                 ft.Row(
                     controls=[
                         _conflict_card("浏览态", shortcut_mgr.conflict_summary("browse"), c),
                         _conflict_card("编辑态", shortcut_mgr.conflict_summary("edit"), c),
                     ],
-                    spacing=10,
+                    spacing=Spacing.XL,
                 ),
-                ft.Container(height=4),
+                ft.Container(height=Spacing.SM),
                 ft.Container(
                     expand=True,
-                    border_radius=12,
+                    border_radius=Radius.XL,
                     bgcolor=ft.Colors.with_opacity(0.04, c.text),
-                    padding=ft.Padding.all(12),
+                    padding=ft.Padding.all(Spacing.XL),
                     content=ft.Column(
                         controls=_action_rows(shortcut_mgr, theme_mode, shortcut_focus, on_update),
-                        spacing=8,
+                        spacing=Spacing.LG,
                         scroll=ft.ScrollMode.AUTO,
                     ),
                 ),
             ],
-            spacing=10,
+            spacing=Spacing.XL,
         ),
     )
 
@@ -339,8 +335,8 @@ def _advanced_panel(
 def _conflict_card(label: str, summary: str | None, c) -> ft.Control:
     return ft.Container(
         expand=True,
-        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
-        border_radius=10,
+        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+        border_radius=Radius.XL,
         bgcolor=ft.Colors.with_opacity(0.08, c.link),
         content=ft.Column(
             controls=[
@@ -348,7 +344,7 @@ def _conflict_card(label: str, summary: str | None, c) -> ft.Control:
                 ft.Text(summary or "无冲突", size=11,
                         color="#E66A00" if summary else c.muted),
             ],
-            spacing=2,
+            spacing=Spacing.XS,
         ),
     )
 
@@ -364,7 +360,7 @@ def _action_rows(
         cmap = shortcut_mgr.conflict_map(layer)
         rows.append(
             ft.Container(
-                padding=ft.Padding.only(top=4, bottom=4),
+                padding=ft.Padding.only(top=Spacing.SM, bottom=Spacing.SM),
                 content=ft.Text(
                     "浏览态" if layer == "browse" else "编辑态",
                     size=13, weight=ft.FontWeight.W_700,
@@ -385,8 +381,8 @@ def _action_row(
 ) -> ft.Control:
     return ft.Container(
         bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.RED) if is_conflict else None,
-        border_radius=10,
-        padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+        border_radius=Radius.XL,
+        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         content=ft.Column(
             controls=[
                 ft.Row(
@@ -397,7 +393,7 @@ def _action_row(
                                 ft.Text(f"{action.category} · {action.description}",
                                         size=11, color=c.muted),
                             ],
-                            spacing=2,
+                            spacing=Spacing.XS,
                             expand=True,
                         ),
                         ft.TextField(
@@ -423,7 +419,7 @@ def _action_row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
             ],
-            spacing=6,
+            spacing=Spacing.MD,
         ),
     )
 

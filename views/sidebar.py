@@ -15,7 +15,7 @@ from collections.abc import Callable
 import flet as ft
 
 from models import BlockType, Document, SegType
-from styles import FONT_MAIN, FONT_MONO, _current_colors, only_border
+from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors, only_border
 
 _MD_EXTS = (".md", ".markdown")
 _MAX_DEPTH = 3  # 文件树扫描最大深度
@@ -154,7 +154,7 @@ def _search_box(
         dense=True,
         border=ft.InputBorder.UNDERLINE,
         text_size=12,
-        content_padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+        content_padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         on_change=lambda e: on_change(e.control.value or ""),
     )
 
@@ -178,15 +178,15 @@ def _list_item(
     content: ft.Control,
     c,
     on_click: Callable | None = None,
-    indent: int = 12,
+    indent: int = Spacing.XL,
 ) -> ft.Control:
     """通用列表项：左侧缩进、hover ink 反馈。"""
     return ft.Container(
         content=content,
-        padding=ft.Padding.only(left=indent, top=4, bottom=4, right=8),
+        padding=ft.Padding.only(left=indent, top=Spacing.SM, bottom=Spacing.SM, right=Spacing.LG),
         on_click=on_click,
         ink=True,
-        border_radius=8,
+        border_radius=Radius.LG,
     )
 
 
@@ -225,7 +225,7 @@ def _render_files_panel(
                             overflow=ft.TextOverflow.ELLIPSIS,
                         ),
                     ],
-                    spacing=6,
+                    spacing=Spacing.MD,
                 ),
                 c,
                 on_click=lambda e, p=p: on_open_file(p),
@@ -235,7 +235,7 @@ def _render_files_panel(
         return ft.Column(
             controls=[
                 ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                    padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
                     content=ft.Text(
                         "最近文件",
                         size=11,
@@ -269,7 +269,7 @@ def _render_files_panel(
     else:
         rows = []
         for kind, name, abspath, depth in flat:
-            indent = depth * 14 + 12
+            indent = depth * 14 + Spacing.XL
             if kind == "file":
                 rows.append(
                     _list_item(
@@ -290,7 +290,7 @@ def _render_files_panel(
                                     expand=True,
                                 ),
                             ],
-                            spacing=6,
+                            spacing=Spacing.MD,
                         ),
                         c,
                         on_click=lambda e, p=abspath: on_open_file(p),
@@ -316,7 +316,7 @@ def _render_files_panel(
                                     expand=True,
                                 ),
                             ],
-                            spacing=6,
+                            spacing=Spacing.MD,
                         ),
                         c,
                         indent=indent,
@@ -330,7 +330,7 @@ def _render_files_panel(
     return ft.Column(
         controls=[
             ft.Container(
-                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
                 content=_search_box(file_filter, set_file_filter, "过滤文件…", c),
             ),
             body,
@@ -360,7 +360,7 @@ def _render_outline_panel(
             ),
             c,
             on_click=lambda e, li=li: on_jump_to_line(li),
-            indent=(lvl - 1) * 14 + 12,
+            indent=(lvl - 1) * 14 + Spacing.XL,
         )
         for li, lvl, text in toc_entries
     ]
@@ -382,7 +382,7 @@ def _render_search_panel(
         return ft.Column(
             controls=[
                 ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
                     content=_search_box(
                         search_query, set_search_query, "在当前文档中查找…", c
                     ),
@@ -397,7 +397,7 @@ def _render_search_panel(
         return ft.Column(
             controls=[
                 ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
                     content=_search_box(
                         search_query, set_search_query, "在当前文档中查找…", c
                     ),
@@ -437,13 +437,13 @@ def _render_search_panel(
     return ft.Column(
         controls=[
             ft.Container(
-                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
                 content=_search_box(
                     search_query, set_search_query, "在当前文档中查找…", c
                 ),
             ),
             ft.Container(
-                padding=ft.Padding.symmetric(horizontal=12, vertical=4),
+                padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.SM),
                 content=ft.Text(
                     value=f"{len(search_results)} 个结果",
                     size=11,
@@ -520,7 +520,7 @@ def Sidebar(
         active = active_panel == key
         return ft.Container(
             expand=True,
-            border_radius=6,
+            border_radius=Radius.MD,
             bgcolor=ft.Colors.with_opacity(0.10, c.link) if active else None,
             content=ft.IconButton(
                 icon=icon,
@@ -529,7 +529,7 @@ def Sidebar(
                 on_click=lambda e: on_change_panel(key),
                 style=ft.ButtonStyle(
                     color=c.link if active else c.muted,
-                    padding=6,
+                    padding=Spacing.MD,
                 ),
             ),
         )
@@ -537,14 +537,14 @@ def Sidebar(
     tabs = ft.Container(
         bgcolor=c.toolbar_bg,
         border=only_border(bottom=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.LG),
         content=ft.Row(
             controls=[
                 _panel_tab("files", ft.Icons.FOLDER_OUTLINED, "文件"),
                 _panel_tab("outline", ft.Icons.FORMAT_LIST_BULLETED, "大纲"),
                 _panel_tab("search", ft.Icons.SEARCH, "搜索"),
             ],
-            spacing=2,
+            spacing=Spacing.XS,
         ),
     )
 

@@ -21,9 +21,13 @@ from models import BlockType, Line
 from styles import (
     FONT_MAIN,
     FONT_MONO,
+    Elevation,
+    Radius,
+    Spacing,
     _current_colors,
     block_text_size,
     block_weight,
+    card_shadow,
     only_border,
 )
 from views.cursor_layer import cursor_text_field, make_strut
@@ -125,9 +129,9 @@ def _wrap_block(
         content = ft.Container(
             content=content,
             bgcolor=ft.Colors.with_opacity(0.22, c.active_bg),
-            border_radius=8,
+            border_radius=Radius.LG,
             border=only_border(left=ft.BorderSide(3, c.link)),
-            padding=ft.Padding.only(left=6),
+            padding=ft.Padding.only(left=Spacing.MD),
         )
 
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
@@ -137,14 +141,14 @@ def _wrap_block(
         for _ in range(lvl):
             content = ft.Container(
                 content=content,
-                padding=ft.Padding.only(left=12),
+                padding=ft.Padding.only(left=Spacing.XL),
                 border=only_border(left=ft.BorderSide(3, c.quote_bar)),
             )
 
     kwargs: dict = {
         "key": f"line-{line_idx}" if line_idx is not None else None,
         "content": content,
-        "padding": ft.Padding.only(left=pad_left, top=2, bottom=2),
+        "padding": ft.Padding.only(left=pad_left, top=Spacing.XS, bottom=Spacing.XS),
         "margin": ft.Margin.all(0),
         "ink": False,
     }
@@ -204,19 +208,24 @@ def _cursor_overlay(
     )
 
 
+@ft.memo
 @ft.component
 def LineView(
     line: Line,
     line_idx: int,
     *,
-    cursor_li: int | None = None,
-    cursor_off: int = 0,
+    cursor_off: int | None = None,
     cursor_ref: ft.Ref | None = None,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
     content_width: float | None = None,
     line_height: float = 1.6,
     is_current_line: bool = False,
+    # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，
+    # ft.memo 浅比较 line 引用未变会误判未刷新。通过 raw 长度 + 段数
+    # 两个值变化触发 memo 检测，让屏幕刷新。LineView 内部不读取这两个值。
+    line_raw_version: int = 0,
+    line_seg_count: int = 0,
     # 光标输入（激活行用）
     on_cursor_change: Callable[[str], None] | None = None,
     on_cursor_submit: Callable[[str], None] | None = None,
@@ -248,21 +257,26 @@ def LineView(
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
+    is_current_line：唯一激活标志（替代原 cursor_li == line_idx 比较）。
     cursor_ref：激活行的光标位置 ref（CursorState）。
     handle_char_input 中不调用 set_cursor_off（避免重渲染打断 IME），
     光标位置仅由 cursor_ref.current.base 跟踪。
     LineView 通过 cursor_ref 读取最新光标位置，计算光标像素坐标。
     parser.reparse_line 触发的重渲染会重新调用 LineView，此时读取
     cursor_ref.current.base 获取最新光标位置，实现光标实时跟随。
+
+    memo 化：非激活行的 prop 集合稳定（line/line_idx/content_width/line_height
+    + 版本号 prop + 回调），cursor 移动时仅旧激活行 + 新激活行 prop 变化，
+    其余 N-2 行 ft.memo 直接复用缓存，跳过 Python 函数体执行。
     """
     c = _current_colors()
     base = block_text_size(line.block_type, line.level)
-    is_active = cursor_li == line_idx and cursor_li is not None
+    is_active = is_current_line
 
     # 激活行：优先使用 cursor_ref.current.base（IME 组合期间最新位置）
     # cursor_off state 在 IME 组合期间不更新（避免重渲染打断 IME），
     # 仅在 _end_input_session 中同步。cursor_ref 实时跟踪最新位置。
-    effective_cursor_off = cursor_off
+    effective_cursor_off = cursor_off if cursor_off is not None else 0
     if is_active and cursor_ref is not None and cursor_ref.current is not None:
         ref_off = getattr(cursor_ref.current, "base", None)
         if ref_off is not None and ref_off >= 0:
@@ -285,8 +299,8 @@ def LineView(
             extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
         )
         content = ft.Container(
-            content=md, bgcolor=c.math_bg, border_radius=6, width=float("inf"),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+            content=md, bgcolor=c.math_bg, border_radius=Radius.MD, width=float("inf"),
+            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             alignment=ft.Alignment.CENTER,
         )
         return _wrap_block(content, line, base, line_idx, is_current_line=is_current_line)
@@ -295,7 +309,7 @@ def LineView(
     if line.block_type == BlockType.HR:
         content = ft.Container(
             content=ft.Divider(height=1, thickness=1, color=c.quote_bar),
-            padding=ft.Padding.symmetric(vertical=8),
+            padding=ft.Padding.symmetric(vertical=Spacing.LG),
             ink=True,
         )
         return _wrap_block(content, line, base, line_idx, is_current_line=is_current_line)
@@ -305,17 +319,17 @@ def LineView(
         toc_items: list[ft.Control] = [
             ft.Container(
                 content=ft.Text(value=text, size=base - 1, color=c.text, font_family=FONT_MAIN),
-                padding=ft.Padding.only(left=(lvl - 1) * 16),
+                padding=ft.Padding.only(left=(lvl - 1) * Spacing.XXL),
                 on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
                 ink=True,
             )
             for li, lvl, text in (toc_entries or [])
         ]
         content = ft.Container(
-            content=ft.Column(controls=toc_items, spacing=2),
+            content=ft.Column(controls=toc_items, spacing=Spacing.XS),
             width=float("inf"),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-            bgcolor=c.code_bg, border_radius=6,
+            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            bgcolor=c.code_bg, border_radius=Radius.MD,
         )
         return _wrap_block(content, line, base, line_idx, is_current_line=is_current_line)
 
@@ -395,9 +409,9 @@ def _render_code_block(
         icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
         icon_size=14,
         tooltip="已复制" if copied else "复制代码",
-        padding=6,
+        padding=Spacing.MD,
         style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=6),
+            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
             color=ft.Colors.GREEN if copied else c.muted,
         ),
         on_click=lambda e, txt=code: (
@@ -408,7 +422,9 @@ def _render_code_block(
 
     line_count = max(1, code.count("\n") + 1)
     digits = len(str(line_count))
-    gutter_width = max(48, 24 + digits * 12) + 8
+    # 紧凑行号区：字号 11 + 等宽字体，每数字约 7-8px
+    # 1 位数字 ~32px，2 位 ~40px，3 位 ~48px（原为 56/68/80）
+    gutter_width = max(28, 12 + digits * 8) + Spacing.SM
     gutter_bg = ft.Colors.with_opacity(0.22 if is_dark else 0.04, c.text)
     editor_height = max(line_count * 20 + 16, 52)
 
@@ -419,7 +435,7 @@ def _render_code_block(
         code_theme=code_theme,
         gutter_style=GutterStyle(
             width=gutter_width,
-            margin=8,
+            margin=Spacing.XS,
             show_line_numbers=True,
             show_errors=False,
             show_folding_handles=False,
@@ -427,7 +443,7 @@ def _render_code_block(
             text_style=ft.TextStyle(font_family=FONT_MONO, size=11, color=c.muted),
         ),
         text_style=ft.TextStyle(font_family=FONT_MONO, size=14, color=c.text),
-        padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.MD),
         height=editor_height,
         read_only=False,
         autofocus=False,
@@ -443,14 +459,15 @@ def _render_code_block(
 
     header = ft.Row(
         controls=[lang_dropdown, ft.Container(expand=True), copy_btn],
-        spacing=6,
+        spacing=Spacing.MD,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
     content = ft.Container(
-        content=ft.Column([header, editor], spacing=4),
+        content=ft.Column([header, editor], spacing=Spacing.SM),
         bgcolor=c.code_block_bg,
-        border_radius=6,
-        padding=ft.Padding.only(left=6, right=8, top=2, bottom=8),
+        border_radius=Radius.MD,
+        padding=ft.Padding.only(left=Spacing.MD, right=Spacing.LG, top=Spacing.XS, bottom=Spacing.LG),
+        shadow=card_shadow(Elevation.LOW, is_dark),
     )
     return _wrap_block(
         content, line, line_idx,

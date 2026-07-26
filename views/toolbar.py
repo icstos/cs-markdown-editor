@@ -11,7 +11,7 @@ from typing import Callable
 
 import flet as ft
 
-from styles import _current_colors
+from styles import Radius, Spacing, _current_colors
 
 
 def _btn(
@@ -26,8 +26,8 @@ def _btn(
         style=ft.ButtonStyle(
             color=c.link if toggle_on else c.muted,
             bgcolor=ft.Colors.with_opacity(0.10 if toggle_on else 0.0, c.link),
-            padding=4,
-            shape=ft.RoundedRectangleBorder(radius=8),
+            padding=Spacing.SM,
+            shape=ft.RoundedRectangleBorder(radius=Radius.LG),
             animation_duration=160,
         ),
     )
@@ -36,7 +36,7 @@ def _btn(
 def _divider() -> ft.Control:
     c = _current_colors()  # 当前主题颜色（亮/暗）
     return ft.Container(
-        width=1, height=20, bgcolor=c.border, margin=ft.Margin.symmetric(horizontal=4)
+        width=1, height=20, bgcolor=c.border, margin=ft.Margin.symmetric(horizontal=Spacing.SM)
     )
 
 

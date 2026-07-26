@@ -516,6 +516,62 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
     line.segments = rebuilt.segments
 
 
+def reparse_line_atomic(line: Line, new_raw: str) -> None:
+    """原子化重解析：所有字段批量更新，仅触发一次 observable 通知。
+
+    用 object.__setattr__ 绕过 Observable.__setattr__ 的逐字段 _notify，
+    最后 line.notify() 触发唯一一次通用通知。替代 reparse_line(line, new_raw)
+    在高频编辑路径（handle_char_input / backspace_core / delete_core /
+    handle_paste / indent_or_outdent）中的调用，将 2-7 次通知合并为 1 次。
+
+    实现要点：
+    - object.__setattr__ 仅更新 __dict__ 不触发 _notify（已验证 Flet Observable 源码）
+    - segments 设为纯 list（不经 _wrap_if_collection 包裹为 ObservableList）：
+      项目代码从不 append/extend/remove line.segments（仅替换引用），安全
+    - line.notify() 是 Observable 的公共方法，触发 _notify(None) 通用通知
+
+    与 reparse_line 的区别：后者保留用于低频路径（toggle_task / change_lang /
+    撤销重做），通知次数不敏感。本函数专用于高频输入路径。
+    """
+    # 静默更新 raw（不触发通知）
+    object.__setattr__(line, "raw", new_raw)
+    raw = new_raw
+
+    if line.block_type == BlockType.CODE:
+        lang, body = _split_code_block(raw)
+        object.__setattr__(line, "lang", lang)
+        object.__setattr__(line, "segments", [Segment(SegType.CODE, body, body)])
+        line.notify()
+        return
+
+    if line.block_type == BlockType.HR:
+        object.__setattr__(line, "segments", [Segment(SegType.TEXT, raw, raw)])
+        line.notify()
+        return
+
+    if line.block_type == BlockType.MATH:
+        m = _RE_MATH_BLOCK.match(raw)
+        content = m.group(1).strip() if m else raw
+        object.__setattr__(line, "segments", [Segment(SegType.MATH, content, content)])
+        line.notify()
+        return
+
+    if line.block_type == BlockType.TABLE:
+        object.__setattr__(line, "segments", [Segment(SegType.TEXT, raw, raw)])
+        line.notify()
+        return
+
+    # 普通块：完整重建（6 字段静默更新 + 1 次 notify）
+    rebuilt = _build_line(raw)
+    object.__setattr__(line, "block_type", rebuilt.block_type)
+    object.__setattr__(line, "level", rebuilt.level)
+    object.__setattr__(line, "lang", "")
+    object.__setattr__(line, "task", rebuilt.task)
+    object.__setattr__(line, "checked", rebuilt.checked)
+    object.__setattr__(line, "segments", rebuilt.segments)
+    line.notify()
+
+
 def segment_raw(segments: list[Segment]) -> str:
     """由段列表拼回行源码。"""
     return "".join(s.raw for s in segments)

@@ -23,7 +23,15 @@ except Exception:  # pragma: no cover
     DataTable2 = ft.DataTable
 
 from models import BlockType, Line
-from styles import FONT_MAIN, FONT_MONO, _current_colors
+from styles import (
+    FONT_MAIN,
+    FONT_MONO,
+    Elevation,
+    Radius,
+    Spacing,
+    _current_colors,
+    card_shadow,
+)
 
 _ALIGN_RE = re.compile(r"^:?-{3,}:?$")
 
@@ -120,6 +128,7 @@ def _align_icon(align: str) -> str:
 # TableView 组件
 # ---------------------------------------------------------------------------
 
+@ft.memo
 @ft.component
 def TableView(
     lines: list[Line],
@@ -132,9 +141,28 @@ def TableView(
     on_table_blur: Callable[[], None] | None = None,
     table_nav_ref: ft.Ref | None = None,
     is_current_line: bool = False,
+    # 版本号触发 prop：on_table_op 通过 document.lines = lines 重新赋值已能
+    # 触发 memo 检测（lines 引用变化）。但 on_change_cell 就地修改 line.raw
+    # 不替换 lines 引用，ft.memo 浅比较 lines 引用未变会误判未刷新。
+    # 表格内部 edit_draft state 已驱动编辑态显示，on_change_cell 无需外部
+    # 重渲染；但保留版本号 prop 作为结构性变更（add_row/delete_col 等）的
+    # 兜底触发，确保 lines 引用未变但内容已变的边缘场景也能刷新。
+    # TableView 内部不读取这两个值，仅作 memo 触发用。
+    lines_version: int = 0,
+    first_line_raw_version: int = 0,
 ):
-    """自管理的表格编辑组件（独立岛屿，不使用 active/draft 系统）。"""
+    """自管理的表格编辑组件（独立岛屿，不使用 active/draft 系统）。
+
+    memo 化：表格作为独立岛屿，prop 集合稳定（lines/line_idx/content_width
+    + 回调 + is_current_line + 版本号 prop）。cursor_line 移动到表格外时
+    is_current_line 由 True→False 触发 memo 刷新（移除高亮边框）；
+    on_table_op 通过 document.lines = lines 重赋值触发 lines 引用变化，
+    memo 检测到后重新解析表格结构。on_change_cell 由内部 edit_draft state
+    驱动显示，无需外部重渲染，memo 跳过以保 IME/编辑流畅。
+    """
     c = _current_colors()
+    page = ft.context.page
+    is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
     header_idx, sep_idx, row_indices, rows, aligns = _parse_table_lines(lines, line_idx)
     if not rows:
         return ft.Container()
@@ -659,14 +687,15 @@ def TableView(
     # is_current_line 高亮
     content = ft.Container(
         content=ft.Column(
-            controls=[toolbar, ft.Container(height=4), table],
+            controls=[toolbar, ft.Container(height=Spacing.SM), table],
             spacing=0,
         ),
         width=float("inf"),
-        padding=ft.Padding.symmetric(horizontal=10, vertical=10),
+        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.LG),
         bgcolor=container_bg,
-        border_radius=14,
+        border_radius=Radius.XXL,
         border=ft.Border.all(1, container_border),
+        shadow=card_shadow(Elevation.LOW, is_dark),
     )
 
     if is_current_line:
@@ -675,7 +704,7 @@ def TableView(
             border=ft.Border.all(
                 2, _safe_color(c.link, 0.20),
             ),
-            border_radius=16,
+            border_radius=Radius.XXXL,
             padding=ft.Padding.all(1),
         )
 

@@ -30,6 +30,7 @@ import io
 import os
 import re
 import urllib.request
+from collections import OrderedDict
 
 import uharfbuzz as _hb
 from PIL import Image as _PILImage
@@ -68,6 +69,50 @@ _hb_faces: dict[str, _hb.Face] = {}
 _hb_fonts: dict[tuple[str, int], tuple[_hb.Font, int]] = {}
 # 单字符宽度缓存：(字符, 字体族, 字号) -> 像素宽度（行内逐字符累加高频调用）
 _char_width_cache: dict[tuple[str, str, int], float] = {}
+
+# 多字符文本测量 LRU 缓存：(text, font_family, size) -> 测量结果
+# width_cache 缓存 float；offsets_cache 缓存 tuple[float, ...]
+# 两者分开存储：同一 (text, font, size) 可能被 measure_text_width 和
+# measure_text_offsets 同时查询，但返回类型不同，混用会类型冲突。
+# 激活行重渲染时非激活段文本不变，命中缓存跳过 HarfBuzz 整形（O(1) 查表）。
+# 单字符仍走 _char_width_cache（独立小缓存，命中率更高，避免被多字符 LRU 淘汰）。
+_MEASURE_CACHE_MAXLEN = 4096          # 条目数上限（~3MB 内存）
+_MEASURE_CACHE_MAX_TEXT_LEN = 256     # 单条文本长度上限（超长段落不缓存）
+_width_cache: OrderedDict[tuple[str, str, int], float] = OrderedDict()
+_offsets_cache: OrderedDict[tuple[str, str, int], tuple[float, ...]] = OrderedDict()
+
+
+def _width_cache_get(key: tuple[str, str, int]) -> float | None:
+    val = _width_cache.get(key)
+    if val is not None:
+        _width_cache.move_to_end(key)
+    return val
+
+
+def _width_cache_put(key: tuple[str, str, int], val: float) -> None:
+    _width_cache[key] = val
+    if len(_width_cache) > _MEASURE_CACHE_MAXLEN:
+        _width_cache.popitem(last=False)
+
+
+def _offsets_cache_get(key: tuple[str, str, int]) -> tuple[float, ...] | None:
+    val = _offsets_cache.get(key)
+    if val is not None:
+        _offsets_cache.move_to_end(key)
+    return val
+
+
+def _offsets_cache_put(key: tuple[str, str, int], val: tuple[float, ...]) -> None:
+    _offsets_cache[key] = val
+    if len(_offsets_cache) > _MEASURE_CACHE_MAXLEN:
+        _offsets_cache.popitem(last=False)
+
+
+def clear_text_layout_cache() -> None:
+    """清空所有文本测量缓存（字体文件变更、主题切换时调用）。"""
+    _char_width_cache.clear()
+    _width_cache.clear()
+    _offsets_cache.clear()
 
 
 def _get_hb_font(font_family: str, size: int) -> tuple[_hb.Font, int] | None:
@@ -180,7 +225,12 @@ def measure_text_width(text: str, font_family: str, size: int) -> float:
     保证光标定位与渲染层 TextSpan 像素级对齐——修复 Pillow getlength 截断 advance
     导致数字行光标偏移（每数字 0.2px 累积）的问题。
 
-    单字符结果缓存于 _char_width_cache，行内逐字符累加场景下首次外为 O(1) 查表。
+    缓存策略：
+    - 单字符：_char_width_cache（独立小缓存，逐字符累加高频场景命中率高）
+    - 多字符（≤256 字符）：_measure_cache LRU（激活行重渲染时非激活段文本不变，
+      命中缓存跳过 HarfBuzz 整形，O(1) 查表）
+    - 超长文本（>256 字符）：不缓存（避免单条占用过大内存；代码块走 CodeEditor
+      独立路径，不经过此函数）
     需要逐字符光标偏移时优先用 measure_text_offsets（cluster 级，含 kerning）。
     """
     if not text:
@@ -192,6 +242,15 @@ def measure_text_width(text: str, font_family: str, size: int) -> float:
             return cached
         width = _measure_uncached(text, font_family, size)
         _char_width_cache[key] = width
+        return width
+    # 多字符：LRU 缓存（文本长度上限 _MEASURE_CACHE_MAX_TEXT_LEN）
+    if len(text) <= _MEASURE_CACHE_MAX_TEXT_LEN:
+        key = (text, font_family, size)
+        cached = _width_cache_get(key)
+        if cached is not None:
+            return cached
+        width = _measure_uncached(text, font_family, size)
+        _width_cache_put(key, width)
         return width
     return _measure_uncached(text, font_family, size)
 
@@ -221,6 +280,23 @@ def measure_text_offsets(text: str, font_family: str, size: int) -> list[float]:
     if len(text) == 1:
         # 单字符：直接查宽度缓存，offsets = [0, width]
         return [0.0, measure_text_width(text, font_family, size)]
+    # 多字符：LRU 缓存（缓存 tuple 不可变，返回 list 副本防外部篡改）
+    if len(text) <= _MEASURE_CACHE_MAX_TEXT_LEN:
+        key = (text, font_family, size)
+        cached = _offsets_cache_get(key)
+        if cached is not None:
+            return list(cached)
+        offsets_tuple = tuple(_compute_offsets(text, font_family, size))
+        _offsets_cache_put(key, offsets_tuple)
+        return list(offsets_tuple)
+    return _compute_offsets(text, font_family, size)
+
+
+def _compute_offsets(text: str, font_family: str, size: int) -> list[float]:
+    """多字符 offsets 计算内部函数（CJK 回退切分 + _hb_cluster_offsets 拼接）。
+
+    被 measure_text_offsets 调用，独立出来便于 LRU 缓存包裹。
+    """
     # CJK 回退：FONT_MAIN 直接整形；其它字体按 CJK 边界切分，CJK 片段换主中文字体
     if font_family == FONT_MAIN or not _CJK_RE.search(text):
         return _hb_cluster_offsets(text, font_family, size)

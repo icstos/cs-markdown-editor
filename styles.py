@@ -275,3 +275,91 @@ def only_border(
         bottom=bottom or _NO_BORDER,
         left=left or _NO_BORDER,
     )
+
+
+# ---------------------------------------------------------------------------
+# Design Token：间距 / 圆角 / 海拔 / 阴影的统一来源
+# ---------------------------------------------------------------------------
+# 设计原则：
+# - 4px 基准网格，2px 半步长用于紧凑控件
+# - 圆角递进 4-6-8-12-16-18，嵌套时外层 = 内层 + padding
+# - 海拔用 BoxShadow 表达（不用 Container.elevation，Material 风格过重）
+# - 亮/暗主题共享 token，颜色差异由 Colors 处理
+# 符合「科学、有序、清爽、科技、专业」的视觉偏好。
+
+
+class Spacing:
+    """间距 token（4px 基准网格）。"""
+
+    XS = 2     # 紧凑控件内间距（toolbar 按钮 padding、TOC 列表 spacing）
+    SM = 4     # 标准控件内间距（图标按钮 padding）
+    MD = 6     # 中等间距（Row spacing、紧凑容器 padding）
+    LG = 8     # 标准垂直间距（块级容器 vertical padding）
+    XL = 12    # 标准水平间距（块级容器 horizontal padding、引用缩进）
+    XXL = 16   # 大间距（对话框 padding、TOC 缩进）
+    XXXL = 24  # 超大间距（对话框外 padding、章节间距）
+
+
+class Radius:
+    """圆角 token（4-6-8-12-16-18 递进，嵌套时外层 = 内层 + padding）。"""
+
+    SM = 4     # 小圆角（行内代码、行内公式）
+    MD = 6     # 中圆角（代码块、表格单元格、TOC 块）
+    LG = 8     # 大圆角（按钮、当前行高亮、侧边栏列表项）
+    XL = 12    # 超大圆角（DataTable、设置面板卡片）
+    XXL = 16   # 容器圆角（表格容器、代码块外层）
+    XXXL = 18  # 对话框圆角
+
+
+class Elevation:
+    """海拔 token（BoxShadow 配置预设）。"""
+
+    NONE = 0
+    LOW = 1      # 代码块、表格（微妙层次）
+    MEDIUM = 2   # 浮动工具栏、弹出菜单
+    HIGH = 4     # 对话框
+    DIALOG = 8   # 模态对话框（强层次）
+
+
+def card_shadow(elevation: int = Elevation.LOW, is_dark: bool = False) -> list[ft.BoxShadow]:
+    """按海拔返回阴影列表。
+
+    亮色：低 opacity（0.06）淡黑阴影，微妙层次感
+    暗色：高 opacity（0.30）深黑阴影，暗背景下需更强对比才可见
+    """
+    if elevation == Elevation.NONE:
+        return []
+    if elevation == Elevation.LOW:
+        opacity = 0.30 if is_dark else 0.06
+        blur = 8 if is_dark else 6
+        return [ft.BoxShadow(
+            spread_radius=0, blur_radius=blur,
+            color=ft.Colors.with_opacity(opacity, ft.Colors.BLACK),
+            offset=ft.Offset(0, 1),
+        )]
+    if elevation == Elevation.MEDIUM:
+        opacity = 0.40 if is_dark else 0.10
+        blur = 12 if is_dark else 10
+        return [ft.BoxShadow(
+            spread_radius=0, blur_radius=blur,
+            color=ft.Colors.with_opacity(opacity, ft.Colors.BLACK),
+            offset=ft.Offset(0, 2),
+        )]
+    # HIGH / DIALOG
+    opacity = 0.50 if is_dark else 0.18
+    blur = 24 if is_dark else 20
+    return [ft.BoxShadow(
+        spread_radius=0, blur_radius=blur,
+        color=ft.Colors.with_opacity(opacity, ft.Colors.BLACK),
+        offset=ft.Offset(0, 8),
+    )]
+
+
+def hairline_border(color: str, opacity: float = 1.0) -> ft.BorderSide:
+    """1px 细线边框（表格分割线、弱化边框）。"""
+    return ft.BorderSide(1, ft.Colors.with_opacity(opacity, color))
+
+
+def accent_border(color: str, width: int = 2) -> ft.BorderSide:
+    """强调边框（当前行/激活态）。"""
+    return ft.BorderSide(width, color)

@@ -891,6 +891,13 @@ def MarkdownEditor(
         _push_history()
         undo_push_pending.current = True
         line = document.lines[li]
+        # 记录旧前缀长度和光标位置（_reparse_atomic 前）
+        old_prefix_len = 0
+        if line.segments and line.segments[0].seg_type in (
+            SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX,
+        ):
+            old_prefix_len = len(line.segments[0].raw)
+        old_off = _cursor_base(len(_line_raw(line)))
         content = _inline_content(line)
         if block_type == BlockType.HEADING:
             new_raw = "#" * level + " " + content
@@ -917,14 +924,18 @@ def MarkdownEditor(
             set_cursor_line(li)
             set_cursor_li(None)
         else:
-            # 定位到内容首字符（跳过前缀）
+            # 保持光标在内容部分的相对位置（Typora 式：切换标题/列表级别不跳到文字首部）
             new_line = document.lines[li]
-            prefix_len = 0
+            new_prefix_len = 0
             if new_line.segments and new_line.segments[0].seg_type in (
                 SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX,
             ):
-                prefix_len = len(new_line.segments[0].raw)
-            _set_cursor(li, prefix_len)
+                new_prefix_len = len(new_line.segments[0].raw)
+            # 光标在内容部分的相对偏移（光标在前缀部分时视为 0）
+            content_off = max(0, old_off - old_prefix_len)
+            new_raw_len = len(_line_raw(new_line))
+            new_off = min(new_prefix_len + content_off, new_raw_len)
+            _set_cursor(li, new_off)
 
     # ============ 行内格式（光标级包裹）============
     def apply_inline_format(fmt: str):

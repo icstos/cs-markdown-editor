@@ -146,12 +146,12 @@ def _wrap_block(
         )
 
     if is_current_line:
+        # 当前行高亮：仅淡色背景，无蓝色竖条（保持界面简洁专业）
+        # 左侧不再加 border 竖条，避免视觉噪声；与跳转脉冲高亮风格统一
         content = ft.Container(
             content=content,
             bgcolor=ft.Colors.with_opacity(0.22, c.active_bg),
             border_radius=Radius.LG,
-            border=only_border(left=ft.BorderSide(3, c.link)),
-            padding=ft.Padding.only(left=Spacing.MD),
         )
 
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):

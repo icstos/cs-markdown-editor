@@ -348,10 +348,29 @@ def raw_to_visible_spans(
                     spans.append(ft.TextSpan(text=text, style=base_style))
         else:
             # 光标不在段内：标记折叠，仅显示 display_text（零宽度标记）
-            display = display_text(seg)
-            if display:
-                spans.append(ft.TextSpan(text=display, style=base_style))
-            # display 为空时不添加 span（标题 # /引用 > 前缀完全消失）
+            # HEADING_PREFIX 例外：光标在本行任意位置时显示 # 前缀（Typora 式：
+            # 编辑标题行时可见 # 号，用户可编辑标题级别）
+            if (
+                seg.seg_type == SegType.HEADING_PREFIX
+                and cursor_raw_offset is not None
+            ):
+                pieces = split_seg_for_display(seg, cursor_local=None)
+                for text, is_marker in pieces:
+                    if not text:
+                        continue
+                    style = ft.TextStyle(
+                        size=base_style.size,
+                        weight=base_style.weight,
+                        color=c.muted,
+                        italic=base_style.italic,
+                        font_family=base_style.font_family,
+                    )
+                    spans.append(ft.TextSpan(text=text, style=style))
+            else:
+                display = display_text(seg)
+                if display:
+                    spans.append(ft.TextSpan(text=display, style=base_style))
+                # display 为空时不添加 span（引用 > 前缀完全消失）
 
         raw_offset = seg_end
 

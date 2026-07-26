@@ -216,14 +216,27 @@ def _line_raw_offsets_x(
                 offsets.append(seg_start_x + seg_offsets[i])
             acc = seg_start_x + seg_offsets[-1]
         elif is_prefix:
-            # 前缀段（光标不在段内）：display_text 宽度（•  / N. / 空）
-            display = display_text(seg)
-            display_w = measure_text_width(display, font, size) if display else 0.0
-            seg_start_x = acc
-            for i in range(seg_raw_len):
-                if i == seg_raw_len - 1:
-                    acc = seg_start_x + display_w
-                offsets.append(acc)
+            # 前缀段（光标不在段内）
+            # HEADING_PREFIX 例外：光标在本行时 # 前缀可见占宽度（与渲染层一致）
+            if (
+                seg.seg_type == SegType.HEADING_PREFIX
+                and cursor_raw_offset is not None
+            ):
+                # 光标在本行：# 前缀占实际宽度（cluster 级整形测量）
+                seg_offsets = measure_text_offsets(seg.raw, font, size)
+                seg_start_x = acc
+                for i in range(1, len(seg_offsets)):
+                    offsets.append(seg_start_x + seg_offsets[i])
+                acc = seg_start_x + seg_offsets[-1]
+            else:
+                # 浏览态或非标题前缀：display_text 宽度（•  / N. / 空）
+                display = display_text(seg)
+                display_w = measure_text_width(display, font, size) if display else 0.0
+                seg_start_x = acc
+                for i in range(seg_raw_len):
+                    if i == seg_raw_len - 1:
+                        acc = seg_start_x + display_w
+                    offsets.append(acc)
         else:
             # 行内段（光标不在段内）：逐 piece 测量，标记零宽度、内容 cluster 级整形
             pieces = split_seg_for_display(seg)

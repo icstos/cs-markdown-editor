@@ -140,6 +140,7 @@ def cursor_text_field(
         "dense": True,
         "shift_enter": False,
         "ignore_up_down_keys": True,  # 上下键冒泡到外层做跨行导航
+        "ignore_pointers": True,  # 点击穿透：不吸收鼠标事件，让 GestureDetector 处理光标定位
         "on_change": lambda e: on_change(e.control.value),
     }
     if on_submit is not None:

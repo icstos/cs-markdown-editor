@@ -316,10 +316,9 @@ def MarkdownEditor(
             if outward_sel_ref.current is not None:
                 _set_outward_sel(None)
             return
-        # 既有向外选区：先清除
+        # 既有向外选区：先清除，然后继续定位光标到点击位置
         if outward_sel_ref.current is not None:
             _set_outward_sel(None)
-            return
         _set_cursor(li, raw_off)
         _ensure_visible(li)
 
@@ -1560,9 +1559,10 @@ def MarkdownEditor(
             except Exception:
                 pass
 
-    # 仅依赖 cursor_li：切换行时才重新聚焦，同行输入/移动不触发 focus()
-    # （同行输入时 focus() 可能重置 IME composing region，需避免）
-    ft.use_effect(_focus_cursor_field, [cursor_li])
+    # 依赖 cursor_li + cursor_off：切换行或同行内光标位置变化时重新聚焦
+    # 同行内点击定位时 cursor_off 变化，需重新 focus 以保持光标可见
+    # IME 安全：_set_cursor 已在光标偏移不连续时调用 _end_input_session()
+    ft.use_effect(_focus_cursor_field, [cursor_li, cursor_off])
 
     # ============ use_effect：清空 cursor TextField 内部 value ============
     # _end_input_session 通过 set_clear_value_seq(+1) 触发此 effect，

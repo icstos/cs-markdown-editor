@@ -1067,7 +1067,7 @@ def MarkdownEditor(
         mark_dirty()
         _set_cursor(li + 1, len(new_raw))
 
-    def set_block(block_type: BlockType, level: int = 0):
+    def set_block(block_type: BlockType, level: int = 0, task: bool = False):
         """切换当前行块类型（Ctrl+0~6 / 工具栏）。"""
         li = cursor_li if cursor_li is not None else cursor_line
         if not (0 <= li < len(document.lines)):
@@ -1087,7 +1087,9 @@ def MarkdownEditor(
             new_raw = "#" * level + " " + content
         elif block_type == BlockType.LIST_UO:
             indent_sp = " " * line.level if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O) else ""
-            new_raw = f"{indent_sp}- " + content
+            # task=True：转为任务列表项（- [ ] content）；默认 False 走普通无序列表
+            prefix = "- [ ] " if task else "- "
+            new_raw = indent_sp + prefix + content
         elif block_type == BlockType.LIST_O:
             indent_sp = " " * line.level if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O) else ""
             new_raw = f"{indent_sp}1. " + content
@@ -1336,6 +1338,28 @@ def MarkdownEditor(
         new_raw = new_prefix + content
         _reparse_atomic(line, new_raw)
         mark_dirty()
+
+    def toggle_task_at_cursor():
+        """Alt+C：切换当前任务列表项的勾选状态。
+
+        编辑态用 cursor_li；浏览态用 cursor_line（最近交互行）兜底。
+        非任务行静默忽略，避免在普通段落按 Alt+C 产生副作用。
+        """
+        li = cursor_li if cursor_li is not None else cursor_line
+        if li is None or not (0 <= li < len(document.lines)):
+            return
+        line = document.lines[li]
+        if not line.task:
+            return
+        toggle_task(li)
+
+    def format_task():
+        """Ctrl+Shift+T：当前行转为任务列表项（- [ ] content）。
+
+        复用 set_block 的 LIST_UO 分支 + task=True 标志，光标位置由
+        set_block 末尾的重定位逻辑自动保持（前缀 2→6 字符自动处理）。
+        """
+        set_block(BlockType.LIST_UO, task=True)
 
     def change_lang(li: int, new_lang: str):
         if not (0 <= li < len(document.lines)):
@@ -2451,6 +2475,8 @@ def MarkdownEditor(
             toggle_focus_mode=toggle_focus_mode,
             set_block=set_block,
             apply_inline_format=apply_inline_format,
+            toggle_task_at_cursor=toggle_task_at_cursor,
+            format_task=format_task,
             code_focus_ref=code_focus_ref,
             table_focus_ref=table_focus_ref,
             math_focus_ref=math_focus_ref,
@@ -2683,6 +2709,7 @@ def MarkdownEditor(
                         on_h3=lambda: set_block(BlockType.HEADING, 3),
                         on_paragraph=lambda: set_block(BlockType.PARAGRAPH),
                         on_list=lambda: set_block(BlockType.LIST_UO),
+                        on_task=lambda: set_block(BlockType.LIST_UO, task=True),
                         on_quote=lambda: set_block(BlockType.QUOTE),
                         on_code_block=lambda: set_block(BlockType.CODE),
                         on_hr=lambda: set_block(BlockType.HR),

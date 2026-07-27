@@ -38,6 +38,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "paste": "ctrl+v",
         "select_all": "ctrl+a",
         "format_math_block": "ctrl+shift+m",
+        "toggle_task": "alt+c",
     },
     "edit": {
         "save": "ctrl+s",
@@ -60,6 +61,8 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "cut": "ctrl+x",
         "paste": "ctrl+v",
         "select_all": "ctrl+a",
+        "toggle_task": "alt+c",
+        "format_task": "ctrl+shift+t",
     },
 }
 
@@ -115,6 +118,9 @@ ACTION_REGISTRY: list[ActionDef] = [
     ActionDef("format_h3", "三级标题", "edit", "格式", "将当前行切换为三级标题。", {}),
     ActionDef("format_paragraph", "正文段落", "edit", "格式", "将当前行切换为普通段落。", {}),
     ActionDef("format_list", "无序列表", "edit", "格式", "将当前行切换为无序列表。", {}),
+    ActionDef("format_task", "任务列表", "edit", "格式", "将当前行切换为任务列表项（- [ ]）。", {"edit": "ctrl+shift+t"}),
+    ActionDef("toggle_task", "切换任务状态", "both", "编辑", "勾选/取消勾选当前任务列表项。",
+              {"browse": "alt+c", "edit": "alt+c"}),
     ActionDef("format_quote", "引用", "edit", "格式", "将当前行切换为引用块。", {}),
     ActionDef("format_code_block", "代码块", "edit", "格式", "将当前行切换为代码块。", {}),
     ActionDef("format_math_block", "公式块", "both", "格式", "将当前行切换为块级公式（$$...$$），并进入编辑态。",

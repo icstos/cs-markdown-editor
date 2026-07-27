@@ -447,6 +447,19 @@ class KeyDispatcher:
             if actions is not None and not self._native_field_focused(actions):
                 actions.set_block(BlockType.MATH)
             return
+        # Ctrl+Shift+T：当前行转为任务列表项（- [ ] content），浏览/编辑两态均生效，
+        # 与 Ctrl+0~6 切换标题行为一致（浏览态用 cursor_line 兜底目标行）。
+        # 代码块/表格聚焦时跳过（避免在原生控件内误触发行级转换）。
+        if matches(combo, shortcuts.get("format_task", "ctrl+shift+t")):
+            if actions is not None and not self._native_field_focused(actions):
+                actions.format_task()
+            return
+        # Alt+C：切换当前任务列表项勾选状态，浏览/编辑两态均生效。
+        # 非任务行静默忽略（toggle_task_at_cursor 内部守卫），无副作用。
+        if matches(combo, shortcuts.get("toggle_task", "alt+c")):
+            if actions is not None and not self._native_field_focused(actions):
+                actions.toggle_task_at_cursor()
+            return
         # 行内格式快捷键：编辑态包裹选区或插入空语法。
         # 代码块/表格聚焦时跳过（交由原生 TextField）。浏览态无 active 时静默返回。
         # combo→fmt_name 从 ShortcutManager 动态读取（用户自定义键位生效）。

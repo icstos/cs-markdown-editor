@@ -360,27 +360,57 @@ def RenderedLine(
         if content_segs:
             # 用整行渲染（raw_to_visible_spans 处理前缀段透明），但前缀段不显示
             # 任务列表的 LIST_PREFIX 已由 Checkbox 替代，渲染时跳过前缀段
+            # checked=True 时注入删除线 + muted 文字色（GitHub/Typora/VS Code 约定）
             spans = _spans_with_highlight(line, base, cursor_off, heading_level,
-                                          outward_range, skip_prefix=True)
+                                          outward_range, skip_prefix=True,
+                                          checked=line.checked)
         else:
-            spans = [ft.TextSpan(" ", style=style)]
+            # 空任务：浏览态显示淡灰占位符（编辑态仍可输入，保留单空格 span）
+            if cursor_off is None:
+                spans = [ft.TextSpan(
+                    "待办事项...",
+                    style=ft.TextStyle(color=c.muted, italic=True, size=base),
+                )]
+            else:
+                spans = [ft.TextSpan(" ", style=style)]
         ww, vlines = _get_vlayout()
         r2f = _build_raw_to_flat_map(line, cursor_off, outward_range, skip_prefix=True)
         text_area = _maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
                                        base, line_height, ww, style)
+        # 主题感知 Checkbox：颜色随亮/暗主题、圆角 4px、focus overlay 透明
+        # （消除 Material 默认焦点矩形——即用户记忆中的"左侧横线"）
+        # 布局：Checkbox 自然宽度 + GestureDetector(expand) 占据剩余空间。
+        # wrap=False 强制同一行（text_area 的 width=inf 由 expand 约束，
+        # 文本软换行由 _maybe_stack_multi 内部多视觉行处理），
+        # 避免 text_area 因 width=inf 被换到下一行导致框与文本分离。
         return ft.Row(
             controls=[
                 ft.Checkbox(
                     value=line.checked,
                     on_change=lambda e: on_toggle_task(line_idx) if on_toggle_task else None,
+                    active_color=c.link,
+                    check_color=ft.Colors.WHITE,
+                    fill_color={
+                        ft.ControlState.SELECTED: c.link,
+                        ft.ControlState.DEFAULT: c.surface,
+                    },
+                    overlay_color={
+                        ft.ControlState.HOVERED: ft.Colors.with_opacity(0.06, c.text),
+                        ft.ControlState.FOCUSED: ft.Colors.TRANSPARENT,
+                    },
+                    border_side=ft.BorderSide(1.5, c.muted),
+                    shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+                    tristate=False,
+                    splash_radius=0,
                 ),
                 ft.GestureDetector(
                     content=text_area, on_tap=_on_tap,
                     on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
                     on_double_tap_down=_on_double_tap_down,
+                    expand=True,
                 ),
             ],
-            wrap=True, spacing=Spacing.SM, run_spacing=0,
+            wrap=False, spacing=Spacing.SM, run_spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             width=float("inf"),  # 可滚动 Column 中占满全宽
         )
@@ -553,17 +583,50 @@ def _spans_with_highlight(
     heading_level: int,
     outward_range: tuple[int, int] | None,
     skip_prefix: bool = False,
+    checked: bool = False,
 ) -> list[ft.TextSpan]:
     """构造渲染 spans：raw_to_visible_spans 基础上注入向外选区高亮。
 
     skip_prefix=True 时跳过前缀段（任务列表用 Checkbox 替代前缀）。
+    checked=True 时（任务列表已勾选项）对所有 span 注入删除线 + muted 文字色，
+    保留原 bgcolor（选区高亮底色不丢失）。GitHub/Typora/VS Code 通用约定。
     """
     if outward_range is None:
-        return raw_to_visible_spans(line, base, cursor_off, heading_level,
-                                    skip_seg0=skip_prefix)
-    # 有选区高亮：逐段注入 highlight_bg
-    return _spans_with_selection(line, base, cursor_off, heading_level, outward_range,
-                                 skip_prefix)
+        spans = raw_to_visible_spans(line, base, cursor_off, heading_level,
+                                     skip_seg0=skip_prefix)
+    else:
+        # 有选区高亮：逐段注入 highlight_bg
+        spans = _spans_with_selection(line, base, cursor_off, heading_level, outward_range,
+                                      skip_prefix)
+    if checked:
+        spans = _apply_checked_style(spans)
+    return spans
+
+
+def _apply_checked_style(spans: list[ft.TextSpan]) -> list[ft.TextSpan]:
+    """已勾选任务文字样式：追加删除线 + muted 文字色，保留 bgcolor。
+
+    与原 decoration 取并集（保留已有 underline 等）；bgcolor 保留原值
+    （选区高亮底色不丢）。color 覆盖为 muted（标识"已完成"语义）。
+    """
+    c = _current_colors()
+    result: list[ft.TextSpan] = []
+    for sp in spans:
+        s = sp.style
+        # decoration 并集：原值 | LINE_THROUGH
+        orig_decoration = s.decoration if s is not None and s.decoration else ft.TextDecoration.NONE
+        new_decoration = orig_decoration | ft.TextDecoration.LINE_THROUGH
+        new_style = ft.TextStyle(
+            size=s.size if s is not None else None,
+            weight=s.weight if s is not None else None,
+            color=c.muted,  # 覆盖为 muted（已完成语义）
+            italic=s.italic if s is not None else None,
+            font_family=s.font_family if s is not None else None,
+            decoration=new_decoration,
+            bgcolor=s.bgcolor if s is not None else None,  # 保留选区高亮底色
+        )
+        result.append(ft.TextSpan(text=sp.text, style=new_style))
+    return result
 
 
 def _strip_prefix_spans(spans: list[ft.TextSpan], prefix_len: int) -> list[ft.TextSpan]:

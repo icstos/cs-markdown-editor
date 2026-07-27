@@ -268,12 +268,6 @@ class KeyDispatcher:
                 if actions.clear_outward_sel is not None:
                     actions.clear_outward_sel()
                 return
-            # Tab：链接字段跳转（仅在链接段上消费，否则 fall-through 到下方全局 Tab）
-            if norm == "tab" and not (e.ctrl or e.meta):
-                if actions.jump_link_field is not None and actions.jump_link_field(
-                    -1 if e.shift else 1
-                ):
-                    return
             # 可打印字符：打字替换 outward 选区（通用基础编辑行为，桌面端直觉）
             char = _extract_printable_char(e)
             if char is not None and actions.handle_outward_type_char is not None:
@@ -390,12 +384,7 @@ class KeyDispatcher:
             active_bt = getattr(actions.active_line, "block_type", None) if actions.active_line else None
             if active_bt in (BlockType.CODE, BlockType.TABLE):
                 return True
-            # 链接字段跳转优先于缩进：光标在链接 text/url 字段内时 Tab 跳字段
-            # （Typora 行为），未消费（返回 False）则 fall-through 到缩进/插空格
-            if actions.jump_link_cursor is not None and actions.jump_link_cursor(
-                -1 if e.shift else 1
-            ):
-                return True
+            # 链接编辑视为常规文本编辑：Tab 不做字段跳转，按默认缩进/插空格处理。
             if e.shift:
                 if actions.indent_or_outdent:
                     actions.indent_or_outdent(-1)

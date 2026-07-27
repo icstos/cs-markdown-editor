@@ -109,10 +109,7 @@ class EditorActions:
     select_all: Callable[[], None] | None = None  # Ctrl+A：全选文档
     cut_current_line: Callable[[], Awaitable[None]] | None = None  # async：无选区时剪切当前行（VSCode 行为）
 
-    # ---- 链接语法 Typora 式交互 ----
-    # 打字替换 outward 选区（浏览态选中→输入即替换，通用基础编辑行为）
+    # ---- 向外选区打字替换（通用基础编辑行为：浏览态选中→输入即替换）----
+    # 链接编辑回归常规文本编辑：光标在链接段内时渲染层显示完整语法，离开则折叠；
+    # 无需 Tab 字段跳转等专用动作。
     handle_outward_type_char: Callable[[str], None] | None = None
-    # outward_sel 态 Tab 在链接 text/url 字段间跳转，返回是否消费（False 则 fall-through）
-    jump_link_field: Callable[[int], bool] | None = None
-    # 编辑态 Tab 在链接 text/url 字段间跳转，返回是否消费（False 则 fall-through 到缩进）
-    jump_link_cursor: Callable[[int], bool] | None = None

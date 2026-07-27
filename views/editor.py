@@ -44,7 +44,7 @@ from styles import (
     block_text_size,
     only_border,
 )
-from utils.segment_helpers import WRAP_SYNTAX, link_field_ranges
+from utils.segment_helpers import WRAP_SYNTAX
 from views.line_view import LineView
 from views.table_view import TableView, _join_row
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
@@ -465,8 +465,13 @@ def MarkdownEditor(
 
         # IME 翻倍修正：value = X + X 模式时取 X
         # （Windows 五笔/拼音 composing text 完美翻倍 bug）
-        # 仅当长度 >= 2 且偶数，且前半 == 后半时触发
-        if len(value) >= 2 and len(value) % 2 == 0:
+        # 仅当长度 >= 4 且偶数，且前半 == 后半时触发。
+        # 阈值 4（非 2）：避免误伤 ASCII 快速连击的合法重复——URL 中常见的 "ww"、
+        # "//" 等 len=2 完美双叠更可能是用户连击而非 IME 翻倍；若折叠会丢字
+        # （last_value 已含首字符，折叠后 value==last_value 触发 ignore 分支吞掉第二个）。
+        # IME 翻倍通常为 composing text（>=2 字符）的双叠（len >= 4，如 "wqwq"）。
+        # len=2 翻倍由 cursor_layer 宽度策略（content_width - cursor_px_x）从根因修复。
+        if len(value) >= 4 and len(value) % 2 == 0:
             half = len(value) // 2
             if value[:half] == value[half:]:
                 value = value[:half]
@@ -1053,29 +1058,20 @@ def MarkdownEditor(
         undo_push_pending.current = True
 
         if fmt == "link":
-            # 包裹为 [selected]()（空 URL），直接进入编辑态定位到 URL 位置
-            # 空 URL 避免删除占位符；光标在 () 间闪烁，用户直接输入 URL
-            # Tab 在 text/url 间跳转（jump_link_cursor）
+            # 包裹为 [selected]()，光标定位到 URL 位置（]( 与 ) 之间）。
+            # 链接编辑视为常规文本编辑：光标在链接段内时渲染层（raw_to_visible_spans /
+            # split_seg_for_display）显示完整语法含 URL，光标离开段后自动折叠为
+            # display_text。无需 Tab 字段跳转 / URL 占位符等特殊状态机，亦无 set_nav_seq
+            # 重建，避免异步重新聚焦间隙丢失快速输入。
             new_raw = raw[:a_off] + f"[{selected}]()" + raw[b_off:]
             _reparse_atomic(line, new_raw)
             new_lines = list(document.lines)
             new_lines[a_li] = line
             document.lines = new_lines
             mark_dirty()
-            # 从重解析后的 segments 定位 LINK 段的 URL 起点，直接进入编辑态
-            acc = 0
-            for seg in line.segments:
-                seg_end = acc + len(seg.raw)
-                if seg.seg_type == SegType.LINK and acc <= a_off < seg_end:
-                    ranges = link_field_ranges(seg, acc)
-                    if ranges is not None:
-                        _, _, us, _ = ranges
-                        # 清 outward_sel + 进入编辑态（光标在 URL 位置）
-                        _set_outward_sel(None)
-                        _set_cursor(a_li, us)
-                    break
-                acc = seg_end
-            set_nav_seq(nav_seq + 1)
+            _set_outward_sel(None)
+            # URL 起点 = a_off + 1([) + len(selected)(text) + 2(])
+            _set_cursor(a_li, a_off + 3 + len(selected))
             return
 
         seg_type = {
@@ -1167,103 +1163,9 @@ def MarkdownEditor(
         # 清选区 + 切换到编辑态（光标在插入字符后）
         _set_outward_sel(None)
         _set_cursor(a_li, a_off + len(char))
-        set_nav_seq(nav_seq + 1)
-
-    def jump_link_field(direction: int) -> bool:
-        """outward_sel 态 Tab 在链接 text/url 字段间跳转。
-
-        direction=1（Tab）：text range → url range
-        direction=-1（Shift+Tab）：url range → text range
-        返回 True 表示已消费（KeyDispatcher 据此停止分发）。
-        空 range（零宽字段）跳过去后立即转 edit 模式（零宽 outward_sel 无意义）。
-        """
-        sel = outward_sel_ref.current
-        if sel is None:
-            return False
-        a_li, a_off, b_li, b_off = sel
-        if (a_li, a_off) > (b_li, b_off):
-            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
-        if a_li != b_li:
-            return False
-        if not (0 <= a_li < len(document.lines)):
-            return False
-        line = document.lines[a_li]
-        if _is_fence(line):
-            return False
-        # 定位包含 active 端（b_off）的 LINK 段
-        acc = 0
-        for seg in line.segments:
-            seg_end = acc + len(seg.raw)
-            if seg.seg_type == SegType.LINK and acc <= b_off <= seg_end:
-                ranges = link_field_ranges(seg, acc)
-                if ranges is None:
-                    return False
-                ts, te, us, ue = ranges
-                if direction == 1 and ts <= b_off <= te:
-                    # text → url
-                    if us == ue:
-                        # 空 URL：转 edit 模式定位到 url 起点
-                        _set_outward_sel(None)
-                        _set_cursor(a_li, us)
-                        set_nav_seq(nav_seq + 1)
-                    else:
-                        _set_outward_sel((a_li, us, a_li, ue))
-                    return True
-                if direction == -1 and us <= b_off <= ue:
-                    # url → text
-                    if ts == te:
-                        _set_outward_sel(None)
-                        _set_cursor(a_li, ts)
-                        set_nav_seq(nav_seq + 1)
-                    else:
-                        _set_outward_sel((a_li, ts, a_li, te))
-                    return True
-                return False
-            acc = seg_end
-        return False
-
-    def jump_link_cursor(direction: int) -> bool:
-        """编辑态 Tab 在链接 text/url 字段间跳转。
-
-        direction=1（Tab）：text → url；已在 url → 退出链接到 ) 之后
-        direction=-1（Shift+Tab）：url → text；已在 text → 退出链接到 [ 之前
-        光标在链接段内时始终返回 True（消费 Tab，防止 indent 在链接内插空格破坏语法）。
-        _set_cursor 触发重渲染，raw_to_visible_spans 检测光标在 URL range
-        → URL 子段变灰可见（既有逻辑，无需改动）。
-        """
-        if cursor_li is None:
-            return False
-        li = cursor_li
-        if not (0 <= li < len(document.lines)):
-            return False
-        line = document.lines[li]
-        if _is_fence(line):
-            return False
-        off = _cursor_base(len(_line_raw(line)))
-        acc = 0
-        for seg in line.segments:
-            seg_end = acc + len(seg.raw)
-            if seg.seg_type == SegType.LINK and acc <= off <= seg_end:
-                ranges = link_field_ranges(seg, acc)
-                if ranges is None:
-                    return False
-                ts, te, us, ue = ranges
-                in_text = ts <= off <= te
-                in_url = us <= off <= ue
-                if direction == 1:  # Tab 前进
-                    if in_url:
-                        _set_cursor(li, seg_end)  # 退出链接到 ) 之后
-                    else:
-                        _set_cursor(li, us)  # text/marker → url
-                else:  # Shift+Tab 后退
-                    if in_text:
-                        _set_cursor(li, acc)  # 退出链接到 [ 之前
-                    else:
-                        _set_cursor(li, ts)  # url/marker → text
-                set_nav_seq(nav_seq + 1)
-                return True
-            acc = seg_end
-        return False
+        # 不递增 nav_seq：避免 TextField 重建→异步重新聚焦间隙丢失后续快速输入。
+        # cursor_li 由 _set_cursor 设置，LineView 据其重渲染刷新 TextField 的 left/on_change；
+        # 旧 value 由 _end_input_session→_clear_cursor_value effect 清空。
 
     # ============ 任务列表 ============
     def toggle_task(li: int):
@@ -2288,8 +2190,6 @@ def MarkdownEditor(
             handle_outward_delete=handle_outward_delete,
             clear_outward_sel=clear_outward_sel,
             handle_outward_type_char=handle_outward_type_char,
-            jump_link_field=jump_link_field,
-            jump_link_cursor=jump_link_cursor,
         )
 
     # ============ TOC 条目（use_memo 稳定化：签名不变则引用不变，避免 ft.memo 误判）============

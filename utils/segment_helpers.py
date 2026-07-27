@@ -88,37 +88,6 @@ def display_text(seg: Segment) -> str:
     return seg.text
 
 
-def link_field_ranges(
-    seg: Segment, seg_start: int = 0
-) -> tuple[int, int, int, int] | None:
-    """返回 LINK 段在行级 raw 中的 (text_start, text_end, url_start, url_end) 偏移。
-
-    seg_start：seg 在 line.raw 中的起始偏移（默认 0，用于单段场景）。
-    end exclusive：[text_start, text_end) 为链接文本范围，[url_start, url_end) 为 URL 范围。
-
-    非 LINK 段或格式异常（无 `](`、不以 `[` 开头/`)` 结尾）返回 None。
-    供 outward_sel Tab 跳转 / 编辑态 Tab 跳转 / 渲染层共享，消除重复 `](` 定位计算。
-
-    示例：
-      `[text](url)` seg_start=0 → (1, 5, 7, 10)
-      `[](url)`     seg_start=0 → (1, 1, 3, 6)   text 为零宽
-      `[text]()`    seg_start=0 → (1, 5, 7, 7)   url 为零宽
-      `[**b**](u)`  seg_start=0 → (1, 6, 8, 9)   text 含内联格式
-    """
-    if seg.seg_type != SegType.LINK:
-        return None
-    raw = seg.raw
-    if not (raw.startswith("[") and raw.endswith(")") and "](" in raw):
-        return None
-    idx = raw.index("](")
-    return (
-        seg_start + 1,                 # text_start（[ 之后）
-        seg_start + idx,               # text_end（] 之前）
-        seg_start + idx + 2,           # url_start（]( 之后）
-        seg_start + len(raw) - 1,      # url_end（) 之前）
-    )
-
-
 def split_seg_for_display(
     seg: Segment, cursor_local: int | None = None
 ) -> list[tuple[str, bool]]:

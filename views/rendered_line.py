@@ -31,6 +31,7 @@ import flet as ft
 from models import BlockType, Line, SegType
 from styles import (
     FONT_MAIN,
+    FONT_MONO,
     Radius,
     Spacing,
     _current_colors,
@@ -404,6 +405,31 @@ def RenderedLine(
                 p_text_style=ft.TextStyle(
                     size=p_size, color=p_color, weight=p_weight,
                     font_family=FONT_MAIN, height=line_height,
+                ),
+                # 行内元素样式须与 segment_style（TextSpan 渲染路径）保持一致，
+                # 否则含行内公式的行经 ft.Markdown 渲染时这些元素会退化为默认样式。
+                # 特别是 code_text_style：flet 在其为 None 时会把 code 重置为
+                # bodyMedium+monospace（丢失 bgcolor/code_fg），导致行内代码
+                # 在含公式行中显示异常（无背景、配色错乱）。
+                code_text_style=ft.TextStyle(
+                    size=p_size - 1,
+                    color=c.code_fg,
+                    bgcolor=c.code_bg,
+                    font_family=FONT_MONO,
+                ),
+                strong_text_style=ft.TextStyle(
+                    size=p_size, weight=ft.FontWeight.BOLD, color=p_color,
+                ),
+                em_text_style=ft.TextStyle(
+                    size=p_size, italic=True, color=p_color,
+                ),
+                del_text_style=ft.TextStyle(
+                    size=p_size, color=c.strike,
+                    decoration=ft.TextDecoration.LINE_THROUGH,
+                ),
+                a_text_style=ft.TextStyle(
+                    size=p_size, color=c.link,
+                    decoration=ft.TextDecoration.UNDERLINE,
                 ),
             ),
         )

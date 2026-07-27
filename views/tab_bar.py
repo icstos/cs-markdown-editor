@@ -21,6 +21,8 @@ import flet as ft
 from styles import FONT_MAIN, Elevation, Radius, Spacing, card_shadow, get_colors, only_border
 
 _DIRTY_COLOR = "#FF9F0A"  # 未保存修改星号色（亮暗通用警示橙）
+_TAB_WIDTH = 200          # 标签固定宽度（超出文件名用省略号截断）
+_TAB_ICON = 12            # 标签内图标/字号（紧凑）
 
 
 def _file_name(path: str | None) -> str:
@@ -50,7 +52,7 @@ def TabBar(
         return ft.IconButton(
             icon=icon,
             tooltip=tooltip,
-            icon_size=14,
+            icon_size=_TAB_ICON,
             on_click=on_click,
             style=ft.ButtonStyle(
                 color=color,
@@ -123,12 +125,16 @@ def TabBar(
             border=only_border(bottom=bottom_border),
             on_click=_on_tab_click,
             on_hover=_on_tab_hover,
-            padding=ft.Padding.only(left=Spacing.XL, right=Spacing.MD, top=Spacing.MD, bottom=Spacing.MD),
+            width=_TAB_WIDTH,
+            padding=ft.Padding.only(
+                left=Spacing.MD, right=Spacing.SM,
+                top=Spacing.XS, bottom=Spacing.XS,
+            ),
             content=ft.Row(
                 controls=[
                     ft.Text(
                         value="*" if dirty else "",
-                        size=13,
+                        size=_TAB_ICON,
                         color=_DIRTY_COLOR,
                         font_family=FONT_MAIN,
                         weight=ft.FontWeight.BOLD,
@@ -136,13 +142,14 @@ def TabBar(
                     ),
                     ft.Text(
                         value=fname,
-                        size=13,
+                        size=_TAB_ICON,
                         color=name_color,
                         font_family=FONT_MAIN,
                         weight=name_weight,
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
-                        tooltip=path or "未命名.md",
+                        tooltip=fname,
+                        expand=True,
                     ),
                     _btn_icon(
                         ft.Icons.CLOSE,
@@ -151,7 +158,7 @@ def TabBar(
                         close_color,
                     ),
                 ],
-                spacing=Spacing.SM,
+                spacing=Spacing.XS,
                 tight=True,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -168,7 +175,7 @@ def TabBar(
     new_btn = ft.Container(
         bgcolor=c.toolbar_bg,
         border=only_border(bottom=ft.BorderSide(2, ft.Colors.TRANSPARENT)),
-        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.SM),
+        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
         content=_btn_icon(
             ft.Icons.ADD,
             "新建标签  Ctrl+N",

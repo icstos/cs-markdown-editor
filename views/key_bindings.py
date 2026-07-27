@@ -56,6 +56,49 @@ def _combo(e) -> str:
     return "+".join(parts + [key])
 
 
+# 不应触发"打字替换 outward 选区"的按键（修饰/导航/功能键等）
+_NON_PRINTABLE_KEYS = frozenset({
+    "shift", "control", "alt", "meta",
+    "tab", "enter", "escape",
+    "backspace", "delete", "insert", "printscreen", "pause", "menu",
+    "home", "end", "pageup", "pagedown",
+    "arrowleft", "arrowright", "arrowup", "arrowdown",
+    "capslock", "numlock", "scrolllock",
+    "controlleft", "controlright", "shiftleft", "shiftright",
+    "altleft", "altright", "metaleft", "metaright",
+})
+
+
+def _extract_printable_char(e) -> str | None:
+    """从 KeyboardEvent 提取可打印字符，用于"打字替换 outward 选区"。
+
+    排除：Ctrl/Meta/Alt 组合键、功能键 F1-F12、修饰键本身、导航键、空格键特殊处理。
+    单字符可打印 → 返回（字母按 shift 决定大小写）；space → 返回 " "；其余 None。
+
+    注意：IME 组合态首字符不触发 KeyDownEvent（走 TextField.on_change），
+    故中文输入法首字符无法触发替换——这是已知限制，URL 几乎均为 ASCII 可接受。
+    """
+    if getattr(e, "ctrl", False) or getattr(e, "meta", False) or getattr(e, "alt", False):
+        return None
+    key = (getattr(e, "key", "") or "")
+    if not key:
+        return None
+    kl = key.lower()
+    if kl in _NON_PRINTABLE_KEYS:
+        return None
+    # F1-F12
+    if len(kl) >= 2 and kl[0] == "f" and kl[1:].isdigit():
+        return None
+    if kl == "space":
+        return " "
+    if len(key) == 1 and key.isprintable():
+        # 字母：未按 shift → 小写（Flet key 默认大写）；按 shift 已是大写
+        if key.isalpha() and not getattr(e, "shift", False):
+            return key.lower()
+        return key
+    return None
+
+
 class KeyDispatcher:
     """键盘事件分发器：浏览态 / 编辑态两层快捷键 + 编辑态光标导航。
 
@@ -225,6 +268,17 @@ class KeyDispatcher:
                 if actions.clear_outward_sel is not None:
                     actions.clear_outward_sel()
                 return
+            # Tab：链接字段跳转（仅在链接段上消费，否则 fall-through 到下方全局 Tab）
+            if norm == "tab" and not (e.ctrl or e.meta):
+                if actions.jump_link_field is not None and actions.jump_link_field(
+                    -1 if e.shift else 1
+                ):
+                    return
+            # 可打印字符：打字替换 outward 选区（通用基础编辑行为，桌面端直觉）
+            char = _extract_printable_char(e)
+            if char is not None and actions.handle_outward_type_char is not None:
+                actions.handle_outward_type_char(char)
+                return
 
         # 全局标签快捷键：Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab 在两层均生效，
         # 置于 layer 判定之前拦截，避免被 edit 层 tab 缩进逻辑吃掉。
@@ -335,6 +389,12 @@ class KeyDispatcher:
             # 非编辑态按 Tab 时 active 可能指向 TABLE 行，此处拦截防止 indent）。
             active_bt = getattr(actions.active_line, "block_type", None) if actions.active_line else None
             if active_bt in (BlockType.CODE, BlockType.TABLE):
+                return True
+            # 链接字段跳转优先于缩进：光标在链接 text/url 字段内时 Tab 跳字段
+            # （Typora 行为），未消费（返回 False）则 fall-through 到缩进/插空格
+            if actions.jump_link_cursor is not None and actions.jump_link_cursor(
+                -1 if e.shift else 1
+            ):
                 return True
             if e.shift:
                 if actions.indent_or_outdent:

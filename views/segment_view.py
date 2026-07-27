@@ -116,6 +116,9 @@ def segment_to_span(
     kwargs: dict = {"text": display_text(seg), "style": style}
     if seg.seg_type == SegType.LINK and seg.url:
         kwargs["on_click"] = lambda e, u=seg.url: _open_link_url(u)
+        # 悬停显示完整 URL（Typora 式链接预览）。Flet TextSpan.tooltip 底层
+        # 依赖 Flutter TextSpan.tooltip，若该版本不支持则静默无效，不影响功能。
+        kwargs["tooltip"] = seg.url
     elif on_activate is not None:
         kwargs["on_click"] = lambda e: on_activate(seg_idx)
     return ft.TextSpan(**kwargs)
@@ -345,7 +348,10 @@ def raw_to_visible_spans(
                     )
                     spans.append(ft.TextSpan(text=text, style=style))
                 else:
-                    spans.append(ft.TextSpan(text=text, style=base_style))
+                    span_kwargs = {"text": text, "style": base_style}
+                    if seg.seg_type == SegType.LINK and seg.url:
+                        span_kwargs["tooltip"] = seg.url
+                    spans.append(ft.TextSpan(**span_kwargs))
         else:
             # 光标不在段内：标记折叠，仅显示 display_text（零宽度标记）
             # HEADING_PREFIX 例外：光标在本行任意位置时显示 # 前缀（Typora 式：
@@ -369,7 +375,10 @@ def raw_to_visible_spans(
             else:
                 display = display_text(seg)
                 if display:
-                    spans.append(ft.TextSpan(text=display, style=base_style))
+                    span_kwargs = {"text": display, "style": base_style}
+                    if seg.seg_type == SegType.LINK and seg.url:
+                        span_kwargs["tooltip"] = seg.url
+                    spans.append(ft.TextSpan(**span_kwargs))
                 # display 为空时不添加 span（引用 > 前缀完全消失）
 
         raw_offset = seg_end

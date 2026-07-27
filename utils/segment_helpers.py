@@ -88,6 +88,37 @@ def display_text(seg: Segment) -> str:
     return seg.text
 
 
+def link_field_ranges(
+    seg: Segment, seg_start: int = 0
+) -> tuple[int, int, int, int] | None:
+    """返回 LINK 段在行级 raw 中的 (text_start, text_end, url_start, url_end) 偏移。
+
+    seg_start：seg 在 line.raw 中的起始偏移（默认 0，用于单段场景）。
+    end exclusive：[text_start, text_end) 为链接文本范围，[url_start, url_end) 为 URL 范围。
+
+    非 LINK 段或格式异常（无 `](`、不以 `[` 开头/`)` 结尾）返回 None。
+    供 outward_sel Tab 跳转 / 编辑态 Tab 跳转 / 渲染层共享，消除重复 `](` 定位计算。
+
+    示例：
+      `[text](url)` seg_start=0 → (1, 5, 7, 10)
+      `[](url)`     seg_start=0 → (1, 1, 3, 6)   text 为零宽
+      `[text]()`    seg_start=0 → (1, 5, 7, 7)   url 为零宽
+      `[**b**](u)`  seg_start=0 → (1, 6, 8, 9)   text 含内联格式
+    """
+    if seg.seg_type != SegType.LINK:
+        return None
+    raw = seg.raw
+    if not (raw.startswith("[") and raw.endswith(")") and "](" in raw):
+        return None
+    idx = raw.index("](")
+    return (
+        seg_start + 1,                 # text_start（[ 之后）
+        seg_start + idx,               # text_end（] 之前）
+        seg_start + idx + 2,           # url_start（]( 之后）
+        seg_start + len(raw) - 1,      # url_end（) 之前）
+    )
+
+
 def split_seg_for_display(
     seg: Segment, cursor_local: int | None = None
 ) -> list[tuple[str, bool]]:
@@ -97,12 +128,9 @@ def split_seg_for_display(
     is_marker=False 的部分为内容，按段样式渲染。
 
     cursor_local：光标在段内 raw 的偏移（0..len(raw)）；None=浏览态/偏移测量态。
-    LINK/IMAGE 的 URL 子段：
-    - cursor_local=None：URL 返回非空（marker），供 pixel_layout 偏移测量计数，
-      渲染层对 marker 零宽度处理，与 display_text 行为一致。
-    - cursor_local=int 且落在 URL 区间 [url_start, url_end)：URL 返回非空（灰色可见）。
-    - cursor_local=int 且不在 URL 区间：URL 返回空串（零宽度折叠），
-      对齐 Typora 最小语法噪声——光标在链接文本上时 URL 不显示。
+    LINK/IMAGE 的 URL 子段：始终返回非空（url_part），由调用方决定渲染方式。
+    - 光标在段内（cursor_local=int）：URL 灰色可见（编辑链接需看到完整语法）。
+    - cursor_local=None：URL 作为 marker，渲染层对 marker 零宽度处理（浏览态折叠）。
     """
     raw = seg.raw
     if not raw:
@@ -128,12 +156,10 @@ def split_seg_for_display(
             idx = raw.index("](")
             text_part = raw[1:idx]
             url_part = raw[idx + 2:-1]
-            url_start = idx + 2
-            url_end = len(raw) - 1
-            # cursor_local=None：URL 非空（偏移测量）；int 时仅 URL 区间内可见
-            url_visible = cursor_local is None or (url_start <= cursor_local < url_end)
-            url_text = url_part if url_visible else ""
-            return [("[", True), (text_part, False), ("](", True), (url_text, True), (")", True)]
+            # 光标在段内时 URL 始终可见（编辑链接需看到完整语法，避免 URL 被折叠）
+            # 与 pixel_layout 偏移测量一致（光标在段内时 measure_text_offsets 测完整 raw 含 URL）
+            # cursor_local=None（偏移测量/选区高亮）：URL 作为 marker，由调用方决定是否渲染
+            return [("[", True), (text_part, False), ("](", True), (url_part, True), (")", True)]
         return [(raw, False)]
 
     if t == SegType.IMAGE:
@@ -141,11 +167,7 @@ def split_seg_for_display(
             idx = raw.index("](")
             alt_part = raw[2:idx]
             url_part = raw[idx + 2:-1]
-            url_start = idx + 2
-            url_end = len(raw) - 1
-            url_visible = cursor_local is None or (url_start <= cursor_local < url_end)
-            url_text = url_part if url_visible else ""
-            return [("![", True), (alt_part, False), ("](", True), (url_text, True), (")", True)]
+            return [("![", True), (alt_part, False), ("](", True), (url_part, True), (")", True)]
         return [(raw, False)]
 
     marks = seg.marks or ()

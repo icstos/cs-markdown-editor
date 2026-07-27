@@ -44,7 +44,7 @@ from styles import (
     block_text_size,
     only_border,
 )
-from utils.segment_helpers import WRAP_SYNTAX
+from utils.segment_helpers import WRAP_SYNTAX, link_field_ranges
 from views.line_view import LineView
 from views.table_view import TableView, _join_row
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
@@ -998,10 +998,12 @@ def MarkdownEditor(
         raw = _line_raw(line)
         off = _cursor_base(len(raw))  # IME 实时光标，避免输入后立即 Ctrl+B 位置错位
         if fmt == "link":
-            new_raw = raw[:off] + "[](url)" + raw[off:]
+            # 插入空链接骨架 []()，光标在 [] 内（text 位置）
+            # 空 URL 避免 Tab 跳到 URL 后需删除占位符；Tab 在 text/url 间切换
+            new_raw = raw[:off] + "[]()" + raw[off:]
             _reparse_atomic(line, new_raw)
             mark_dirty()
-            _set_cursor(li, off + 1)  # 光标落在 [ 后
+            _set_cursor(li, off + 1)  # 光标落在 [ 后（text 位置）
         else:
             seg_type = {
                 "bold": SegType.STRONG,
@@ -1051,15 +1053,28 @@ def MarkdownEditor(
         undo_push_pending.current = True
 
         if fmt == "link":
-            # 链接格式不 toggle，直接包裹
-            new_raw = raw[:a_off] + f"[{selected}](url)" + raw[b_off:]
+            # 包裹为 [selected]()（空 URL），直接进入编辑态定位到 URL 位置
+            # 空 URL 避免删除占位符；光标在 () 间闪烁，用户直接输入 URL
+            # Tab 在 text/url 间跳转（jump_link_cursor）
+            new_raw = raw[:a_off] + f"[{selected}]()" + raw[b_off:]
             _reparse_atomic(line, new_raw)
             new_lines = list(document.lines)
             new_lines[a_li] = line
             document.lines = new_lines
             mark_dirty()
-            # 选区保持在链接文本上（不含 [ ](url)）
-            _set_outward_sel((a_li, a_off + 1, a_li, a_off + 1 + len(selected)))
+            # 从重解析后的 segments 定位 LINK 段的 URL 起点，直接进入编辑态
+            acc = 0
+            for seg in line.segments:
+                seg_end = acc + len(seg.raw)
+                if seg.seg_type == SegType.LINK and acc <= a_off < seg_end:
+                    ranges = link_field_ranges(seg, acc)
+                    if ranges is not None:
+                        _, _, us, _ = ranges
+                        # 清 outward_sel + 进入编辑态（光标在 URL 位置）
+                        _set_outward_sel(None)
+                        _set_cursor(a_li, us)
+                    break
+                acc = seg_end
             set_nav_seq(nav_seq + 1)
             return
 
@@ -1112,6 +1127,143 @@ def MarkdownEditor(
         mark_dirty()
         _set_outward_sel(new_sel)
         set_nav_seq(nav_seq + 1)
+
+    # ============ 链接语法 Typora 式交互 ============
+    def handle_outward_type_char(char: str):
+        """打字替换 outward 选区（浏览态选中→输入即替换，通用基础编辑行为）。
+
+        一次 reparse 完成删除+插入，避免 delete+insert 两次重绘闪烁。
+        替换后清除 outward_sel 高亮并切换到编辑态（cursor_li=li），
+        现有 use_effect(_focus_cursor_field, [cursor_li]) 自动聚焦 cursor_text_field，
+        下一字符走正常 IME 输入流。
+        """
+        sel = outward_sel_ref.current
+        if sel is None:
+            return
+        a_li, a_off, b_li, b_off = sel
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        if a_li != b_li:
+            return  # 跨行 v1 不处理
+        if not (0 <= a_li < len(document.lines)):
+            return
+        line = document.lines[a_li]
+        if _is_fence(line):
+            return
+        raw = _line_raw(line)
+        a_off = max(0, min(a_off, len(raw)))
+        b_off = max(a_off, min(b_off, len(raw)))
+        if a_off == b_off:
+            return  # 零宽选区不操作
+
+        _push_history()
+        undo_push_pending.current = True
+        new_raw = raw[:a_off] + char + raw[b_off:]
+        _reparse_atomic(line, new_raw)
+        new_lines = list(document.lines)
+        new_lines[a_li] = line
+        document.lines = new_lines
+        mark_dirty()
+        # 清选区 + 切换到编辑态（光标在插入字符后）
+        _set_outward_sel(None)
+        _set_cursor(a_li, a_off + len(char))
+        set_nav_seq(nav_seq + 1)
+
+    def jump_link_field(direction: int) -> bool:
+        """outward_sel 态 Tab 在链接 text/url 字段间跳转。
+
+        direction=1（Tab）：text range → url range
+        direction=-1（Shift+Tab）：url range → text range
+        返回 True 表示已消费（KeyDispatcher 据此停止分发）。
+        空 range（零宽字段）跳过去后立即转 edit 模式（零宽 outward_sel 无意义）。
+        """
+        sel = outward_sel_ref.current
+        if sel is None:
+            return False
+        a_li, a_off, b_li, b_off = sel
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        if a_li != b_li:
+            return False
+        if not (0 <= a_li < len(document.lines)):
+            return False
+        line = document.lines[a_li]
+        if _is_fence(line):
+            return False
+        # 定位包含 active 端（b_off）的 LINK 段
+        acc = 0
+        for seg in line.segments:
+            seg_end = acc + len(seg.raw)
+            if seg.seg_type == SegType.LINK and acc <= b_off <= seg_end:
+                ranges = link_field_ranges(seg, acc)
+                if ranges is None:
+                    return False
+                ts, te, us, ue = ranges
+                if direction == 1 and ts <= b_off <= te:
+                    # text → url
+                    if us == ue:
+                        # 空 URL：转 edit 模式定位到 url 起点
+                        _set_outward_sel(None)
+                        _set_cursor(a_li, us)
+                        set_nav_seq(nav_seq + 1)
+                    else:
+                        _set_outward_sel((a_li, us, a_li, ue))
+                    return True
+                if direction == -1 and us <= b_off <= ue:
+                    # url → text
+                    if ts == te:
+                        _set_outward_sel(None)
+                        _set_cursor(a_li, ts)
+                        set_nav_seq(nav_seq + 1)
+                    else:
+                        _set_outward_sel((a_li, ts, a_li, te))
+                    return True
+                return False
+            acc = seg_end
+        return False
+
+    def jump_link_cursor(direction: int) -> bool:
+        """编辑态 Tab 在链接 text/url 字段间跳转。
+
+        direction=1（Tab）：text → url；已在 url → 退出链接到 ) 之后
+        direction=-1（Shift+Tab）：url → text；已在 text → 退出链接到 [ 之前
+        光标在链接段内时始终返回 True（消费 Tab，防止 indent 在链接内插空格破坏语法）。
+        _set_cursor 触发重渲染，raw_to_visible_spans 检测光标在 URL range
+        → URL 子段变灰可见（既有逻辑，无需改动）。
+        """
+        if cursor_li is None:
+            return False
+        li = cursor_li
+        if not (0 <= li < len(document.lines)):
+            return False
+        line = document.lines[li]
+        if _is_fence(line):
+            return False
+        off = _cursor_base(len(_line_raw(line)))
+        acc = 0
+        for seg in line.segments:
+            seg_end = acc + len(seg.raw)
+            if seg.seg_type == SegType.LINK and acc <= off <= seg_end:
+                ranges = link_field_ranges(seg, acc)
+                if ranges is None:
+                    return False
+                ts, te, us, ue = ranges
+                in_text = ts <= off <= te
+                in_url = us <= off <= ue
+                if direction == 1:  # Tab 前进
+                    if in_url:
+                        _set_cursor(li, seg_end)  # 退出链接到 ) 之后
+                    else:
+                        _set_cursor(li, us)  # text/marker → url
+                else:  # Shift+Tab 后退
+                    if in_text:
+                        _set_cursor(li, acc)  # 退出链接到 [ 之前
+                    else:
+                        _set_cursor(li, ts)  # url/marker → text
+                set_nav_seq(nav_seq + 1)
+                return True
+            acc = seg_end
+        return False
 
     # ============ 任务列表 ============
     def toggle_task(li: int):
@@ -2135,6 +2287,9 @@ def MarkdownEditor(
             handle_outward_cut=handle_outward_cut,
             handle_outward_delete=handle_outward_delete,
             clear_outward_sel=clear_outward_sel,
+            handle_outward_type_char=handle_outward_type_char,
+            jump_link_field=jump_link_field,
+            jump_link_cursor=jump_link_cursor,
         )
 
     # ============ TOC 条目（use_memo 稳定化：签名不变则引用不变，避免 ft.memo 误判）============

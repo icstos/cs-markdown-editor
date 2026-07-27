@@ -157,12 +157,21 @@ def _wrap_block(
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
         pad_left = line.level * 20
     elif line.block_type == BlockType.QUOTE:
+        # 多级嵌套引用：逐层包裹左侧彩色边框，颜色复用 heading_colors
+        # （红橙绿青蓝紫），与标题/大纲/列表色阶统一。最外层 = level 1 = 红，
+        # 每深入一级切换下一色，一眼区分引用层级。层级 > 6 钳制到第 6 色。
+        # 边框色降不透明度至 0.5：半透明叠加背景天然去饱和，呈更浅、偏灰的
+        # 柔和色调，避免高饱和色块喧宾夺主，保持界面清爽专业。
         lvl = line.level or 1
-        for _ in range(lvl):
+        for i in range(lvl):
+            # i=0 → 最内层（最深 lvl），i=lvl-1 → 最外层（level 1）
+            level = lvl - i
+            base_color = c.heading_colors.get(min(level, 6), c.quote_bar)
+            color = ft.Colors.with_opacity(0.5, base_color)
             content = ft.Container(
                 content=content,
                 padding=ft.Padding.only(left=Spacing.XL),
-                border=only_border(left=ft.BorderSide(3, c.quote_bar)),
+                border=only_border(left=ft.BorderSide(3, color)),
             )
 
     kwargs: dict = {

@@ -1,4 +1,4 @@
-"""渲染层行组件：Typora 式 WYSIWYG 静态渲染 + 点击/拖拽命中。
+"""渲染层行组件：Typora 式 WYSIWYG 静态渲染 + 点击/拖拽命中（支持软换行）。
 
 作为 Stack 双层架构的底层渲染层：
 - 调用 raw_to_visible_spans 把行 segments 渲染为 TextSpan 列表（拼接 == line.raw）
@@ -6,6 +6,12 @@
 - cursor_off=int：光标所在段的标记变灰可见（激活行，Typora 式最小语法）
 - GestureDetector 统一处理点击/拖拽，命中测试返回行级 raw 偏移
 - cursor_overlay 非 None 时（激活行），Text 包入 ft.Stack 叠加透明光标 TextField
+
+软换行（2D 视觉行布局）：
+- _line_visual_layout 把一行切成 N 个 VisualLine（与光标测量共用同一换行函数）
+- _build_raw_to_flat_map 建立 raw 偏移 → flat 文本位置映射（与 span 构造逻辑一致）
+- _slice_spans_for_visual_line 按视觉行 raw 范围切 flat spans（跨边界 span 拆分）
+- _maybe_stack_multi 在 Stack 内渲染 N 个单行 Text（top=i*text_h, no_wrap=True）
 
 本组件只负责"渲染 + 命中"，不做状态管理。所有状态由 editor.py 驱动。
 不包 _wrap_block（缩进/引用边框由 line_view.py 外层包）。
@@ -18,9 +24,10 @@
 依赖项：
 - models：BlockType / Line / SegType
 - styles：FONT_MAIN / _current_colors / block_text_size / block_weight
-- utils.segment_helpers：PREFIX_SEGTYPES（段类型常量）
+- utils.segment_helpers：PREFIX_SEGTYPES / display_text / split_seg_for_display
 - utils.text_layout：image_fit_size（图片尺寸测量）
-- views.pixel_layout：_line_raw_offsets_x / hit_test_line_x_raw（行内 X 偏移与命中）
+- views.pixel_layout：_line_raw_offsets_x / hit_test_line_x_raw / _line_visual_layout /
+  _compute_wrap_width / _block_padding / VisualLine
 - views.segment_view：raw_to_visible_spans / selection_highlight_bg（段渲染）
 """
 
@@ -40,9 +47,16 @@ from styles import (
     list_color_level,
     prefix_style,
 )
-from utils.segment_helpers import PREFIX_SEGTYPES, display_text
-from utils.text_layout import image_fit_size
-from views.pixel_layout import _line_raw_offsets_x, hit_test_line_x_raw
+from utils.segment_helpers import PREFIX_SEGTYPES, display_text, split_seg_for_display
+from utils.text_layout import image_fit_size, measure_text_width
+from views.pixel_layout import (
+    VisualLine,
+    _block_padding,
+    _compute_wrap_width,
+    _line_raw_offsets_x,
+    _line_visual_layout,
+    hit_test_line_x_raw,
+)
 from views.segment_view import (
     raw_to_visible_spans,
     selection_highlight_bg,
@@ -157,6 +171,23 @@ def RenderedLine(
     weight = block_weight(line.block_type, line.level)
     style = _line_style(base, weight, line_height)
     heading_level = line.level if line.block_type == BlockType.HEADING else 0
+
+    # 软换行视觉行布局（惰性计算，仅普通文本行/任务行/空行使用）
+    _vlayout_cache: list = [None]  # [0] = (wrap_width, visual_lines) or None
+
+    def _get_vlayout() -> tuple[float, list[VisualLine]]:
+        """惰性计算 (wrap_width, visual_lines)，与光标测量共用同一换行函数。"""
+        if _vlayout_cache[0] is None:
+            _, _, left_pad = _block_padding(line)
+            cw = content_width if content_width is not None else float("inf")
+            ww = _compute_wrap_width(cw, left_pad)
+            vlines = _line_visual_layout(
+                line, base, ww,
+                cursor_raw_offset=cursor_off,
+                line_height=line_height,
+            )
+            _vlayout_cache[0] = (ww, vlines)
+        return _vlayout_cache[0]
 
     # 闭包共享标志：GestureDetector.on_tap 处理 Shift+Click 后置 True，
     # 供外层 Container.on_click 检测并跳过（避免覆盖选区）。每次渲染重建。
@@ -311,9 +342,10 @@ def RenderedLine(
     # ============ 空行 ============
     if line.block_type == BlockType.BLANK or not _has_visible_text(line):
         spans = [ft.TextSpan(" ", style=style)]
-        text_ctrl = ft.Text(spans=spans, style=style, width=float("inf"))
-        content = _maybe_stack(text_ctrl, cursor_overlay, base, line_height,
-                               content_width, line, raw_off_for_cursor=cursor_off)
+        ww, vlines = _get_vlayout()
+        r2f = _build_raw_to_flat_map(line, cursor_off, outward_range)
+        content = _maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
+                                     base, line_height, ww, style)
         return ft.GestureDetector(
             content=content, on_tap=_on_tap,
             on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
@@ -332,9 +364,10 @@ def RenderedLine(
                                           outward_range, skip_prefix=True)
         else:
             spans = [ft.TextSpan(" ", style=style)]
-        text_ctrl = ft.Text(spans=spans, style=style)
-        text_area = _maybe_stack(text_ctrl, cursor_overlay, base, line_height,
-                                 content_width, line, raw_off_for_cursor=cursor_off)
+        ww, vlines = _get_vlayout()
+        r2f = _build_raw_to_flat_map(line, cursor_off, outward_range, skip_prefix=True)
+        text_area = _maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
+                                       base, line_height, ww, style)
         return ft.Row(
             controls=[
                 ft.Checkbox(
@@ -349,6 +382,7 @@ def RenderedLine(
             ],
             wrap=True, spacing=Spacing.SM, run_spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            width=float("inf"),  # 可滚动 Column 中占满全宽
         )
 
     # ============ 图片行 ============
@@ -383,6 +417,7 @@ def RenderedLine(
         return ft.Column(
             controls=img_controls, spacing=Spacing.SM,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            width=float("inf"),  # 可滚动 Column 中占满全宽
         )
 
     # ============ 含行内公式的行（浏览态用 ft.Markdown 渲染 LaTeX）============
@@ -459,20 +494,38 @@ def RenderedLine(
                         size=base, color=c.heading_colors.get(lvl, c.muted),
                         weight=ft.FontWeight.BOLD,
                     )
+            # 约束 Markdown 宽度到 wrap_width（减去前缀宽度），让长公式行原生换行
+            _, _, left_pad = _block_padding(line)
+            cw = content_width if content_width is not None else float("inf")
+            full_ww = _compute_wrap_width(cw, left_pad)
+            prefix_w = measure_text_width(prefix_display, FONT_MAIN, base) if prefix_display else 0.0
+            md_w = full_ww - prefix_w if full_ww != float("inf") else float("inf")
             content = ft.Row(
                 controls=[
                     ft.Text(
                         spans=[ft.TextSpan(text=prefix_display, style=prefix_st)],
                         style=ft.TextStyle(size=base, height=line_height),
                     ),
-                    ft.Container(content=md, expand=True),
+                    ft.Container(content=md, expand=True, width=md_w if md_w != float("inf") else None),
                 ],
                 spacing=0,
                 wrap=False,
                 vertical_alignment=ft.CrossAxisAlignment.START,
+                width=float("inf"),  # 占满父容器全宽（与代码块/公式块一致）
             )
         else:
-            content = md
+            # 约束 Markdown 宽度到 wrap_width，让长公式行原生换行
+            _, _, left_pad = _block_padding(line)
+            cw = content_width if content_width is not None else float("inf")
+            full_ww = _compute_wrap_width(cw, left_pad)
+            if full_ww != float("inf"):
+                # 外层 Container 占满全宽（高亮背景铺满整行），内层约束 Markdown 到 wrap_width 换行
+                content = ft.Container(
+                    content=ft.Container(content=md, width=full_ww),
+                    width=float("inf"),
+                )
+            else:
+                content = md
 
         return ft.GestureDetector(
             content=content, on_tap=_on_tap,
@@ -482,9 +535,10 @@ def RenderedLine(
 
     # ============ 普通块（段落 / 标题 / 列表 / 引用）============
     spans = _spans_with_highlight(line, base, cursor_off, heading_level, outward_range)
-    text_ctrl = ft.Text(spans=spans, style=style, width=float("inf"))
-    content = _maybe_stack(text_ctrl, cursor_overlay, base, line_height,
-                           content_width, line, raw_off_for_cursor=cursor_off)
+    ww, vlines = _get_vlayout()
+    r2f = _build_raw_to_flat_map(line, cursor_off, outward_range)
+    content = _maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
+                                 base, line_height, ww, style)
     return ft.GestureDetector(
         content=content, on_tap=_on_tap,
         on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
@@ -591,33 +645,239 @@ def _gray_marker_spans(seg, base: int, heading_level: int) -> list[ft.TextSpan]:
     return raw_to_visible_spans(tmp, base, cursor_raw_offset=len(seg.raw), heading_level=heading_level)
 
 
-def _maybe_stack(
-    text_ctrl: ft.Text,
+# ---------------------------------------------------------------------------
+# 软换行：raw→flat 映射 + span 切片 + 多视觉行渲染
+# ---------------------------------------------------------------------------
+
+def _build_raw_to_flat_map(
+    line: Line,
+    cursor_off: int | None = None,
+    outward_range: tuple[int, int] | None = None,
+    skip_prefix: bool = False,
+) -> list[int]:
+    """raw 偏移 → flat 文本位置映射。len = len(line.raw)+1。
+
+    与 _spans_with_highlight 的标记折叠逻辑完全一致（单一真源）：
+    - 无选区：匹配 raw_to_visible_spans
+      · 光标在段内：所有字符（含标记）可见 → flat = seg.raw 逐字符
+      · 光标不在段内：标记折叠 → flat = display_text / content pieces
+      · HEADING_PREFIX 例外：光标在本行时 # 前缀可见（灰色）
+    - 有选区：匹配 _spans_with_selection
+      · HEADING_PREFIX 始终折叠（display_text="" ）
+      · 有选区交集的段：标记折叠（segment_to_spans_partial 跳过标记）
+      · 无交集 + 光标在段：_gray_marker_spans → 全可见
+      · 无交集 + 光标不在段：segment_to_span → display_text
+
+    前缀段（#/•/>）：所有 raw 偏移映射到同一 flat_pos（不拆分，整段留 vline 0），
+    flat_pos 前进 len(display_text)。
+    """
+    raw_to_flat = [0]
+    flat_pos = 0
+    raw_offset = 0
+    seg_count = len(line.segments)
+    has_selection = outward_range is not None
+    hl_s, hl_e = outward_range if has_selection else (-1, -1)
+
+    for seg_idx, seg in enumerate(line.segments):
+        seg_start = raw_offset
+        seg_raw_len = len(seg.raw)
+        seg_end = seg_start + seg_raw_len
+
+        if skip_prefix and seg_idx == 0 and seg.seg_type in PREFIX_SEGTYPES:
+            for _ in range(seg_raw_len):
+                raw_to_flat.append(flat_pos)
+            raw_offset = seg_end
+            continue
+
+        is_last = seg_idx == seg_count - 1
+        if cursor_off is None:
+            cursor_in_seg = False
+        elif is_last:
+            cursor_in_seg = seg_start <= cursor_off <= seg_end
+        else:
+            cursor_in_seg = seg_start <= cursor_off < seg_end
+
+        is_prefix = seg.seg_type in PREFIX_SEGTYPES
+
+        # 选区交集判断
+        if has_selection:
+            inter_start = max(seg_start, hl_s)
+            inter_end = min(seg_end, hl_e)
+            has_overlap = inter_start < inter_end
+        else:
+            has_overlap = False
+
+        if is_prefix:
+            if (
+                seg.seg_type == SegType.HEADING_PREFIX
+                and cursor_off is not None
+                and not has_selection
+            ):
+                # 无选区 + 光标在本行：# 前缀可见（逐字符，flat = seg.raw）
+                for _ in range(seg_raw_len):
+                    flat_pos += 1
+                    raw_to_flat.append(flat_pos)
+            else:
+                # 浏览态/有选区：display_text（前缀段不拆分，整段映射到同一 flat_pos）
+                # 末 raw 偏移映射到 flat_pos + len(display)（与 _line_raw_offsets_x
+                # 的 offsets[prefix_len] = display_w 一致：前缀末尾 = 显示末尾）
+                display = display_text(seg)
+                display_len = len(display)
+                for i in range(seg_raw_len):
+                    if i == seg_raw_len - 1:
+                        flat_pos += display_len
+                    raw_to_flat.append(flat_pos)
+        elif cursor_in_seg and not has_overlap:
+            # 光标在段内 + 无选区交集：全字符可见（flat = seg.raw 逐字符）
+            for _ in range(seg_raw_len):
+                flat_pos += 1
+                raw_to_flat.append(flat_pos)
+        else:
+            # 浏览态/选区交集：标记折叠，逐 piece 走（marker 不前进 flat，content 前进）
+            pieces = split_seg_for_display(seg)
+            for text, is_marker in pieces:
+                if not text:
+                    continue
+                if is_marker:
+                    for _ in range(len(text)):
+                        raw_to_flat.append(flat_pos)
+                else:
+                    for _ in range(len(text)):
+                        flat_pos += 1
+                        raw_to_flat.append(flat_pos)
+
+        raw_offset = seg_end
+
+    # 围栏块兜底：segments 拼接 != line.raw（CODE/MATH 无围栏标记）
+    if len(raw_to_flat) - 1 != len(line.raw):
+        raw_to_flat = list(range(len(line.raw) + 1))
+    return raw_to_flat
+
+
+def _slice_spans_for_visual_line(
+    flat_spans: list[ft.TextSpan],
+    raw_to_flat: list[int],
+    vline: VisualLine,
+    fallback_style: ft.TextStyle,
+) -> list[ft.TextSpan]:
+    """按视觉行 raw 范围切 flat spans（跨边界 span 拆分，保留 style/on_click/tooltip）。
+
+    flat_spans 的文本拼接 = flat text；raw_to_flat[vline.start_raw/end_raw] 给出
+    该视觉行在 flat text 中的 [start, end) 范围。遍历 spans，切出范围内的文本。
+    """
+    flat_start = raw_to_flat[vline.start_raw] if vline.start_raw < len(raw_to_flat) else 0
+    flat_end = raw_to_flat[vline.end_raw] if vline.end_raw < len(raw_to_flat) else flat_start
+
+    if flat_start >= flat_end:
+        # 空范围（如纯标记行）：返回单个空格 span 保持行高
+        return [ft.TextSpan(" ", style=fallback_style)]
+
+    result: list[ft.TextSpan] = []
+    current_pos = 0
+    for span in flat_spans:
+        span_text = span.text or ""
+        span_len = len(span_text)
+        span_start = current_pos
+        span_end = current_pos + span_len
+
+        if span_end <= flat_start or span_start >= flat_end:
+            current_pos = span_end
+            continue
+
+        # 裁切到 [flat_start, flat_end) 范围
+        local_start = max(0, flat_start - span_start)
+        local_end = min(span_len, flat_end - span_start)
+        sliced_text = span_text[local_start:local_end]
+
+        if sliced_text:
+            kwargs = {"text": sliced_text, "style": span.style}
+            # 保留 on_click / tooltip（Flet TextSpan 属性）
+            on_click = getattr(span, "on_click", None)
+            if on_click is not None:
+                kwargs["on_click"] = on_click
+            tooltip = getattr(span, "tooltip", None)
+            if tooltip is not None:
+                kwargs["tooltip"] = tooltip
+            result.append(ft.TextSpan(**kwargs))
+
+        current_pos = span_end
+
+    if not result:
+        return [ft.TextSpan(" ", style=fallback_style)]
+    return result
+
+
+def _maybe_stack_multi(
+    flat_spans: list[ft.TextSpan],
+    raw_to_flat: list[int],
+    visual_lines: list[VisualLine],
     cursor_overlay: ft.Control | None,
     base: int,
     line_height: float,
-    content_width: float | None,
-    line: Line,
-    raw_off_for_cursor: int | None,
+    wrap_width: float,
+    style: ft.TextStyle,
 ) -> ft.Control:
-    """若 cursor_overlay 非 None，把 Text 包入 ft.Stack 叠加光标层。
+    """渲染 N 个视觉行（Stack 内逐行 Text）+ 可选光标 overlay。
 
-    Stack 高度 = text_height = base * line_height（与 cursor_text_field 一致）。
-    cursor_overlay 已由调用方设置 left/top（相对 Stack 左上角 = 文字左起点）。
+    每个视觉行渲染为单独的 ft.Text（no_wrap=True, top=i*text_h），保证换行点
+    与光标测量完全一致（共用 _line_visual_layout）。Stack 高度 = N * text_h。
+    cursor_overlay 由调用方定位（Phase 4 传 cursor_px_y）。
 
-    高度一致性：无论是否激活，Text 都设 height=text_h，确保光标移动时
-    行高不变（非激活行 Text 高度 vs 激活行 Stack 高度一致），
-    避免总高度波动导致滚动条长度抖动。
+    宽度策略（占满整行）：
+    - 外层 Container width=inf：在可滚动 Column 中，只有 Container 的 width=inf
+      才能撑满父容器全宽（Stack/Text 的 width=inf 无效）。与代码块/公式块一致，
+      当前行高亮背景、选区高亮铺满整行。
+    - 内层每个视觉行 Text 宽度 = wrap_width：文本在此宽度内换行，左对齐。
+    - Stack 无 width 约束：由父 Container 决定宽度，Stack 撑满 Container。
+
+    wrap_width=inf（不换行）时退化为单行 Text（行为与旧 _maybe_stack 一致）。
     """
     text_h = base * line_height
-    text_ctrl.height = text_h  # 强制 Text 高度 = base * line_height
-    if cursor_overlay is None:
-        return text_ctrl
-    # Stack 宽度：撑满可用区域（content_width 或自动）
-    stack_w = content_width if content_width is not None else float("inf")
-    return ft.Stack(
-        controls=[text_ctrl, cursor_overlay],
-        width=stack_w,
-        height=text_h,
-        clip_behavior=ft.ClipBehavior.NONE,  # 不裁切光标层（IME 候选框）
+    num_vlines = len(visual_lines)
+    stack_h = num_vlines * text_h
+    is_inf = wrap_width == float("inf")
+
+    # 不换行（单视觉行）：退化为简单 Text，避免 Stack 开销
+    if num_vlines <= 1 and cursor_overlay is None:
+        text = flat_spans[0] if len(flat_spans) == 1 else None
+        if text is not None and text.text == " ":
+            # 空行快捷路径
+            return ft.Container(
+                content=ft.Text(spans=flat_spans, style=style, height=text_h),
+                width=float("inf"),
+                height=text_h,
+            )
+        return ft.Container(
+            content=ft.Text(spans=flat_spans, style=style, height=text_h),
+            width=float("inf"),
+            height=text_h,
+        )
+
+    # 多视觉行或激活行：Stack 内逐行 Text
+    controls: list[ft.Control] = []
+    for vline in visual_lines:
+        vline_spans = _slice_spans_for_visual_line(flat_spans, raw_to_flat, vline, style)
+        # 每个视觉行 Text 宽度 = wrap_width：文本在此宽度内换行
+        text_w = wrap_width if not is_inf else float("inf")
+        controls.append(ft.Text(
+            spans=vline_spans,
+            style=style,
+            width=text_w,
+            height=text_h,
+            no_wrap=True,
+            top=vline.vline_idx * text_h,
+            left=0,
+        ))
+
+    if cursor_overlay is not None:
+        controls.append(cursor_overlay)
+
+    return ft.Container(
+        content=ft.Stack(
+            controls=controls,
+            height=stack_h,
+            clip_behavior=ft.ClipBehavior.NONE,  # 不裁切光标层（IME 候选框）
+        ),
+        width=float("inf"),  # 可滚动 Column 中只有 Container width=inf 撑满全宽
+        height=stack_h,
     )

@@ -31,7 +31,12 @@ from styles import (
     only_border,
 )
 from views.cursor_layer import cursor_text_field, make_strut
-from views.pixel_layout import _line_raw_offsets_x
+from views.pixel_layout import (
+    _block_padding,
+    _compute_wrap_width,
+    _find_vline_for_raw,
+    _line_visual_layout,
+)
 from views.rendered_line import RenderedLine
 
 
@@ -203,29 +208,59 @@ def _cursor_overlay(
     on_blur: Callable | None,
     on_selection_change: Callable | None,
 ) -> ft.TextField:
-    """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off。
+    """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off（2D 视觉行）。
 
-    li 传入 cursor_text_field 作为 key 主体，保证同行输入不重建控件（IME 友好）。
+    软换行 2D 定位（与渲染层 _maybe_stack_multi 共用 _line_visual_layout，
+    换行点天然一致）：
+    - _line_visual_layout 按 wrap_width 切出 N 视觉行
+    - _find_vline_for_raw 找到 cursor_off 所在视觉行
+    - cursor_px_x = vline.offsets_x[local_off]（局部于视觉行，已 rebase 到 0）
+    - cursor_px_y = vline.vline_idx * text_h（非零，2D 定位）
+
+    li 传入 cursor_text_field 作为 key 主体，保证同行输入不重建控件（IME 友好）；
+    key 不含 vline_idx → 同行跨视觉行移动仅改 top/left，不重建控件，IME 组合态保持。
 
     任务行：Checkbox 替代了前缀，text_ctrl 只渲染内容（skip_prefix=True），
-    cursor_overlay 在内容 Text 的 Stack 内，需减去前缀宽度使光标 X 相对内容起点。
+    cursor_overlay 在内容 Text 的 Stack 内。前缀段在 vline 0 占宽度，需扣除
+    vline.offsets_x[prefix_len] 使光标 X 相对内容起点；vline 1+ 起点已在内容区，
+    无需扣除。
 
     光标在段内：该段标记变灰可见占宽度（逐字符测量 raw）；其余段标记折叠。
     """
-    offsets_x = _line_raw_offsets_x(line, base, cursor_raw_offset=cursor_off)
-    off = max(0, min(cursor_off, len(offsets_x) - 1))
-    cursor_px_x = offsets_x[off]
-    if line.task and line.segments:
+    # 计算视觉行布局（与渲染层 _get_vlayout 共用同一函数，换行点一致）
+    _, _, left_pad = _block_padding(line)
+    cw = content_width if content_width is not None else float("inf")
+    wrap_width = _compute_wrap_width(cw, left_pad)
+    visual_lines = _line_visual_layout(
+        line, base, wrap_width,
+        cursor_raw_offset=cursor_off,
+        line_height=line_height,
+    )
+
+    # 找到 cursor_off 所在视觉行
+    vline = _find_vline_for_raw(visual_lines, cursor_off)
+    text_h = base * line_height
+    if vline is None:
+        cursor_px_x = 0.0
+        cursor_px_y = 0.0
+    else:
+        local_off = cursor_off - vline.start_raw
+        local_off = max(0, min(local_off, len(vline.offsets_x) - 1))
+        cursor_px_x = vline.offsets_x[local_off]
+        cursor_px_y = vline.vline_idx * text_h
+
+    # 任务行前缀宽度扣除（仅 vline 0：前缀占宽度，需相对内容起点定位光标）
+    if line.task and line.segments and vline is not None and vline.vline_idx == 0:
         prefix_raw = line.segments[0].raw
         prefix_len = len(prefix_raw) if prefix_raw else 0
-        if 0 < prefix_len < len(offsets_x):
-            cursor_px_x -= offsets_x[prefix_len]
-    line_height_px = base * line_height
+        if 0 < prefix_len < len(vline.offsets_x):
+            cursor_px_x -= vline.offsets_x[prefix_len]
+
     return cursor_text_field(
         li=li,
         cursor_px_x=cursor_px_x,
-        cursor_px_y=0.0,
-        line_height_px=line_height_px,
+        cursor_px_y=cursor_px_y,
+        line_height_px=text_h,  # 单视觉行高（TextField 高度，Stack 高 = N * text_h）
         base_size=base,
         line_height=line_height,
         on_change=on_change,
@@ -235,7 +270,7 @@ def _cursor_overlay(
         on_selection_change=on_selection_change,
         field_ref=field_ref,
         nav_seq=nav_seq,
-        content_width=content_width,
+        content_width=wrap_width,  # vline 内剩余宽度（IME 友好）
     )
 
 

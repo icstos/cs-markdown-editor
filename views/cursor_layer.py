@@ -15,10 +15,10 @@ IME 友好策略（key = li + nav_seq）：
 - 切换行：li 变 → key 变 → 重建（旧行释放 TextField，新行创建）
 - 撤销/重做：nav_seq 变 → key 变 → 重建（强制刷新内部状态）
 
-定位参数（由 LineLayoutCache.cursor_px 计算）：
-- cursor_px_x：光标 X（相对 Stack 左上角 = 文字左起点）
-- cursor_px_y：恒为 0（Stack 高度 = text_height，文字顶 = Stack 顶）
-- line_height_px：Stack 高度 = base * line_height
+定位参数（由 _cursor_overlay 计算，2D 视觉行定位）：
+- cursor_px_x：光标 X（相对视觉行左起点，vline.offsets_x[local_off]）
+- cursor_px_y：vline_idx * text_h（非零，2D 定位；单视觉行时为 0）
+- line_height_px：单视觉行高 = base * line_height（TextField 高度）
 - cursor_h：光标高度 = base_size（与文字同高，视觉贴合）
 """
 
@@ -97,11 +97,15 @@ def cursor_text_field(
       五笔/拼音输入法组合文本重复翻倍的 bug。
     """
     c = _current_colors()
-    # 宽度：从光标位置到行尾（IME 需要足够宽度，否则 Windows 输入法会重复输入）
-    if content_width is not None and content_width > cursor_px_x:
-        w = content_width - cursor_px_x
+    # 宽度：从光标位置到行尾，保底 200px 给 IME 组合文本空间。
+    # 软换行场景：光标在视觉行末尾时 cursor_px_x ≈ wrap_width，
+    # content_width - cursor_px_x ≈ 0，极窄 TextField 会触发 Windows IME
+    # composing text 翻倍 bug。Stack clip_behavior=NONE 不裁切，多出的宽度
+    # 不影响视觉（TextField 文字透明），仅保证 IME 有足够空间管理组合文本。
+    if content_width is not None:
+        w = max(content_width - cursor_px_x, 200.0)
     else:
-        w = 200.0  # 保底宽度
+        w = 200.0
     kwargs: dict = {
         # key = li + nav_seq：同行输入不重建（保 IME），切行/撤销时重建
         "key": f"cursor-field-li-{li}-seq-{nav_seq}",

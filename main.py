@@ -455,6 +455,10 @@ def App():
     def toggle_sidebar():
         update_setting("sidebar_open", not settings.get("sidebar_open", False))
 
+    def toggle_word_wrap():
+        """切换自动换行（VSCode 风格 Alt+Z）：开 = 软换行，关 = 长行不换行。"""
+        update_setting("word_wrap", not settings.get("word_wrap", True))
+
     def _apply_content_layout():
         page = page_ref.current
         if page is None:
@@ -599,6 +603,7 @@ def App():
             "open": open_doc,
             "toggle_sidebar": toggle_sidebar,
             "toggle_theme": toggle_theme,
+            "toggle_word_wrap": toggle_word_wrap,
             "open_settings": open_settings,
             "close_tab": lambda: close_tab(active_index_ref.current),
             "next_tab": lambda: _cycle_tab(1),
@@ -722,6 +727,8 @@ def App():
             cursor_row_col=cursor_row_col,
             theme_mode=theme_mode,
             on_toggle_sidebar=toggle_sidebar,
+            word_wrap=settings.get("word_wrap", True),
+            on_toggle_word_wrap=toggle_word_wrap,
         )
         if settings.get("show_footer", True)
         else ft.Container(height=0)

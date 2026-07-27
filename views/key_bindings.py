@@ -288,6 +288,11 @@ class KeyDispatcher:
             cb["prev_tab"]()
             return
 
+        # Alt+Z 切换自动换行：两层均生效（VSCode 风格），置于 layer 判定之前。
+        if matches(combo, browse_sc.get("toggle_word_wrap", "alt+z")):
+            cb["toggle_word_wrap"]()
+            return
+
         # PageUp / PageDown：两层均生效（编辑态光标翻页跟随，浏览态纯滚动）。
         # 置于 layer 判定之前，确保浏览态也能响应。outward_sel 激活时顶部拦截块
         # 不匹配 pageup/pagedown 会 fall-through 到此，active is None → 浏览态纯滚动。

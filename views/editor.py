@@ -157,6 +157,7 @@ def MarkdownEditor(
     body_font_size = settings.get("body_font_size", 16)
     line_height = settings.get("line_height", 1.6)
     show_toolbar = settings.get("show_toolbar", True)
+    word_wrap = settings.get("word_wrap", True)
 
     # ============ 状态：光标级（替代 active/active_seg/draft）============
     cursor_li, set_cursor_li = ft.use_state(None)  # 激活行号 | None（浏览态）
@@ -185,6 +186,11 @@ def MarkdownEditor(
     scroll_offset_ref = ft.use_ref(0.0)
     viewport_h_ref = ft.use_ref(0.0)
     max_scroll_ref = ft.use_ref(0.0)
+    # 视口宽度跟踪：程序尺寸变化时段落自适应宽度。
+    # on_size_change 上报实际 Container 宽度 → set_viewport_w 触发重渲染 →
+    # content_width 重算 → 文本按新宽度换行。ref 用于去重（>1px 变化才更新 state）。
+    viewport_w, set_viewport_w = ft.use_state(0.0)
+    viewport_w_ref = ft.use_ref(0.0)
     # 行实际渲染高度缓存：{line_idx: height_px}，由 LineView 的 on_size_change 上报。
     # 用于精确累加计算滚动偏移，避免估算偏差导致大纲跳转/光标导航落点不准。
     # build_controls_on_demand 下未构建的行无缓存，回退到 _estimate_line_height 估算。
@@ -192,7 +198,7 @@ def MarkdownEditor(
     # LineLayoutCache 缓存：跨行拖拽选区精确命中（Y 二分 + 行内 X）。
     # 惰性构建（首次 pan 事件触发），行数变化时失效（_reset_line_heights 同步清空）。
     layout_cache_ref = ft.use_ref(None)
-    # 记忆列：垂直导航时记录的行级 raw 偏移
+    # 记忆列：垂直导航时记录的 X 像素（视觉行内列位置，跨视觉行一致定位）
     preferred_col_ref = ft.use_ref(None)
     # SelectionArea 当前选中的纯文本
     selection_text_ref = ft.use_ref("")
@@ -821,33 +827,174 @@ def MarkdownEditor(
         _set_cursor(li, len(_line_raw(document.lines[li])))
         _ensure_visible(li)
 
-    def _vertical_goto(target_li: int):
-        """垂直导航到 target_li，使用记忆列定位。"""
-        if not (0 <= target_li < len(document.lines)):
-            return
+    def _get_line_visual_lines(li: int, cursor_off: int | None = None):
+        """获取目标行的视觉行列表。
+
+        cursor_off=None：浏览态（标记折叠），优先从已构建的 LineLayoutCache 读取
+        （不强制构建——导航只需 1-2 行，实时计算比构建全文档 cache 更快）。
+        cursor_off=int：激活态（光标段标记可见），实时计算（与 _cursor_overlay 一致）。
+        """
+        # 浏览态：若 cache 已构建则复用（避免逐行重算 measure_text_offsets）
+        if cursor_off is None and layout_cache_ref.current is not None:
+            layout = layout_cache_ref.current.get(li)
+            if layout is not None:
+                return layout.visual_lines
+        from views.pixel_layout import (
+            _block_padding,
+            _compute_wrap_width,
+            _line_visual_layout,
+        )
+        if not (0 <= li < len(document.lines)):
+            return None
+        line = document.lines[li]
+        if _is_fence(line):
+            return None
+        base = block_text_size(line.block_type, line.level)
+        _, _, left_pad = _block_padding(line)
+        cw = content_width if content_width is not None else float("inf")
+        wrap_width = _compute_wrap_width(cw, left_pad)
+        return _line_visual_layout(
+            line, base, wrap_width,
+            cursor_raw_offset=cursor_off, line_height=line_height,
+        )
+
+    def _cursor_vline_info(li: int, off: int):
+        """返回当前光标的 (visual_lines, vline, current_x)。
+
+        用激活态 cursor_raw_offset=off 计算视觉行布局（标记可见，与渲染层一致）。
+        current_x = vline.offsets_x[local_off]（vline 内 X 像素，用于记忆列）。
+        返回 None 表示围栏块或无效行。
+        """
+        from views.pixel_layout import _find_vline_for_raw
+        visual_lines = _get_line_visual_lines(li, cursor_off=off)
+        if visual_lines is None:
+            return None
+        vline = _find_vline_for_raw(visual_lines, off)
+        if vline is None:
+            return None
+        local_off = off - vline.start_raw
+        local_off = max(0, min(local_off, len(vline.offsets_x) - 1))
+        current_x = vline.offsets_x[local_off]
+        return (visual_lines, vline, current_x)
+
+    def _vline_off_at_x(visual_lines, vline_idx: int, x: float) -> int | None:
+        """在指定视觉行上用 X 像素命中 raw 偏移（vline.start_raw + local_off）。"""
+        from views.pixel_layout import hit_test_line_x_raw
+        if vline_idx < 0 or vline_idx >= len(visual_lines):
+            return None
+        vline = visual_lines[vline_idx]
+        local_off = hit_test_line_x_raw(vline.offsets_x, x)
+        return vline.start_raw + local_off
+
+    def _move_vline(direction: int, steps: int = 1):
+        """视觉行导航：移动 steps 个视觉行（direction: -1=上, +1=下）。
+
+        - 同逻辑行内：移到上/下视觉行（X 列保持）
+        - 越界：跨逻辑行（跳过围栏块），目标行用浏览态视觉行取末行/首行
+        - preferred_col_ref 存储 X 像素（跨视觉行一致列定位，比 raw 偏移更准）
+        - 围栏块：进入编辑态（set_cursor_line + set_cursor_li(None)）
+        """
         if cursor_li is None:
             return
-        if preferred_col_ref.current is None:
-            preferred_col_ref.current = _cursor_base()
-        col = preferred_col_ref.current
-        target_line = document.lines[target_li]
-        if _is_fence(target_line):
-            set_cursor_line(target_li)
-            set_cursor_li(None)
+        li = cursor_li
+        off = _cursor_base()
+
+        # 获取当前视觉行信息
+        info = _cursor_vline_info(li, off)
+        if info is None:
+            # 围栏块或无效行：退化为逻辑行导航
+            target_li = max(0, min(len(document.lines) - 1, li + direction * steps))
+            if _is_fence(document.lines[target_li]):
+                set_cursor_line(target_li)
+                set_cursor_li(None)
+            else:
+                _set_cursor(target_li, 0)
+                _ensure_visible(target_li)
             return
-        target_off = max(0, min(col, len(_line_raw(target_line))))
+
+        visual_lines, vline, current_x = info
+        target_vline_idx = vline.vline_idx
+
+        # 记忆列：首次垂直导航时记录当前 X 像素
+        if preferred_col_ref.current is None:
+            preferred_col_ref.current = current_x
+        preferred_x = preferred_col_ref.current
+
+        # 沿 direction 走 steps 个视觉行
+        target_li = li
+        target_vlines = visual_lines
+        remaining = steps
+
+        while remaining > 0:
+            if direction > 0:
+                # 向下
+                if target_vline_idx < len(target_vlines) - 1:
+                    target_vline_idx += 1
+                    remaining -= 1
+                else:
+                    # 跨到下一非围栏逻辑行
+                    nxt_li = target_li + 1
+                    while nxt_li < len(document.lines) and _is_fence(document.lines[nxt_li]):
+                        nxt_li += 1
+                    if nxt_li >= len(document.lines):
+                        # 到达文档末尾：落到末行末尾（可能是围栏块）
+                        last_li = len(document.lines) - 1
+                        if _is_fence(document.lines[last_li]):
+                            set_cursor_line(last_li)
+                            set_cursor_li(None)
+                        else:
+                            _set_cursor(last_li, len(_line_raw(document.lines[last_li])),
+                                        clear_preferred=False)
+                            _ensure_visible(last_li)
+                        return
+                    target_li = nxt_li
+                    target_vlines = _get_line_visual_lines(target_li)
+                    if target_vlines is None:
+                        _set_cursor(target_li, 0, clear_preferred=False)
+                        _ensure_visible(target_li)
+                        return
+                    target_vline_idx = 0
+                    remaining -= 1
+            else:
+                # 向上
+                if target_vline_idx > 0:
+                    target_vline_idx -= 1
+                    remaining -= 1
+                else:
+                    # 跨到上一非围栏逻辑行
+                    prev_li = target_li - 1
+                    while prev_li >= 0 and _is_fence(document.lines[prev_li]):
+                        prev_li -= 1
+                    if prev_li < 0:
+                        # 到达文档顶部
+                        _set_cursor(0, 0, clear_preferred=False)
+                        _ensure_visible(0)
+                        return
+                    target_li = prev_li
+                    target_vlines = _get_line_visual_lines(target_li)
+                    if target_vlines is None:
+                        _set_cursor(target_li, 0, clear_preferred=False)
+                        _ensure_visible(target_li)
+                        return
+                    target_vline_idx = len(target_vlines) - 1
+                    remaining -= 1
+
+        # 在目标视觉行上用 preferred_x 命中 raw 偏移
+        target_off = _vline_off_at_x(target_vlines, target_vline_idx, preferred_x)
+        if target_off is None:
+            target_off = 0
         _set_cursor(target_li, target_off, clear_preferred=False)
         _ensure_visible(target_li)
 
     def move_up():
-        if cursor_li is None or cursor_li <= 0:
+        if cursor_li is None:
             return
-        _vertical_goto(cursor_li - 1)
+        _move_vline(-1, 1)
 
     def move_down():
-        if cursor_li is None or cursor_li >= len(document.lines) - 1:
+        if cursor_li is None:
             return
-        _vertical_goto(cursor_li + 1)
+        _move_vline(1, 1)
 
     # ============ 缩进 ============
     def indent_or_outdent(delta: int):
@@ -1573,20 +1720,77 @@ def MarkdownEditor(
         return (li + 1, 0)
 
     def _step_up(li: int, off: int) -> tuple[int, int] | None:
-        if li <= 0:
-            return None
-        prev = document.lines[li - 1]
-        if _is_fence(prev):
-            return None
-        return (li - 1, min(off, len(_line_raw(prev))))
+        """视觉行向上步进（向外选区 Shift+Up 用）。"""
+        return _step_vline(li, off, -1)
 
     def _step_down(li: int, off: int) -> tuple[int, int] | None:
-        if li >= len(document.lines) - 1:
-            return None
-        nxt = document.lines[li + 1]
-        if _is_fence(nxt):
-            return None
-        return (li + 1, min(off, len(_line_raw(nxt))))
+        """视觉行向下步进（向外选区 Shift+Down 用）。"""
+        return _step_vline(li, off, 1)
+
+    def _step_vline(li: int, off: int, direction: int) -> tuple[int, int] | None:
+        """视觉行步进：返回目标 (li, off)，不移动光标。
+
+        与 _move_vline 逻辑一致（同逻辑行内移视觉行，越界跨逻辑行跳过围栏块），
+        但仅返回目标位置由 _extend_outward_step 设置选区。
+        """
+        info = _cursor_vline_info(li, off)
+        if info is None:
+            # 围栏块：退化为逻辑行步进
+            if direction > 0:
+                if li >= len(document.lines) - 1:
+                    return None
+                nxt = document.lines[li + 1]
+                if _is_fence(nxt):
+                    return None
+                return (li + 1, 0)
+            else:
+                if li <= 0:
+                    return None
+                prev = document.lines[li - 1]
+                if _is_fence(prev):
+                    return None
+                return (li - 1, len(_line_raw(prev)))
+
+        visual_lines, vline, current_x = info
+        # 记忆列（与 _move_vline 共享 preferred_col_ref）
+        if preferred_col_ref.current is None:
+            preferred_col_ref.current = current_x
+        preferred_x = preferred_col_ref.current
+        target_vline_idx = vline.vline_idx
+
+        if direction > 0:
+            if target_vline_idx < len(visual_lines) - 1:
+                target_vline_idx += 1
+            else:
+                nxt_li = li + 1
+                while nxt_li < len(document.lines) and _is_fence(document.lines[nxt_li]):
+                    nxt_li += 1
+                if nxt_li >= len(document.lines):
+                    return None
+                visual_lines = _get_line_visual_lines(nxt_li)
+                if visual_lines is None:
+                    return (nxt_li, 0)
+                target_vline_idx = 0
+                li = nxt_li
+        else:
+            if target_vline_idx > 0:
+                target_vline_idx -= 1
+            else:
+                prev_li = li - 1
+                while prev_li >= 0 and _is_fence(document.lines[prev_li]):
+                    prev_li -= 1
+                if prev_li < 0:
+                    return None
+                visual_lines = _get_line_visual_lines(prev_li)
+                if visual_lines is None:
+                    return (prev_li, 0)
+                target_vline_idx = len(visual_lines) - 1
+                li = prev_li
+
+        target_off = _vline_off_at_x(visual_lines, target_vline_idx, preferred_x)
+        if target_off is None:
+            target_off = 0
+        return (li, target_off)
 
     def _start_outward_from_point(anchor_li: int, anchor_off: int, target_li: int, target_off: int) -> None:
         if outward_sel_ref.current is not None:
@@ -1861,6 +2065,21 @@ def MarkdownEditor(
         except Exception:
             pass
 
+    def _on_content_resize(e):
+        """内容 Container 尺寸变化回调：跟踪视口宽度，实现段落自适应换行。
+
+        程序尺寸变化时 Container 宽度变化 → set_viewport_w 触发重渲染 →
+        content_width 重算为 min(视口宽度, content_max_width) → 文本按新宽度换行。
+        去重：宽度变化 >1px 才更新 state，避免 sub-pixel 抖动引发频繁重渲染。
+        """
+        try:
+            new_w = float(e.width) if e.width else 0.0
+            if new_w > 0 and abs(new_w - viewport_w_ref.current) > 1:
+                viewport_w_ref.current = new_w
+                set_viewport_w(new_w)
+        except Exception:
+            pass
+
     def on_line_size_change(li: int, height: float):
         """LineView on_size_change 回调：缓存行实际渲染高度。
 
@@ -1876,7 +2095,10 @@ def MarkdownEditor(
 
         未命中缓存（行未构建或已被销毁）时按块类型估算：
         - CODE：头部工具栏 + 每代码行 + padding（多行内容必须计入）
-        - 其它：block_text_size × line_height + 上下 padding(2×Spacing.XS)
+        - 围栏块（MATH/HR/TOC/TABLE）：占位单行高
+        - 普通行：num_vlines × text_h + padding（软换行变量高度）
+          · 优先用 LineLayoutCache 的精确视觉行数
+          · 回退：measure_text_width(raw) / wrap_width 估算
         """
         cache = line_heights_ref.current
         cached = cache.get(li)
@@ -1891,8 +2113,29 @@ def MarkdownEditor(
             code_lines = max(1, code.count("\n") + 1)
             # 头部工具栏(~28) + 代码行(14×line_height) + 容器 padding(~12)
             return 28 + code_lines * 14 * line_height + 12
-        # 普通行：字号 × 行高 + 上下 padding（Spacing.XS × 2 = 4）
-        return base * line_height + 4
+        # 围栏块（MATH/HR/TOC/TABLE）：占位单行高（实际高度由原生控件决定）
+        if line.block_type in (BlockType.MATH, BlockType.HR, BlockType.TOC, BlockType.TABLE):
+            return base * line_height + 4
+        # 普通行：估算视觉行数（软换行）
+        # 优先用 LineLayoutCache 的精确视觉行数
+        layout_cache = layout_cache_ref.current
+        if layout_cache is not None:
+            layout = layout_cache.get(li)
+            if layout is not None:
+                return layout.num_vlines * base * line_height + 4
+        # 回退：用 measure_text_width 估算视觉行数
+        from views.pixel_layout import _compute_wrap_width, _block_padding
+        from utils.text_layout import measure_text_width
+        _, _, left_pad = _block_padding(line)
+        cw = content_width if content_width is not None else float("inf")
+        wrap_width = _compute_wrap_width(cw, left_pad)
+        raw = _line_raw(line)
+        if wrap_width != float("inf") and raw:
+            est_w = measure_text_width(raw, FONT_MAIN, base)
+            num_vlines = max(1, int(est_w / wrap_width) + 1)
+        else:
+            num_vlines = 1
+        return num_vlines * base * line_height + 4
 
     def _estimate_line_offset(li: int) -> float:
         """累加 0..li 行高，得到目标行顶部的 y 偏移（相对 ListView 内容起点）。
@@ -1903,12 +2146,15 @@ def MarkdownEditor(
         """
         return sum(_estimate_line_height(j) for j in range(li))
 
-    async def _safe_scroll_to(li: int, to_top: bool = False):
+    async def _safe_scroll_to(li: int, to_top: bool = False,
+                              cursor_y_in_line: float = 0.0):
         """异步滚动：Flet 的 scroll_to 是协程，需 await。
 
         Args:
             li: 目标行索引
             to_top: True=滚动到视口顶部（大纲跳转），False=仅在不可见时滚动（光标导航）
+            cursor_y_in_line: 光标在行内的 Y 偏移（vline_idx * text_h），
+                to_top=False 时用于 vline 级精确滚动（软换行：长行只滚到光标所在视觉行）
 
         两步滚动（to_top=True 且目标行未构建时）：
         build_controls_on_demand 下视口外的行尚未构建，无实测高度缓存。
@@ -1942,25 +2188,42 @@ def MarkdownEditor(
                         precise_scroll, duration=120
                     )
             else:
-                target_y = _estimate_line_offset(li)
-                target_h = _estimate_line_height(li)
+                # vline 级精确滚动：用光标在行内的 Y 偏移定位到具体视觉行
+                line_y = _estimate_line_offset(li)
+                cursor_abs_y = line_y + cursor_y_in_line
+                text_h = body_font_size * line_height  # 单视觉行高
                 viewport = viewport_h_ref.current or 600
                 cur = scroll_offset_ref.current
-                if target_y < cur + 40:
+                if cursor_abs_y < cur + 40:
                     await list_view_ref.current.scroll_to(
-                        max(0, target_y - 40), duration=100
+                        max(0, cursor_abs_y - 40), duration=100
                     )
-                elif target_y + target_h > cur + viewport - 40:
+                elif cursor_abs_y + text_h > cur + viewport - 40:
                     await list_view_ref.current.scroll_to(
-                        max(0, target_y + target_h - viewport + 40), duration=100
+                        max(0, cursor_abs_y + text_h - viewport + 40), duration=100
                     )
         except Exception:
             pass
 
     def _ensure_visible(li: int):
+        """确保光标所在视觉行可见（vline 级精确滚动）。
+
+        计算光标在行内的 Y 偏移（vline_idx × text_h），传给 _safe_scroll_to
+        实现软换行场景下的精确滚动：长行只滚到光标所在视觉行，而非整行顶部。
+        """
         page = ft.context.page
         if page is not None:
-            page.run_task(_safe_scroll_to, li)
+            cursor_y_in_line = 0.0
+            if 0 <= li < len(document.lines):
+                off = _cursor_base()
+                info = _cursor_vline_info(li, off)
+                if info is not None:
+                    _, vline, _ = info
+                    base = block_text_size(
+                        document.lines[li].block_type, document.lines[li].level
+                    )
+                    cursor_y_in_line = vline.vline_idx * base * line_height
+            page.run_task(_safe_scroll_to, li, cursor_y_in_line=cursor_y_in_line)
 
     def _hit_test_line_x(li: int, x: float) -> int:
         """跨行拖拽用：返回目标行 raw 偏移。"""
@@ -2007,13 +2270,15 @@ def MarkdownEditor(
         doc_y = y + layout.text_top
         return cache.hit_test(doc_x, doc_y)
 
-    def _page_rows() -> int:
+    def _page_vlines() -> int:
+        """每页视觉行数：视口高度 / 单视觉行高（软换行按视觉行翻页）。"""
         viewport = viewport_h_ref.current or 600
-        return max(1, int(viewport / (body_font_size * line_height + 4)))
+        text_h = body_font_size * line_height
+        return max(1, int(viewport / text_h))
 
     def page_up():
         if cursor_li is not None:
-            _vertical_goto(max(0, cursor_li - _page_rows()))
+            _move_vline(-1, _page_vlines())
         else:
             page = ft.context.page
             if page is not None:
@@ -2021,7 +2286,7 @@ def MarkdownEditor(
 
     def page_down():
         if cursor_li is not None:
-            _vertical_goto(min(len(document.lines) - 1, cursor_li + _page_rows()))
+            _move_vline(1, _page_vlines())
         else:
             page = ft.context.page
             if page is not None:
@@ -2100,11 +2365,13 @@ def MarkdownEditor(
     # 插入/删除整行会让 line_idx 错位，旧缓存的高度会对应到错误的行。
     # 行数不变的单行内容编辑由 on_size_change 自动更新对应条目，无需清空。
     # 同时清空 layout_cache_ref（LineLayoutCache 行号映射也会错位）。
+    # word_wrap 切换时 content_width 变化（finite ↔ inf），视觉行布局完全不同，
+    # 高度缓存和布局缓存均需失效。viewport_w 变化时同理（窗口尺寸变化→换行宽度变化）。
     def _reset_line_heights():
         line_heights_ref.current = {}
         layout_cache_ref.current = None
 
-    ft.use_effect(_reset_line_heights, [len(document.lines)])
+    ft.use_effect(_reset_line_heights, [len(document.lines), word_wrap, viewport_w])
 
     # ============ use_effect：清空 cursor TextField 内部 value ============
     # _end_input_session 通过 set_clear_value_seq(+1) 触发此 effect，
@@ -2217,7 +2484,20 @@ def MarkdownEditor(
 
     toc_entries = ft.use_memo(_build_toc, [_toc_sig])
 
-    content_width = content_max_width - 2 * content_padding
+    # content_width：段落换行宽度，自适应视口宽度。
+    # - word_wrap=False：inf（不换行）
+    # - word_wrap=True：min(视口可用宽度, content_max_width - 2*padding)
+    #   · 视口比 content_max_width 窄时按视口宽度换行（自适应）
+    #   · 视口比 content_max_width 宽时不超过 content_max_width（可读性上限）
+    #   · viewport_w=0（首次渲染前 on_size_change 未上报）回退到固定值
+    if not word_wrap:
+        content_width = float("inf")
+    elif viewport_w > 0:
+        available = viewport_w - 2 * content_padding
+        max_content = content_max_width - 2 * content_padding
+        content_width = min(available, max_content) if available > 0 else max_content
+    else:
+        content_width = content_max_width - 2 * content_padding
 
     # ============ 回调稳定化（ref + use_memo([])）============
     # editor 每次重渲染时闭包重建，若直接传给 LineView 会导致 ft.memo 浅比较
@@ -2484,6 +2764,7 @@ def MarkdownEditor(
                         padding=ft.Padding.symmetric(
                             horizontal=content_padding, vertical=content_padding_top
                         ),
+                        on_size_change=_on_content_resize,
                     ),
                 ),
             ],

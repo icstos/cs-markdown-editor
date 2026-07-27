@@ -26,7 +26,7 @@ SETTINGS_PATH: str = os.path.join(
 )
 
 DEFAULT_SETTINGS: dict = {
-    "content_max_width": 920,
+    "content_max_width": 1080,
     "content_padding": 36,
     "content_padding_top": 24,
     "show_footer": True,
@@ -36,6 +36,7 @@ DEFAULT_SETTINGS: dict = {
     "auto_save": False,
     "remember_focus_mode": False,
     "show_toolbar": True,
+    "word_wrap": True,
     "show_line_numbers": False,
     "code_theme_dark": "ATOM_ONE_DARK",
     "code_theme_light": "GITHUB",

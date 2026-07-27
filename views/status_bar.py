@@ -31,6 +31,8 @@ def StatusBar(
     cursor_row_col: tuple[int, int],
     theme_mode: ft.ThemeMode,
     on_toggle_sidebar: Callable[[], None],
+    word_wrap: bool = True,
+    on_toggle_word_wrap: Callable[[], None] | None = None,
 ):
     """底部状态栏。
 
@@ -86,6 +88,20 @@ def StatusBar(
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,
+                ),
+                ft.Container(width=Spacing.XXL),
+                ft.Container(
+                    content=ft.Text(
+                        value="换行: 开" if word_wrap else "换行: 关",
+                        size=12,
+                        color=c.link if word_wrap else c.muted,
+                        font_family=FONT_MAIN,
+                    ),
+                    on_click=lambda e: on_toggle_word_wrap() if on_toggle_word_wrap else None,
+                    ink=True,
+                    tooltip="自动换行 (Alt+Z)",
+                    padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+                    border_radius=ft.BorderRadius.all(4),
                 ),
                 ft.Container(width=Spacing.XXL),
                 ft.Text(

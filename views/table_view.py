@@ -150,6 +150,12 @@ def TableView(
     # TableView 内部不读取这两个值，仅作 memo 触发用。
     lines_version: int = 0,
     first_line_raw_version: int = 0,
+    # 主题失效 prop：切换主题时 lines/版本号/回调均不变，ft.memo 会复用缓存
+    # 跳过函数体执行，导致 _current_colors() 与 is_dark 判定停留在旧主题，
+    # 单元格背景、表头色、边框色不刷新。通过 theme_mode 变化触发 memo 失效，
+    # 重新执行函数体取色。TableView 内部不读取此值（直接读 page.theme_mode，
+    # 已由 App 在渲染期同步写入），仅作 memo 触发用。
+    theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
 ):
     """自管理的表格编辑组件（独立岛屿，不使用 active/draft 系统）。
 

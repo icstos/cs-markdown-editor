@@ -2594,6 +2594,8 @@ def MarkdownEditor(
                         len(document.lines[table_start].raw)
                         if 0 <= table_start < len(document.lines) else 0
                     ),
+                    # 主题失效 prop：切换主题时让 ft.memo 失效，重新取色
+                    theme_mode=theme_mode,
                 )
             )
         else:
@@ -2615,6 +2617,8 @@ def MarkdownEditor(
                     # 两个值变化触发 memo 检测，让屏幕刷新。
                     line_raw_version=len(line.raw) if line.raw else 0,
                     line_seg_count=len(line.segments),
+                    # 主题失效 prop：切换主题时让 ft.memo 失效，重新取色
+                    theme_mode=theme_mode,
                     on_cursor_change=handle_char_input if is_act else None,
                     on_cursor_submit=on_submit if is_act else None,
                     on_cursor_focus=on_cursor_focus if is_act else None,

@@ -428,6 +428,13 @@ def LineView(
     # 两个值变化触发 memo 检测，让屏幕刷新。LineView 内部不读取这两个值。
     line_raw_version: int = 0,
     line_seg_count: int = 0,
+    # 主题失效 prop：切换主题时 line/版本号/回调均不变，ft.memo 会复用缓存
+    # 跳过函数体执行，导致 _current_colors() 不被重新调用，行内代码、公式、
+    # 引用、列表、标题色与 CodeEditor 的 code_theme 停留在旧主题。
+    # 通过 theme_mode 变化触发 memo 失效，重新执行函数体取色。LineView
+    # 内部不读取此值（_current_colors 直接读 page.theme_mode，已由 App
+    # 在渲染期同步写入），仅作 memo 触发用。
+    theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
     # 光标输入（激活行用）
     on_cursor_change: Callable[[str], None] | None = None,
     on_cursor_submit: Callable[[str], None] | None = None,
@@ -479,7 +486,9 @@ def LineView(
 
     memo 化：非激活行的 prop 集合稳定（line/line_idx/content_width/line_height
     + 版本号 prop + 回调），cursor 移动时仅旧激活行 + 新激活行 prop 变化，
-    其余 N-2 行 ft.memo 直接复用缓存，跳过 Python 函数体执行。
+    其余 N-2 行 ft.memo 直接复用缓存，跳过 Python 函数体执行。主题切换时
+    line/版本号/回调均不变，靠 theme_mode prop 变化触发 memo 失效，让
+    _current_colors() 与 CodeEditor 的 code_theme 重新取最新主题色。
     """
     c = _current_colors()
     base = block_text_size(line.block_type, line.level)

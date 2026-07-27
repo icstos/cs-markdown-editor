@@ -62,6 +62,15 @@ def App():
     capturing, set_capturing = ft.use_state((None, None))
     # 导航接口：editor 把光标状态与导航函数写入此 ref，App 的 on_key 据此分发
     nav_ref = ft.use_ref(None)
+    # 向右拆分编辑器（VSCode 风格 Ctrl+\）：右侧第二个 MarkdownEditor 视口，
+    # 共享同一 document（@ft.observable 自动同步），独立光标/滚动。
+    # nav_ref_split 为右侧编辑器的导航接口；active_pane 跟踪当前焦点视口（0=左, 1=右），
+    # KeyDispatcher 据此选择 actions_ref，状态栏据此选择光标位置来源。
+    split_editor, set_split_editor = ft.use_state(False)
+    active_pane, set_active_pane = ft.use_state(0)
+    nav_ref_split = ft.use_ref(None)
+    active_pane_ref = ft.use_ref(active_pane)
+    active_pane_ref.current = active_pane
 
     # FilePicker / Clipboard：service 实例，通过 ref 在事件回调中访问
     picker_holder = ft.use_ref()
@@ -459,6 +468,20 @@ def App():
         """切换自动换行（VSCode 风格 Alt+Z）：开 = 软换行，关 = 长行不换行。"""
         update_setting("word_wrap", not settings.get("word_wrap", True))
 
+    def toggle_split_editor():
+        """向右拆分编辑器（VSCode 风格 Ctrl+\）：切换右侧第二视口，共享同一文档。"""
+        next_split = not split_editor
+        set_split_editor(next_split)
+        # 关闭拆分时焦点回到左侧；打开时默认焦点左侧
+        set_active_pane(0)
+        active_pane_ref.current = 0
+
+    def _set_active_pane(pane: int):
+        """切换焦点视口（点击/光标聚焦触发）。同值不重渲染。"""
+        if active_pane_ref.current != pane:
+            set_active_pane(pane)
+            active_pane_ref.current = pane
+
     def _apply_content_layout():
         page = page_ref.current
         if page is None:
@@ -472,7 +495,9 @@ def App():
         update_setting("sidebar_width", width)
 
     def jump_to_line(li: int):
-        actions = nav_ref.current
+        # 拆分编辑器时跳转到焦点视口
+        active_nav = nav_ref_split if (split_editor and active_pane == 1) else nav_ref
+        actions = active_nav.current
         if actions is not None:
             actions.jump_to_line(li)
 
@@ -591,9 +616,11 @@ def App():
     # KeyDispatcher：替代 on_key 闭包。持有 shortcut_mgr + nav_ref 引用，
     # editor.py 每次渲染写入最新 EditorActions 后 dispatcher 读到的就是最新值，
     # 无需 on_key_ref 中转层。
+    # 拆分编辑器：根据 active_pane 选择对应视口的 nav_ref，键盘事件作用于焦点视口。
+    active_nav_ref = nav_ref_split if (split_editor and active_pane == 1) else nav_ref
     dispatcher = KeyDispatcher(
         shortcut_mgr=shortcut_mgr,
-        actions_ref=nav_ref,
+        actions_ref=active_nav_ref,
         clipboard_ref=clipboard_holder,
         page_ref=page_ref,
         paste_old_draft=paste_old_draft,
@@ -604,6 +631,7 @@ def App():
             "toggle_sidebar": toggle_sidebar,
             "toggle_theme": toggle_theme,
             "toggle_word_wrap": toggle_word_wrap,
+            "toggle_split_editor": toggle_split_editor,
             "open_settings": open_settings,
             "close_tab": lambda: close_tab(active_index_ref.current),
             "next_tab": lambda: _cycle_tab(1),
@@ -685,38 +713,80 @@ def App():
             on_width_change=change_sidebar_width,
         ),
     )
+    # 编辑器公共 props：左右两视口共享（仅 nav_ref / key / show_toolbar / on_editor_focus 不同）
+    _editor_common = dict(
+        document=document,
+        file_path=file_path,
+        on_new=new_doc,
+        on_open=lambda: page_ref.current.run_task(open_doc),
+        on_save=lambda: page_ref.current.run_task(save_doc),
+        on_export=lambda: page_ref.current.run_task(export_doc),
+        on_dirty_change=on_dirty_change,
+        clipboard_ref=clipboard_holder,
+        theme_mode=theme_mode,
+        on_toggle_theme=toggle_theme,
+        settings=settings,
+        on_open_settings=open_settings,
+        sidebar_open=sidebar_open,
+        on_toggle_sidebar=toggle_sidebar,
+        shortcut_mgr=shortcut_mgr,
+    )
+
+    if split_editor:
+        # 拆分：左 + 分隔线 + 右，各占一半；右侧隐藏工具栏保持简洁。
+        # 两视口共享同一 document（@ft.observable），各自独立光标/滚动。
+        editor_area = ft.Row(
+            controls=[
+                ft.Container(
+                    content=MarkdownEditor(
+                        key=f"{session}-0",
+                        nav_ref=nav_ref,
+                        on_editor_focus=lambda: _set_active_pane(0),
+                        **_editor_common,
+                    ),
+                    expand=True,
+                    on_click=lambda e: _set_active_pane(0),
+                ),
+                ft.VerticalDivider(width=1, color=get_colors(theme_mode).border),
+                ft.Container(
+                    content=MarkdownEditor(
+                        key=f"{session}-1",
+                        nav_ref=nav_ref_split,
+                        show_toolbar=False,
+                        on_editor_focus=lambda: _set_active_pane(1),
+                        keyboard_autofocus=False,
+                        **_editor_common,
+                    ),
+                    expand=True,
+                    on_click=lambda e: _set_active_pane(1),
+                ),
+            ],
+            spacing=0,
+            expand=True,
+        )
+    else:
+        editor_area = ft.Container(
+            content=MarkdownEditor(
+                key=f"{session}-0",  # 与拆分时左视口同 key，切换拆分不重置左视口光标
+                nav_ref=nav_ref,
+                **_editor_common,
+            ),
+            expand=True,
+        )
+
     body = ft.Row(
         controls=[
             sidebar_container,
-            ft.Container(
-                content=MarkdownEditor(
-                    key=str(session),
-                    document=document,
-                    file_path=file_path,
-                    on_new=new_doc,
-                    on_open=lambda: page_ref.current.run_task(open_doc),
-                    on_save=lambda: page_ref.current.run_task(save_doc),
-                    on_export=lambda: page_ref.current.run_task(export_doc),
-                    on_dirty_change=on_dirty_change,
-                    nav_ref=nav_ref,
-                    clipboard_ref=clipboard_holder,
-                    theme_mode=theme_mode,
-                    on_toggle_theme=toggle_theme,
-                    settings=settings,
-                    on_open_settings=open_settings,
-                    sidebar_open=sidebar_open,
-                    on_toggle_sidebar=toggle_sidebar,
-                    shortcut_mgr=shortcut_mgr,
-                ),
-                expand=True,
-            ),
+            editor_area,
         ],
         spacing=0,
         expand=True,
     )
 
     # 底部状态栏：贯穿侧边栏 + 编辑区全宽，放在 body 之下
-    _actions = nav_ref.current
+    # 拆分时根据 active_pane 选择焦点视口的光标位置
+    _active_nav = nav_ref_split if (split_editor and active_pane == 1) else nav_ref
+    _actions = _active_nav.current
     cursor_row_col = _actions.get_cursor_row_col() if _actions else (1, 1)
     footer = (
         StatusBar(
@@ -729,6 +799,8 @@ def App():
             on_toggle_sidebar=toggle_sidebar,
             word_wrap=settings.get("word_wrap", True),
             on_toggle_word_wrap=toggle_word_wrap,
+            split_editor=split_editor,
+            on_toggle_split_editor=toggle_split_editor,
         )
         if settings.get("show_footer", True)
         else ft.Container(height=0)

@@ -293,6 +293,11 @@ class KeyDispatcher:
             cb["toggle_word_wrap"]()
             return
 
+        # Ctrl+\ 向右拆分编辑器：两层均生效（VSCode 风格），多视口查看同一文档。
+        if matches(combo, browse_sc.get("toggle_split_editor", "ctrl+\\")):
+            cb["toggle_split_editor"]()
+            return
+
         # PageUp / PageDown：两层均生效（编辑态光标翻页跟随，浏览态纯滚动）。
         # 置于 layer 判定之前，确保浏览态也能响应。outward_sel 激活时顶部拦截块
         # 不匹配 pageup/pagedown 会 fall-through 到此，active is None → 浏览态纯滚动。

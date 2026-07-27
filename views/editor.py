@@ -147,6 +147,9 @@ def MarkdownEditor(
     sidebar_open: bool = False,
     on_toggle_sidebar: Callable[[], None] | None = None,
     shortcut_mgr=None,
+    show_toolbar: bool | None = None,
+    on_editor_focus: Callable[[], None] | None = None,
+    keyboard_autofocus: bool = True,
 ):
     c = _current_colors()
     settings = settings or {}
@@ -156,7 +159,8 @@ def MarkdownEditor(
     show_footer = settings.get("show_footer", True)
     body_font_size = settings.get("body_font_size", 16)
     line_height = settings.get("line_height", 1.6)
-    show_toolbar = settings.get("show_toolbar", True)
+    # show_toolbar prop：None 时回落到 settings，False 时强制隐藏（用于右侧拆分编辑器）
+    show_toolbar = show_toolbar if show_toolbar is not None else settings.get("show_toolbar", True)
     word_wrap = settings.get("word_wrap", True)
 
     # ============ 状态：光标级（替代 active/active_seg/draft）============
@@ -1585,6 +1589,11 @@ def MarkdownEditor(
             return
         # 不主动退出：保留光标位置（Typora 式，点击别处由 on_tap 处理）
 
+    def on_cursor_focus():
+        """cursor TextField 聚焦：通知父组件当前编辑器获得焦点（拆分视口跟踪 active pane）。"""
+        if on_editor_focus is not None:
+            on_editor_focus()
+
     def suppress_blur_for_click():
         suppress_blur.current = True
 
@@ -2608,6 +2617,7 @@ def MarkdownEditor(
                     line_seg_count=len(line.segments),
                     on_cursor_change=handle_char_input if is_act else None,
                     on_cursor_submit=on_submit if is_act else None,
+                    on_cursor_focus=on_cursor_focus if is_act else None,
                     on_cursor_blur=on_blur if is_act else None,
                     on_tap=s_on_tap,
                     on_pan_start=s_on_pan_start,
@@ -2728,7 +2738,7 @@ def MarkdownEditor(
             ctrl_pressed_ref.current = False
 
     return ft.KeyboardListener(
-        autofocus=True,
+        autofocus=keyboard_autofocus,
         on_key_down=_on_key_down,
         on_key_up=_on_key_up,
         expand=True,

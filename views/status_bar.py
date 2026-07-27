@@ -33,6 +33,8 @@ def StatusBar(
     on_toggle_sidebar: Callable[[], None],
     word_wrap: bool = True,
     on_toggle_word_wrap: Callable[[], None] | None = None,
+    split_editor: bool = False,
+    on_toggle_split_editor: Callable[[], None] | None = None,
 ):
     """底部状态栏。
 
@@ -100,6 +102,20 @@ def StatusBar(
                     on_click=lambda e: on_toggle_word_wrap() if on_toggle_word_wrap else None,
                     ink=True,
                     tooltip="自动换行 (Alt+Z)",
+                    padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+                    border_radius=ft.BorderRadius.all(4),
+                ),
+                ft.Container(width=Spacing.XXL),
+                ft.Container(
+                    content=ft.Text(
+                        value="拆分: 开" if split_editor else "拆分: 关",
+                        size=12,
+                        color=c.link if split_editor else c.muted,
+                        font_family=FONT_MAIN,
+                    ),
+                    on_click=lambda e: on_toggle_split_editor() if on_toggle_split_editor else None,
+                    ink=True,
+                    tooltip="向右拆分编辑器 (Ctrl+\\)",
                     padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
                     border_radius=ft.BorderRadius.all(4),
                 ),

@@ -39,6 +39,7 @@
       "next_tab": "ctrl+tab",
       "prev_tab": "ctrl+shift+tab",
       "toggle_word_wrap": "alt+z",
+      "toggle_split_editor": "ctrl+\\",
       "copy": "ctrl+c",
       "cut": "ctrl+x",
       "paste": "ctrl+v",

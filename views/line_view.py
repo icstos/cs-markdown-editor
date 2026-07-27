@@ -423,20 +423,98 @@ def LineView(
 
     # ============ 目录 [toc] ============
     if line.block_type == BlockType.TOC:
-        toc_items: list[ft.Control] = [
-            ft.Container(
-                content=ft.Text(value=text, size=base - 1, color=c.text, font_family=FONT_MAIN),
-                padding=ft.Padding.only(left=(lvl - 1) * Spacing.XXL),
-                on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
-                ink=True,
+        # 目录卡片：与侧边栏大纲面板视觉一致——彩色细竖线区分标题级别
+        # （红橙绿青蓝紫），同级别条目左对齐到同一缩进位置，H1/H2 加粗突出主章节。
+        # 头部含图标 + 标题 + 计数，清爽卡片边框，科学有序。
+        entries = toc_entries or []
+        header = ft.Row(
+            controls=[
+                ft.Icon(ft.Icons.FORMAT_LIST_BULLETED, size=14, color=c.muted),
+                ft.Text(
+                    value="目录",
+                    size=base - 5,
+                    color=c.muted,
+                    font_family=FONT_MAIN,
+                    weight=ft.FontWeight.W_600,
+                ),
+                ft.Container(expand=True),
+                ft.Text(
+                    value=f"{len(entries)} 项",
+                    size=base - 6,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                ),
+            ],
+            spacing=Spacing.SM,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        if not entries:
+            body = ft.Container(
+                content=ft.Text(
+                    value="文档无标题，目录为空",
+                    size=base - 4,
+                    color=c.muted,
+                    font_family=FONT_MAIN,
+                ),
+                padding=ft.Padding.symmetric(vertical=Spacing.XL),
+                alignment=ft.Alignment.CENTER,
+                width=float("inf"),
             )
-            for li, lvl, text in (toc_entries or [])
-        ]
+        else:
+            items: list[ft.Control] = []
+            for li, lvl, text in entries:
+                color = c.heading_colors.get(lvl, c.muted)
+                bar = ft.Container(width=2, height=14, bgcolor=color, border_radius=2)
+                txt = ft.Text(
+                    value=text,
+                    size=base - 3,
+                    color=c.text,
+                    font_family=FONT_MAIN,
+                    weight=ft.FontWeight.W_600 if lvl <= 2 else ft.FontWeight.NORMAL,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    expand=True,
+                )
+                row = ft.Row(
+                    controls=[bar, txt],
+                    spacing=Spacing.MD,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                # 同级别左对齐：缩进 = (lvl-1) * Spacing.XXL，色条作为级别标识
+                items.append(ft.Container(
+                    content=row,
+                    padding=ft.Padding.only(
+                        left=(lvl - 1) * Spacing.XXL,
+                        top=Spacing.SM,
+                        bottom=Spacing.SM,
+                        right=Spacing.SM,
+                    ),
+                    on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
+                    ink=True,
+                    border_radius=Radius.SM,
+                ))
+            body = ft.Column(controls=items, spacing=0)
+
         content = ft.Container(
-            content=ft.Column(controls=toc_items, spacing=Spacing.XS),
+            content=ft.Column(
+                controls=[
+                    header,
+                    ft.Divider(height=1, thickness=1, color=c.border),
+                    body,
+                ],
+                spacing=Spacing.SM,
+            ),
             width=float("inf"),
             padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-            bgcolor=c.code_bg, border_radius=Radius.MD,
+            bgcolor=c.code_bg,
+            border_radius=Radius.LG,
+            border=only_border(
+                top=ft.BorderSide(1, c.border),
+                bottom=ft.BorderSide(1, c.border),
+                left=ft.BorderSide(1, c.border),
+                right=ft.BorderSide(1, c.border),
+            ),
         )
         return _wrap_block(
             content, line, base, line_idx,

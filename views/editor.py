@@ -2486,16 +2486,13 @@ def MarkdownEditor(
 
     # content_width：段落换行宽度，自适应视口宽度。
     # - word_wrap=False：inf（不换行）
-    # - word_wrap=True：min(视口可用宽度, content_max_width - 2*padding)
-    #   · 视口比 content_max_width 窄时按视口宽度换行（自适应）
-    #   · 视口比 content_max_width 宽时不超过 content_max_width（可读性上限）
-    #   · viewport_w=0（首次渲染前 on_size_change 未上报）回退到固定值
+    # - word_wrap=True：视口可用宽度（占满整行，VSCode 风格）
+    #   · viewport_w=0（首次渲染前 on_size_change 未上报）回退到 content_max_width
     if not word_wrap:
         content_width = float("inf")
     elif viewport_w > 0:
         available = viewport_w - 2 * content_padding
-        max_content = content_max_width - 2 * content_padding
-        content_width = min(available, max_content) if available > 0 else max_content
+        content_width = available if available > 0 else content_max_width - 2 * content_padding
     else:
         content_width = content_max_width - 2 * content_padding
 

@@ -14,11 +14,11 @@
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
-  "sidebar_panel": "outline",
+  "sidebar_panel": "files",
   "sidebar_width": 181,
   "recent_files": [
-    "C:\\Users\\aigcs\\Desktop\\README.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
+    "C:\\Users\\aigcs\\Desktop\\README.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\README.md"
   ],
   "shortcuts": {

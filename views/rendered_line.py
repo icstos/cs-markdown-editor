@@ -204,6 +204,10 @@ def RenderedLine(
         优先调用 on_hit_test_xy（LineLayoutCache 精确命中：Y 二分 + 行内 X），
         解决标题/普通/列表/引用混合行高不一致时 round(y/base*lh) 估算偏差。
         无 on_hit_test_xy 时回退到原等高估算 + on_hit_test_x。
+
+        激活行命中本行时：缓存按浏览态构建（所有标记零宽度折叠），但激活行视觉上
+        光标所在段标记变灰可见占宽度，二者布局不匹配——须改用 _hit_raw_off
+        （cursor_raw_offset=cursor_off）匹配视觉布局，修复拖拽起止点偏移。
         """
         if pos is None:
             return (line_idx, 0)
@@ -211,7 +215,11 @@ def RenderedLine(
         if on_hit_test_xy is not None:
             result = on_hit_test_xy(line_idx, pos.x, pos.y)
             if result is not None:
-                return result
+                target_li, target_off = result
+                # 激活行本行：缓存浏览态偏移与视觉（标记可见）不匹配，重算
+                if target_li == line_idx and cursor_off is not None:
+                    return (target_li, _hit_raw_off(pos.x))
+                return (target_li, target_off)
         # 回退：按 base * line_height 等高估算行号
         _line_h = base * line_height
         line_dy = round(pos.y / _line_h) if _line_h > 0 else 0
@@ -229,11 +237,17 @@ def RenderedLine(
         """点击命中 raw_off：优先用 LineLayoutCache 精确命中（缓存 offsets），
         回退到 _hit_raw_off（重算 measure_text_offsets）。
 
-        on_hit_test_xy 用缓存 offsets（cursor_raw_offset=None 浏览态），
-        对非激活行完全准确；激活行标记可见但偏差仅标记宽度（1-3px），可接受。
+        激活行（cursor_off is not None）例外：视觉上光标所在段的标记变灰可见占宽度，
+        而缓存按浏览态构建（所有标记零宽度折叠），二者布局不匹配——点击标记/内容
+        边界会偏移到段外（如 **粗体** 点击"体"与"*"之间落到行尾），导致光标离开段、
+        标记折叠成"渲染态"无法编辑。故激活行须用 _hit_raw_off（cursor_raw_offset
+        =cursor_off）匹配视觉布局。非激活行缓存与视觉一致（标记全折叠），用缓存更快。
         """
         if pos is None:
             return 0
+        # 激活行：标记可见，须用 _hit_raw_off 匹配视觉布局（缓存浏览态会偏移）
+        if cursor_off is not None:
+            return _hit_raw_off(pos.x)
         if on_hit_test_xy is not None:
             result = on_hit_test_xy(line_idx, pos.x, pos.y)
             if result is not None:

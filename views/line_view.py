@@ -288,23 +288,32 @@ def _render_math_block(
     is_flash: bool = False,
     on_line_size_change: Callable[[int, float], None] | None = None,
 ) -> ft.Control:
-    """公式块：浏览态 ft.Markdown 渲染 LaTeX；编辑态 TextField 显示源码。
+    """公式块：浏览态 ft.Markdown 渲染 LaTeX；编辑态源码 + 实时预览。
 
     双态切换由 editor 端 math_focus_li state 驱动（Typora 式：点击进入编辑，
     失焦/点击外部回到渲染态）。左侧 math_fg 强调边框 + math_bg 底色，
     与行内公式配色统一。
+
+    编辑态布局（垂直堆叠）：
+    - header：ƒ 图标 + "公式编辑" + "点击外部完成"
+    - 源码区：TextField（monospace, math_fg）+ "源码" 标签
+    - 分隔线：math_fg 半透明
+    - 预览区：ft.Markdown 实时渲染 LaTeX + "预览" 标签
+    on_change_math 更新 line.segments[0].text 触发重渲染，预览自动刷新。
     """
     c = _current_colors()
     formula = line.segments[0].text if line.segments else ""
 
     if is_editing:
-        # 编辑态：多行 TextField + 等宽字体 + 公式源码着色
+        # 编辑态：源码编辑器 + 实时预览（垂直堆叠）
+        # on_change_math 更新 line.segments[0].text 触发 observable 重渲染，
+        # 本函数重新执行读取最新 formula，preview_md 的 value 自动同步刷新。
         text_field = ft.TextField(
             key=f"math-edit-{line_idx}",
             value=formula,
             multiline=True,
             min_lines=2,
-            max_lines=10,
+            max_lines=6,
             border=ft.InputBorder.NONE,
             text_size=14,
             text_style=ft.TextStyle(font_family=FONT_MONO, color=c.math_fg),
@@ -318,14 +327,62 @@ def _render_math_block(
             text_field.ref = math_field_ref
 
         header = ft.Row([
+            ft.Icon(ft.Icons.FUNCTIONS, size=13, color=c.math_fg),
             ft.Text("公式编辑", size=11, color=c.muted,
                     font_family=FONT_MONO, weight=ft.FontWeight.W_600),
             ft.Container(expand=True),
             ft.Text("点击外部完成", size=11, color=c.muted),
         ], spacing=Spacing.SM, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
+        source_label = ft.Text(
+            "源码", size=10, color=c.muted,
+            font_family=FONT_MONO, weight=ft.FontWeight.W_500,
+        )
+
+        source_section = ft.Container(
+            content=text_field,
+            border_radius=Radius.SM,
+            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+        )
+
+        divider = ft.Divider(
+            height=1, thickness=1,
+            color=ft.Colors.with_opacity(0.2, c.math_fg),
+            leading_indent=0, trailing_indent=0,
+        )
+
+        preview_label = ft.Text(
+            "预览", size=10, color=c.muted,
+            font_family=FONT_MONO, weight=ft.FontWeight.W_500,
+        )
+
+        preview_md = ft.Markdown(
+            value=f"$$\n{formula}\n$$",
+            selectable=False,
+            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+            soft_line_break=True,
+            latex_style=ft.TextStyle(color=c.text),
+        )
+
+        preview_section = ft.Container(
+            content=preview_md,
+            alignment=ft.Alignment.CENTER_LEFT,
+            padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+        )
+
         content = ft.Container(
-            content=ft.Column([header, text_field], spacing=Spacing.XS),
+            content=ft.Column(
+                controls=[
+                    header,
+                    source_label,
+                    source_section,
+                    divider,
+                    preview_label,
+                    preview_section,
+                ],
+                spacing=Spacing.SM,
+                tight=True,
+            ),
             bgcolor=c.math_bg, border_radius=Radius.MD, width=float("inf"),
             padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             border=only_border(left=ft.BorderSide(3, c.math_fg)),

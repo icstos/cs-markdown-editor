@@ -401,6 +401,8 @@ def _line_visual_layout(
     wrap_width: float,
     cursor_raw_offset: int | None = None,
     line_height: float = 1.6,
+    *,
+    _precomputed_offsets: list[float] | None = None,
 ) -> list[VisualLine]:
     """2D 布局：按 wrap_width 把一行切成 N 个视觉行。
 
@@ -408,8 +410,16 @@ def _line_visual_layout(
     wrap_width = 可用文本宽度（已扣除块级 left_pad）。
     cursor_raw_offset=None 浏览态（标记全折叠）；int 激活行（光标段标记可见占宽）。
     返回 >=1 个 VisualLine（空行为单 vline）。
+
+    性能优化：_precomputed_offsets 允许调用方传入已计算的 offsets_x（来自
+    _line_raw_offsets_x），避免激活行在 RenderedLine / _cursor_overlay / hit_test
+    三处重复调用 _line_raw_offsets_x（内含 HarfBuzz 整形测量）。传入时跳过内部
+    _line_raw_offsets_x 调用，直接用预计算结果做换行切分。
     """
-    offsets_x = _line_raw_offsets_x(line, base, cursor_raw_offset)
+    if _precomputed_offsets is not None:
+        offsets_x = _precomputed_offsets
+    else:
+        offsets_x = _line_raw_offsets_x(line, base, cursor_raw_offset)
     raw_text = line.raw if line.raw else "".join(s.raw for s in line.segments)
     # 前缀段（#/•/>）不断行，整段留在 vline 0
     min_break_off = 0

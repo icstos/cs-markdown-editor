@@ -207,6 +207,9 @@ def _cursor_overlay(
     on_focus: Callable | None,
     on_blur: Callable | None,
     on_selection_change: Callable | None,
+    *,
+    precomputed_vlines: list | None = None,
+    precomputed_wrap_width: float | None = None,
 ) -> ft.TextField:
     """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off（2D 视觉行）。
 
@@ -226,16 +229,24 @@ def _cursor_overlay(
     无需扣除。
 
     光标在段内：该段标记变灰可见占宽度（逐字符测量 raw）；其余段标记折叠。
+
+    性能优化：precomputed_vlines / precomputed_wrap_width 由 LineView 共享传入，
+    避免与 RenderedLine._get_vlayout 重复调用 _line_visual_layout（内含
+    HarfBuzz 整形测量）。传入时跳过内部 _line_visual_layout 调用。
     """
-    # 计算视觉行布局（与渲染层 _get_vlayout 共用同一函数，换行点一致）
-    _, _, left_pad = _block_padding(line)
-    cw = content_width if content_width is not None else float("inf")
-    wrap_width = _compute_wrap_width(cw, left_pad)
-    visual_lines = _line_visual_layout(
-        line, base, wrap_width,
-        cursor_raw_offset=cursor_off,
-        line_height=line_height,
-    )
+    # 视觉行布局：优先复用 LineView 预计算结果，否则自行计算
+    if precomputed_vlines is not None and precomputed_wrap_width is not None:
+        visual_lines = precomputed_vlines
+        wrap_width = precomputed_wrap_width
+    else:
+        _, _, left_pad = _block_padding(line)
+        cw = content_width if content_width is not None else float("inf")
+        wrap_width = _compute_wrap_width(cw, left_pad)
+        visual_lines = _line_visual_layout(
+            line, base, wrap_width,
+            cursor_raw_offset=cursor_off,
+            line_height=line_height,
+        )
 
     # 找到 cursor_off 所在视觉行
     vline = _find_vline_for_raw(visual_lines, cursor_off)
@@ -632,13 +643,30 @@ def LineView(
         )
 
     # ============ 普通文本行（段落/标题/列表/引用/空行）：RenderedLine + Stack ============
+    # 性能优化：激活行在此计算一次视觉行布局，共享给 _cursor_overlay 和 RenderedLine，
+    # 消除原先三处独立调用 _line_visual_layout（内含 HarfBuzz 整形测量）的冗余。
+    # 非激活行无 overlay，vlayout 由 RenderedLine 内部惰性计算（无重复）。
     cursor_off_val = effective_cursor_off if is_active else None
+    shared_vlayout: tuple[float, list] | None = None
+    if is_active:
+        _, _, left_pad = _block_padding(line)
+        cw = content_width if content_width is not None else float("inf")
+        shared_ww = _compute_wrap_width(cw, left_pad)
+        shared_vlines = _line_visual_layout(
+            line, base, shared_ww,
+            cursor_raw_offset=effective_cursor_off,
+            line_height=line_height,
+        )
+        shared_vlayout = (shared_ww, shared_vlines)
+
     overlay = None
     if is_active and on_cursor_change is not None:
         overlay = _cursor_overlay(
             line, base, line_height, effective_cursor_off, content_width, line_idx, nav_seq,
             field_ref, on_cursor_change, on_cursor_submit, on_cursor_focus,
             on_cursor_blur, on_selection_change,
+            precomputed_vlines=shared_vlayout[1] if shared_vlayout else None,
+            precomputed_wrap_width=shared_vlayout[0] if shared_vlayout else None,
         )
 
     inner = RenderedLine(
@@ -649,6 +677,7 @@ def LineView(
         line_height=line_height,
         content_width=content_width,
         cursor_overlay=overlay,
+        precomputed_vlayout=shared_vlayout,
         on_tap=on_tap,
         on_pan_start=on_pan_start,
         on_pan_update=on_pan_update,

@@ -136,6 +136,8 @@ def RenderedLine(
     line_height: float = 1.6,
     content_width: float | None = None,
     cursor_overlay: ft.Control | None = None,
+    # 预计算视觉行布局：(wrap_width, visual_lines)，由 LineView 共享传入避免重复计算
+    precomputed_vlayout: tuple[float, list[VisualLine]] | None = None,
     # 点击 / 拖拽
     on_tap: Callable[[int, int], None] | None = None,
     on_pan_start: Callable[[int, int], None] | None = None,
@@ -174,19 +176,38 @@ def RenderedLine(
 
     # 软换行视觉行布局（惰性计算，仅普通文本行/任务行/空行使用）
     _vlayout_cache: list = [None]  # [0] = (wrap_width, visual_lines) or None
+    # 行内 offsets_x 缓存：_line_raw_offsets_x 结果（含 HarfBuzz 整形测量）。
+    # vlayout 计算和 hit_test 共用同一份，避免激活行点击时重复测量。
+    _offsets_cache: list[list[float] | None] = [None]
+
+    def _get_offsets() -> list[float]:
+        """惰性计算行内 offsets_x（含标记折叠/kerning/逐段字体），hit_test 复用。"""
+        if _offsets_cache[0] is None:
+            _offsets_cache[0] = _line_raw_offsets_x(line, base, cursor_raw_offset=cursor_off)
+        return _offsets_cache[0]
 
     def _get_vlayout() -> tuple[float, list[VisualLine]]:
-        """惰性计算 (wrap_width, visual_lines)，与光标测量共用同一换行函数。"""
+        """惰性计算 (wrap_width, visual_lines)，与光标测量共用同一换行函数。
+
+        性能优化：优先使用 LineView 传入的 precomputed_vlayout（激活行已在外部
+        计算一次，此处直接复用）；否则用 _get_offsets() 缓存的 offsets 传入
+        _line_visual_layout，避免内部重复调用 _line_raw_offsets_x。
+        """
         if _vlayout_cache[0] is None:
-            _, _, left_pad = _block_padding(line)
-            cw = content_width if content_width is not None else float("inf")
-            ww = _compute_wrap_width(cw, left_pad)
-            vlines = _line_visual_layout(
-                line, base, ww,
-                cursor_raw_offset=cursor_off,
-                line_height=line_height,
-            )
-            _vlayout_cache[0] = (ww, vlines)
+            if precomputed_vlayout is not None:
+                _vlayout_cache[0] = precomputed_vlayout
+            else:
+                _, _, left_pad = _block_padding(line)
+                cw = content_width if content_width is not None else float("inf")
+                ww = _compute_wrap_width(cw, left_pad)
+                offsets = _get_offsets()
+                vlines = _line_visual_layout(
+                    line, base, ww,
+                    cursor_raw_offset=cursor_off,
+                    line_height=line_height,
+                    _precomputed_offsets=offsets,
+                )
+                _vlayout_cache[0] = (ww, vlines)
         return _vlayout_cache[0]
 
     # 闭包共享标志：GestureDetector.on_tap 处理 Shift+Click 后置 True，
@@ -220,13 +241,16 @@ def RenderedLine(
         任务行：Checkbox 替代了前缀，text_ctrl 只渲染内容（skip_seg0=True），
         local_x 相对内容起点。前缀段在 offsets_x 中已折叠为零宽度，
         scan_forward 自动跳过零宽度区域定位到内容起点。
+
+        性能优化：非任务行复用 _get_offsets() 缓存（与 vlayout 共用同一份
+        _line_raw_offsets_x 结果），避免每次点击/拖拽重新调用 HarfBuzz 整形测量。
         """
         if line.task:
             # 任务行：前缀已折叠（display_text=""），用浏览态 offsets
             # scan_forward 跳过前缀零宽度区域，直接定位内容偏移
             offsets = _line_raw_offsets_x(line, base, cursor_raw_offset=None)
         else:
-            offsets = _line_raw_offsets_x(line, base, cursor_raw_offset=cursor_off)
+            offsets = _get_offsets()
         return hit_test_line_x_raw(offsets, x)
 
     def _pan_target_off(pos) -> tuple[int, int]:

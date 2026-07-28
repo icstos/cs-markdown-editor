@@ -240,6 +240,9 @@ def MarkdownEditor(
     # LineLayoutCache 缓存：跨行拖拽选区精确命中（Y 二分 + 行内 X）。
     # 惰性构建（首次 pan 事件触发），行数变化时失效（_reset_line_heights 同步清空）。
     layout_cache_ref = ft.use_ref(None)
+    # 行偏移前缀和缓存：[0.0, h0, h0+h1, ...]，_estimate_line_offset 用 O(1) 查表
+    # 替代 O(n) 逐行累加。行高变化（on_line_size_change）或行数变化时置 None 失效。
+    _offset_prefix_ref = ft.use_ref(None)
     # 记忆列：垂直导航时记录的 X 像素（视觉行内列位置，跨视觉行一致定位）
     preferred_col_ref = ft.use_ref(None)
     # SelectionArea 当前选中的纯文本
@@ -2275,10 +2278,12 @@ def MarkdownEditor(
 
         容差 0.5px 内不更新，避免 layout 抖动引发无效写入。缓存供
         _estimate_line_offset 精确累加滚动偏移，未命中的行回退到估算。
+        行高变化时同步失效前缀和缓存（_offset_prefix_ref）。
         """
         cache = line_heights_ref.current
         if height > 0 and abs(cache.get(li, 0.0) - height) > 0.5:
             cache[li] = height
+            _offset_prefix_ref.current = None  # 失效前缀和缓存
 
     def _estimate_line_height(li: int) -> float:
         """估算单行渲染高度（px）。优先用 on_size_change 上报的实际高度。
@@ -2333,8 +2338,21 @@ def MarkdownEditor(
         比旧的 li × (目标行字号 × line_height + 4) 估算准确得多：
         - 各行按自身字号/块类型累加，而非统一用目标行字号
         - 已构建行用实测高度，消除代码块/长段落换行/表格的估算偏差
+
+        性能优化：前缀和缓存——首次调用 O(n) 构建前缀和数组，后续调用 O(1) 查表。
+        原先每次调用都 O(li) 逐行累加，光标在第 500 行时每次导航需 500 次高度查找。
+        缓存在行高变化（on_line_size_change）或行数变化（_reset_line_heights）时失效。
         """
-        return sum(_estimate_line_height(j) for j in range(li))
+        n = len(document.lines)
+        prefix = _offset_prefix_ref.current
+        if prefix is None or len(prefix) != n + 1:
+            prefix = [0.0] * (n + 1)
+            for j in range(n):
+                prefix[j + 1] = prefix[j] + _estimate_line_height(j)
+            _offset_prefix_ref.current = prefix
+        if 0 <= li <= n:
+            return prefix[li]
+        return prefix[n] if n > 0 else 0.0
 
     async def _safe_scroll_to(li: int, to_top: bool = False,
                               cursor_y_in_line: float = 0.0):
@@ -2546,11 +2564,18 @@ def MarkdownEditor(
             except Exception:
                 pass
 
-    # 依赖 cursor_li + cursor_off + focus_seq：切换行、同行内光标位置变化、
-    # 或点击同一位置（focus_seq 递增）时重新聚焦。点击同一位置时 cursor_li/off 不变，
-    # 但点击已使 TextField 失焦，须靠 focus_seq 触发重聚焦避免光标丢失。
+    # 依赖 cursor_li + nav_seq + focus_seq：
+    # - cursor_li 变化：切换行，TextField key 含 li，key 变 → 新控件需聚焦
+    # - nav_seq 变化：撤销/重做，TextField key 含 seq，key 变 → 新控件需聚焦
+    # - focus_seq 变化：点击同一位置（cursor_li/off 均不变，但点击已使 TextField
+    #   失焦），须强制重聚焦避免光标丢失
+    #
+    # 性能优化：移除 cursor_off 依赖。同行内光标位置变化（←/→/Home/End）时
+    # cursor_li 和 nav_seq 均不变 → TextField key 不变 → 控件原地更新（left/top
+    # prop 变化）而非重建 → 焦点自然保持，无需异步 focus()。原先每次 ←/→ 都触发
+    # 异步 focus() 调用，快速导航时累积多个协程造成延迟。
     # IME 安全：_set_cursor 已在光标偏移不连续时调用 _end_input_session()
-    ft.use_effect(_focus_cursor_field, [cursor_li, cursor_off, focus_seq])
+    ft.use_effect(_focus_cursor_field, [cursor_li, nav_seq, focus_seq])
 
     # ============ use_effect：文档行数变化时清空行高缓存 ============
     # 插入/删除整行会让 line_idx 错位，旧缓存的高度会对应到错误的行。
@@ -2561,6 +2586,7 @@ def MarkdownEditor(
     def _reset_line_heights():
         line_heights_ref.current = {}
         layout_cache_ref.current = None
+        _offset_prefix_ref.current = None  # 失效前缀和缓存
 
     ft.use_effect(_reset_line_heights, [len(document.lines), word_wrap, viewport_w])
 

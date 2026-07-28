@@ -125,6 +125,40 @@ def _file_name(path: str | None) -> str:
     return os.path.basename(path) if path else "未命名.md"
 
 
+# 列表缩进单位（空格数）：与 list_color_level 色阶（indent // 2 + 1）一致，
+# 每 Tab 一级 = 2 空格 = 1 色阶，视觉与配色同步变化。
+_LIST_INDENT_UNIT = 2
+# 列表最大缩进空格数：对应 6 级色阶（0,2,4,6,8,10），防止无限嵌套。
+_LIST_MAX_SPACES = 10
+# 引用最大嵌套层级：对应 6 级彩色边框（heading_colors 红→紫）。
+_QUOTE_MAX_LEVEL = 6
+
+
+def _snap_indent_up(level: int, unit: int, limit: int) -> int:
+    """缩进：向 unit 的倍数上取一级，钳制到 limit。"""
+    return min(((level // unit) + 1) * unit, limit)
+
+
+def _snap_indent_down(level: int, unit: int) -> int:
+    """降级：向 unit 的倍数下取一级（不含当前），最小 0。"""
+    if level <= 0:
+        return 0
+    return max(((level - 1) // unit) * unit, 0)
+
+
+def _shift_cursor_off(cur_off: int, old_prefix_len: int, new_prefix_len: int, new_raw_len: int) -> int:
+    """缩进 / 降级后光标位置：保留内容内相对偏移；光标在前缀内则落到内容首。
+
+    仅前缀长度变化时同步平移光标，使光标在文字中的位置保持不变（自然丝滑）。
+    """
+    if cur_off >= old_prefix_len:
+        off = cur_off + (new_prefix_len - old_prefix_len)
+    else:
+        off = new_prefix_len
+    return max(0, min(off, new_raw_len))
+
+
+
 def _heading_prefix(level: int) -> str:
     return f"{'#' * max(level, 1)} "
 
@@ -1006,56 +1040,127 @@ def MarkdownEditor(
         _move_vline(1, 1)
 
     # ============ 缩进 ============
+    def _rebuild_list_prefix(level: int, body: str, block_type, task: bool, checked: bool,
+                            restart_num: bool) -> str:
+        """按缩进级别重建列表前缀。
+
+        restart_num=True 时有序列表序号重置为 1（嵌套子列表自然重新计数）。
+        任务列表保留原标记符号与勾选状态。
+        """
+        indent_sp = " " * level
+        if task:
+            m = re.match(r"^([-*+])\s+", body)
+            marker = m.group(1) if m else "-"
+            return f"{indent_sp}{marker} [{'x' if checked else ' '}] "
+        if block_type == BlockType.LIST_O:
+            if restart_num:
+                num = "1"
+            else:
+                m = re.match(r"^(\d+)\.\s+", body)
+                num = m.group(1) if m else "1"
+            return f"{indent_sp}{num}. "
+        m = re.match(r"^([-*+])\s+", body)
+        marker = m.group(1) if m else "-"
+        return f"{indent_sp}{marker} "
+
     def indent_or_outdent(delta: int):
-        """Tab / Shift+Tab：列表缩进 / 引用层级。"""
+        """Tab / Shift+Tab：列表缩进 / 引用层级（桌面端直觉式）。
+
+        列表（无序 / 有序 / 任务）：
+        - Tab：缩进一级（+2 空格，与 list_color_level 色阶一致），上限 10 空格（6 色）；
+          有序列表缩进时序号重置为 1（嵌套子列表自然计数）。
+        - Shift+Tab：减少缩进一级；顶级（0 空格）时转为普通段落（移除标记，保留内容）。
+        引用：
+        - Tab：增加一级嵌套（+1 个 > ），上限 6 级（6 色边框）。
+        - Shift+Tab：减少一级；顶级（1 级）时转为普通段落。
+        光标：保留在内容中的相对偏移（仅前缀长度变化时同步平移），自然丝滑。
+        """
         if cursor_li is None:
             return
         li = cursor_li
         if not (0 <= li < len(document.lines)):
             return
         line = document.lines[li]
+        raw = _line_raw(line)
+        cur_off = _cursor_base(len(raw))
+
         if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
-            _push_history()
-            undo_push_pending.current = True
-            new_level = max(0, (line.level or 0) + delta)
-            indent_sp = " " * new_level
-            # 从前缀段提取列表标记符号
-            prefix_raw = line.segments[0].raw if line.segments else "- "
-            # 从整行获取完整内容（排除前缀）
+            level = line.level or 0
+            prefix_raw = line.segments[0].raw if line.segments else ""
+            old_prefix_len = len(prefix_raw)
             content = _inline_content(line)
-            # 从前缀中提取标记类型
             body = prefix_raw.lstrip()
-            if line.task:
-                marker_match = re.match(r"^([-*+])\s+", body)
-                marker = marker_match.group(1) if marker_match else "-"
-                new_prefix = f"{indent_sp}{marker} [{'x' if line.checked else ' '}] "
-            elif line.block_type == BlockType.LIST_O:
-                num_match = re.match(r"^(\d+)\.\s+", body)
-                num = num_match.group(1) if num_match else "1"
-                new_prefix = f"{indent_sp}{num}. "
-            else:
-                marker_match = re.match(r"^([-*+])\s+", body)
-                marker = marker_match.group(1) if marker_match else "-"
-                new_prefix = f"{indent_sp}{marker} "
-            new_raw = new_prefix + content
-            _reparse_atomic(line, new_raw)
-            mark_dirty()
-            _set_cursor(li, len(new_prefix))
-        elif line.block_type == BlockType.QUOTE:
-            _push_history()
-            undo_push_pending.current = True
-            new_level = max(1, (line.level or 1) + delta)
-            content = _inline_content(line)
-            new_raw = "> " * new_level + content
-            _reparse_atomic(line, new_raw)
-            mark_dirty()
-            _set_cursor(li, new_level * 2)
-        else:
-            # 普通段落：Tab 插入 4 空格
+
             if delta > 0:
-                raw = _line_raw(line)
-                off = _cursor_base(len(raw))  # IME 实时光标，避免输入后立即 Tab 位置错位
+                # Tab：缩进一级
+                new_level = _snap_indent_up(level, _LIST_INDENT_UNIT, _LIST_MAX_SPACES)
+                new_prefix = _rebuild_list_prefix(
+                    new_level, body, line.block_type, line.task, line.checked, restart_num=True)
+                new_raw = new_prefix + content
+                _push_history()
+                undo_push_pending.current = True
+                _reparse_atomic(line, new_raw)
+                mark_dirty()
+                _set_cursor(li, _shift_cursor_off(cur_off, old_prefix_len, len(new_prefix), len(new_raw)))
+            else:
+                # Shift+Tab：降级或转段落
+                if level <= 0:
+                    # 顶级列表项 → 普通段落（移除标记，保留内容）
+                    new_raw = content
+                    _push_history()
+                    undo_push_pending.current = True
+                    _reparse_atomic(line, new_raw)
+                    mark_dirty()
+                    _set_cursor(li, _shift_cursor_off(cur_off, old_prefix_len, 0, len(new_raw)))
+                else:
+                    new_level = _snap_indent_down(level, _LIST_INDENT_UNIT)
+                    new_prefix = _rebuild_list_prefix(
+                        new_level, body, line.block_type, line.task, line.checked, restart_num=False)
+                    new_raw = new_prefix + content
+                    _push_history()
+                    undo_push_pending.current = True
+                    _reparse_atomic(line, new_raw)
+                    mark_dirty()
+                    _set_cursor(li, _shift_cursor_off(cur_off, old_prefix_len, len(new_prefix), len(new_raw)))
+        elif line.block_type == BlockType.QUOTE:
+            level = line.level or 1
+            content = _inline_content(line)
+            old_prefix_len = level * 2  # "> " * level
+
+            if delta > 0:
+                # Tab：增加一级嵌套，上限 6
+                new_level = min(level + 1, _QUOTE_MAX_LEVEL)
+                new_raw = "> " * new_level + content
+                _push_history()
+                undo_push_pending.current = True
+                _reparse_atomic(line, new_raw)
+                mark_dirty()
+                _set_cursor(li, _shift_cursor_off(cur_off, old_prefix_len, new_level * 2, len(new_raw)))
+            else:
+                # Shift+Tab：降级或转段落
+                if level <= 1:
+                    # 顶级引用 → 普通段落
+                    new_raw = content
+                    _push_history()
+                    undo_push_pending.current = True
+                    _reparse_atomic(line, new_raw)
+                    mark_dirty()
+                    _set_cursor(li, _shift_cursor_off(cur_off, old_prefix_len, 0, len(new_raw)))
+                else:
+                    new_level = level - 1
+                    new_raw = "> " * new_level + content
+                    _push_history()
+                    undo_push_pending.current = True
+                    _reparse_atomic(line, new_raw)
+                    mark_dirty()
+                    _set_cursor(li, _shift_cursor_off(cur_off, old_prefix_len, new_level * 2, len(new_raw)))
+        else:
+            # 普通段落：Tab 插入 4 空格（Shift+Tab 无操作）
+            if delta > 0:
+                off = cur_off
                 new_raw = raw[:off] + "    " + raw[off:]
+                _push_history()
+                undo_push_pending.current = True
                 _reparse_atomic(line, new_raw)
                 mark_dirty()
                 _set_cursor(li, off + 4)

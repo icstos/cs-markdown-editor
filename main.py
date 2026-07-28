@@ -71,6 +71,18 @@ def App():
     diff_active_pane, set_diff_active_pane = ft.use_state(0)  # 0=左, 1=右
     diff_active_pane_ref = ft.use_ref(0)
     diff_active_pane_ref.current = diff_active_pane
+    # diff 同步滚动（VSCode 风格）：一侧滚动时另一侧跟随相同像素偏移。
+    # diff_gaps 已让两侧差异行视觉对齐，像素同步即可保持对应行对齐。
+    # - diff_syncing_ref：程序触发滚动期间为 True，被动侧 on_scroll 据此跳过反向同步
+    # - diff_sync_direction_ref："lr"=左主动同步右 / "rl"=右主动同步左 / None。
+    #   syncing 期间仅主动侧的 on_scroll 累积 pending，被动侧忽略，避免短文档侧
+    #   clamp 后反向拉回长文档侧（VSCode 行为：一侧到底时另一侧可继续独立滚动）
+    # - diff_pending_*：syncing 期间主动侧累积的最新请求，标记清除后追赶，避免连续
+    #   滚轮滚动时中间帧被丢弃导致跟随滞后
+    diff_syncing_ref = ft.use_ref(False)
+    diff_sync_direction_ref = ft.use_ref(None)
+    diff_pending_target_ref = ft.use_ref(None)  # 追赶目标 nav_ref
+    diff_pending_offset_ref = ft.use_ref(0.0)   # 追赶目标 offset
     # 亮/暗主题模式
     theme_mode, set_theme_mode = ft.use_state(ft.ThemeMode.LIGHT)
     settings, set_settings = ft.use_state(load_settings)
@@ -795,6 +807,77 @@ def App():
             return nav_ref_split
         return nav_ref
 
+    # ============ diff 同步滚动 ============
+    def _sync_diff_scroll_to(target_nav, offset: float, direction: str):
+        """将 target_nav 侧滚动到 offset（像素同步）。
+
+        direction: "lr"=左主动同步右 / "rl"=右主动同步左。标记主动侧，使 syncing
+        期间仅主动侧 on_scroll 累积 pending，被动侧忽略，避免 clamp 反向拉回。
+
+        流程：置 syncing+direction 标记 → 调用目标侧 scroll_to_offset(duration=0)
+        → 异步等待 Flutter 执行 + 触发目标侧 on_scroll（被动侧被标记拦截）
+        → 清除标记 → 追赶 syncing 期间主动侧累积的最新请求。
+        """
+        target = target_nav.current if target_nav is not None else None
+        if target is None or target.scroll_to_offset is None:
+            return
+        diff_syncing_ref.current = True
+        diff_sync_direction_ref.current = direction
+        diff_pending_target_ref.current = None
+        diff_pending_offset_ref.current = 0.0
+        try:
+            target.scroll_to_offset(offset)
+        except Exception:
+            diff_syncing_ref.current = False
+            diff_sync_direction_ref.current = None
+            return
+        page = page_ref.current
+        if page is None:
+            diff_syncing_ref.current = False
+            diff_sync_direction_ref.current = None
+            return
+        page.run_task(_after_diff_sync)
+
+    async def _after_diff_sync():
+        """等待目标侧滚动完成 + on_scroll 触发后，清除同步标记并追赶累积请求。"""
+        # duration=0 的 scroll_to 仍需一次 Flutter 帧往返执行 + 触发 on_scroll
+        await asyncio.sleep(0.06)
+        direction = diff_sync_direction_ref.current
+        diff_syncing_ref.current = False
+        diff_sync_direction_ref.current = None
+        # 追赶：syncing 期间主动侧继续滚动累积的最新 offset
+        pending_nav = diff_pending_target_ref.current
+        pending_off = diff_pending_offset_ref.current
+        if pending_nav is not None:
+            diff_pending_target_ref.current = None
+            _sync_diff_scroll_to(pending_nav, pending_off, direction)
+
+    def _on_diff_left_scroll(offset: float, max_scroll: float, viewport_h: float):
+        """左侧滚动 → 同步右侧。
+
+        syncing 期间：仅当左侧是主动侧（direction=lr）才累积 pending 追赶；
+        若左侧是被动侧（direction=rl，被右侧同步触发），忽略，避免反向拉回。
+        """
+        if diff_syncing_ref.current:
+            if diff_sync_direction_ref.current == "lr":
+                diff_pending_target_ref.current = diff_nav_right
+                diff_pending_offset_ref.current = offset
+            return
+        _sync_diff_scroll_to(diff_nav_right, offset, "lr")
+
+    def _on_diff_right_scroll(offset: float, max_scroll: float, viewport_h: float):
+        """右侧滚动 → 同步左侧。
+
+        syncing 期间：仅当右侧是主动侧（direction=rl）才累积 pending 追赶；
+        若右侧是被动侧（direction=lr，被左侧同步触发），忽略，避免反向拉回。
+        """
+        if diff_syncing_ref.current:
+            if diff_sync_direction_ref.current == "rl":
+                diff_pending_target_ref.current = diff_nav_left
+                diff_pending_offset_ref.current = offset
+            return
+        _sync_diff_scroll_to(diff_nav_left, offset, "rl")
+
     def _apply_content_layout():
         page = page_ref.current
         if page is None:
@@ -1169,6 +1252,7 @@ def App():
                                 diff_gaps=gaps_left,
                                 on_editor_focus=lambda: _set_diff_active_pane(0),
                                 on_save=lambda: _save_diff_doc(_ldoc),
+                                on_scroll_change=_on_diff_left_scroll,
                                 **_diff_common,
                             ),
                             expand=True,
@@ -1186,6 +1270,7 @@ def App():
                                 show_toolbar=False,
                                 on_editor_focus=lambda: _set_diff_active_pane(1),
                                 on_save=lambda: _save_diff_doc(_rdoc),
+                                on_scroll_change=_on_diff_right_scroll,
                                 keyboard_autofocus=False,
                                 **_diff_common,
                             ),

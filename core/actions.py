@@ -116,3 +116,11 @@ class EditorActions:
     # 链接编辑回归常规文本编辑：光标在链接段内时渲染层显示完整语法，离开则折叠；
     # 无需 Tab 字段跳转等专用动作。
     handle_outward_type_char: Callable[[str], None] | None = None
+
+    # ---- 滚动同步（diff 对比模式：左右编辑器像素偏移同步）----
+    # get_scroll_state：返回 (offset, max_scroll_extent, viewport_height)，
+    #   供 main.py 读取当前滚动位置做同步对齐。
+    # scroll_to_offset：同步调度异步 scroll_to(offset, duration=0)，对外非阻塞。
+    #   duration=0 保证跟随滚轮即时响应，无动画延迟。
+    get_scroll_state: Callable[[], tuple[float, float, float]] | None = None
+    scroll_to_offset: Callable[[float], None] | None = None

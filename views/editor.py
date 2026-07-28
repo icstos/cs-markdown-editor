@@ -202,6 +202,9 @@ def MarkdownEditor(
     # diff 对比模式：diff_marks 映射行号→标记，diff_gaps 映射行号→间隙高度列表
     diff_marks: dict[int, str] | None = None,
     diff_gaps: dict[int, list[float]] | None = None,
+    # 滚动同步回调：滚动时上报 (offset, max_scroll, viewport_h)，供 diff 对比模式
+    # 驱动另一侧同步滚动。None 时不同步（单编辑器 / 拆分编辑器）。
+    on_scroll_change: Callable[[float, float, float], None] | None = None,
 ):
     c = _current_colors()
     settings = settings or {}
@@ -2273,8 +2276,42 @@ def MarkdownEditor(
                 max_scroll_ref.current = e.max_scroll_extent
             if hasattr(e, "viewport_dimension"):
                 viewport_h_ref.current = e.viewport_dimension
+            # diff 对比模式滚动同步：上报当前滚动位置，main.py 据此驱动另一侧
+            if on_scroll_change is not None:
+                on_scroll_change(
+                    scroll_offset_ref.current,
+                    max_scroll_ref.current,
+                    viewport_h_ref.current,
+                )
         except Exception:
             pass
+
+    def _get_scroll_state() -> tuple[float, float, float]:
+        """返回当前滚动状态 (offset, max_scroll_extent, viewport_height)。"""
+        return (
+            scroll_offset_ref.current,
+            max_scroll_ref.current,
+            viewport_h_ref.current,
+        )
+
+    def _scroll_to_offset(offset: float) -> None:
+        """同步调度异步 scroll_to(offset, duration=0)。
+
+        duration=0 即时跳转，跟随滚轮无动画延迟（diff 同步滚动专用）。
+        对外非阻塞：内部用 page.run_task 调度协程。
+        """
+        page = ft.context.page
+
+        async def _do():
+            if list_view_ref.current is None:
+                return
+            try:
+                await list_view_ref.current.scroll_to(offset, duration=0)
+            except Exception:
+                pass
+
+        if page is not None:
+            page.run_task(_do)
 
     def _on_content_resize(e):
         """内容 Container 尺寸变化回调：跟踪视口宽度，实现段落自适应换行。
@@ -2695,6 +2732,8 @@ def MarkdownEditor(
             handle_outward_delete=handle_outward_delete,
             clear_outward_sel=clear_outward_sel,
             handle_outward_type_char=handle_outward_type_char,
+            get_scroll_state=_get_scroll_state,
+            scroll_to_offset=_scroll_to_offset,
         )
 
     # ============ TOC 条目（use_memo 稳定化：签名不变则引用不变，避免 ft.memo 误判）============

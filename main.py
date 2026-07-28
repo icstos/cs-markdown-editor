@@ -43,6 +43,24 @@ def _file_name(path: str | None) -> str:
     return os.path.basename(path) if path else "未命名.md"
 
 
+def _tab_is_dirty(tab: dict) -> bool:
+    """统一脏状态判断：diff 标签任一侧脏即为脏，否则取 dirty 字段。"""
+    if tab.get("type") == "diff":
+        return bool(tab.get("left_dirty")) or bool(tab.get("right_dirty"))
+    return bool(tab.get("dirty", False))
+
+
+def _tab_paths(tab: dict) -> list[str]:
+    """统一路径列表：diff 标签返回 [left_path, right_path]，否则 [file_path]。
+
+    用于文件重命名同步、比较文本获取等需要按路径匹配标签的场景。
+    """
+    if tab.get("type") == "diff":
+        return [p for p in (tab.get("left_path"), tab.get("right_path")) if p]
+    p = tab.get("file_path")
+    return [p] if p else []
+
+
 @ft.component
 def App():
     # 多文档标签：每个 tab 持有 {document, file_path, dirty}；active_index 指向当前标签
@@ -57,15 +75,12 @@ def App():
     # 文件操作对话框状态：{"mode":"input"|"confirm", "action":..., "target":...} | None
     # 由右键菜单触发（新建文件/文件夹/重命名/删除），确认后执行对应文件操作
     file_dialog, set_file_dialog = ft.use_state(None)
-    # 文件比较（VSCode 风格）：compare_source 为「选择以进行比较」记录的源文件路径；
-    # diff_mode 为 {"left_path","right_path","left_doc","right_doc"} | None，
-    # 非 None 时进入双编辑器对比模式（左右各一个 MarkdownEditor，行级 diff 背景着色 + 间隙对齐）。
+    # 文件比较（VSCode 风格）：compare_source 为「选择以进行比较」记录的源文件路径。
+    # 对比以标签形式管理：tabs 中 type=="diff" 的标签即对比视图（双编辑器 + 行级 diff），
+    # 可与普通编辑标签并存、切换、关闭。is_diff_tab_ref 标记当前激活标签是否为对比。
     compare_source, set_compare_source = ft.use_state(None)
-    diff_mode, set_diff_mode = ft.use_state(None)
-    # diff_mode 的 ref 镜像：_bind_keyboard 空依赖闭包读取最新值，Escape 退出对比
-    diff_mode_ref = ft.use_ref(None)
-    diff_mode_ref.current = diff_mode
-    # 对比模式双编辑器导航接口 + 焦点视口
+    is_diff_tab_ref = ft.use_ref(False)
+    # 对比标签双编辑器导航接口 + 焦点视口
     diff_nav_left = ft.use_ref(None)
     diff_nav_right = ft.use_ref(None)
     diff_active_pane, set_diff_active_pane = ft.use_state(0)  # 0=左, 1=右
@@ -118,10 +133,13 @@ def App():
 
     # 当前激活标签的派生值（供下游闭包与渲染使用）
     _safe_idx = active_index if 0 <= active_index < len(tabs) else 0
-    cur_tab = tabs[_safe_idx] if tabs else {"document": parser.parse_markdown(""), "file_path": None, "dirty": False}
-    document = cur_tab["document"]
-    file_path = cur_tab["file_path"]
-    dirty = cur_tab["dirty"]
+    cur_tab = tabs[_safe_idx] if tabs else {"type": "editor", "document": parser.parse_markdown(""), "file_path": None, "dirty": False}
+    is_diff_tab = cur_tab.get("type") == "diff"
+    is_diff_tab_ref.current = is_diff_tab
+    # editor 标签派生值（diff 标签无这些字段，对应分支不访问）
+    document = cur_tab.get("document") if not is_diff_tab else None
+    file_path = cur_tab.get("file_path") if not is_diff_tab else None
+    dirty = _tab_is_dirty(cur_tab) if not is_diff_tab else (cur_tab.get("left_dirty") or cur_tab.get("right_dirty"))
 
     def _cur_tab():
         """从 ref 读取最新激活标签（异步场景使用）。"""
@@ -157,9 +175,12 @@ def App():
         return any(line.raw.strip() for line in doc.lines)
 
     def _is_blank_untitled(tab) -> bool:
+        # diff 标签始终非空白（不复用为新建/打开的载体）
+        if tab.get("type") == "diff":
+            return False
         return (
-            tab["file_path"] is None
-            and not tab["dirty"]
+            tab.get("file_path") is None
+            and not tab.get("dirty")
             and not _doc_has_text(tab["document"])
         )
 
@@ -212,7 +233,7 @@ def App():
         valid = [i for i in targets if 0 <= i < len(ts)]
         if not valid:
             return
-        if any(ts[i]["dirty"] for i in valid):
+        if any(_tab_is_dirty(ts[i]) for i in valid):
             set_confirm_close(valid)
         else:
             _do_close_many(valid)
@@ -222,12 +243,14 @@ def App():
         _request_close([index])
 
     def _on_tab_context_action(action: str, index: int):
-        """标签右键菜单回调：处理打开/新建/路径/重命名/副本/删除/关闭等操作。"""
+        """标签右键菜单回调：处理打开/新建/路径/重命名/副本/删除/关闭/交换对比等操作。"""
         ts = tabs_ref.current
         if not (0 <= index < len(ts)):
             return
         tab = ts[index]
-        path = tab["file_path"]
+        # diff 标签无 file_path 字段；统一用 .get() 避免 KeyError
+        path = tab.get("file_path")
+        is_diff = tab.get("type") == "diff"
 
         if action == "close":
             close_tab(index)
@@ -235,6 +258,25 @@ def App():
             _request_close([j for j in range(len(ts)) if j != index])
         elif action == "close_all":
             _request_close(list(range(len(ts))))
+        elif action == "swap_diff":
+            # 仅对比标签有效：交换左右侧文档/路径/脏状态，便于从不同视角审阅差异
+            if not is_diff:
+                return
+            new_tabs = list(ts)
+            new_tabs[index] = {
+                **tab,
+                "left_path": tab.get("right_path"),
+                "right_path": tab.get("left_path"),
+                "left_doc": tab.get("right_doc"),
+                "right_doc": tab.get("left_doc"),
+                "left_dirty": tab.get("right_dirty", False),
+                "right_dirty": tab.get("left_dirty", False),
+            }
+            set_tabs(new_tabs)
+            tabs_ref.current = new_tabs
+            # 切换焦点到原主动侧的对侧，保持视觉焦点对应同一文档
+            _set_diff_active_pane(1 - diff_active_pane_ref.current)
+            set_session(session + 1)
         elif action == "copy_path":
             page = page_ref.current
             if path and page is not None:
@@ -302,7 +344,7 @@ def App():
             return
         for idx in list(pending):
             ts = tabs_ref.current
-            if 0 <= idx < len(ts) and ts[idx]["dirty"]:
+            if 0 <= idx < len(ts) and _tab_is_dirty(ts[idx]):
                 ok = await save_doc(idx)
                 if not ok:
                     set_confirm_close(None)
@@ -356,22 +398,37 @@ def App():
         page.update()
 
     def _update_tab_for_renamed_file(old_path: str, new_path: str):
-        """文件重命名后，同步更新打开了该文件的标签的 file_path。"""
+        """文件重命名后，同步更新引用该文件的标签路径（含对比标签两侧）。"""
         ts = list(tabs_ref.current)
         changed = False
         for i, t in enumerate(ts):
-            if t["file_path"] == old_path:
+            if t.get("type") == "diff":
+                # 对比标签：检查左右两侧路径，更新匹配侧
+                updates = {}
+                if t.get("left_path") == old_path:
+                    updates["left_path"] = new_path
+                    if t.get("left_doc") is not None:
+                        t["left_doc"].file_path = new_path
+                if t.get("right_path") == old_path:
+                    updates["right_path"] = new_path
+                    if t.get("right_doc") is not None:
+                        t["right_doc"].file_path = new_path
+                if updates:
+                    ts[i] = {**t, **updates}
+                    changed = True
+            elif t.get("file_path") == old_path:
                 ts[i] = {**t, "file_path": new_path}
-                ts[i]["document"].file_path = new_path
+                if t.get("document") is not None:
+                    ts[i]["document"].file_path = new_path
                 changed = True
         if changed:
             set_tabs(ts)
             tabs_ref.current = ts
 
     def _close_tabs_for_path(path: str):
-        """关闭打开了指定路径的所有标签（不保存，用于删除后清理）。"""
+        """关闭引用指定路径的所有标签（含对比标签，用于删除后清理）。"""
         ts = tabs_ref.current
-        indices = [i for i, t in enumerate(ts) if t["file_path"] == path]
+        indices = [i for i, t in enumerate(ts) if path in _tab_paths(t)]
         if indices:
             _do_close_many(indices)
 
@@ -456,7 +513,12 @@ def App():
         这样比较未保存的草稿也能反映最新编辑结果，与 VSCode 行为一致。
         """
         for t in tabs_ref.current:
-            if t["file_path"] == path:
+            if path in _tab_paths(t):
+                # diff 标签：返回对应侧文档内容；editor 标签：返回 document
+                if t.get("type") == "diff":
+                    if t.get("left_path") == path:
+                        return parser.serialize(t["left_doc"])
+                    return parser.serialize(t["right_doc"])
                 return parser.serialize(t["document"])
         try:
             return read_text(path)
@@ -470,9 +532,10 @@ def App():
         _show_snack(f"已选择以进行比较：{os.path.basename(path)}")
 
     def _compare_with_selected(right_path: str):
-        """用已选源（左）与 right_path（右）进入双编辑器对比模式。
+        """用已选源（左）与 right_path（右）创建对比标签。
 
         两侧均加载为可编辑 Document，实时计算行级 diff 标记和间隙对齐。
+        对比以 type=="diff" 标签形式存在，可与普通编辑标签并存、切换、关闭。
         """
         src = compare_source
         if not src:
@@ -487,14 +550,31 @@ def App():
         left_doc.file_path = src
         right_doc = parser.parse_markdown(right_text)
         right_doc.file_path = right_path
-        set_diff_active_pane(0)
-        diff_active_pane_ref.current = 0
-        set_diff_mode({
+        new_tab = {
+            "type": "diff",
             "left_path": src,
             "right_path": right_path,
             "left_doc": left_doc,
             "right_doc": right_doc,
-        })
+            "left_dirty": False,
+            "right_dirty": False,
+        }
+        # 复用当前空白未命名标签（完全替换，避免残留 editor 字段），否则追加新标签
+        if _is_blank_untitled(cur_tab):
+            new_tabs = list(tabs)
+            new_tabs[active_index] = new_tab
+            new_idx = active_index
+        else:
+            new_tabs = list(tabs)
+            new_tabs.append(new_tab)
+            new_idx = len(new_tabs) - 1
+        set_tabs(new_tabs)
+        tabs_ref.current = new_tabs
+        set_active_index(new_idx)
+        active_index_ref.current = new_idx
+        set_diff_active_pane(0)
+        diff_active_pane_ref.current = 0
+        set_session(session + 1)
 
     def _on_sidebar_context_action(action: str, path: str):
         """侧边栏文件/文件夹右键菜单回调。
@@ -627,7 +707,13 @@ def App():
         set_capturing((None, None))
 
     def _autosave_enabled_for(tab) -> bool:
-        return bool(settings.get("auto_save", False)) and bool(tab and tab["file_path"])
+        """自动保存是否对该标签生效：需开启 auto_save 且标签有可写路径。
+
+        对比标签任一侧有路径即生效；普通标签需有 file_path。
+        """
+        if not settings.get("auto_save", False) or not tab:
+            return False
+        return bool(_tab_paths(tab))
 
     def _schedule_autosave():
         """基于 ref 读取当前激活标签，延时 2s 自动保存该标签。
@@ -635,7 +721,7 @@ def App():
         捕获调度时的 active_index，即便用户切换到其他标签，仍保存当初变脏的标签。
         """
         tab = _cur_tab()
-        if not tab or not tab["dirty"] or not _autosave_enabled_for(tab):
+        if not tab or not _tab_is_dirty(tab) or not _autosave_enabled_for(tab):
             return
         page = page_ref.current
         if page is None:
@@ -648,7 +734,7 @@ def App():
             if not (0 <= sched_idx < len(ts)):
                 return
             t2 = ts[sched_idx]
-            if t2["dirty"] and _autosave_enabled_for(t2):
+            if _tab_is_dirty(t2) and _autosave_enabled_for(t2):
                 await save_doc(sched_idx)
 
         page.run_task(_debounced_save)
@@ -737,9 +823,9 @@ def App():
         - 当前标签为空白未命名 → 复用该标签加载
         - 否则 → 追加新标签并激活
         """
-        # 已在某标签打开：直接切换
+        # 已在某普通编辑标签打开：直接切换（对比标签不算重复打开）
         for i, t in enumerate(tabs):
-            if t["file_path"] == path:
+            if t.get("file_path") == path:
                 if i != active_index:
                     set_active_index(i)
                     set_session(session + 1)
@@ -774,8 +860,8 @@ def App():
 
     def toggle_split_editor():
         """向右拆分编辑器（VSCode 风格 Ctrl+\）：切换右侧第二视口，共享同一文档。"""
-        # 对比模式下禁用拆分切换：两者互斥，避免退出对比后意外进入拆分
-        if diff_mode_ref.current is not None:
+        # 对比标签下禁用拆分切换：两者互斥，避免对比标签内意外进入拆分
+        if is_diff_tab_ref.current:
             return
         next_split = not split_editor
         set_split_editor(next_split)
@@ -795,13 +881,31 @@ def App():
             set_diff_active_pane(pane)
             diff_active_pane_ref.current = pane
 
+    def _on_diff_dirty_change(side: int, dirty: bool):
+        """对比标签侧文档脏状态变化回调。
+
+        side: 0=左, 1=右。仅当状态真正变化时更新标签，避免高频回调触发重渲染。
+        同步写 tabs_ref.current，使 autosave 等异步读取者立即拿到最新脏状态。
+        """
+        ts = list(tabs_ref.current)
+        ai = active_index_ref.current
+        if not (0 <= ai < len(ts)) or ts[ai].get("type") != "diff":
+            return
+        tab = ts[ai]
+        key = "left_dirty" if side == 0 else "right_dirty"
+        if tab.get(key) == dirty:
+            return
+        ts[ai] = {**tab, key: dirty}
+        set_tabs(ts)
+        tabs_ref.current = ts
+
     def _get_active_nav():
         """统一获取当前焦点视口的 nav_ref。
 
-        优先级：diff_mode > split_editor > 单编辑器。键盘事件、跳转、状态栏
+        优先级：对比标签 > split_editor > 单编辑器。键盘事件、跳转、状态栏
         光标位置都通过此函数路由，避免散落的分支判断。
         """
-        if diff_mode_ref.current is not None:
+        if is_diff_tab_ref.current:
             return diff_nav_right if diff_active_pane_ref.current == 1 else diff_nav_left
         if split_editor and active_pane_ref.current == 1:
             return nav_ref_split
@@ -898,8 +1002,13 @@ def App():
             actions.jump_to_line(li)
 
     def on_dirty_change(d: bool):
-        """编辑器上报脏状态变化时，更新当前标签的 dirty（仅状态变化时写，避免每键重渲染）。"""
-        if cur_tab["dirty"] != d:
+        """编辑器上报脏状态变化时，更新当前标签的 dirty（仅状态变化时写，避免每键重渲染）。
+
+        仅普通编辑标签走此回调；对比标签两侧各自走 _on_diff_dirty_change。
+        """
+        if is_diff_tab_ref.current:
+            return
+        if cur_tab.get("dirty") != d:
             _update_active(dirty=d)
         if d:
             _schedule_autosave()
@@ -936,6 +1045,7 @@ def App():
         """保存指定标签（默认激活标签）。返回是否真正保存成功（用户取消另存则 False）。
 
         基于 tabs_ref.current 读取/更新，保证批量保存（确认弹层）时不互相覆盖。
+        对比标签分别保存两侧脏文档到各自路径；普通标签走单文档保存。
         """
         if tab_index is None:
             tab_index = active_index_ref.current
@@ -943,8 +1053,49 @@ def App():
         if not (0 <= tab_index < len(ts)):
             return False
         tab = ts[tab_index]
-        doc = tab["document"]
-        path = tab["file_path"]
+
+        # ---- 对比标签：分别保存左右两侧脏文档 ----
+        if tab.get("type") == "diff":
+            left_doc = tab.get("left_doc")
+            right_doc = tab.get("right_doc")
+            left_path = tab.get("left_path")
+            right_path = tab.get("right_path")
+            left_dirty = tab.get("left_dirty", False)
+            right_dirty = tab.get("right_dirty", False)
+            if not left_dirty and not right_dirty:
+                return True  # 两侧均无修改，无需保存
+            # 保存左侧
+            if left_dirty and left_path and left_doc is not None:
+                try:
+                    write_text(left_path, parser.serialize(left_doc))
+                    left_doc.dirty = False
+                except Exception as e:
+                    _show_snack(f"左侧保存失败：{e}")
+                    return False
+            # 保存右侧
+            if right_dirty and right_path and right_doc is not None:
+                try:
+                    write_text(right_path, parser.serialize(right_doc))
+                    right_doc.dirty = False
+                except Exception as e:
+                    _show_snack(f"右侧保存失败：{e}")
+                    return False
+            latest = list(tabs_ref.current)
+            latest[tab_index] = {
+                **latest[tab_index],
+                "left_dirty": False,
+                "right_dirty": False,
+            }
+            set_tabs(latest)
+            tabs_ref.current = latest
+            _show_snack("对比文档保存成功")
+            return True
+
+        # ---- 普通编辑标签：单文档保存 ----
+        doc = tab.get("document")
+        path = tab.get("file_path")
+        if doc is None:
+            return False
         if not path:
             picker = picker_holder.current
             if picker is None:
@@ -976,7 +1127,10 @@ def App():
         return True
 
     async def export_doc():
-        """导出为 HTML 文件。"""
+        """导出为 HTML 文件。对比标签不支持导出（两侧均可独立导出，请切到对应编辑标签）。"""
+        if is_diff_tab_ref.current:
+            _show_snack("对比标签不支持导出，请切换到普通编辑标签")
+            return
         md_text = parser.serialize(document)
         html = parser.to_html(md_text)
         picker = picker_holder.current
@@ -1012,7 +1166,7 @@ def App():
     # editor.py 每次渲染写入最新 EditorActions 后 dispatcher 读到的就是最新值，
     # 无需 on_key_ref 中转层。
     # 拆分/对比编辑器：根据当前模式选择对应视口的 nav_ref，键盘事件作用于焦点视口。
-    if diff_mode:
+    if is_diff_tab:
         active_nav_ref = diff_nav_right if diff_active_pane == 1 else diff_nav_left
     elif split_editor and active_pane == 1:
         active_nav_ref = nav_ref_split
@@ -1051,10 +1205,6 @@ def App():
             return lambda: None
 
         def _handler(e):
-            # Escape 退出文件对比模式（VSCode 风格），优先级高于普通快捷键
-            if (e.key or "").lower() == "escape" and diff_mode_ref.current is not None:
-                set_diff_mode(None)
-                return
             # 通过 ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例
             d = dispatcher_ref.current
             if d is None:
@@ -1100,14 +1250,21 @@ def App():
     # 侧边栏：始终渲染 Sidebar，外层 Container 宽度动画 0↔sidebar_width，
     # clip_behavior=HARD_EDGE 在收拢时裁剪内容，实现 VSCode 式平滑开合。
     # 始终保持 Sidebar 挂载可保留内部状态（搜索词 / 文件过滤 / 滚动位置）。
+    # 对比标签下 document=None，需传当前焦点侧文档以保持大纲/搜索可用。
+    if is_diff_tab:
+        _sidebar_doc = cur_tab["right_doc"] if diff_active_pane == 1 else cur_tab["left_doc"]
+        _sidebar_path = cur_tab["right_path"] if diff_active_pane == 1 else cur_tab["left_path"]
+    else:
+        _sidebar_doc = document
+        _sidebar_path = file_path
     sidebar_width = settings.get("sidebar_width", 256)
     sidebar_container = ft.Container(
         width=sidebar_width if sidebar_open else 0,
         animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
         content=Sidebar(
-            document=document,
-            file_path=file_path,
+            document=_sidebar_doc,
+            file_path=_sidebar_path,
             theme_mode=theme_mode,
             settings=settings,
             active_panel=settings.get("sidebar_panel", "files"),
@@ -1138,14 +1295,15 @@ def App():
         shortcut_mgr=shortcut_mgr,
     )
 
-    if diff_mode:
-        # ============ 文件对比模式：双 MarkdownEditor 并排 + 行级 diff 背景着色 ============
+    if is_diff_tab:
+        # ============ 对比标签：双 MarkdownEditor 并排 + 行级 diff 背景着色 ============
         # 左右各一个原生可编辑 MarkdownEditor，共享 diff_marks/diff_gaps 实现差异可视化。
         # diff 在每次渲染时由 serialize(left_doc)/serialize(right_doc) 重算——Document
         # 为 @ft.observable，任一侧编辑触发 App 重渲染，diff 标记/间隙即时更新。
-        _dm = diff_mode
-        _ldoc = _dm["left_doc"]
-        _rdoc = _dm["right_doc"]
+        _ldoc = cur_tab["left_doc"]
+        _rdoc = cur_tab["right_doc"]
+        _lpath = cur_tab["left_path"]
+        _rpath = cur_tab["right_path"]
         _ltext = parser.serialize(_ldoc)
         _rtext = parser.serialize(_rdoc)
         marks_left, marks_right, gaps_left, gaps_right = compute_diff_for_editors(
@@ -1156,13 +1314,13 @@ def App():
         _removed = sum(1 for v in marks_left.values() if v == "removed")
         _modified = sum(1 for v in marks_right.values() if v == "modified")
 
-        # 对比模式公共 props：不复用 _editor_common（其 document/file_path/on_dirty_change
-        # 绑定当前标签），对比编辑器各自持有 diff 文档，脏状态/保存独立于标签系统。
+        # 对比标签公共 props：不复用 _editor_common（其 document/file_path/on_dirty_change
+        # 绑定当前 editor 标签），对比编辑器各自持有 diff 文档。on_dirty_change/on_save
+        # 按侧传入，不放在共享 dict。
         _diff_common = dict(
             on_new=new_doc,
             on_open=lambda: page_ref.current.run_task(open_doc),
             on_export=lambda: page_ref.current.run_task(export_doc),
-            on_dirty_change=lambda d: None,  # 对比编辑不影响标签脏状态
             clipboard_ref=clipboard_holder,
             theme_mode=theme_mode,
             on_toggle_theme=toggle_theme,
@@ -1173,26 +1331,14 @@ def App():
             shortcut_mgr=shortcut_mgr,
         )
 
-        def _save_diff_doc(doc):
-            """保存对比文档到其 file_path（Ctrl+S 在对比编辑器内触发）。"""
-            if not doc.file_path:
-                _show_snack("该对比文件无路径，无法保存")
-                return
-            try:
-                write_text(doc.file_path, parser.serialize(doc))
-                doc.dirty = False
-                _show_snack(f"已保存：{os.path.basename(doc.file_path)}")
-            except Exception as e:
-                _show_snack(f"保存失败：{e}")
-
         _c = get_colors(theme_mode)
         _is_dark = theme_mode == ft.ThemeMode.DARK
         _added_char = "#7ee787" if _is_dark else "#1a7f37"
         _removed_char = "#f47067" if _is_dark else "#cf222e"
-        _left_name = os.path.basename(_dm["left_path"]) if _dm["left_path"] else "未命名"
-        _right_name = os.path.basename(_dm["right_path"]) if _dm["right_path"] else "未命名"
+        _left_name = os.path.basename(_lpath) if _lpath else "未命名"
+        _right_name = os.path.basename(_rpath) if _rpath else "未命名"
 
-        # 对比头部：文件名 + 差异统计 + 关闭按钮（复用 DiffView overlay 的视觉风格）
+        # 对比头部：文件名 + 差异统计 + 关闭按钮（关闭当前对比标签）
         _diff_header = ft.Container(
             bgcolor=_c.toolbar_bg,
             border=only_border(bottom=ft.BorderSide(1, _c.border)),
@@ -1227,8 +1373,8 @@ def App():
                     ),
                     ft.Container(expand=True),
                     ft.IconButton(
-                        icon=ft.Icons.CLOSE, tooltip="关闭对比 (Esc)",
-                        on_click=lambda e: set_diff_mode(None),
+                        icon=ft.Icons.CLOSE, tooltip="关闭对比标签",
+                        on_click=lambda e: close_tab(active_index),
                         icon_size=18, style=ft.ButtonStyle(color=_c.muted),
                     ),
                 ],
@@ -1244,14 +1390,15 @@ def App():
                     controls=[
                         ft.Container(
                             content=MarkdownEditor(
-                                key="diff-left",
+                                key=f"diff-left-{active_index}",
                                 document=_ldoc,
-                                file_path=_dm["left_path"],
+                                file_path=_lpath,
                                 nav_ref=diff_nav_left,
                                 diff_marks=marks_left,
                                 diff_gaps=gaps_left,
                                 on_editor_focus=lambda: _set_diff_active_pane(0),
-                                on_save=lambda: _save_diff_doc(_ldoc),
+                                on_dirty_change=lambda d: _on_diff_dirty_change(0, d),
+                                on_save=lambda: page_ref.current.run_task(save_doc),
                                 on_scroll_change=_on_diff_left_scroll,
                                 **_diff_common,
                             ),
@@ -1261,15 +1408,16 @@ def App():
                         ft.VerticalDivider(width=1, color=_c.border),
                         ft.Container(
                             content=MarkdownEditor(
-                                key="diff-right",
+                                key=f"diff-right-{active_index}",
                                 document=_rdoc,
-                                file_path=_dm["right_path"],
+                                file_path=_rpath,
                                 nav_ref=diff_nav_right,
                                 diff_marks=marks_right,
                                 diff_gaps=gaps_right,
                                 show_toolbar=False,
                                 on_editor_focus=lambda: _set_diff_active_pane(1),
-                                on_save=lambda: _save_diff_doc(_rdoc),
+                                on_dirty_change=lambda d: _on_diff_dirty_change(1, d),
+                                on_save=lambda: page_ref.current.run_task(save_doc),
                                 on_scroll_change=_on_diff_right_scroll,
                                 keyboard_autofocus=False,
                                 **_diff_common,
@@ -1337,12 +1485,12 @@ def App():
     )
 
     # 底部状态栏：贯穿侧边栏 + 编辑区全宽，放在 body 之下
-    # diff_mode 时反映当前焦点对比视口的文档/路径/光标；拆分时按 active_pane 选择。
-    if diff_mode:
-        _footer_doc = diff_mode["right_doc"] if diff_active_pane == 1 else diff_mode["left_doc"]
-        _footer_path = diff_mode["right_path"] if diff_active_pane == 1 else diff_mode["left_path"]
+    # 对比标签时反映当前焦点对比视口的文档/路径/光标；拆分时按 active_pane 选择。
+    if is_diff_tab:
+        _footer_doc = cur_tab["right_doc"] if diff_active_pane == 1 else cur_tab["left_doc"]
+        _footer_path = cur_tab["right_path"] if diff_active_pane == 1 else cur_tab["left_path"]
         _footer_split = False
-        _footer_split_cb = None  # 对比模式下禁用拆分切换，避免模式冲突
+        _footer_split_cb = None  # 对比标签下禁用拆分切换，避免模式冲突
     else:
         _footer_doc = document
         _footer_path = file_path
@@ -1369,9 +1517,10 @@ def App():
         else ft.Container(height=0)
     )
 
-    # 顶部多文档标签栏
+    # 顶部多文档标签栏：直接传完整 tabs，TabBar 用 .get() 读取所需展示字段
+    # （普通标签读 file_path/dirty，对比标签读 type/left_path/right_path/left_dirty/right_dirty）
     tab_bar = TabBar(
-        tabs=[{"file_path": t["file_path"], "dirty": t["dirty"]} for t in tabs],
+        tabs=tabs,
         active_index=active_index,
         theme_mode=theme_mode,
         on_select=select_tab,
@@ -1392,9 +1541,17 @@ def App():
     )
 
     # 关闭脏标签确认弹层
+    def _tab_display_name(t: dict) -> str:
+        """统一标签显示名：diff 标签显示「left ⟷ right」，否则取文件名。"""
+        if t.get("type") == "diff":
+            left = os.path.basename(t.get("left_path")) if t.get("left_path") else "未命名"
+            right = os.path.basename(t.get("right_path")) if t.get("right_path") else "未命名"
+            return f"{left} ⟷ {right}"
+        return _file_name(t.get("file_path"))
+
     _pending = confirm_close
     if _pending and len(_pending) == 1 and 0 <= _pending[0] < len(tabs):
-        _pending_label = _file_name(tabs[_pending[0]]["file_path"])
+        _pending_label = _tab_display_name(tabs[_pending[0]])
         _pending_save_label = "保存并关闭"
     elif _pending and len(_pending) > 1:
         _pending_label = f"{len(_pending)} 个标签"
@@ -1442,8 +1599,8 @@ def App():
             on_cancel=lambda: None,
         )
 
-    # 文件对比已重构为双 MarkdownEditor 原生编辑模式（见上方 diff_mode 分支），
-    # 旧的 DiffView 全屏 overlay 已移除。
+    # 文件对比已重构为双 MarkdownEditor 原生编辑模式（见上方 is_diff_tab 分支），
+    # 以 type=="diff" 标签形式管理，旧的 DiffView 全屏 overlay 已移除。
 
     return ft.Stack(
         controls=[

@@ -28,6 +28,8 @@ _PREVIEW_RADIUS = 30  # 搜索预览匹配位前后字符数
 
 def _compute_toc(document: Document) -> list[tuple[int, int, str]]:
     """复用 editor.toc_entries 的派生逻辑：返回 [(line_idx, level, text), ...]。"""
+    if document is None:
+        return []
     result: list[tuple[int, int, str]] = []
     for i, line in enumerate(document.lines):
         if line.block_type != BlockType.HEADING:
@@ -120,7 +122,7 @@ def _match_lines(
 
     preview 取匹配位前后 _PREVIEW_RADIUS 字符，超界加 …。
     """
-    if not query.strip():
+    if document is None or not query.strip():
         return []
     q = query.strip().lower()
     results: list[tuple[int, str]] = []

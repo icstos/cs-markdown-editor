@@ -25,6 +25,7 @@ from styles import FONT_MAIN, Elevation, Radius, Spacing, card_shadow, get_color
 
 _DIRTY_COLOR = "#FF9F0A"  # 未保存修改星号色（亮暗通用警示橙）
 _TAB_WIDTH = 200          # 标签固定宽度（超出文件名用省略号截断）
+_TAB_WIDTH_DIFF = 280     # 对比标签宽度（需容纳「左 ⟷ 右」双文件名）
 _TAB_ICON = 12            # 标签内图标/字号（紧凑）
 
 
@@ -46,11 +47,13 @@ def TabBar(
 ):
     """顶部标签栏。
 
-    tabs: 每项为 {"file_path": str|None, "dirty": bool}（仅展示用元数据）。
+    tabs: 每项为 {"file_path": str|None, "dirty": bool}（普通编辑标签）或
+          {"type":"diff", "left_path", "right_path", "left_dirty", "right_dirty"}（对比标签）。
     on_context_action(action, i)：action ∈ {"open","new_file","new_folder","copy_path",
     "reveal","rename","duplicate","delete","close","close_others","close_all",
-    "select_for_compare","compare_with_selected"}。
-    有 file_path 的标签才显示文件操作项（打开/复制路径/打开位置/重命名/副本/删除/比较）。
+    "select_for_compare","compare_with_selected","swap_diff"}。
+    有 file_path 的普通标签才显示文件操作项（打开/复制路径/打开位置/重命名/副本/删除/比较）。
+    对比标签（type=="diff"）显示「交换左右侧」替代文件操作，并以对比图标 + 双文件名标识。
     compare_source 非空时，所有有 file_path 的标签均显示「与已选项目进行比较」项。
     """
     c = get_colors(theme_mode)
@@ -72,9 +75,21 @@ def TabBar(
 
     tab_controls: list[ft.Control] = []
     for i, t in enumerate(tabs):
+        is_diff = t.get("type") == "diff"
         path = t.get("file_path")
-        dirty = bool(t.get("dirty"))
-        fname = _file_name(path)
+        if is_diff:
+            # 对比标签：显示「左 ⟷ 右」双文件名，任一侧脏即标脏
+            left_name = os.path.basename(t.get("left_path")) if t.get("left_path") else "未命名"
+            right_name = os.path.basename(t.get("right_path")) if t.get("right_path") else "未命名"
+            fname = f"{left_name} ⟷ {right_name}"
+            dirty = bool(t.get("left_dirty")) or bool(t.get("right_dirty"))
+            leading_icon = ft.Icons.COMPARE_ARROWS
+            leading_color = c.link
+        else:
+            fname = _file_name(path)
+            dirty = bool(t.get("dirty"))
+            leading_icon = None
+            leading_color = c.muted
         is_active = i == active_index
         is_hover = i == hover_index
 
@@ -185,6 +200,16 @@ def TabBar(
                 )
             )
             context_items.append(ft.PopupMenuItem())  # 分隔
+        # 对比标签专属：交换左右侧（便于从不同视角审阅差异）
+        if is_diff:
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="交换左右侧",
+                    icon=ft.Icons.SWAP_HORIZ,
+                    on_click=lambda e, idx=i: on_context_action("swap_diff", idx),
+                )
+            )
+            context_items.append(ft.PopupMenuItem())  # 分隔
         # 关闭操作（始终可用）
         context_items.append(
             ft.PopupMenuItem(
@@ -211,44 +236,62 @@ def TabBar(
         name_color = c.text if is_active else c.muted
         name_weight = ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL
 
+        # 对比标签显示双文件名，加宽以减少截断；普通标签保持固定宽度
+        tab_width = _TAB_WIDTH_DIFF if is_diff else _TAB_WIDTH
+
+        row_controls: list[ft.Control] = []
+        if leading_icon is not None:
+            row_controls.append(
+                ft.Icon(
+                    leading_icon,
+                    size=_TAB_ICON,
+                    color=leading_color if is_active else c.muted,
+                )
+            )
+        row_controls.append(
+            ft.Text(
+                value="*" if dirty else "",
+                size=_TAB_ICON,
+                color=_DIRTY_COLOR,
+                font_family=FONT_MAIN,
+                weight=ft.FontWeight.BOLD,
+                visible=dirty,
+            )
+        )
+        row_controls.append(
+            ft.Text(
+                value=fname,
+                size=_TAB_ICON,
+                color=name_color,
+                font_family=FONT_MAIN,
+                weight=name_weight,
+                max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS,
+                tooltip=fname,
+                expand=True,
+            )
+        )
+        row_controls.append(
+            _btn_icon(
+                ft.Icons.CLOSE,
+                "关闭",
+                _on_close_click,
+                close_color,
+            )
+        )
+
         tab_content = ft.Container(
             bgcolor=bgcolor,
             border=only_border(bottom=bottom_border),
             on_click=_on_tab_click,
             on_hover=_on_tab_hover,
-            width=_TAB_WIDTH,
+            width=tab_width,
             padding=ft.Padding.only(
                 left=Spacing.MD, right=Spacing.SM,
                 top=Spacing.XS, bottom=Spacing.XS,
             ),
             content=ft.Row(
-                controls=[
-                    ft.Text(
-                        value="*" if dirty else "",
-                        size=_TAB_ICON,
-                        color=_DIRTY_COLOR,
-                        font_family=FONT_MAIN,
-                        weight=ft.FontWeight.BOLD,
-                        visible=dirty,
-                    ),
-                    ft.Text(
-                        value=fname,
-                        size=_TAB_ICON,
-                        color=name_color,
-                        font_family=FONT_MAIN,
-                        weight=name_weight,
-                        max_lines=1,
-                        overflow=ft.TextOverflow.ELLIPSIS,
-                        tooltip=fname,
-                        expand=True,
-                    ),
-                    _btn_icon(
-                        ft.Icons.CLOSE,
-                        "关闭",
-                        _on_close_click,
-                        close_color,
-                    ),
-                ],
+                controls=row_controls,
                 spacing=Spacing.XS,
                 tight=True,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,

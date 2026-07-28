@@ -11,7 +11,7 @@
 - **光标级实时渲染**：点击任意位置即显示光标，输入字符立即融入渲染样式；语法标记（`#`、`**`、`` ` ``、`-`、`>` 等）在非激活段透明，仅光标所在段的最小语法标记变灰可见，对齐 Typora 最小语法噪声
 - **像素级光标对齐**：基于 HarfBuzz（与 Skia/Flutter 同引擎）整形测量文本 advance，光标 X 坐标与渲染层 TextSpan 像素级贴合；Flet 默认 letter_spacing 已补偿
 - **IME 友好**：透明 TextField 不设 `value` 属性，由 `use_effect` 异步清空内部值；同行输入 `key` 不变（基于 `li + nav_seq`），保持 IME 组合态不被重渲染打断
-- **多文档标签页**：顶部标签栏支持并行编辑多个文档，未保存修改标星号 `*`；新建 / 关闭 / 切换标签，关闭未保存文档时弹出确认对话框；右键菜单支持「关闭 / 关闭其他 / 关闭全部 / 复制路径」
+- **多文档标签页**：顶部标签栏支持并行编辑多个文档，未保存修改标星号 `*`；新建 / 关闭 / 切换标签，关闭未保存文档时弹出确认对话框；右键菜单支持「打开 / 选择以进行比较 / 与已选项目进行比较 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除 / 关闭 / 关闭其他 / 关闭全部」；普通编辑标签与文件对比标签并存、自由切换
 - **跨段光标导航**：方向键在段间 / 行间无缝移动，`Home` / `End` 跳转行首 / 行尾，`Ctrl+Home` / `Ctrl+End` 跳文档首末，`PageUp` / `PageDown` 翻页；上下方向键跨短行时记忆列偏移（VSCode 风格），点击命中按中点吸附到最近段边界
 - **行首 / 行尾合并**：`Backspace` 在行首与前一行合并，`Delete` 在行尾与下一行合并——所有行内块类型（标题 / 列表 / 引用 / 段落）行为一致，光标落在合并点
 - **向外选区**：`Shift+Click` 或 `Shift+方向键` 从编辑光标起始跨段 / 跨行选区，高亮覆盖范围；支持 `Ctrl+X` 剪切、`Backspace` / `Delete` 删除、`Escape` 取消、`Ctrl+C` 复制选区 raw 文本
@@ -19,6 +19,7 @@
 - **URL 智能折叠**：链接 `[text](url)` 与图片 `![alt](url)` 的 URL 子段根据光标位置动态折叠——光标在文本/alt 段时 URL 折叠为零宽度（最小语法噪声），光标进入 URL 段时完整可见；链接编辑视为常规文本编辑，光标移出链接区间即自动折叠回渲染态
 - **自适应宽度与软换行**：长行超出视口时按可用宽度自动断行（CJK 逐字、西文按词），`Alt+Z` 一键切换自动换行开关（VSCode 风格，设置持久化）；窗口尺寸变化时段落宽度实时自适应重排
 - **向右拆分编辑器**：`Ctrl+\` 将当前文档在右侧拆分出第二视口（VSCode 风格），两视口共享同一文档、独立光标与滚动，便于多处对照查看与编辑
+- **文件对比（标签化双编辑器 diff）**：VSCode 风格的文件对比以标签形式管理——在标签或侧边栏文件上右键「选择以进行比较」标记源文件，再在另一文件上右键「与已选项目进行比较」即创建对比标签（`type: "diff"`）。对比标签内左右并排两个原生可编辑 `MarkdownEditor`，行级 diff 背景着色标识差异（绿色=新增、红色=删除、灰色=修改），缺失侧行高间隙对齐保持视觉对应。对比头部显示「左文件名 → 右文件名」及差异统计（`+新增` / `-删除` / `~修改`）。两侧均可直接编辑，差异标记实时重算；`Ctrl+S` 分别保存两侧脏文档到各自路径。左右侧像素级同步滚动（VSCode 行为：一侧到底时另一侧可继续独立滚动）；右键「交换左右侧」可快速切换对比视角
 - **列表 / 引用缩进**：`Tab` / `Shift+Tab` 在列表项内调整缩进级别（每级 2 空格，与色阶同步：每次缩进切换一种项目符颜色）；在引用行内调整引用嵌套层级（增减 `>` 前缀），左侧彩色边框随之重排。智能效果：有序列表缩进时序号重置为 1（嵌套子列表自然计数）、任务列表保留勾选状态、`Shift+Tab` 在顶级时转为普通段落（移除标记保留内容）、缩进有上限（列表 6 级 / 引用 6 级）防止无限嵌套；光标保留在文字中的相对位置
 - **行级撤销快照**：单行编辑（字符输入 / backspace / delete / 行内格式包裹）使用 `LineEditSnapshot` 行级快照（内存 O(1)/操作），行结构变化（回车 / 行合并 / 多行粘贴）才使用全文快照；撤销栈固定容量 50，大文档不膨胀
 - **智能复制粘贴**：跨行复制自动还原为 Markdown 源码；多行粘贴自动拆分为新行
@@ -55,7 +56,7 @@
 - **跳转高亮脉冲**：大纲 / 搜索 / TOC 点击跳转后目标行 300ms 淡蓝底脉冲反馈
 - **当前行高亮**：激活行左侧 3px `link` 色边条 + 半透明背景，编辑焦点清晰可辨
 - **行内代码 / 公式选区着色**：左键拖选时背景色随选区高亮变化
-- **标签栏紧凑化**：固定宽度 200px、文件名超出省略、鼠标悬停显示全名 tooltip、整体高度收紧，保持简洁专业
+- **标签栏紧凑化**：普通标签固定宽度 200px、对比标签加宽至 280px（容纳「左 ⟷ 右」双文件名）、文件名超出省略、鼠标悬停显示全名 tooltip、整体高度收紧，保持简洁专业；对比标签以对比图标 `⇄` 标识
 - **软换行视觉行布局**：长行按可用宽度切分为多个视觉行，渲染层与光标测量共用同一断行算法，光标 Y 按视觉行精确定位；上下方向键 / PageUp / PageDown 按视觉行导航（非逻辑行），跨视觉行一致列定位
 
 ### 文件与导出
@@ -64,6 +65,7 @@
 - 导出 HTML（mistune 渲染，含表格、脚注、任务列表等扩展）
 - 自动保存（可配置间隔，异步回写避免阻塞 UI）
 - 最近文件列表（侧边栏无 `file_path` 时显示）
+- 文件对比保存：对比标签 `Ctrl+S` 分别保存两侧脏文档到各自路径，任一侧无修改则跳过
 
 ## 技术栈
 
@@ -169,8 +171,8 @@ cs-markdown-editor
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  main.py            入口：App 组件、多文档标签、文件 IO、主题、│
-│                     侧边栏、状态栏、设置弹层、拆分编辑器组装   │
+│  main.py            入口：App、多文档标签（含 diff）、文件 IO、│
+│                     对比同步滚动、主题、侧边栏、状态栏、组装   │
 ├──────────────────────────────────────────────────────────────┤
 │  views/             声明式 Flet 视图组件                      │
 │    editor.py        编辑器根组件（Stack 双层状态编排）         │
@@ -181,7 +183,8 @@ cs-markdown-editor
 │    segment_view.py  段级 TextSpan 渲染                        │
 │    key_bindings.py  KeyDispatcher 键盘事件分发                │
 │    toolbar.py / sidebar.py / tab_bar.py / status_bar.py       │
-│    settings_dialog.py / table_view.py                         │
+│    settings_dialog.py / table_view.py / diff_view.py /        │
+│    file_dialogs.py                                            │
 ├──────────────────────────────────────────────────────────────┤
 │  core/              编辑器核心状态                            │
 │    actions.py       EditorActions：editor → App 动作契约      │
@@ -307,6 +310,49 @@ main.py
 
 焦点跟踪：光标 TextField 聚焦时经 `on_cursor_focus → on_editor_focus → _set_active_pane` 切换 `active_pane`（同值不重渲染）；状态栏光标位置、TOC 跳转、键盘事件均跟随焦点视口。右视口隐藏工具栏（`show_toolbar=False`）且不抢占 autofocus（`keyboard_autofocus=False`），保持简洁。
 
+### 文件对比（标签化双编辑器 diff）
+
+文件对比以 `type: "diff"` 标签融入 tabs 系统，可与普通编辑标签并存、切换、关闭，替代独立的 overlay 对比视图：
+
+```
+main.py
+  ├─ tabs[i] = {type:"diff", left_path, right_path, left_doc, right_doc, left_dirty, right_dirty}
+  ├─ _tab_is_dirty(tab) / _tab_paths(tab)：统一脏状态 / 路径判断（diff 任一侧脏即为脏）
+  ├─ _compare_with_selected(right_path)：创建 diff 标签（复用空白标签或追加）
+  ├─ diff_nav_left / diff_nav_right：两侧编辑器各自的 EditorActions 引用
+  ├─ diff_active_pane state（0=左, 1=右 焦点跟踪）
+  ├─ _get_active_nav()：优先级 diff > split > 单编辑器，统一路由键盘事件 / 跳转
+  ├─ save_doc：diff 标签分别保存两侧脏文档到各自路径
+  └─ 同步滚动：diff_syncing_ref + diff_sync_direction_ref 防循环 + pending 追赶
+```
+
+**diff 计算与渲染**（`views/diff_view.py`）：
+
+```
+compute_diff_for_editors(left_text, right_text)
+  ├─ difflib.SequenceMatcher 行级 diff
+  ├─ 返回 (marks_left, marks_right, gaps_left, gaps_right)
+  │   ├─ marks_left:  {line_idx: "equal"|"removed"|"modified"}
+  │   ├─ marks_right: {line_idx: "equal"|"added"|"modified"}
+  │   └─ gaps_*:      {after_line_idx: [height, ...]} 缺失侧行高间隙
+  └─ MarkdownEditor 接收 diff_marks / diff_gaps prop → 行级背景着色 + 间隙占位
+```
+
+**同步滚动**（VSCode 风格像素同步）：
+
+```
+左侧 on_scroll_change(offset) → _on_diff_left_scroll
+  ├─ diff_syncing_ref=True 期间：仅主动侧（direction=lr）累积 pending，被动侧忽略
+  └─ 否则 → _sync_diff_scroll_to(diff_nav_right, offset, "lr")
+      ├─ 置 syncing + direction 标记
+      ├─ target.scroll_to_offset(offset)  # duration=0 即时
+      └─ _after_diff_sync：异步等待 60ms → 清除标记 → 追赶 pending 请求
+```
+
+方向标记区分主动 / 被动侧：syncing 期间仅主动侧 on_scroll 累积 pending 追赶，被动侧忽略，避免短文档侧 clamp 后反向拉回长文档侧（VSCode 行为：一侧到底时另一侧可继续独立滚动）。
+
+焦点跟踪：点击侧或 `on_editor_focus` 回调切换 `diff_active_pane`（同值不重渲染）；`KeyDispatcher.actions_ref` 按焦点侧选择 `diff_nav_left` / `diff_nav_right`；状态栏光标位置、侧边栏大纲/搜索跟随焦点侧文档。右视口隐藏工具栏且不抢占 autofocus。
+
 ### EditorActions 数据契约
 
 `core/actions.py` 的 `EditorActions` dataclass 是 editor.py 每次渲染上抛给 App 层（main.py / key_bindings.py）的动作集合，替代旧的 `nav_ref` 字典。所有字段在构造时必填（缺失即报错），包含：
@@ -319,6 +365,7 @@ main.py
 - **全局动作**：`undo` / `redo` / `jump_to_line` / `toggle_raw` / `toggle_focus_mode` / `set_block`（Ctrl+0~6 标题级别）/ `apply_inline_format`（Ctrl+B/I/U/… 行内格式）
 - **代码块 / 表格**：`code_focus_ref` / `table_focus_ref`（聚焦守卫）
 - **状态栏**：`get_cursor_row_col`
+- **滚动同步**：`get_scroll_state`（返回 offset / max_extent / viewport_h）/ `scroll_to_offset`（异步 scroll_to，duration=0 即时，供 diff 对比模式左右像素同步）
 
 ### 撤销 / 重做（混合快照）
 
@@ -368,6 +415,8 @@ page.on_keyboard_event → KeyDispatcher.handle(e)
 
 **关键路由点**：向外选区激活时 `cursor_li is None` → `layer=browse`，若不拦截则 `_handle_edit_nav` 不被调用、Backspace 误路由到 SelectionArea 删除分支。因此在 `handle` 顶部加拦截块，在 layer 判定前优先路由 outward_sel 相关键。
 
+**多视口 actions_ref 选择**：`actions_ref` 在每次渲染时按当前模式动态绑定——对比标签按 `diff_active_pane` 选择 `diff_nav_left` / `diff_nav_right`，拆分编辑器按 `active_pane` 选择 `nav_ref` / `nav_ref_split`，单编辑器用 `nav_ref`。优先级：diff > split > 单编辑器（`_get_active_nav()` 统一路由）。
+
 ### 快捷键自定义（捕获式）
 
 ```
@@ -386,7 +435,7 @@ page.on_keyboard_event → KeyDispatcher.handle(e)
 
 ```
 cs-markdown-editor/
-├── main.py                  # 入口：App 组件、多文档标签模型、文件操作、主题、侧边栏、状态栏组装
+├── main.py                  # 入口：App 组件、多文档标签模型（含 diff 标签）、文件操作、对比同步滚动、主题、侧边栏、状态栏组装
 ├── parser.py                # Markdown 解析：行级 / 段级 / 选区↔源码 / HTML 导出
 ├── styles.py                # 主题配色、段→TextStyle、标题字重、列表色阶、Border 工具
 ├── settings.json            # 用户设置（内容宽度、边距、字号、行高、主题、代码高亮、快捷键等）
@@ -399,7 +448,7 @@ cs-markdown-editor/
 │   ├── settings.py          # DEFAULT_SETTINGS / load_settings / save_settings（深合并 shortcuts）
 │   └── sample.py            # 示例文档 SAMPLE_MD
 ├── core/
-│   ├── actions.py           # EditorActions dataclass：editor → main/key_bindings 动作契约
+│   ├── actions.py           # EditorActions dataclass：editor → main/key_bindings 动作契约（含滚动同步接口）
 │   ├── cursor.py            # CursorState：base / extent / draft_len 光标状态
 │   └── history.py           # EditHistory：撤销/重做栈（EditorSnapshot | LineEditSnapshot）
 ├── models/
@@ -413,16 +462,18 @@ cs-markdown-editor/
 │   ├── table_helpers.py     # 表格行解析与拼接、对齐正则
 │   └── file_helpers.py      # 文件名派生等文件工具
 └── views/
-    ├── editor.py            # 编辑器根组件：Stack 双层状态编排、光标导航、向外选区、撤销/重做、行内格式
-    ├── line_view.py         # 行视图：围栏岛屿分支 + RenderedLine + Stack + 跳转高亮
+    ├── editor.py            # 编辑器根组件：Stack 双层状态编排、光标导航、向外选区、撤销/重做、行内格式、diff 标记/间隙/滚动同步
+    ├── line_view.py         # 行视图：围栏岛屿分支 + RenderedLine + Stack + 跳转高亮 + diff 行级背景着色
     ├── rendered_line.py     # 渲染层：raw_to_visible_spans + GestureDetector 命中测试
     ├── cursor_layer.py      # 透明光标 TextField（IME 友好，StrutStyle 行高对齐）
     ├── pixel_layout.py      # LineLayoutCache：像素布局缓存 + cursor_px + hit_test
     ├── segment_view.py      # 段级 TextSpan 渲染（含向外选区字符级高亮）
     ├── key_bindings.py      # KeyDispatcher：浏览/编辑两层 + outward 拦截 + 快捷键捕获 + 原生控件守卫
     ├── table_view.py        # 表格视图：DataTable2 单元格编辑、行列增删、对齐、Tab/Enter 导航
+    ├── diff_view.py         # 文件对比：compute_diff_for_editors 行级 diff 计算 + 间隙对齐
+    ├── file_dialogs.py      # 文件操作对话框：新建文件/文件夹/重命名/删除确认
     ├── toolbar.py           # 格式工具栏：块级/行内按钮，tooltip 动态显示自定义键位
-    ├── tab_bar.py           # 顶部多文档标签栏 + ConfirmCloseDialog + 右键菜单
+    ├── tab_bar.py           # 顶部多文档标签栏（含 diff 标签渲染）+ ConfirmCloseDialog + 右键菜单
     ├── sidebar.py           # 侧边栏：文件树 / 大纲（点击跳转带高亮脉冲）/ 搜索
     ├── settings_dialog.py   # 设置对话框：五分区配置面板 + 快捷键捕获式自定义
     └── status_bar.py        # 状态栏：光标行列 / 段落数 / 词数 / 字符数 / 阅读时长 / 换行 / 拆分指示
@@ -439,7 +490,7 @@ tests/                      # 单元测试（python -m tests.test_<name>）
 
 | 能力 | 说明 |
 |------|------|
-| `Colors` dataclass | 亮 / 暗两套配色（bg / surface / text / muted / link / code_bg / heading_colors …） |
+| `Colors` dataclass | 亮 / 暗两套配色（bg / surface / text / muted / link / code_bg / heading_colors / diff_add_bg / diff_del_bg / diff_gap_* …） |
 | `get_colors(mode)` | 按 `ft.ThemeMode` 返回对应 `Colors` |
 | `_current_colors()` | 渲染期同步取色（与 `page.theme_mode` 一致） |
 | `heading_colors` | H1–H6 六级标题色（红橙绿青蓝紫） |
@@ -483,6 +534,10 @@ tests/                      # 单元测试（python -m tests.test_<name>）
 - **拆分焦点跟踪**：`active_pane` state + `active_pane_ref` 镜像（防同值重渲染），`KeyDispatcher.actions_ref` 与状态栏光标位置均按焦点视口选择 `nav_ref` / `nav_ref_split`；右视口 `keyboard_autofocus=False` 避免挂载时抢走左视口焦点
 - **行内格式 Toggle**：`apply_inline_format` 检测选区是否已被对应语法包裹，已包裹则取消（移除两侧标记）、未包裹则包裹，包裹后通过 `outward_sel` 保持选区；浏览态（`cursor_li is None`）优先处理 `outward_sel`，无需先进入编辑态
 - **链接常规文本编辑**：链接编辑不再走专用字段跳转状态机，视为常规文本编辑，依赖渲染层 `split_seg_for_display` 按光标位置自动显示 / 折叠 URL；避免 `set_nav_seq+1` 重建 TextField 导致快速输入丢失
+- **对比标签融入 tabs 系统**：文件对比以 `type: "diff"` 标签管理，复用 tabs 的切换 / 关闭 / 脏状态确认流程，避免独立 overlay 视图的焦点 / 状态管理复杂度；`_tab_is_dirty` / `_tab_paths` 辅助函数统一 editor 与 diff 标签的脏状态判断和路径匹配，使关闭确认 / 自动保存 / 文件重命名同步等流程无需分支特判
+- **diff 实时重算**：对比标签每次渲染由 `serialize(left_doc)` / `serialize(right_doc)` 重算 `compute_diff_for_editors`，Document 为 `@ft.observable`，任一侧编辑自动触发 App 重渲染，diff 标记 / 间隙即时更新——无需手动刷新或 diff 阈值节流
+- **diff 同步滚动防循环**：`diff_syncing_ref` + `diff_sync_direction_ref` 双标记区分主动 / 被动侧；syncing 期间仅主动侧 on_scroll 累积 `pending` 追赶（连续滚轮滚动不丢帧），被动侧忽略（避免短文档侧 clamp 后反向拉回长文档侧）；`_after_diff_sync` 异步等待 60ms 清除标记后追赶 pending，保证 duration=0 的 scroll_to 完成一帧往返
+- **diff 焦点统一路由**：`_get_active_nav()` 按优先级 diff > split > 单编辑器返回当前焦点视口的 `nav_ref`，键盘事件 / TOC 跳转 / 状态栏光标位置均经此路由，避免散落分支判断；侧边栏大纲 / 搜索也跟随 `diff_active_pane` 选择对应侧文档
 
 ## 许可证
 

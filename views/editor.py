@@ -46,7 +46,7 @@ from styles import (
 )
 from utils.segment_helpers import WRAP_SYNTAX
 from views.line_view import LineView
-from views.table_view import TableView, _join_row
+from views.table_view import TableView, _align_marker, _join_row
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知，替代 reparse_line 的 2-7 次）
@@ -224,6 +224,11 @@ def MarkdownEditor(
     code_edit_changed = ft.use_ref(False)  # 代码块编辑会话是否有变化
     table_focus_ref = ft.use_ref(None)
     table_nav_ref = ft.use_ref(None)
+    # 表格聚焦 state（修复 table_focus_ref 从未赋值 Bug）：set_block(TABLE) 创建后
+    # set_table_focus_li(li) 触发 TableView auto_focus 首格编辑；on_table_blur 清空。
+    # ref 镜像供 KeyDispatcher._native_field_focused 判断是否屏蔽全局快捷键。
+    table_focus_li, set_table_focus_li = ft.use_state(None)
+    table_focus_ref.current = table_focus_li
     # 块级公式聚焦：浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态 TextField
     # math_focus_li 为 state 驱动条件渲染（view/edit 两态切换）；ref 镜像供
     # KeyDispatcher._native_field_focused 判断是否放行原生编辑键。
@@ -1099,6 +1104,32 @@ def MarkdownEditor(
             new_raw = "```\n" + content + "\n```"
         elif block_type == BlockType.MATH:
             new_raw = f"$$\n{content}\n$$"
+        elif block_type == BlockType.TABLE:
+            # TABLE 是多行结构（header + sep + data 行），不能用 _reparse_atomic
+            # （后者面向单行 CODE/MATH/HR），需直接切片替换 document.lines。
+            # 当前行已是 TABLE 时静默返回（避免重复创建）。
+            if line.block_type == BlockType.TABLE:
+                return
+            header_raw = _join_row([content, ""])
+            sep_raw = _join_row(["---", "---"])
+            data_raw = _join_row(["", ""])
+
+            def _mk_table_line(raw: str) -> Line:
+                nl = Line(block_type=BlockType.TABLE, raw=raw)
+                nl.segments = [Segment(SegType.TEXT, raw, raw)]
+                return nl
+
+            document.lines = (
+                document.lines[:li]
+                + [_mk_table_line(header_raw), _mk_table_line(sep_raw), _mk_table_line(data_raw)]
+                + document.lines[li + 1:]
+            )
+            mark_dirty()
+            # 退出光标编辑态，进入表格编辑态（TableView auto_focus 首格）
+            set_cursor_line(li)
+            set_cursor_li(None)
+            set_table_focus_li(li)
+            return
         elif block_type == BlockType.HR:
             new_raw = "---"
         else:
@@ -1361,6 +1392,14 @@ def MarkdownEditor(
         """
         set_block(BlockType.LIST_UO, task=True)
 
+    def format_table():
+        """Ctrl+Alt+T：当前行转为 2×2 表格（1 表头 + 1 数据行）。
+
+        复用 set_block 的 TABLE 分支：当前行内容作为表头第一列，创建后退出光标
+        编辑态并进入表格编辑态（TableView auto_focus 表头首格）。
+        """
+        set_block(BlockType.TABLE)
+
     def change_lang(li: int, new_lang: str):
         if not (0 <= li < len(document.lines)):
             return
@@ -1570,7 +1609,11 @@ def MarkdownEditor(
             sep_li = _find_sep_line(ts2)
             cells = _table_cells(lines[sep_li])
             if 0 <= col_idx < len(cells):
-                cells[col_idx] = align
+                # align 为语义字符串（"left"/"center"/"right"），需转为 Markdown
+                # 对齐标记（"---"/":---:"/"---:"）写入分隔行。直接写 "center"
+                # 不匹配 _ALIGN_RE，下次解析该行会被当作数据行，导致"在下方单元格
+                # 写入了 center 字符"且对齐失效。
+                cells[col_idx] = _align_marker(align)
             _rebuild_table_line(sep_li, _join_row(cells))
             document.lines = lines
             mark_dirty()
@@ -1580,6 +1623,8 @@ def MarkdownEditor(
 
     def on_table_blur() -> None:
         undo_push_pending.current = True
+        # 清空表格聚焦 state：退出表格编辑态，恢复全局快捷键（_native_field_focused）
+        set_table_focus_li(None)
 
     # ============ 原文模式 ============
     def toggle_raw():
@@ -2477,6 +2522,7 @@ def MarkdownEditor(
             apply_inline_format=apply_inline_format,
             toggle_task_at_cursor=toggle_task_at_cursor,
             format_task=format_task,
+            format_table=format_table,
             code_focus_ref=code_focus_ref,
             table_focus_ref=table_focus_ref,
             math_focus_ref=math_focus_ref,
@@ -2614,6 +2660,8 @@ def MarkdownEditor(
                     on_table_blur=on_table_blur,
                     table_nav_ref=table_nav_ref,
                     is_current_line=table_start <= cursor_line <= table_end,
+                    # 表格创建后自动聚焦首格（set_block(TABLE) 设置 table_focus_li）
+                    auto_focus_li=table_focus_li,
                     # 版本号触发 prop：lines 列表与首行 raw 长度变化时触发 memo 刷新
                     lines_version=len(document.lines),
                     first_line_raw_version=(
@@ -2714,6 +2762,7 @@ def MarkdownEditor(
                         on_code_block=lambda: set_block(BlockType.CODE),
                         on_hr=lambda: set_block(BlockType.HR),
                         on_math_block=lambda: set_block(BlockType.MATH),
+                        on_table=lambda: set_block(BlockType.TABLE),
                         on_bold=lambda: apply_inline_format("bold"),
                         on_italic=lambda: apply_inline_format("italic"),
                         on_highlight=lambda: apply_inline_format("highlight"),
@@ -2750,13 +2799,22 @@ def MarkdownEditor(
             shift_pressed_ref.current = True
         if key.startswith("control"):
             ctrl_pressed_ref.current = True
-        # 表格 Tab/Escape 路由
+        # 表格 Tab/Escape/方向键路由（table_focus_ref 修复后此块真正生效）
         if table_focus_ref.current is not None and table_nav_ref.current is not None:
             if key == "tab" and not ctrl_pressed_ref.current:
                 table_nav_ref.current("tab", -1 if shift_pressed_ref.current else 1)
                 return
             if key == "escape":
                 table_nav_ref.current("escape")
+                return
+            # 方向键单元格间导航（Excel 行为）：单行 TextField 内 ArrowUp/Down 无意义，
+            # 直接用于跨行导航。key 可能含空格（"Arrow Up"），去空格统一匹配。
+            nk = key.replace(" ", "")
+            if nk == "arrowup":
+                table_nav_ref.current("up")
+                return
+            if nk == "arrowdown":
+                table_nav_ref.current("down")
                 return
         # 行内格式快捷键由 KeyDispatcher 统一分发（支持自定义键位、原生控件聚焦检测），
         # 此处不再重复分发——避免双重触发导致 toggle wrap→unwrap 抵消（闪烁后无效果）。

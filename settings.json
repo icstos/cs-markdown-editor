@@ -9,13 +9,13 @@
   "auto_save": false,
   "remember_focus_mode": false,
   "show_toolbar": true,
-  "word_wrap": false,
+  "word_wrap": true,
   "show_line_numbers": false,
   "code_theme_dark": "ATOM_ONE_DARK",
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
-  "sidebar_panel": "outline",
+  "sidebar_panel": "files",
   "sidebar_width": 181,
   "recent_files": [
     "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
@@ -44,7 +44,9 @@
       "cut": "ctrl+x",
       "paste": "ctrl+v",
       "select_all": "ctrl+a",
-      "format_math_block": "ctrl+shift+m"
+      "format_math_block": "ctrl+shift+m",
+      "format_table": "ctrl+alt+t",
+      "toggle_task": "alt+c"
     },
     "edit": {
       "save": "ctrl+s",
@@ -63,10 +65,13 @@
       "format_link": "ctrl+k",
       "format_inline_math": "ctrl+m",
       "format_math_block": "ctrl+shift+m",
+      "format_table": "ctrl+alt+t",
       "copy": "ctrl+c",
       "cut": "ctrl+x",
       "paste": "ctrl+v",
-      "select_all": "ctrl+a"
+      "select_all": "ctrl+a",
+      "toggle_task": "alt+c",
+      "format_task": "ctrl+shift+t"
     }
   }
 }

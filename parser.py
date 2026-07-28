@@ -455,7 +455,13 @@ def parse_markdown(text: str) -> Document:
             i = j + 1
             continue
         if _is_table_row(raw) and i + 1 < n and is_table_separator(lines_src[i + 1]):
-            table_lines = [raw]
+            # 保留分隔行：对齐信息（:---: / ---: / :---）必须持久化到
+            # document.lines，否则 set_align 找不到分隔行会把 :---: 写到
+            # 数据行，且表格渲染时对齐信息丢失（所有列默认 left）。
+            # 此前实现跳过分隔行（j = i + 2），导致：
+            #   1. set_align 写到数据行（"在下方单元格写入了 center 字符"）
+            #   2. 已有对齐信息丢失（打开 | :---: | 文件后渲染为 left）
+            table_lines = [raw, lines_src[i + 1]]
             j = i + 2
             while j < n and _is_table_row(lines_src[j]) and lines_src[j].strip():
                 table_lines.append(lines_src[j])

@@ -88,7 +88,7 @@ def _normalize_rows(rows: list[list[str]]) -> list[list[str]]:
 
 
 def _cell_text(cell: str) -> str:
-    return cell.strip() or " "
+    return cell.strip() or "\u00A0"  # 不换行空格：确保空单元格有可测量宽度
 
 
 def _safe_color(color: str, opacity: float) -> str:
@@ -110,6 +110,19 @@ def _align_text_align(align: str) -> ft.TextAlign:
         "center": ft.TextAlign.CENTER,
         "right": ft.TextAlign.RIGHT,
     }.get(align, ft.TextAlign.LEFT)
+
+
+def _align_container(align: str) -> ft.Alignment:
+    """Container 内容对齐：控制 Text 块在单元格内的水平位置。
+
+    Text 无 expand=True 时只占内容宽度，text_align 无空间生效。
+    通过 Container.alignment 把 Text 块整体左/中/右对齐。
+    """
+    return {
+        "left": ft.Alignment.CENTER_LEFT,
+        "center": ft.Alignment.CENTER,
+        "right": ft.Alignment.CENTER_RIGHT,
+    }.get(align, ft.Alignment.CENTER_LEFT)
 
 
 def _align_marker(align: str) -> str:
@@ -141,6 +154,8 @@ def TableView(
     on_table_blur: Callable[[], None] | None = None,
     table_nav_ref: ft.Ref | None = None,
     is_current_line: bool = False,
+    # set_block(TABLE) 创建后传入 table_focus_li，触发 use_effect 自动聚焦表头首格
+    auto_focus_li: int | None = None,
     # 版本号触发 prop：on_table_op 通过 document.lines = lines 重新赋值已能
     # 触发 memo 检测（lines 引用变化）。但 on_change_cell 就地修改 line.raw
     # 不替换 lines 引用，ft.memo 浅比较 lines 引用未变会误判未刷新。
@@ -264,8 +279,12 @@ def TableView(
             on_table_op("add_row", {"after_li": all_rows[-1], "col_count": col_count})
             set_pending_nav(("new_row", 0))
 
-    def _move_down():
-        """Enter：移动到下一行同列。末行 Enter 新增行。"""
+    def _move_down(add: bool = True):
+        """移动到下一行同列。
+
+        add=True（Enter）：末行新增行（Typora/Word 行为）。
+        add=False（ArrowDown）：末行不动作（Excel 行为），避免方向键误增行。
+        """
         _commit_current()
         current = edit_cell or (header_idx, 0)
         all_rows = [header_idx] + row_indices
@@ -277,9 +296,24 @@ def TableView(
         next_row_idx = row_idx + 1
         if next_row_idx < len(all_rows):
             _start_edit(all_rows[next_row_idx], ci)
-        elif on_table_op is not None:
+        elif add and on_table_op is not None:
             on_table_op("add_row", {"after_li": all_rows[-1], "col_count": col_count})
             set_pending_nav(("new_row", ci))
+
+    def _move_up():
+        """ArrowUp：移动到上一行同列。首行不动作（Excel 行为）。"""
+        _commit_current()
+        current = edit_cell or (header_idx, 0)
+        all_rows = [header_idx] + row_indices
+        try:
+            row_idx = all_rows.index(current[0])
+        except ValueError:
+            row_idx = 0
+        ci = current[1]
+        next_row_idx = row_idx - 1
+        if next_row_idx >= 0:
+            _start_edit(all_rows[next_row_idx], ci)
+        # 首行 ArrowUp：不动作
 
     # ---- TextField 事件 ----
     def _on_change_draft(value: str):
@@ -321,6 +355,10 @@ def TableView(
             _move_cell(delta)
         elif action == "escape":
             _exit_edit()
+        elif action == "up":
+            _move_up()
+        elif action == "down":
+            _move_down(add=False)  # ArrowDown 末行不新增行（Excel 行为）
 
     if table_nav_ref is not None:
         table_nav_ref.current = _navigate
@@ -337,6 +375,15 @@ def TableView(
         set_pending_nav(None)
 
     ft.use_effect(_resolve_pending_nav, [pending_nav])
+
+    # ---- 表格创建后自动聚焦表头首格（set_block(TABLE) 触发）----
+    def _auto_focus_first_cell():
+        # auto_focus_li == line_idx：仅当前表格匹配创建行；edit_cell is None：
+        # 避免用户已点进某格后又因 auto_focus 抢焦
+        if auto_focus_li is not None and auto_focus_li == line_idx and edit_cell is None:
+            _start_edit(header_idx, 0)
+
+    ft.use_effect(_auto_focus_first_cell, [auto_focus_li])
 
     # ---- 当前选中行/列（工具栏操作目标）----
     sel = edit_cell or (
@@ -481,6 +528,7 @@ def TableView(
                         font_family=FONT_MAIN, color=c.text, size=14,
                         weight=ft.FontWeight.W_600,
                     ),
+                    text_align=_align_text_align(aligns[ci]),
                     cursor_color=c.link,
                     selection_color=_safe_color(c.link, 0.18),
                     on_change=lambda e: _on_change_draft(e.control.value),
@@ -551,6 +599,7 @@ def TableView(
                         text_style=ft.TextStyle(
                             font_family=FONT_MAIN, color=c.text, size=14,
                         ),
+                        text_align=_align_text_align(aligns[ci]),
                         cursor_color=c.link,
                         selection_color=_safe_color(c.link, 0.18),
                         on_change=lambda e: _on_change_draft(e.control.value),
@@ -573,6 +622,11 @@ def TableView(
                         max_lines=4,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
+                    # Container.alignment：控制 Text 块在单元格内的水平位置。
+                    # Text 无 expand=True 只占内容宽度，text_align 无空间生效，
+                    # 仅靠 text_align 数据行永远左对齐（表头用 Row+expand=True
+                    # 能生效，数据行无 Row 需通过 Container.alignment 补齐）。
+                    alignment=_align_container(aligns[ci]),
                     padding=ft.Padding.symmetric(horizontal=10, vertical=8),
                     border_radius=6,
                 )
@@ -655,6 +709,10 @@ def TableView(
     )
 
     # ---- DataTable2 ----
+    # min_width 不支持 float("inf")：word_wrap=False 时 content_width=inf，
+    # JSON 序列化为 "Infinity"（非标准），Flutter 无法解析导致渲染异常
+    # （如只显示首列）。转为 None 让 DataTable2 自适应内容宽度。
+    _min_w = content_width if (content_width and content_width != float("inf")) else None
     table = DataTable2(
         columns=columns,
         rows=data_rows,
@@ -684,7 +742,7 @@ def TableView(
         show_checkbox_column=False,
         fixed_top_rows=1,
         fixed_left_columns=0,
-        min_width=content_width,
+        min_width=_min_w,
     )
 
     container_bg = _safe_color(c.code_bg, 0.55)

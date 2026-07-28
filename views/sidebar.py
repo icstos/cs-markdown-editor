@@ -97,15 +97,19 @@ def _filter_tree(tree: list, query: str) -> list:
     return [c for c in (_filter(x) for x in tree) if c]
 
 
-def _flatten_tree(tree: list, depth: int = 0) -> list[tuple[str, str, str | None, int]]:
-    """扁平化为 [(type, name, abspath_or_None, depth), ...]，便于一次性渲染。"""
+def _flatten_tree(tree: list, depth: int = 0, root_dir: str = "") -> list[tuple[str, str, str | None, int]]:
+    """扁平化为 [(type, name, abspath_or_None, depth), ...]，便于一次性渲染。
+
+    目录的 abspath 由 root_dir + 目录名拼接（供右键菜单使用）。
+    """
     out: list[tuple[str, str, str | None, int]] = []
     for node in tree:
         if node[0] == "file":
             out.append(("file", node[1], node[2], depth))
         else:
-            out.append(("dir", node[1], None, depth))
-            out.extend(_flatten_tree(node[2], depth + 1))
+            dir_path = os.path.join(root_dir, node[1]) if root_dir else node[1]
+            out.append(("dir", node[1], dir_path, depth))
+            out.extend(_flatten_tree(node[2], depth + 1, dir_path))
     return out
 
 
@@ -138,6 +142,86 @@ def _match_lines(
 
 
 # ---- 通用控件工厂 ----
+
+
+def _wrap_context_menu(
+    content: ft.Control,
+    path: str,
+    is_dir: bool,
+    on_action: Callable[[str, str], None],
+) -> ft.ContextMenu:
+    """将列表项包裹在右键菜单中。
+
+    文件菜单：打开 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除
+    文件夹菜单：新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 删除
+    （文件夹无"打开"和"创建副本"）
+    """
+    items: list[ft.PopupMenuItem] = []
+
+    if not is_dir:
+        items.append(
+            ft.PopupMenuItem(
+                content="打开", icon=ft.Icons.OPEN_IN_NEW,
+                on_click=lambda e, p=path: on_action("open", p),
+            )
+        )
+        items.append(ft.PopupMenuItem())  # 分隔
+
+    # 新建文件/文件夹
+    items.append(
+        ft.PopupMenuItem(
+            content="新建文件", icon=ft.Icons.NOTE_ADD,
+            on_click=lambda e, p=path: on_action("new_file", p),
+        )
+    )
+    items.append(
+        ft.PopupMenuItem(
+            content="新建文件夹", icon=ft.Icons.CREATE_NEW_FOLDER,
+            on_click=lambda e, p=path: on_action("new_folder", p),
+        )
+    )
+    items.append(ft.PopupMenuItem())  # 分隔
+
+    # 路径操作
+    items.append(
+        ft.PopupMenuItem(
+            content="复制路径", icon=ft.Icons.CONTENT_COPY,
+            on_click=lambda e, p=path: on_action("copy_path", p),
+        )
+    )
+    items.append(
+        ft.PopupMenuItem(
+            content="打开文件位置", icon=ft.Icons.FOLDER_OPEN,
+            on_click=lambda e, p=path: on_action("reveal", p),
+        )
+    )
+    items.append(ft.PopupMenuItem())  # 分隔
+
+    # 文件操作
+    items.append(
+        ft.PopupMenuItem(
+            content="重命名", icon=ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+            on_click=lambda e, p=path: on_action("rename", p),
+        )
+    )
+    if not is_dir:
+        items.append(
+            ft.PopupMenuItem(
+                content="创建副本", icon=ft.Icons.FILE_COPY_OUTLINED,
+                on_click=lambda e, p=path: on_action("duplicate", p),
+            )
+        )
+    items.append(
+        ft.PopupMenuItem(
+            content="删除", icon=ft.Icons.DELETE_OUTLINE,
+            on_click=lambda e, p=path: on_action("delete", p),
+        )
+    )
+
+    return ft.ContextMenu(
+        content=content,
+        secondary_items=items,
+    )
 
 
 def _search_box(
@@ -214,9 +298,13 @@ def _render_files_panel(
     file_filter: str,
     set_file_filter: Callable[[str], None],
     on_open_file: Callable[[str], None],
+    on_file_context_action: Callable[[str, str], None],
     c,
 ) -> ft.Control:
-    """文件面板：有 file_path 显示目录树+过滤；否则显示最近文件列表。"""
+    """文件面板：有 file_path 显示目录树+过滤；否则显示最近文件列表。
+
+    每个文件/文件夹项包裹 ft.ContextMenu，右键提供完整文件操作菜单。
+    """
     root_dir = os.path.dirname(file_path) if file_path else None
 
     # 无根目录：最近文件列表
@@ -225,25 +313,30 @@ def _render_files_panel(
         if not existing:
             return _empty_hint("暂无最近文件\n打开或保存一个文件后此处会显示", c)
         items = [
-            _list_item(
-                ft.Row(
-                    controls=[
-                        ft.Icon(
-                            ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=14, color=c.muted
-                        ),
-                        ft.Text(
-                            os.path.basename(p),
-                            size=12,
-                            color=c.text,
-                            font_family=FONT_MAIN,
-                            max_lines=1,
-                            overflow=ft.TextOverflow.ELLIPSIS,
-                        ),
-                    ],
-                    spacing=Spacing.MD,
+            _wrap_context_menu(
+                _list_item(
+                    ft.Row(
+                        controls=[
+                            ft.Icon(
+                                ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=14, color=c.muted
+                            ),
+                            ft.Text(
+                                os.path.basename(p),
+                                size=12,
+                                color=c.text,
+                                font_family=FONT_MAIN,
+                                max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                        ],
+                        spacing=Spacing.MD,
+                    ),
+                    c,
+                    on_click=lambda e, p=p: on_open_file(p),
                 ),
-                c,
-                on_click=lambda e, p=p: on_open_file(p),
+                p,
+                is_dir=False,
+                on_action=on_file_context_action,
             )
             for p in existing
         ]
@@ -274,7 +367,7 @@ def _render_files_panel(
     # 有根目录：搜索框 + 文件树
     full_tree = _scan_markdown_files(root_dir)
     filtered = _filter_tree(full_tree, file_filter)
-    flat = _flatten_tree(filtered)
+    flat = _flatten_tree(filtered, root_dir=root_dir)
 
     if not flat:
         body: ft.Control = _empty_hint(
@@ -287,54 +380,64 @@ def _render_files_panel(
             indent = depth * 14 + Spacing.XL
             if kind == "file":
                 rows.append(
-                    _list_item(
-                        ft.Row(
-                            controls=[
-                                ft.Icon(
-                                    ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
-                                    size=13,
-                                    color=c.muted,
-                                ),
-                                ft.Text(
-                                    name,
-                                    size=12,
-                                    color=c.text,
-                                    font_family=FONT_MAIN,
-                                    max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
-                                    expand=True,
-                                ),
-                            ],
-                            spacing=Spacing.MD,
+                    _wrap_context_menu(
+                        _list_item(
+                            ft.Row(
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+                                        size=13,
+                                        color=c.muted,
+                                    ),
+                                    ft.Text(
+                                        name,
+                                        size=12,
+                                        color=c.text,
+                                        font_family=FONT_MAIN,
+                                        max_lines=1,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                        expand=True,
+                                    ),
+                                ],
+                                spacing=Spacing.MD,
+                            ),
+                            c,
+                            on_click=lambda e, p=abspath: on_open_file(p),
+                            indent=indent,
                         ),
-                        c,
-                        on_click=lambda e, p=abspath: on_open_file(p),
-                        indent=indent,
+                        abspath or "",
+                        is_dir=False,
+                        on_action=on_file_context_action,
                     )
                 )
             else:
                 rows.append(
-                    _list_item(
-                        ft.Row(
-                            controls=[
-                                ft.Icon(
-                                    ft.Icons.FOLDER_OUTLINED, size=13, color=c.muted
-                                ),
-                                ft.Text(
-                                    name,
-                                    size=12,
-                                    color=c.text,
-                                    font_family=FONT_MAIN,
-                                    weight=ft.FontWeight.W_600,
-                                    max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
-                                    expand=True,
-                                ),
-                            ],
-                            spacing=Spacing.MD,
+                    _wrap_context_menu(
+                        _list_item(
+                            ft.Row(
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.FOLDER_OUTLINED, size=13, color=c.muted
+                                    ),
+                                    ft.Text(
+                                        name,
+                                        size=12,
+                                        color=c.text,
+                                        font_family=FONT_MAIN,
+                                        weight=ft.FontWeight.W_600,
+                                        max_lines=1,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                        expand=True,
+                                    ),
+                                ],
+                                spacing=Spacing.MD,
+                            ),
+                            c,
+                            indent=indent,
                         ),
-                        c,
-                        indent=indent,
+                        abspath or "",
+                        is_dir=True,
+                        on_action=on_file_context_action,
                     )
                 )
         body = ft.Container(
@@ -500,8 +603,13 @@ def Sidebar(
     on_open_file: Callable[[str], None],
     on_jump_to_line: Callable[[int], None],
     on_width_change: Callable[[int], None] | None = None,
+    on_file_context_action: Callable[[str, str], None] | None = None,
 ):
-    """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。"""
+    """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
+
+    on_file_context_action(action, path)：文件/文件夹右键菜单回调。
+    action ∈ {"open","new_file","new_folder","copy_path","reveal","rename","duplicate","delete"}。
+    """
     c = _current_colors()
 
     # 宽度：内部 state（拖拽时实时更新），ref 同步避免 stale 闭包
@@ -577,6 +685,8 @@ def Sidebar(
     )
 
     # ---- 面板选择 ----
+    # 文件面板右键回调：未提供时用 no-op 避免崩溃
+    _file_ctx = on_file_context_action if on_file_context_action is not None else (lambda action, path: None)
     if active_panel == "files":
         panel: ft.Control = _render_files_panel(
             file_path,
@@ -584,6 +694,7 @@ def Sidebar(
             file_filter,
             set_file_filter,
             on_open_file,
+            _file_ctx,
             c,
         )
     elif active_panel == "outline":

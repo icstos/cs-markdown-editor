@@ -2,7 +2,9 @@
 
 - TabBar：横向标签列表，每标签显示文件名，未保存修改前置 `*`（警告色）；
   激活态有底部 primary 强调条；非激活悬停时高亮。尾部固定「+」新建按钮。
-  每个标签包裹 ft.ContextMenu，右键提供「关闭 / 关闭其他 / 关闭全部 / 复制路径」。
+  每个标签包裹 ft.ContextMenu，右键提供完整文件操作菜单：
+  打开 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除 /
+  关闭 / 关闭其他 / 关闭全部（有 file_path 的标签才显示文件操作项）。
 - ConfirmCloseDialog：关闭脏标签时的半透明遮罩确认弹层（保存并关闭 / 不保存 / 取消），
   样式与 views/settings_dialog.py 的 overlay 风格保持一致。
 
@@ -43,7 +45,9 @@ def TabBar(
     """顶部标签栏。
 
     tabs: 每项为 {"file_path": str|None, "dirty": bool}（仅展示用元数据）。
-    on_context_action(action, i)：action ∈ {"close","close_others","close_all","copy_path"}。
+    on_context_action(action, i)：action ∈ {"open","new_file","new_folder","copy_path",
+    "reveal","rename","duplicate","delete","close","close_others","close_all"}。
+    有 file_path 的标签才显示文件操作项（打开/复制路径/打开位置/重命名/副本/删除）。
     """
     c = get_colors(theme_mode)
     hover_index, set_hover_index = ft.use_state(-1)
@@ -96,26 +100,93 @@ def TabBar(
             # 不会冒泡到外层 Container.on_click，故无需 stop_propagation。
             on_close(idx)
 
-        # 右键菜单项
-        context_items = [
+        # 右键菜单项：有 file_path 才显示文件操作（打开/复制路径/打开位置/重命名/副本/删除）
+        context_items: list[ft.PopupMenuItem] = []
+        if path:
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="打开",
+                    icon=ft.Icons.OPEN_IN_NEW,
+                    on_click=lambda e, idx=i: on_context_action("open", idx),
+                )
+            )
+            context_items.append(ft.PopupMenuItem())  # 分隔
+        # 新建文件/文件夹（有 file_path 时提供目录上下文）
+        if path:
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="新建文件",
+                    icon=ft.Icons.NOTE_ADD,
+                    on_click=lambda e, idx=i: on_context_action("new_file", idx),
+                )
+            )
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="新建文件夹",
+                    icon=ft.Icons.CREATE_NEW_FOLDER,
+                    on_click=lambda e, idx=i: on_context_action("new_folder", idx),
+                )
+            )
+            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="复制路径",
+                    icon=ft.Icons.CONTENT_COPY,
+                    on_click=lambda e, idx=i: on_context_action("copy_path", idx),
+                )
+            )
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="打开文件位置",
+                    icon=ft.Icons.FOLDER_OPEN,
+                    on_click=lambda e, idx=i: on_context_action("reveal", idx),
+                )
+            )
+            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="重命名",
+                    icon=ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                    on_click=lambda e, idx=i: on_context_action("rename", idx),
+                )
+            )
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="创建副本",
+                    icon=ft.Icons.FILE_COPY_OUTLINED,
+                    on_click=lambda e, idx=i: on_context_action("duplicate", idx),
+                )
+            )
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="删除",
+                    icon=ft.Icons.DELETE_OUTLINE,
+                    on_click=lambda e, idx=i: on_context_action("delete", idx),
+                )
+            )
+            context_items.append(ft.PopupMenuItem())  # 分隔
+        # 关闭操作（始终可用）
+        context_items.append(
             ft.PopupMenuItem(
                 content="关闭",
+                icon=ft.Icons.CLOSE,
                 on_click=lambda e, idx=i: on_context_action("close", idx),
-            ),
+            )
+        )
+        context_items.append(
             ft.PopupMenuItem(
                 content="关闭其他",
+                icon=ft.Icons.CANCEL,
                 on_click=lambda e, idx=i: on_context_action("close_others", idx),
-            ),
+            )
+        )
+        context_items.append(
             ft.PopupMenuItem(
                 content="关闭全部",
+                icon=ft.Icons.TAB,
                 on_click=lambda e: on_context_action("close_all", 0),
-            ),
-            ft.PopupMenuItem(),  # 分隔
-            ft.PopupMenuItem(
-                content="复制路径",
-                on_click=lambda e, idx=i: on_context_action("copy_path", idx),
-            ),
-        ]
+            )
+        )
 
         name_color = c.text if is_active else c.muted
         name_weight = ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL

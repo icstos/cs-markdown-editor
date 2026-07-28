@@ -25,10 +25,12 @@ import parser
 from config.sample import SAMPLE_MD
 from config.settings import DEFAULT_SETTINGS, load_settings, save_settings
 from models import Document
+from services import file_ops
 from services.file_io import read_text, write_text
 from services.shortcuts import ShortcutManager
 from styles import FONT_MAIN, get_colors, only_border
 from views.editor import MarkdownEditor
+from views.file_dialogs import FileActionDialog
 from views.key_bindings import KeyDispatcher
 from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
@@ -51,6 +53,9 @@ def App():
     active_index, set_active_index = ft.use_state(0)
     session, set_session = ft.use_state(0)  # 切换标签时自增，强制编辑器重置内部状态
     confirm_close, set_confirm_close = ft.use_state(None)  # 待确认关闭的 tab index | None
+    # 文件操作对话框状态：{"mode":"input"|"confirm", "action":..., "target":...} | None
+    # 由右键菜单触发（新建文件/文件夹/重命名/删除），确认后执行对应文件操作
+    file_dialog, set_file_dialog = ft.use_state(None)
     # 亮/暗主题模式
     theme_mode, set_theme_mode = ft.use_state(ft.ThemeMode.LIGHT)
     settings, set_settings = ft.use_state(load_settings)
@@ -190,20 +195,69 @@ def App():
         _request_close([index])
 
     def _on_tab_context_action(action: str, index: int):
+        """标签右键菜单回调：处理打开/新建/路径/重命名/副本/删除/关闭等操作。"""
+        ts = tabs_ref.current
+        if not (0 <= index < len(ts)):
+            return
+        tab = ts[index]
+        path = tab["file_path"]
+
         if action == "close":
             close_tab(index)
         elif action == "close_others":
-            _request_close([j for j in range(len(tabs_ref.current)) if j != index])
+            _request_close([j for j in range(len(ts)) if j != index])
         elif action == "close_all":
-            _request_close(list(range(len(tabs_ref.current))))
+            _request_close(list(range(len(ts))))
         elif action == "copy_path":
-            ts = tabs_ref.current
-            path = ts[index]["file_path"] if 0 <= index < len(ts) else None
             page = page_ref.current
             if path and page is not None:
                 page.run_task(_copy_path, path)
             elif page is not None:
                 page.open(ft.SnackBar(ft.Text("该标签无文件路径")))
+        elif action == "open":
+            if path:
+                _open_file_by_path(path)
+        elif action == "new_file":
+            if path:
+                dir_path = os.path.dirname(path)
+                _open_input_dialog(
+                    "new_file", "新建文件", ft.Icons.NOTE_ADD,
+                    "文件名", "输入文件名（自动添加 .md）", "",
+                    f"在 {dir_path} 创建", "创建", dir_path,
+                )
+        elif action == "new_folder":
+            if path:
+                dir_path = os.path.dirname(path)
+                _open_input_dialog(
+                    "new_folder", "新建文件夹", ft.Icons.CREATE_NEW_FOLDER,
+                    "文件夹名", "输入文件夹名", "",
+                    f"在 {dir_path} 创建", "创建", dir_path,
+                )
+        elif action == "reveal":
+            if path:
+                try:
+                    file_ops.reveal_in_explorer(path)
+                except Exception as e:
+                    _show_snack(f"打开失败：{e}")
+        elif action == "rename":
+            if path:
+                dir_path = os.path.dirname(path)
+                _open_input_dialog(
+                    "rename", "重命名", ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                    "新名称", "输入新文件名", os.path.basename(path),
+                    f"位置：{dir_path}", "重命名", path,
+                )
+        elif action == "duplicate":
+            if path:
+                try:
+                    new_path = file_ops.duplicate_file(path)
+                    _open_file_by_path(new_path)
+                    _show_snack(f"已创建副本：{os.path.basename(new_path)}")
+                except Exception as e:
+                    _show_snack(f"创建副本失败：{e}")
+        elif action == "delete":
+            if path:
+                _open_delete_dialog(path, is_dir=False)
 
     async def _save_and_close_pending():
         """确认弹层「保存并关闭」：逐个保存脏标签，全部成功后关闭整批。
@@ -245,6 +299,160 @@ def App():
                     page_ref.current.open(ft.SnackBar(ft.Text("路径已复制")))
             except Exception:
                 pass
+
+    def _show_snack(msg: str):
+        """在页面底部弹出 SnackBar 提示。"""
+        page = page_ref.current
+        if page is not None:
+            page.open(ft.SnackBar(ft.Text(msg)))
+
+    def _update_tab_for_renamed_file(old_path: str, new_path: str):
+        """文件重命名后，同步更新打开了该文件的标签的 file_path。"""
+        ts = list(tabs_ref.current)
+        changed = False
+        for i, t in enumerate(ts):
+            if t["file_path"] == old_path:
+                ts[i] = {**t, "file_path": new_path}
+                ts[i]["document"].file_path = new_path
+                changed = True
+        if changed:
+            set_tabs(ts)
+            tabs_ref.current = ts
+
+    def _close_tabs_for_path(path: str):
+        """关闭打开了指定路径的所有标签（不保存，用于删除后清理）。"""
+        ts = tabs_ref.current
+        indices = [i for i, t in enumerate(ts) if t["file_path"] == path]
+        if indices:
+            _do_close_many(indices)
+
+    def _on_file_dialog_confirm(value: str = ""):
+        """文件操作对话框确认回调。
+
+        input 模式：value 为用户输入的文本（文件名/文件夹名/新名称）。
+        confirm 模式：value 为空字符串（删除确认）。
+        """
+        state = file_dialog
+        if state is None:
+            return
+        action = state["action"]
+        target = state["target"]
+        set_file_dialog(None)  # 先关闭对话框
+
+        if action == "new_file":
+            try:
+                path = file_ops.create_file(target, value)
+                _open_file_by_path(path)
+                _show_snack(f"已创建：{os.path.basename(path)}")
+            except Exception as e:
+                _show_snack(f"创建失败：{e}")
+        elif action == "new_folder":
+            try:
+                file_ops.create_folder(target, value)
+                _show_snack(f"已创建文件夹：{value}")
+            except Exception as e:
+                _show_snack(f"创建失败：{e}")
+        elif action == "rename":
+            try:
+                new_path = file_ops.rename_path(target, value)
+                _update_tab_for_renamed_file(target, new_path)
+                _show_snack(f"已重命名为：{os.path.basename(new_path)}")
+            except Exception as e:
+                _show_snack(f"重命名失败：{e}")
+        elif action == "delete":
+            try:
+                fname = os.path.basename(target)
+                file_ops.delete_path(target)
+                _close_tabs_for_path(target)
+                _show_snack(f"已删除：{fname}")
+            except Exception as e:
+                _show_snack(f"删除失败：{e}")
+
+    def _open_input_dialog(action: str, title: str, icon: str, label: str,
+                           hint: str, default_value: str, location: str,
+                           confirm_label: str, target: str):
+        """弹出输入对话框（新建文件/文件夹/重命名）。"""
+        set_file_dialog({
+            "mode": "input",
+            "title": title,
+            "icon": icon,
+            "input_label": label,
+            "input_value": default_value,
+            "input_hint": hint,
+            "location_hint": location,
+            "confirm_label": confirm_label,
+            "action": action,
+            "target": target,
+        })
+
+    def _open_delete_dialog(target: str, is_dir: bool):
+        """弹出删除确认对话框。"""
+        fname = os.path.basename(target)
+        title = "删除文件夹" if is_dir else "删除文件"
+        msg = f"确定删除{'文件夹' if is_dir else '文件'}「{fname}」？\n此操作不可撤销。"
+        set_file_dialog({
+            "mode": "confirm",
+            "title": title,
+            "icon": ft.Icons.DELETE_OUTLINE,
+            "message": msg,
+            "confirm_label": "删除",
+            "danger": True,
+            "action": "delete",
+            "target": target,
+        })
+
+    def _on_sidebar_context_action(action: str, path: str):
+        """侧边栏文件/文件夹右键菜单回调。
+
+        path 为文件或文件夹的绝对路径。对于新建操作：
+        - 文件夹：在其内部创建（dir_path = path）
+        - 文件：在其所在目录创建（dir_path = dirname(path)）
+        """
+        is_dir = os.path.isdir(path)
+
+        if action == "open":
+            if not is_dir:
+                _open_file_by_path(path)
+        elif action == "new_file":
+            dir_path = path if is_dir else os.path.dirname(path)
+            _open_input_dialog(
+                "new_file", "新建文件", ft.Icons.NOTE_ADD,
+                "文件名", "输入文件名（自动添加 .md）", "",
+                f"在 {dir_path} 创建", "创建", dir_path,
+            )
+        elif action == "new_folder":
+            dir_path = path if is_dir else os.path.dirname(path)
+            _open_input_dialog(
+                "new_folder", "新建文件夹", ft.Icons.CREATE_NEW_FOLDER,
+                "文件夹名", "输入文件夹名", "",
+                f"在 {dir_path} 创建", "创建", dir_path,
+            )
+        elif action == "copy_path":
+            page = page_ref.current
+            if page is not None:
+                page.run_task(_copy_path, path)
+        elif action == "reveal":
+            try:
+                file_ops.reveal_in_explorer(path)
+            except Exception as e:
+                _show_snack(f"打开失败：{e}")
+        elif action == "rename":
+            dir_path = os.path.dirname(path)
+            _open_input_dialog(
+                "rename", "重命名", ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                "新名称", "输入新名称", os.path.basename(path),
+                f"位置：{dir_path}", "重命名", path,
+            )
+        elif action == "duplicate":
+            if not is_dir:
+                try:
+                    new_path = file_ops.duplicate_file(path)
+                    _open_file_by_path(new_path)
+                    _show_snack(f"已创建副本：{os.path.basename(new_path)}")
+                except Exception as e:
+                    _show_snack(f"创建副本失败：{e}")
+        elif action == "delete":
+            _open_delete_dialog(path, is_dir=is_dir)
 
     # 同步设置 page.theme_mode：use_effect 在渲染之后执行，本次渲染期间
     # 子组件（MarkdownEditor→LineView 等）调用 _current_colors() 读到的
@@ -711,6 +919,7 @@ def App():
             on_open_file=_open_file_by_path,
             on_jump_to_line=jump_to_line,
             on_width_change=change_sidebar_width,
+            on_file_context_action=_on_sidebar_context_action,
         ),
     )
     # 编辑器公共 props：左右两视口共享（仅 nav_ref / key / show_toolbar / on_editor_focus 不同）
@@ -848,11 +1057,42 @@ def App():
         on_cancel=_cancel_close,
     )
 
+    # 文件操作对话框（新建文件/文件夹/重命名/删除）
+    _fd = file_dialog
+    if _fd is not None:
+        file_dialog_view = FileActionDialog(
+            visible=True,
+            mode=_fd["mode"],
+            title=_fd["title"],
+            theme_mode=theme_mode,
+            confirm_label=_fd["confirm_label"],
+            on_confirm=_on_file_dialog_confirm,
+            on_cancel=lambda: set_file_dialog(None),
+            input_label=_fd.get("input_label", ""),
+            input_value=_fd.get("input_value", ""),
+            input_hint=_fd.get("input_hint", ""),
+            location_hint=_fd.get("location_hint"),
+            message=_fd.get("message", ""),
+            danger=_fd.get("danger", False),
+            icon=_fd.get("icon", ft.Icons.HELP_OUTLINE),
+        )
+    else:
+        file_dialog_view = FileActionDialog(
+            visible=False,
+            mode="confirm",
+            title="",
+            theme_mode=theme_mode,
+            confirm_label="确定",
+            on_confirm=lambda value="": None,
+            on_cancel=lambda: None,
+        )
+
     return ft.Stack(
         controls=[
             main_col,
             settings_view,
             confirm_dialog,
+            file_dialog_view,
         ],
         expand=True,
     )

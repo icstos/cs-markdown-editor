@@ -73,6 +73,21 @@ def _noop() -> None:
     pass
 
 
+def _build_diff_gap(height: float, c) -> ft.Control:
+    """构建 diff 对齐间隙容器：空行占位，背景色标识对侧增删。
+
+    用于 diff 对比模式中，当一侧有行而另一侧没有时，在缺失侧插入等高间隙，
+    保持左右视觉行对齐（VSCode diff editor 风格）。
+    """
+    return ft.Container(
+        height=height,
+        width=float("inf"),
+        bgcolor=c.diff_gap_del_bg,
+        margin=ft.Margin.all(0),
+        padding=ft.Padding.all(0),
+    )
+
+
 # 围栏块：自管理独立岛屿，不参与光标导航/合并
 _FENCE_BLOCKS = (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC, BlockType.TABLE)
 
@@ -184,6 +199,9 @@ def MarkdownEditor(
     show_toolbar: bool | None = None,
     on_editor_focus: Callable[[], None] | None = None,
     keyboard_autofocus: bool = True,
+    # diff 对比模式：diff_marks 映射行号→标记，diff_gaps 映射行号→间隙高度列表
+    diff_marks: dict[int, str] | None = None,
+    diff_gaps: dict[int, list[float]] | None = None,
 ):
     c = _current_colors()
     settings = settings or {}
@@ -2774,10 +2792,18 @@ def MarkdownEditor(
 
     # ============ 行视图列表 ============
     line_controls = []
+    # diff 间隙：首行之前的对齐间隙（对侧在开头有额外行时）
+    if diff_gaps:
+        _pre_gaps = diff_gaps.get(-1)
+        if _pre_gaps:
+            for _gh in _pre_gaps:
+                line_controls.append(_build_diff_gap(_gh, c))
     i = 0
     while i < len(document.lines):
         line = document.lines[i]
         is_act = cursor_li == i and cursor_li is not None
+        # diff 行级标记：从 diff_marks 字典取当前行标记（None=普通行）
+        _diff_mark = diff_marks.get(i) if diff_marks else None
         if line.block_type == BlockType.TABLE:
             table_start = i
             while (
@@ -2862,9 +2888,16 @@ def MarkdownEditor(
                     on_hit_test_x=s_on_hit_test_x,
                     on_hit_test_xy=s_on_hit_test_xy,
                     on_double_tap=s_on_double_tap,
+                    diff_mark=_diff_mark,
                 )
             )
         i += 1
+        # diff 间隙：在当前行后插入对齐间隙容器（另一侧有但本侧没有的行）
+        if diff_gaps:
+            _gaps = diff_gaps.get(i - 1)
+            if _gaps:
+                for _gh in _gaps:
+                    line_controls.append(_build_diff_gap(_gh, c))
 
     # ============ 工具区 ============
     def _tool_area():

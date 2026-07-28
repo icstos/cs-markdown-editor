@@ -149,12 +149,15 @@ def _wrap_context_menu(
     path: str,
     is_dir: bool,
     on_action: Callable[[str, str], None],
+    compare_source: str | None = None,
 ) -> ft.ContextMenu:
     """将列表项包裹在右键菜单中。
 
-    文件菜单：打开 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除
+    文件菜单：打开 / 选择以进行比较 / 与已选项目进行比较 /
+            新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除
     文件夹菜单：新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 删除
-    （文件夹无"打开"和"创建副本"）
+    （文件夹无"打开"、"比较"和"创建副本"）
+    compare_source 非空时，文件项显示「与已选项目进行比较」。
     """
     items: list[ft.PopupMenuItem] = []
 
@@ -165,6 +168,20 @@ def _wrap_context_menu(
                 on_click=lambda e, p=path: on_action("open", p),
             )
         )
+        # 文件比较：选择以进行比较 / 与已选项目进行比较（VSCode 风格）
+        items.append(
+            ft.PopupMenuItem(
+                content="选择以进行比较", icon=ft.Icons.DIFFERENCE,
+                on_click=lambda e, p=path: on_action("select_for_compare", p),
+            )
+        )
+        if compare_source and os.path.abspath(compare_source) != os.path.abspath(path):
+            items.append(
+                ft.PopupMenuItem(
+                    content="与已选项目进行比较", icon=ft.Icons.COMPARE_ARROWS,
+                    on_click=lambda e, p=path: on_action("compare_with_selected", p),
+                )
+            )
         items.append(ft.PopupMenuItem())  # 分隔
 
     # 新建文件/文件夹
@@ -300,10 +317,12 @@ def _render_files_panel(
     on_open_file: Callable[[str], None],
     on_file_context_action: Callable[[str, str], None],
     c,
+    compare_source: str | None = None,
 ) -> ft.Control:
     """文件面板：有 file_path 显示目录树+过滤；否则显示最近文件列表。
 
     每个文件/文件夹项包裹 ft.ContextMenu，右键提供完整文件操作菜单。
+    compare_source 非空时，文件项的右键菜单显示「与已选项目进行比较」。
     """
     root_dir = os.path.dirname(file_path) if file_path else None
 
@@ -337,6 +356,7 @@ def _render_files_panel(
                 p,
                 is_dir=False,
                 on_action=on_file_context_action,
+                compare_source=compare_source,
             )
             for p in existing
         ]
@@ -408,6 +428,7 @@ def _render_files_panel(
                         abspath or "",
                         is_dir=False,
                         on_action=on_file_context_action,
+                        compare_source=compare_source,
                     )
                 )
             else:
@@ -604,11 +625,14 @@ def Sidebar(
     on_jump_to_line: Callable[[int], None],
     on_width_change: Callable[[int], None] | None = None,
     on_file_context_action: Callable[[str, str], None] | None = None,
+    compare_source: str | None = None,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
     on_file_context_action(action, path)：文件/文件夹右键菜单回调。
-    action ∈ {"open","new_file","new_folder","copy_path","reveal","rename","duplicate","delete"}。
+    action ∈ {"open","select_for_compare","compare_with_selected","new_file","new_folder",
+    "copy_path","reveal","rename","duplicate","delete"}。
+    compare_source 非空时，文件项右键菜单显示「与已选项目进行比较」。
     """
     c = _current_colors()
 
@@ -696,6 +720,7 @@ def Sidebar(
             on_open_file,
             _file_ctx,
             c,
+            compare_source=compare_source,
         )
     elif active_panel == "outline":
         panel = _render_outline_panel(toc_entries, on_jump_to_line, c)

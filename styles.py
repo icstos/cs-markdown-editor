@@ -56,6 +56,11 @@ class Colors:
     highlight_bg: str = "#FFF3BF"  # ==高亮== 背景
     supsub_fg: str = "#8A919E"  # 上下标文字色
     heading_colors: dict[int, str] = field(default_factory=dict)
+    # diff 对比配色（GitHub 风格绿增红删）
+    diff_add_bg: str = "#e6ffed"       # 新增行背景
+    diff_del_bg: str = "#ffeef0"       # 删除行背景
+    diff_gap_add_bg: str = "#f0fff4"   # 新增侧间隙背景（更浅）
+    diff_gap_del_bg: str = "#fff5f5"   # 删除侧间隙背景（更浅）
 
 
 # 亮色：清爽白底，Material 700 标题色阶
@@ -110,6 +115,10 @@ _DARK = Colors(
     border="#30363D",
     highlight_bg="#4D3E00",  # 暗琥珀高亮
     supsub_fg="#B0B8C1",
+    diff_add_bg="#1a2e22",       # 暗色新增行背景
+    diff_del_bg="#2e1a1d",       # 暗色删除行背景
+    diff_gap_add_bg="#16201a",   # 暗色新增侧间隙
+    diff_gap_del_bg="#1f1618",   # 暗色删除侧间隙
     heading_colors={
         1: "#FF6B6B",  # 亮红
         2: "#FFA94D",  # 亮橙

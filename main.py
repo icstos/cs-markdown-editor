@@ -28,8 +28,9 @@ from models import Document
 from services import file_ops
 from services.file_io import read_text, write_text
 from services.shortcuts import ShortcutManager
-from styles import FONT_MAIN, get_colors, only_border
+from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, get_colors, only_border
 from views.editor import MarkdownEditor
+from views.diff_view import compute_diff_for_editors
 from views.file_dialogs import FileActionDialog
 from views.key_bindings import KeyDispatcher
 from views.settings_dialog import SettingsDialog
@@ -56,6 +57,20 @@ def App():
     # 文件操作对话框状态：{"mode":"input"|"confirm", "action":..., "target":...} | None
     # 由右键菜单触发（新建文件/文件夹/重命名/删除），确认后执行对应文件操作
     file_dialog, set_file_dialog = ft.use_state(None)
+    # 文件比较（VSCode 风格）：compare_source 为「选择以进行比较」记录的源文件路径；
+    # diff_mode 为 {"left_path","right_path","left_doc","right_doc"} | None，
+    # 非 None 时进入双编辑器对比模式（左右各一个 MarkdownEditor，行级 diff 背景着色 + 间隙对齐）。
+    compare_source, set_compare_source = ft.use_state(None)
+    diff_mode, set_diff_mode = ft.use_state(None)
+    # diff_mode 的 ref 镜像：_bind_keyboard 空依赖闭包读取最新值，Escape 退出对比
+    diff_mode_ref = ft.use_ref(None)
+    diff_mode_ref.current = diff_mode
+    # 对比模式双编辑器导航接口 + 焦点视口
+    diff_nav_left = ft.use_ref(None)
+    diff_nav_right = ft.use_ref(None)
+    diff_active_pane, set_diff_active_pane = ft.use_state(0)  # 0=左, 1=右
+    diff_active_pane_ref = ft.use_ref(0)
+    diff_active_pane_ref.current = diff_active_pane
     # 亮/暗主题模式
     theme_mode, set_theme_mode = ft.use_state(ft.ThemeMode.LIGHT)
     settings, set_settings = ft.use_state(load_settings)
@@ -213,10 +228,16 @@ def App():
             if path and page is not None:
                 page.run_task(_copy_path, path)
             elif page is not None:
-                page.open(ft.SnackBar(ft.Text("该标签无文件路径")))
+                _show_snack("该标签无文件路径")
         elif action == "open":
             if path:
                 _open_file_by_path(path)
+        elif action == "select_for_compare":
+            if path:
+                _select_for_compare(path)
+        elif action == "compare_with_selected":
+            if path:
+                _compare_with_selected(path)
         elif action == "new_file":
             if path:
                 dir_path = os.path.dirname(path)
@@ -296,15 +317,31 @@ def App():
             try:
                 await cb.set(path)
                 if page_ref.current is not None:
-                    page_ref.current.open(ft.SnackBar(ft.Text("路径已复制")))
+                    _show_snack("路径已复制")
             except Exception:
                 pass
 
     def _show_snack(msg: str):
-        """在页面底部弹出 SnackBar 提示。"""
+        """在页面底部弹出 SnackBar 提示。
+
+        Flet 0.86 无 page.open()，通过 overlay + SnackBar.open=True 实现，
+        on_dismiss 时从 overlay 移除避免列表无限增长。
+        """
         page = page_ref.current
-        if page is not None:
-            page.open(ft.SnackBar(ft.Text(msg)))
+        if page is None:
+            return
+        snack = ft.SnackBar(content=ft.Text(msg))
+
+        def _on_dismiss(e):
+            try:
+                page.overlay.remove(snack)
+            except (ValueError, AttributeError):
+                pass
+
+        snack.on_dismiss = _on_dismiss
+        snack.open = True
+        page.overlay.append(snack)
+        page.update()
 
     def _update_tab_for_renamed_file(old_path: str, new_path: str):
         """文件重命名后，同步更新打开了该文件的标签的 file_path。"""
@@ -401,6 +438,52 @@ def App():
             "target": target,
         })
 
+    def _get_text_for_compare(path: str) -> str:
+        """获取用于比较的文本：优先用已打开标签的内存内容（含未保存修改），否则读磁盘。
+
+        这样比较未保存的草稿也能反映最新编辑结果，与 VSCode 行为一致。
+        """
+        for t in tabs_ref.current:
+            if t["file_path"] == path:
+                return parser.serialize(t["document"])
+        try:
+            return read_text(path)
+        except Exception as e:
+            _show_snack(f"读取失败：{e}")
+            return ""
+
+    def _select_for_compare(path: str):
+        """记录比较源文件路径，供后续「与已选项目进行比较」使用。"""
+        set_compare_source(path)
+        _show_snack(f"已选择以进行比较：{os.path.basename(path)}")
+
+    def _compare_with_selected(right_path: str):
+        """用已选源（左）与 right_path（右）进入双编辑器对比模式。
+
+        两侧均加载为可编辑 Document，实时计算行级 diff 标记和间隙对齐。
+        """
+        src = compare_source
+        if not src:
+            _show_snack("请先「选择以进行比较」一个文件")
+            return
+        if os.path.abspath(src) == os.path.abspath(right_path):
+            _show_snack("不能与同一个文件进行比较")
+            return
+        left_text = _get_text_for_compare(src)
+        right_text = _get_text_for_compare(right_path)
+        left_doc = parser.parse_markdown(left_text)
+        left_doc.file_path = src
+        right_doc = parser.parse_markdown(right_text)
+        right_doc.file_path = right_path
+        set_diff_active_pane(0)
+        diff_active_pane_ref.current = 0
+        set_diff_mode({
+            "left_path": src,
+            "right_path": right_path,
+            "left_doc": left_doc,
+            "right_doc": right_doc,
+        })
+
     def _on_sidebar_context_action(action: str, path: str):
         """侧边栏文件/文件夹右键菜单回调。
 
@@ -413,6 +496,12 @@ def App():
         if action == "open":
             if not is_dir:
                 _open_file_by_path(path)
+        elif action == "select_for_compare":
+            if not is_dir:
+                _select_for_compare(path)
+        elif action == "compare_with_selected":
+            if not is_dir:
+                _compare_with_selected(path)
         elif action == "new_file":
             dir_path = path if is_dir else os.path.dirname(path)
             _open_input_dialog(
@@ -588,11 +677,9 @@ def App():
             )
             write_text(path, payload)
         except Exception as e:
-            if page_ref.current is not None:
-                page_ref.current.open(ft.SnackBar(ft.Text(f"导出失败：{e}")))
+            _show_snack(f"导出失败：{e}")
             return
-        if page_ref.current is not None:
-            page_ref.current.open(ft.SnackBar(ft.Text("快捷键方案已导出")))
+        _show_snack("快捷键方案已导出")
 
     async def import_shortcuts():
         picker = picker_holder.current
@@ -616,11 +703,9 @@ def App():
             save_settings(next_settings)
             set_shortcut_focus((None, None))
         except Exception as e:
-            if page_ref.current is not None:
-                page_ref.current.open(ft.SnackBar(ft.Text(f"导入失败：{e}")))
+            _show_snack(f"导入失败：{e}")
             return
-        if page_ref.current is not None:
-            page_ref.current.open(ft.SnackBar(ft.Text("快捷键方案已导入")))
+        _show_snack("快捷键方案已导入")
 
     def _push_recent_file(path: str):
         """把 path 加入最近文件列表头部（去重、截断 10 条）并持久化。"""
@@ -650,8 +735,7 @@ def App():
         try:
             text = read_text(path)
         except Exception as e:
-            if page_ref.current is not None:
-                page_ref.current.open(ft.SnackBar(ft.Text(f"打开失败：{e}")))
+            _show_snack(f"打开失败：{e}")
             return
         doc = parser.parse_markdown(text)
         doc.file_path = path
@@ -678,6 +762,9 @@ def App():
 
     def toggle_split_editor():
         """向右拆分编辑器（VSCode 风格 Ctrl+\）：切换右侧第二视口，共享同一文档。"""
+        # 对比模式下禁用拆分切换：两者互斥，避免退出对比后意外进入拆分
+        if diff_mode_ref.current is not None:
+            return
         next_split = not split_editor
         set_split_editor(next_split)
         # 关闭拆分时焦点回到左侧；打开时默认焦点左侧
@@ -689,6 +776,24 @@ def App():
         if active_pane_ref.current != pane:
             set_active_pane(pane)
             active_pane_ref.current = pane
+
+    def _set_diff_active_pane(pane: int):
+        """切换对比模式焦点视口（0=左, 1=右）。同值不重渲染。"""
+        if diff_active_pane_ref.current != pane:
+            set_diff_active_pane(pane)
+            diff_active_pane_ref.current = pane
+
+    def _get_active_nav():
+        """统一获取当前焦点视口的 nav_ref。
+
+        优先级：diff_mode > split_editor > 单编辑器。键盘事件、跳转、状态栏
+        光标位置都通过此函数路由，避免散落的分支判断。
+        """
+        if diff_mode_ref.current is not None:
+            return diff_nav_right if diff_active_pane_ref.current == 1 else diff_nav_left
+        if split_editor and active_pane_ref.current == 1:
+            return nav_ref_split
+        return nav_ref
 
     def _apply_content_layout():
         page = page_ref.current
@@ -703,8 +808,8 @@ def App():
         update_setting("sidebar_width", width)
 
     def jump_to_line(li: int):
-        # 拆分编辑器时跳转到焦点视口
-        active_nav = nav_ref_split if (split_editor and active_pane == 1) else nav_ref
+        # 跳转到当前焦点视口（diff / 拆分 / 单编辑器统一路由）
+        active_nav = _get_active_nav()
         actions = active_nav.current
         if actions is not None:
             actions.jump_to_line(li)
@@ -775,8 +880,7 @@ def App():
         try:
             write_text(path, text)
         except Exception as e:
-            if page_ref.current is not None:
-                page_ref.current.open(ft.SnackBar(ft.Text(f"保存失败：{e}")))
+            _show_snack(f"保存失败：{e}")
             return False
         doc.file_path = path
         doc.dirty = False
@@ -808,9 +912,9 @@ def App():
         try:
             write_text(path, html)
         except Exception as e:
-            page_ref.current.open(ft.SnackBar(ft.Text(f"导出失败：{e}")))
+            _show_snack(f"导出失败：{e}")
             return
-        page_ref.current.open(ft.SnackBar(ft.Text("导出成功")))
+        _show_snack("导出成功")
 
     # ---- 快捷键 + 光标导航 ----
     # page.on_keyboard_event 的 KeyboardEvent 直接提供 ctrl/meta 修饰键状态
@@ -824,8 +928,13 @@ def App():
     # KeyDispatcher：替代 on_key 闭包。持有 shortcut_mgr + nav_ref 引用，
     # editor.py 每次渲染写入最新 EditorActions 后 dispatcher 读到的就是最新值，
     # 无需 on_key_ref 中转层。
-    # 拆分编辑器：根据 active_pane 选择对应视口的 nav_ref，键盘事件作用于焦点视口。
-    active_nav_ref = nav_ref_split if (split_editor and active_pane == 1) else nav_ref
+    # 拆分/对比编辑器：根据当前模式选择对应视口的 nav_ref，键盘事件作用于焦点视口。
+    if diff_mode:
+        active_nav_ref = diff_nav_right if diff_active_pane == 1 else diff_nav_left
+    elif split_editor and active_pane == 1:
+        active_nav_ref = nav_ref_split
+    else:
+        active_nav_ref = nav_ref
     dispatcher = KeyDispatcher(
         shortcut_mgr=shortcut_mgr,
         actions_ref=active_nav_ref,
@@ -859,6 +968,10 @@ def App():
             return lambda: None
 
         def _handler(e):
+            # Escape 退出文件对比模式（VSCode 风格），优先级高于普通快捷键
+            if (e.key or "").lower() == "escape" and diff_mode_ref.current is not None:
+                set_diff_mode(None)
+                return
             # 通过 ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例
             d = dispatcher_ref.current
             if d is None:
@@ -920,6 +1033,7 @@ def App():
             on_jump_to_line=jump_to_line,
             on_width_change=change_sidebar_width,
             on_file_context_action=_on_sidebar_context_action,
+            compare_source=compare_source,
         ),
     )
     # 编辑器公共 props：左右两视口共享（仅 nav_ref / key / show_toolbar / on_editor_focus 不同）
@@ -941,7 +1055,152 @@ def App():
         shortcut_mgr=shortcut_mgr,
     )
 
-    if split_editor:
+    if diff_mode:
+        # ============ 文件对比模式：双 MarkdownEditor 并排 + 行级 diff 背景着色 ============
+        # 左右各一个原生可编辑 MarkdownEditor，共享 diff_marks/diff_gaps 实现差异可视化。
+        # diff 在每次渲染时由 serialize(left_doc)/serialize(right_doc) 重算——Document
+        # 为 @ft.observable，任一侧编辑触发 App 重渲染，diff 标记/间隙即时更新。
+        _dm = diff_mode
+        _ldoc = _dm["left_doc"]
+        _rdoc = _dm["right_doc"]
+        _ltext = parser.serialize(_ldoc)
+        _rtext = parser.serialize(_rdoc)
+        marks_left, marks_right, gaps_left, gaps_right = compute_diff_for_editors(
+            _ltext, _rtext
+        )
+        # 差异统计：added 仅右侧、removed 仅左侧、modified 两侧各一行
+        _added = sum(1 for v in marks_right.values() if v == "added")
+        _removed = sum(1 for v in marks_left.values() if v == "removed")
+        _modified = sum(1 for v in marks_right.values() if v == "modified")
+
+        # 对比模式公共 props：不复用 _editor_common（其 document/file_path/on_dirty_change
+        # 绑定当前标签），对比编辑器各自持有 diff 文档，脏状态/保存独立于标签系统。
+        _diff_common = dict(
+            on_new=new_doc,
+            on_open=lambda: page_ref.current.run_task(open_doc),
+            on_export=lambda: page_ref.current.run_task(export_doc),
+            on_dirty_change=lambda d: None,  # 对比编辑不影响标签脏状态
+            clipboard_ref=clipboard_holder,
+            theme_mode=theme_mode,
+            on_toggle_theme=toggle_theme,
+            settings=settings,
+            on_open_settings=open_settings,
+            sidebar_open=sidebar_open,
+            on_toggle_sidebar=toggle_sidebar,
+            shortcut_mgr=shortcut_mgr,
+        )
+
+        def _save_diff_doc(doc):
+            """保存对比文档到其 file_path（Ctrl+S 在对比编辑器内触发）。"""
+            if not doc.file_path:
+                _show_snack("该对比文件无路径，无法保存")
+                return
+            try:
+                write_text(doc.file_path, parser.serialize(doc))
+                doc.dirty = False
+                _show_snack(f"已保存：{os.path.basename(doc.file_path)}")
+            except Exception as e:
+                _show_snack(f"保存失败：{e}")
+
+        _c = get_colors(theme_mode)
+        _is_dark = theme_mode == ft.ThemeMode.DARK
+        _added_char = "#7ee787" if _is_dark else "#1a7f37"
+        _removed_char = "#f47067" if _is_dark else "#cf222e"
+        _left_name = os.path.basename(_dm["left_path"]) if _dm["left_path"] else "未命名"
+        _right_name = os.path.basename(_dm["right_path"]) if _dm["right_path"] else "未命名"
+
+        # 对比头部：文件名 + 差异统计 + 关闭按钮（复用 DiffView overlay 的视觉风格）
+        _diff_header = ft.Container(
+            bgcolor=_c.toolbar_bg,
+            border=only_border(bottom=ft.BorderSide(1, _c.border)),
+            padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.COMPARE_ARROWS, color=_c.link, size=18),
+                    ft.Text(
+                        value=f"{_left_name}  →  {_right_name}",
+                        size=13, color=_c.text, font_family=FONT_MAIN,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                    ft.Container(width=Spacing.MD),
+                    ft.Container(
+                        bgcolor=_c.diff_add_bg, border_radius=Radius.SM,
+                        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                        content=ft.Text(f"+{_added}", size=11, color=_added_char,
+                                        font_family=FONT_MONO, weight=ft.FontWeight.W_600),
+                    ),
+                    ft.Container(
+                        bgcolor=_c.diff_del_bg, border_radius=Radius.SM,
+                        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                        content=ft.Text(f"-{_removed}", size=11, color=_removed_char,
+                                        font_family=FONT_MONO, weight=ft.FontWeight.W_600),
+                    ),
+                    ft.Container(
+                        bgcolor=ft.Colors.with_opacity(0.08, _c.text),
+                        border_radius=Radius.SM,
+                        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                        content=ft.Text(f"~{_modified}", size=11, color=_c.muted,
+                                        font_family=FONT_MONO, weight=ft.FontWeight.W_600),
+                    ),
+                    ft.Container(expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE, tooltip="关闭对比 (Esc)",
+                        on_click=lambda e: set_diff_mode(None),
+                        icon_size=18, style=ft.ButtonStyle(color=_c.muted),
+                    ),
+                ],
+                spacing=Spacing.SM,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        )
+
+        editor_area = ft.Column(
+            controls=[
+                _diff_header,
+                ft.Row(
+                    controls=[
+                        ft.Container(
+                            content=MarkdownEditor(
+                                key="diff-left",
+                                document=_ldoc,
+                                file_path=_dm["left_path"],
+                                nav_ref=diff_nav_left,
+                                diff_marks=marks_left,
+                                diff_gaps=gaps_left,
+                                on_editor_focus=lambda: _set_diff_active_pane(0),
+                                on_save=lambda: _save_diff_doc(_ldoc),
+                                **_diff_common,
+                            ),
+                            expand=True,
+                            on_click=lambda e: _set_diff_active_pane(0),
+                        ),
+                        ft.VerticalDivider(width=1, color=_c.border),
+                        ft.Container(
+                            content=MarkdownEditor(
+                                key="diff-right",
+                                document=_rdoc,
+                                file_path=_dm["right_path"],
+                                nav_ref=diff_nav_right,
+                                diff_marks=marks_right,
+                                diff_gaps=gaps_right,
+                                show_toolbar=False,
+                                on_editor_focus=lambda: _set_diff_active_pane(1),
+                                on_save=lambda: _save_diff_doc(_rdoc),
+                                keyboard_autofocus=False,
+                                **_diff_common,
+                            ),
+                            expand=True,
+                            on_click=lambda e: _set_diff_active_pane(1),
+                        ),
+                    ],
+                    spacing=0,
+                    expand=True,
+                ),
+            ],
+            spacing=0,
+            expand=True,
+        )
+    elif split_editor:
         # 拆分：左 + 分隔线 + 右，各占一半；右侧隐藏工具栏保持简洁。
         # 两视口共享同一 document（@ft.observable），各自独立光标/滚动。
         editor_area = ft.Row(
@@ -993,23 +1252,33 @@ def App():
     )
 
     # 底部状态栏：贯穿侧边栏 + 编辑区全宽，放在 body 之下
-    # 拆分时根据 active_pane 选择焦点视口的光标位置
-    _active_nav = nav_ref_split if (split_editor and active_pane == 1) else nav_ref
+    # diff_mode 时反映当前焦点对比视口的文档/路径/光标；拆分时按 active_pane 选择。
+    if diff_mode:
+        _footer_doc = diff_mode["right_doc"] if diff_active_pane == 1 else diff_mode["left_doc"]
+        _footer_path = diff_mode["right_path"] if diff_active_pane == 1 else diff_mode["left_path"]
+        _footer_split = False
+        _footer_split_cb = None  # 对比模式下禁用拆分切换，避免模式冲突
+    else:
+        _footer_doc = document
+        _footer_path = file_path
+        _footer_split = split_editor
+        _footer_split_cb = toggle_split_editor
+    _active_nav = _get_active_nav()
     _actions = _active_nav.current
     cursor_row_col = _actions.get_cursor_row_col() if _actions else (1, 1)
     footer = (
         StatusBar(
-            document=document,
-            file_path=file_path,
-            dirty=document.dirty,
+            document=_footer_doc,
+            file_path=_footer_path,
+            dirty=_footer_doc.dirty,
             sidebar_open=settings.get("sidebar_open", False),
             cursor_row_col=cursor_row_col,
             theme_mode=theme_mode,
             on_toggle_sidebar=toggle_sidebar,
             word_wrap=settings.get("word_wrap", True),
             on_toggle_word_wrap=toggle_word_wrap,
-            split_editor=split_editor,
-            on_toggle_split_editor=toggle_split_editor,
+            split_editor=_footer_split,
+            on_toggle_split_editor=_footer_split_cb,
         )
         if settings.get("show_footer", True)
         else ft.Container(height=0)
@@ -1024,6 +1293,7 @@ def App():
         on_close=close_tab,
         on_new=new_doc,
         on_context_action=_on_tab_context_action,
+        compare_source=compare_source,
     )
 
     main_col = ft.Column(
@@ -1086,6 +1356,9 @@ def App():
             on_confirm=lambda value="": None,
             on_cancel=lambda: None,
         )
+
+    # 文件对比已重构为双 MarkdownEditor 原生编辑模式（见上方 diff_mode 分支），
+    # 旧的 DiffView 全屏 overlay 已移除。
 
     return ft.Stack(
         controls=[

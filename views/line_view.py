@@ -128,8 +128,9 @@ def _wrap_block(
     is_current_line: bool = False,
     is_flash: bool = False,
     on_size_change: Callable[[int, float], None] | None = None,
+    diff_mark: str | None = None,
 ) -> ft.Control:
-    """包一层块级容器：缩进、引用边框、当前行高亮、跳转脉冲高亮。
+    """包一层块级容器：缩进、引用边框、当前行高亮、跳转脉冲高亮、diff 背景着色。
 
     on_click：挂到最外层 Container 的点击回调（padding 死区兜底）。
     on_size_change：行实际渲染高度上报回调，用于精确计算滚动偏移。
@@ -137,9 +138,25 @@ def _wrap_block(
         内层引用/激活态包裹容器重复触发。
     is_flash：跳转目标行脉冲高亮（淡蓝底，animate 300ms 淡入/淡出）。
         与 is_current_line 可叠加：flash 更强且 1.2s 消失，current 持续。
+    diff_mark：diff 对比行标记。"added"=绿底，"removed"=红底，"modified"=浅绿底。
+        作为最底层背景，与 flash/current 叠加时 diff 色在底，高亮在上。
     """
     c = _current_colors()
     pad_left = 0
+
+    # diff 背景着色：作为最底层背景包裹（在 flash/current 之前）
+    if diff_mark:
+        diff_bg = {
+            "added": c.diff_add_bg,
+            "removed": c.diff_del_bg,
+            "modified": c.diff_add_bg,
+        }.get(diff_mark)
+        if diff_bg:
+            content = ft.Container(
+                content=content,
+                bgcolor=diff_bg,
+                border_radius=Radius.LG,
+            )
 
     if is_flash:
         # 跳转脉冲高亮：淡蓝底，animate 使 flash_li 清回 -1 时 bgcolor 平滑淡出
@@ -298,6 +315,7 @@ def _render_math_block(
     is_current_line: bool,
     is_flash: bool = False,
     on_line_size_change: Callable[[int, float], None] | None = None,
+    diff_mark: str | None = None,
 ) -> ft.Control:
     """公式块：浏览态 ft.Markdown 渲染 LaTeX；编辑态源码 + 实时预览。
 
@@ -416,7 +434,7 @@ def _render_math_block(
     return _wrap_block(
         content, line, base, line_idx,
         is_current_line=is_current_line, is_flash=is_flash,
-        on_size_change=on_line_size_change,
+        on_size_change=on_line_size_change, diff_mark=diff_mark,
     )
 
 
@@ -484,6 +502,8 @@ def LineView(
     on_hit_test_x: Callable[[int, float], int] | None = None,
     on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
     on_double_tap: Callable[[int, int], None] | None = None,
+    # diff 对比：行级背景着色标记（"added"|"removed"|"modified"|None）
+    diff_mark: str | None = None,
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
@@ -520,6 +540,7 @@ def LineView(
             line, line_idx, base, content_width, clipboard_ref,
             on_change_code, on_code_focus, on_code_blur, on_change_lang,
             code_field_ref, is_current_line, is_flash, on_line_size_change,
+            diff_mark=diff_mark,
         )
 
     # ============ 块级公式 MATH（浏览态 ft.Markdown / 编辑态 TextField）============
@@ -528,6 +549,7 @@ def LineView(
             line, line_idx, base, content_width,
             on_change_math, on_math_focus, on_math_blur, math_field_ref,
             is_math_editing, is_current_line, is_flash, on_line_size_change,
+            diff_mark=diff_mark,
         )
 
     # ============ 分隔线 HR（视图态）============
@@ -540,6 +562,7 @@ def LineView(
         return _wrap_block(
             content, line, base, line_idx,
             is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
+            diff_mark=diff_mark,
         )
 
     # ============ 目录 [toc] ============
@@ -640,6 +663,7 @@ def LineView(
         return _wrap_block(
             content, line, base, line_idx,
             is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
+            diff_mark=diff_mark,
         )
 
     # ============ 普通文本行（段落/标题/列表/引用/空行）：RenderedLine + Stack ============
@@ -694,6 +718,7 @@ def LineView(
     return _wrap_block(
         inner, line, base, line_idx,
         is_current_line=is_current_line, on_size_change=on_line_size_change,
+        diff_mark=diff_mark,
     )
 
 
@@ -711,6 +736,7 @@ def _render_code_block(
     is_current_line: bool,
     is_flash: bool = False,
     on_line_size_change: Callable[[int, float], None] | None = None,
+    diff_mark: str | None = None,
 ) -> ft.Control:
     """代码块分支：CodeEditor 始终可编辑独立岛屿（Typora/VSCode 风格）。
 
@@ -900,4 +926,5 @@ def _render_code_block(
         is_current_line=is_current_line,
         is_flash=is_flash,
         on_size_change=on_line_size_change,
+        diff_mark=diff_mark,
     )

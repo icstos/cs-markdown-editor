@@ -3,7 +3,8 @@
 - TabBar：横向标签列表，每标签显示文件名，未保存修改前置 `*`（警告色）；
   激活态有底部 primary 强调条；非激活悬停时高亮。尾部固定「+」新建按钮。
   每个标签包裹 ft.ContextMenu，右键提供完整文件操作菜单：
-  打开 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除 /
+  打开 / 选择以进行比较 / 与已选项目进行比较 / 新建文件 / 新建文件夹 /
+  复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除 /
   关闭 / 关闭其他 / 关闭全部（有 file_path 的标签才显示文件操作项）。
 - ConfirmCloseDialog：关闭脏标签时的半透明遮罩确认弹层（保存并关闭 / 不保存 / 取消），
   样式与 views/settings_dialog.py 的 overlay 风格保持一致。
@@ -41,13 +42,16 @@ def TabBar(
     on_close: Callable[[int], None],
     on_new: Callable[[], None],
     on_context_action: Callable[[str, int], None],
+    compare_source: str | None = None,
 ):
     """顶部标签栏。
 
     tabs: 每项为 {"file_path": str|None, "dirty": bool}（仅展示用元数据）。
     on_context_action(action, i)：action ∈ {"open","new_file","new_folder","copy_path",
-    "reveal","rename","duplicate","delete","close","close_others","close_all"}。
-    有 file_path 的标签才显示文件操作项（打开/复制路径/打开位置/重命名/副本/删除）。
+    "reveal","rename","duplicate","delete","close","close_others","close_all",
+    "select_for_compare","compare_with_selected"}。
+    有 file_path 的标签才显示文件操作项（打开/复制路径/打开位置/重命名/副本/删除/比较）。
+    compare_source 非空时，所有有 file_path 的标签均显示「与已选项目进行比较」项。
     """
     c = get_colors(theme_mode)
     hover_index, set_hover_index = ft.use_state(-1)
@@ -100,7 +104,7 @@ def TabBar(
             # 不会冒泡到外层 Container.on_click，故无需 stop_propagation。
             on_close(idx)
 
-        # 右键菜单项：有 file_path 才显示文件操作（打开/复制路径/打开位置/重命名/副本/删除）
+        # 右键菜单项：有 file_path 才显示文件操作（打开/比较/复制路径/打开位置/重命名/副本/删除）
         context_items: list[ft.PopupMenuItem] = []
         if path:
             context_items.append(
@@ -110,6 +114,22 @@ def TabBar(
                     on_click=lambda e, idx=i: on_context_action("open", idx),
                 )
             )
+            # 文件比较：选择以进行比较 / 与已选项目进行比较（VSCode 风格）
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="选择以进行比较",
+                    icon=ft.Icons.DIFFERENCE,
+                    on_click=lambda e, idx=i: on_context_action("select_for_compare", idx),
+                )
+            )
+            if compare_source and os.path.abspath(compare_source) != os.path.abspath(path):
+                context_items.append(
+                    ft.PopupMenuItem(
+                        content="与已选项目进行比较",
+                        icon=ft.Icons.COMPARE_ARROWS,
+                        on_click=lambda e, idx=i: on_context_action("compare_with_selected", idx),
+                    )
+                )
             context_items.append(ft.PopupMenuItem())  # 分隔
         # 新建文件/文件夹（有 file_path 时提供目录上下文）
         if path:

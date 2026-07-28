@@ -201,6 +201,10 @@ def MarkdownEditor(
     cursor_li, set_cursor_li = ft.use_state(None)  # 激活行号 | None（浏览态）
     cursor_off, set_cursor_off = ft.use_state(0)  # 行级 raw 偏移 0..len(line.raw)
     nav_seq, set_nav_seq = ft.use_state(0)  # 仅撤销/重做递增，强制 TextField 重建
+    # 光标重聚焦触发器：点击同一位置时 cursor_li/cursor_off 不变，use_effect 不触发，
+    # 但点击已使 cursor TextField 失焦。递增此值强制 _focus_cursor_field 重新聚焦，
+    # 避免光标丢失（如光标在行尾再次点击行尾）。
+    focus_seq, set_focus_seq = ft.use_state(0)
     cursor_line, set_cursor_line = ft.use_state(0)  # 最近交互行（供工具栏块级操作）
     cursor_field_ref = ft.use_ref(None)  # 透明 cursor TextField 引用
     # IME 输入会话：on_change 期间不清空 TextField value，用"增量式"编辑同步文档
@@ -491,6 +495,9 @@ def MarkdownEditor(
         if outward_sel_ref.current is not None:
             _set_outward_sel(None)
         _set_cursor(li, raw_off)
+        # 点击同一位置时 cursor_li/cursor_off 不变，use_effect 不触发重新聚焦；
+        # 但点击已使 cursor TextField 失焦——递增 focus_seq 强制重聚焦，避免光标丢失。
+        set_focus_seq(focus_seq + 1)
         _ensure_visible(li)
 
     def handle_char_input(value: str):
@@ -2539,10 +2546,11 @@ def MarkdownEditor(
             except Exception:
                 pass
 
-    # 依赖 cursor_li + cursor_off：切换行或同行内光标位置变化时重新聚焦
-    # 同行内点击定位时 cursor_off 变化，需重新 focus 以保持光标可见
+    # 依赖 cursor_li + cursor_off + focus_seq：切换行、同行内光标位置变化、
+    # 或点击同一位置（focus_seq 递增）时重新聚焦。点击同一位置时 cursor_li/off 不变，
+    # 但点击已使 TextField 失焦，须靠 focus_seq 触发重聚焦避免光标丢失。
     # IME 安全：_set_cursor 已在光标偏移不连续时调用 _end_input_session()
-    ft.use_effect(_focus_cursor_field, [cursor_li, cursor_off])
+    ft.use_effect(_focus_cursor_field, [cursor_li, cursor_off, focus_seq])
 
     # ============ use_effect：文档行数变化时清空行高缓存 ============
     # 插入/删除整行会让 line_idx 错位，旧缓存的高度会对应到错误的行。

@@ -38,16 +38,15 @@ import parser
 from styles import (
     FONT_MAIN,
     FONT_MONO,
-    Spacing,
     _current_colors,
     block_text_size,
-    only_border,
 )
 from utils.segment_helpers import WRAP_SYNTAX
 from views._editor_helpers import _shift_cursor_off, _snap_indent_down, _snap_indent_up, _table_cells, _vline_off_at_x
 from views.line_view import LineView
+from views.raw_editor import RawEditor
 from views.table_view import TableView, _align_marker, _join_row
-from views.toolbar import Toolbar, _btn, _divider as _tb_divider
+from views.tool_area import ToolArea
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知，替代 reparse_line 的 2-7 次）
 _reparse_atomic = parser.reparse_line_atomic
@@ -1757,28 +1756,15 @@ def MarkdownEditor(
     def suppress_blur_for_click():
         suppress_blur.current = True
 
-    def _raw_editor() -> ft.Control:
-        def _on_raw_change(value: str):
-            set_raw_draft(value)
-            document.lines = parser.parse_markdown(value).lines
-            mark_dirty()
+    def _on_raw_change(value: str):
+        """原文模式输入同步：更新草稿 + 重解析整篇 + 标脏。
 
-        return ft.Container(
-            expand=True,
-            alignment=ft.Alignment.TOP_LEFT,
-            bgcolor=c.bg,
-            padding=ft.Padding.symmetric(horizontal=content_padding, vertical=content_padding_top),
-            content=ft.TextField(
-                value=raw_draft,
-                multiline=True,
-                min_lines=20,
-                border=ft.InputBorder.NONE,
-                text_size=body_font_size,
-                text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
-                on_change=lambda e: _on_raw_change(e.control.value),
-                expand=True,
-            ),
-        )
+        由 RawEditor 组件的 on_change 触发，文档同步逻辑集中在 editor 闭包，
+        RawEditor 仅负责受控 TextField 的声明式构建。
+        """
+        set_raw_draft(value)
+        document.lines = parser.parse_markdown(value).lines
+        mark_dirty()
 
     # ============ 剪贴板 / 选区 ============
     def compute_markdown_from_text(text: str) -> str:
@@ -2893,70 +2879,34 @@ def MarkdownEditor(
                 for _gh in _gaps:
                     line_controls.append(_build_diff_gap(_gh, c))
 
-    # ============ 工具区 ============
-    def _tool_area():
-        menu_items = [
-            ft.PopupMenuItem(content="新建", on_click=lambda e: (on_new or _noop)()),
-            ft.PopupMenuItem(content="打开...", on_click=lambda e: (on_open or _noop)()),
-            ft.PopupMenuItem(content="保存", on_click=lambda e: (on_save or _noop)()),
-            ft.PopupMenuItem(),
-            ft.PopupMenuItem(content="设置", on_click=lambda e: (on_open_settings or _noop)()),
-        ]
-        if not show_toolbar:
-            return ft.Container(height=0)
-        return ft.Container(
-            bgcolor=ft.Colors.with_opacity(0.96, c.toolbar_bg),
-            border=only_border(bottom=ft.BorderSide(1, c.border)),
-            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-            content=ft.Row(
-                controls=[
-                    ft.PopupMenuButton(
-                        icon=ft.Icons.MENU,
-                        tooltip="文件菜单",
-                        items=menu_items,
-                    ),
-                    _tb_divider(),
-                    Toolbar(
-                        shortcut_mgr=shortcut_mgr,
-                        on_h1=lambda: set_block(BlockType.HEADING, 1),
-                        on_h2=lambda: set_block(BlockType.HEADING, 2),
-                        on_h3=lambda: set_block(BlockType.HEADING, 3),
-                        on_paragraph=lambda: set_block(BlockType.PARAGRAPH),
-                        on_list=lambda: set_block(BlockType.LIST_UO),
-                        on_task=lambda: set_block(BlockType.LIST_UO, task=True),
-                        on_quote=lambda: set_block(BlockType.QUOTE),
-                        on_code_block=lambda: set_block(BlockType.CODE),
-                        on_hr=lambda: set_block(BlockType.HR),
-                        on_math_block=lambda: set_block(BlockType.MATH),
-                        on_table=lambda: set_block(BlockType.TABLE),
-                        on_bold=lambda: apply_inline_format("bold"),
-                        on_italic=lambda: apply_inline_format("italic"),
-                        on_highlight=lambda: apply_inline_format("highlight"),
-                        on_code=lambda: apply_inline_format("code"),
-                        on_link=lambda: apply_inline_format("link"),
-                        on_inline_math=lambda: apply_inline_format("inline_math"),
-                        on_strike=lambda: apply_inline_format("strike"),
-                    ),
-                    ft.Container(expand=True),
-                    _btn(
-                        ft.Icons.VISIBILITY if not raw_mode else ft.Icons.EDIT,
-                        "原文模式" if not raw_mode else "返回编辑",
-                        toggle_raw,
-                        toggle_on=raw_mode,
-                    ),
-                    _btn(ft.Icons.FILE_DOWNLOAD, "导出 HTML", on_export or _noop),
-                    _btn(ft.Icons.CENTER_FOCUS_STRONG, "聚焦模式", toggle_focus_mode),
-                    _btn(
-                        ft.Icons.DARK_MODE if theme_mode == ft.ThemeMode.LIGHT else ft.Icons.LIGHT_MODE,
-                        "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
-                        on_toggle_theme or _noop,
-                    ),
-                    _btn(ft.Icons.SETTINGS, "设置  Ctrl+,", on_open_settings or _noop),
-                ],
-                spacing=Spacing.MD,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-        )
+    # ============ 工具区稳定回调（供 ToolArea/RawEditor 记忆化）============
+    # editor 每次重渲染时闭包重建，若直接传给 ToolArea 会破坏 @ft.memo 浅比较，
+    # 导致输入时整条工具栏无谓重渲染。此处用 ref 持有最新闭包，use_memo([])
+    # 产出稳定引用，ToolArea/RawEditor 据此跳过未变重渲染。
+    _tool_cb_ref = ft.use_ref({})
+    _tool_cb_ref.current = {
+        "on_new": on_new or _noop,
+        "on_open": on_open or _noop,
+        "on_save": on_save or _noop,
+        "on_open_settings": on_open_settings or _noop,
+        "set_block": set_block,
+        "apply_inline_format": apply_inline_format,
+        "toggle_raw": toggle_raw,
+        "on_export": on_export or _noop,
+        "toggle_focus_mode": toggle_focus_mode,
+        "on_toggle_theme": on_toggle_theme or _noop,
+        "on_raw_change": _on_raw_change,
+    }
+    _TOOL_CB_KEYS = (
+        "on_new", "on_open", "on_save", "on_open_settings",
+        "set_block", "apply_inline_format", "toggle_raw",
+        "on_export", "toggle_focus_mode", "on_toggle_theme",
+        "on_raw_change",
+    )
+    _tool_stable = ft.use_memo(
+        lambda: {k: _make_stable_cb(_tool_cb_ref, k) for k in _TOOL_CB_KEYS},
+        [],
+    )
 
     # ============ 键盘事件 ============
     def _on_key_down(e):
@@ -2999,8 +2949,30 @@ def MarkdownEditor(
         expand=True,
         content=ft.Column(
             controls=[
-                _tool_area(),
-                _raw_editor()
+                ToolArea(
+                    theme_mode=theme_mode,
+                    show_toolbar=show_toolbar,
+                    shortcut_mgr=shortcut_mgr,
+                    raw_mode=raw_mode,
+                    on_new=_tool_stable["on_new"],
+                    on_open=_tool_stable["on_open"],
+                    on_save=_tool_stable["on_save"],
+                    on_open_settings=_tool_stable["on_open_settings"],
+                    set_block=_tool_stable["set_block"],
+                    apply_inline_format=_tool_stable["apply_inline_format"],
+                    on_toggle_raw=_tool_stable["toggle_raw"],
+                    on_export=_tool_stable["on_export"],
+                    on_toggle_focus_mode=_tool_stable["toggle_focus_mode"],
+                    on_toggle_theme=_tool_stable["on_toggle_theme"],
+                ),
+                RawEditor(
+                    theme_mode=theme_mode,
+                    raw_draft=raw_draft,
+                    on_change=_tool_stable["on_raw_change"],
+                    content_padding=content_padding,
+                    content_padding_top=content_padding_top,
+                    body_font_size=body_font_size,
+                )
                 if raw_mode
                 else ft.SelectionArea(
                     expand=True,

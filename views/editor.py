@@ -1808,12 +1808,14 @@ def MarkdownEditor(
         raw = _line_raw(line)
         _push_history()
         undo_push_pending.current = True
-        # 复制行文本到剪贴板
+        # 复制行文本到剪贴板：raw 已是该行 Markdown 源码（含语法标记），
+        # 直接写入即可。原先调 compute_markdown_from_text 做 O(n) 全文段遍历
+        # 匹配，但 raw 含语法标记与 display_text（去语法纯文本）不匹配，
+        # 该调用必然返回空串后回退用 raw —— 纯粹白费 O(n) 开销。
         clipboard = clipboard_ref.current if clipboard_ref is not None else None
         if clipboard is not None and raw:
             try:
-                md = parser.compute_markdown_from_text(document.lines, raw)
-                await clipboard.set(md or raw)
+                await clipboard.set(raw)
             except Exception:
                 pass
         # 删除当前行（或清空唯一行）
@@ -2104,8 +2106,11 @@ def MarkdownEditor(
                 line = document.lines[start_li]
                 cur_raw = _line_raw(line)
                 new_raw = cur_raw[:start_off] + cur_raw[end_off:]
+                # 单行编辑：行数不变，_reparse_atomic 的 line.notify() 已触发重渲染
+                # （与 handle_char_input 同路径），无需复制整个列表赋值 document.lines
+                # 触发额外通知。省 O(n) 列表复制，_set_outward_sel/_set_cursor 的
+                # state 更新进一步保障重渲染。
                 _reparse_atomic(line, new_raw)
-                new_lines = list(document.lines)
             else:
                 if not (0 <= start_li < len(document.lines) and 0 <= end_li < len(document.lines)):
                     return
@@ -2113,10 +2118,10 @@ def MarkdownEditor(
                 end_line = document.lines[end_li]
                 merged = _line_raw(start_line)[:start_off] + _line_raw(end_line)[end_off:]
                 _reparse_atomic(start_line, merged)
-                new_lines = document.lines[:start_li + 1] + document.lines[end_li + 1:]
+                # 多行删除：行数变化，必须赋值新列表触发 document.lines 结构通知
+                document.lines = document.lines[:start_li + 1] + document.lines[end_li + 1:]
         except Exception:
             return
-        document.lines = new_lines
         mark_dirty()
         _set_outward_sel(None)
         if 0 <= start_li < len(document.lines):
@@ -2130,25 +2135,32 @@ def MarkdownEditor(
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
         _delete_raw_range(a_li, a_off, b_li, b_off)
 
+    def _extract_outward_text(a_li: int, a_off: int, b_li: int, b_off: int) -> str:
+        """提取已排序选区 [a_li,a_off]..[b_li,b_off] 的文本（行级 raw 拼接）。
+
+        cut/copy 共用：统一边界检查，避免重复逻辑。返回行级 Markdown 源码
+        拼接（含语法标记），直接写入剪贴板，粘贴时恢复格式。
+        """
+        try:
+            if not (0 <= a_li < len(document.lines) and 0 <= b_li < len(document.lines)):
+                return ""
+            if a_li == b_li:
+                return _line_raw(document.lines[a_li])[a_off:b_off]
+            parts = [_line_raw(document.lines[a_li])[a_off:]]
+            for i in range(a_li + 1, b_li):
+                parts.append(_line_raw(document.lines[i]))
+            parts.append(_line_raw(document.lines[b_li])[:b_off])
+            return "\n".join(parts)
+        except Exception:
+            return ""
+
     async def handle_outward_cut() -> None:
         if outward_sel is None:
             return
         a_li, a_off, b_li, b_off = outward_sel
         if (a_li, a_off) > (b_li, b_off):
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
-        # 提取选区文本
-        try:
-            if a_li == b_li:
-                line = document.lines[a_li]
-                text = _line_raw(line)[a_off:b_off]
-            else:
-                parts = [_line_raw(document.lines[a_li])[a_off:]]
-                for i in range(a_li + 1, b_li):
-                    parts.append(_line_raw(document.lines[i]))
-                parts.append(_line_raw(document.lines[b_li])[:b_off])
-                text = "\n".join(parts)
-        except Exception:
-            text = ""
+        text = _extract_outward_text(a_li, a_off, b_li, b_off)
         clipboard = clipboard_ref.current if clipboard_ref is not None else None
         if clipboard is not None and text:
             try:
@@ -2160,7 +2172,8 @@ def MarkdownEditor(
     async def handle_outward_copy() -> None:
         """Ctrl+C：复制 outward_sel 选区文本到剪贴板（不删除）。
 
-        复用 handle_outward_cut 的文本提取逻辑，但跳过 _delete_raw_range。
+        复用 _extract_outward_text 提取逻辑，但跳过 _delete_raw_range。
+        用 outward_sel_ref.current 读取实时光标选区（复制不改变状态）。
         """
         sel = outward_sel_ref.current
         if sel is None:
@@ -2168,21 +2181,7 @@ def MarkdownEditor(
         a_li, a_off, b_li, b_off = sel
         if (a_li, a_off) > (b_li, b_off):
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
-        try:
-            if a_li == b_li:
-                if not (0 <= a_li < len(document.lines)):
-                    return
-                text = _line_raw(document.lines[a_li])[a_off:b_off]
-            else:
-                if not (0 <= a_li < len(document.lines) and 0 <= b_li < len(document.lines)):
-                    return
-                parts = [_line_raw(document.lines[a_li])[a_off:]]
-                for i in range(a_li + 1, b_li):
-                    parts.append(_line_raw(document.lines[i]))
-                parts.append(_line_raw(document.lines[b_li])[:b_off])
-                text = "\n".join(parts)
-        except Exception:
-            text = ""
+        text = _extract_outward_text(a_li, a_off, b_li, b_off)
         clipboard = clipboard_ref.current if clipboard_ref is not None else None
         if clipboard is not None and text:
             try:
@@ -2533,24 +2532,35 @@ def MarkdownEditor(
             return (cursor_li + 1, cursor_off + 1)
         return (cursor_line + 1, 1)
 
-    def _line_highlight_range(li: int) -> tuple[int, int] | None:
+    # ============ 向外选区高亮映射（预计算 + use_memo 稳定引用）============
+    #原先每行调用 _line_highlight_range(i) 返回新 tuple，@ft.memo 身份比较会
+    # 判定 prop 变化 → 选区内所有行每次重渲染都 memo 失效、重执行函数体。
+    # 预计算为 dict 缓存后，.get(i) 返回稳定 tuple 引用，memo 命中跳过重渲染。
+    # 依赖 outward_sel + 行数：选区存在期间不编辑（输入会清空选区），边界行
+    # raw 长度不会变化，故无需依赖行内容签名。
+    def _build_highlight_map() -> dict[int, tuple[int, int]]:
         if outward_sel is None:
-            return None
+            return {}
         a_li, a_off, b_li, b_off = outward_sel
         if (a_li, a_off) > (b_li, b_off):
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
-        if li < a_li or li > b_li:
-            return None
-        if not (0 <= li < len(document.lines)):
-            return None
-        line_raw_len = len(_line_raw(document.lines[li]))
-        if li == a_li and li == b_li:
-            return (a_off, b_off)
-        if li == a_li:
-            return (a_off, line_raw_len)
-        if li == b_li:
-            return (0, b_off)
-        return (0, line_raw_len)
+        n = len(document.lines)
+        lo = max(a_li, 0)
+        hi = min(b_li, n - 1)
+        result: dict[int, tuple[int, int]] = {}
+        for li in range(lo, hi + 1):
+            line_raw_len = len(_line_raw(document.lines[li]))
+            if li == a_li and li == b_li:
+                result[li] = (a_off, b_off)
+            elif li == a_li:
+                result[li] = (a_off, line_raw_len)
+            elif li == b_li:
+                result[li] = (0, b_off)
+            else:
+                result[li] = (0, line_raw_len)
+        return result
+
+    _highlight_map = ft.use_memo(_build_highlight_map, [outward_sel, len(document.lines)])
 
     # ============ use_effect：聚焦 cursor TextField ============
     async def _focus_cursor_field():
@@ -2770,6 +2780,23 @@ def MarkdownEditor(
     s_on_hit_test_xy = _stable_cbs["on_hit_test_xy"]
     s_on_double_tap = _stable_cbs["on_double_tap"]
 
+    # ============ TableView 回调稳定化 ============
+    # 表格回调是闭包函数，每次渲染重建会破坏 TableView 的 @ft.memo，
+    # 导致每次输入（即使在普通行）整个表格重渲染。稳定化后引用不变，
+    # 表格仅在 lines_version/first_line_raw_version/theme_mode 变化时刷新。
+    _table_cb_ref = ft.use_ref({})
+    _table_cb_ref.current = {
+        "on_change_cell": on_change_cell,
+        "on_table_op": on_table_op,
+        "on_table_focus": on_table_focus,
+        "on_table_blur": on_table_blur,
+    }
+    _TABLE_CB_KEYS = ("on_change_cell", "on_table_op", "on_table_focus", "on_table_blur")
+    _table_stable = ft.use_memo(
+        lambda: {k: _make_stable_cb(_table_cb_ref, k) for k in _TABLE_CB_KEYS},
+        [],
+    )
+
     # ============ 行视图列表 ============
     line_controls = []
     # diff 间隙：首行之前的对齐间隙（对侧在开头有额外行时）
@@ -2799,10 +2826,10 @@ def MarkdownEditor(
                     line_idx=table_start,
                     content_width=content_width,
                     clipboard_ref=clipboard_ref,
-                    on_change_cell=on_change_cell,
-                    on_table_op=on_table_op,
-                    on_table_focus=on_table_focus,
-                    on_table_blur=on_table_blur,
+                    on_change_cell=_table_stable["on_change_cell"],
+                    on_table_op=_table_stable["on_table_op"],
+                    on_table_focus=_table_stable["on_table_focus"],
+                    on_table_blur=_table_stable["on_table_blur"],
                     table_nav_ref=table_nav_ref,
                     is_current_line=table_start <= cursor_line <= table_end,
                     # 表格创建后自动聚焦首格（set_block(TABLE) 设置 table_focus_li）
@@ -2860,7 +2887,7 @@ def MarkdownEditor(
                     toc_entries=toc_entries,
                     on_jump_to=s_on_jump_to,
                     on_line_size_change=s_on_line_size_change,
-                    outward_range=_line_highlight_range(i),
+                    outward_range=_highlight_map.get(i),
                     on_extend_outward=s_on_extend_outward,
                     on_clear_outward=s_on_clear_outward,
                     shift_pressed_ref=shift_pressed_ref,

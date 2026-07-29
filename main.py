@@ -28,7 +28,9 @@ from models import Document
 from services import file_ops
 from services.file_io import read_text, write_text
 from services.shortcuts import ShortcutManager
+from services.ui_feedback import show_snack
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, get_colors, only_border
+from utils.file_helpers import file_name
 from views.editor import MarkdownEditor
 from views.diff_view import compute_diff_for_editors
 from views.file_dialogs import FileActionDialog
@@ -37,10 +39,6 @@ from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
 from views.status_bar import StatusBar
 from views.tab_bar import ConfirmCloseDialog, TabBar
-
-
-def _file_name(path: str | None) -> str:
-    return os.path.basename(path) if path else "未命名.md"
 
 
 def _tab_is_dirty(tab: dict) -> bool:
@@ -376,26 +374,8 @@ def App():
                 pass
 
     def _show_snack(msg: str):
-        """在页面底部弹出 SnackBar 提示。
-
-        Flet 0.86 无 page.open()，通过 overlay + SnackBar.open=True 实现，
-        on_dismiss 时从 overlay 移除避免列表无限增长。
-        """
-        page = page_ref.current
-        if page is None:
-            return
-        snack = ft.SnackBar(content=ft.Text(msg))
-
-        def _on_dismiss(e):
-            try:
-                page.overlay.remove(snack)
-            except (ValueError, AttributeError):
-                pass
-
-        snack.on_dismiss = _on_dismiss
-        snack.open = True
-        page.overlay.append(snack)
-        page.update()
+        """SnackBar 提示（委托 services.ui_feedback.show_snack，page 从 page_ref 读取）。"""
+        show_snack(page_ref.current, msg)
 
     def _update_tab_for_renamed_file(old_path: str, new_path: str):
         """文件重命名后，同步更新引用该文件的标签路径（含对比标签两侧）。"""
@@ -1138,7 +1118,7 @@ def App():
             return
         path = await picker.save_file(
             dialog_title="导出 HTML",
-            file_name=_file_name(file_path).replace(".md", ".html"),
+            file_name=file_name(file_path).replace(".md", ".html"),
             allowed_extensions=["html"],
             file_type=ft.FilePickerFileType.CUSTOM,
         )
@@ -1547,7 +1527,7 @@ def App():
             left = os.path.basename(t.get("left_path")) if t.get("left_path") else "未命名"
             right = os.path.basename(t.get("right_path")) if t.get("right_path") else "未命名"
             return f"{left} ⟷ {right}"
-        return _file_name(t.get("file_path"))
+        return file_name(t.get("file_path"))
 
     _pending = confirm_close
     if _pending and len(_pending) == 1 and 0 <= _pending[0] < len(tabs):

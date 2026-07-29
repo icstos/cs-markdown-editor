@@ -10,7 +10,7 @@
 立即反映新组合，与设置页保持一致。
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 import flet as ft
 

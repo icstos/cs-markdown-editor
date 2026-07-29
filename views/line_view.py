@@ -12,7 +12,7 @@
 """
 
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 
 import flet as ft
 from flet_code_editor import CodeEditor, CodeLanguage, CodeTheme, GutterStyle

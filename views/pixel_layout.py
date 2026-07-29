@@ -378,7 +378,7 @@ def hit_test_line_x(line: Line, x: float, base: int, cursor_raw_offset: int | No
 # ---------------------------------------------------------------------------
 # 软换行（2D 视觉行布局）
 # ---------------------------------------------------------------------------
-@dataclass
+@dataclass(slots=True)
 class VisualLine:
     """一行逻辑行被 wrap_width 切出的单个视觉行。"""
 

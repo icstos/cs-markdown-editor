@@ -13,7 +13,7 @@
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(slots=True)
 class CursorState:
     """TextField 光标位置镜像（ref 而非 state）。
 

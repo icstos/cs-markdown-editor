@@ -25,7 +25,6 @@
 """
 
 import asyncio
-import os
 import re
 from collections.abc import Callable
 
@@ -45,6 +44,7 @@ from styles import (
     only_border,
 )
 from utils.segment_helpers import WRAP_SYNTAX
+from views._editor_helpers import _shift_cursor_off, _snap_indent_down, _snap_indent_up, _table_cells, _vline_off_at_x
 from views.line_view import LineView
 from views.table_view import TableView, _align_marker, _join_row
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
@@ -136,10 +136,6 @@ def _next_line_raw(line: Line) -> str:
     return ""
 
 
-def _file_name(path: str | None) -> str:
-    return os.path.basename(path) if path else "未命名.md"
-
-
 # 列表缩进单位（空格数）：与 list_color_level 色阶（indent // 2 + 1）一致，
 # 每 Tab 一级 = 2 空格 = 1 色阶，视觉与配色同步变化。
 _LIST_INDENT_UNIT = 2
@@ -147,35 +143,6 @@ _LIST_INDENT_UNIT = 2
 _LIST_MAX_SPACES = 10
 # 引用最大嵌套层级：对应 6 级彩色边框（heading_colors 红→紫）。
 _QUOTE_MAX_LEVEL = 6
-
-
-def _snap_indent_up(level: int, unit: int, limit: int) -> int:
-    """缩进：向 unit 的倍数上取一级，钳制到 limit。"""
-    return min(((level // unit) + 1) * unit, limit)
-
-
-def _snap_indent_down(level: int, unit: int) -> int:
-    """降级：向 unit 的倍数下取一级（不含当前），最小 0。"""
-    if level <= 0:
-        return 0
-    return max(((level - 1) // unit) * unit, 0)
-
-
-def _shift_cursor_off(cur_off: int, old_prefix_len: int, new_prefix_len: int, new_raw_len: int) -> int:
-    """缩进 / 降级后光标位置：保留内容内相对偏移；光标在前缀内则落到内容首。
-
-    仅前缀长度变化时同步平移光标，使光标在文字中的位置保持不变（自然丝滑）。
-    """
-    if cur_off >= old_prefix_len:
-        off = cur_off + (new_prefix_len - old_prefix_len)
-    else:
-        off = new_prefix_len
-    return max(0, min(off, new_raw_len))
-
-
-
-def _heading_prefix(level: int) -> str:
-    return f"{'#' * max(level, 1)} "
 
 
 @ft.component
@@ -951,15 +918,6 @@ def MarkdownEditor(
         current_x = vline.offsets_x[local_off]
         return (visual_lines, vline, current_x)
 
-    def _vline_off_at_x(visual_lines, vline_idx: int, x: float) -> int | None:
-        """在指定视觉行上用 X 像素命中 raw 偏移（vline.start_raw + local_off）。"""
-        from views.pixel_layout import hit_test_line_x_raw
-        if vline_idx < 0 or vline_idx >= len(visual_lines):
-            return None
-        vline = visual_lines[vline_idx]
-        local_off = hit_test_line_x_raw(vline.offsets_x, x)
-        return vline.start_raw + local_off
-
     def _move_vline(direction: int, steps: int = 1):
         """视觉行导航：移动 steps 个视觉行（direction: -1=上, +1=下）。
 
@@ -1631,9 +1589,6 @@ def MarkdownEditor(
         math_edit_changed.current = False
 
     # ============ 表格 ============
-    def _table_cells(line: Line) -> list[str]:
-        return [cell.strip() for cell in line.raw.strip().strip("|").split("|")]
-
     def on_change_cell(li: int, cell_idx: int, value: str) -> None:
         if not (0 <= li < len(document.lines)):
             return

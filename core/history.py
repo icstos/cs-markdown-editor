@@ -10,7 +10,7 @@
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EditorSnapshot:
     """编辑器可恢复状态（Stack 双层光标级架构）。
 
@@ -28,7 +28,7 @@ class EditorSnapshot:
     raw_draft: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LineEditSnapshot:
     """行级编辑快照：单行 raw 恢复目标 + 光标恢复点。
 
@@ -52,7 +52,7 @@ class LineEditSnapshot:
 
 
 # 快照联合类型（撤销 / 重做栈元素）
-Snapshot = EditorSnapshot | LineEditSnapshot
+type Snapshot = EditorSnapshot | LineEditSnapshot
 
 
 class EditHistory:

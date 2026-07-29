@@ -69,7 +69,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ActionDef:
     """单个动作的元信息（原 _ACTION_REGISTRY 列表元素）。"""
 

@@ -42,7 +42,7 @@ from styles import (
     block_text_size,
 )
 from utils.segment_helpers import WRAP_SYNTAX
-from views._editor_helpers import _shift_cursor_off, _snap_indent_down, _snap_indent_up, _table_cells, _vline_off_at_x
+from views._editor_helpers import _fix_ime_doubling, _shift_cursor_off, _snap_indent_down, _snap_indent_up, _table_cells, _vline_off_at_x
 from views.line_view import LineView
 from views.raw_editor import RawEditor
 from views.table_view import TableView, _align_marker, _join_row
@@ -509,18 +509,11 @@ def MarkdownEditor(
         if cursor_li is None or not value:
             return
 
-        # IME 翻倍修正：value = X + X 模式时取 X
-        # （Windows 五笔/拼音 composing text 完美翻倍 bug）
-        # 仅当长度 >= 4 且偶数，且前半 == 后半时触发。
-        # 阈值 4（非 2）：避免误伤 ASCII 快速连击的合法重复——URL 中常见的 "ww"、
-        # "//" 等 len=2 完美双叠更可能是用户连击而非 IME 翻倍；若折叠会丢字
-        # （last_value 已含首字符，折叠后 value==last_value 触发 ignore 分支吞掉第二个）。
-        # IME 翻倍通常为 composing text（>=2 字符）的双叠（len >= 4，如 "wqwq"）。
-        # len=2 翻倍由 cursor_layer 宽度策略（content_width - cursor_px_x）从根因修复。
-        if len(value) >= 4 and len(value) % 2 == 0:
-            half = len(value) // 2
-            if value[:half] == value[half:]:
-                value = value[:half]
+        # IME 翻倍修正：Windows IME composing/commit text 完美翻倍（value = X + X）。
+        # 纯函数 _fix_ime_doubling 按 ASCII/非 ASCII 分策略，非 ASCII 用 last_value
+        # 区分翻倍 vs 合法连续输入，既修复 "你你" 单次上屏翻倍，又不误伤 "好好" 连续。
+        _last_val = (input_session_ref.current or {}).get("last_value", "")
+        value = _fix_ime_doubling(value, _last_val)
 
         li = cursor_li
         if not (0 <= li < len(document.lines)):

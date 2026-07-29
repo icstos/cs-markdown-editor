@@ -47,6 +47,36 @@ def _shift_cursor_off(cur_off: int, old_prefix_len: int, new_prefix_len: int, ne
     return max(0, min(off, new_raw_len))
 
 
+def _fix_ime_doubling(value: str, last_value: str) -> str:
+    """修正 Windows IME composing/commit text 完美翻倍（value = X + X）。
+
+    Windows 五笔/拼音等输入法在特定 TextField 配置下，composing 或 commit text
+    会被完美翻倍（value = X + X，如 "wqwq"、"你你"）。按 ASCII/非 ASCII 分策略：
+
+    - ASCII（composing 编码，如 "wqwq"）：阈值 >= 4 才折叠。避免误伤 "ww"、"//"
+      等快速连击——len=2 双叠更可能是用户连击而非 IME 翻倍，折叠会丢字
+      （last_value 已含首字符，折叠后 value==last_value 触发 ignore 吞掉第二个）。
+
+    - 非 ASCII（commit 上屏中文/日文等，如 "你你"）：阈值 >= 2，但用 last_value
+      区分 IME 翻倍 vs 合法连续输入：
+      - last_value != X → IME 翻倍（新会话单次上屏 / composing 转上屏翻倍）→ 折叠
+      - last_value == X → 合法连续（上一次已上屏 X，本次再上屏 X）→ 不折叠
+
+    既修复单次上屏 "你你" 翻倍，又不误伤 "好好" 合法连续输入。
+    """
+    if len(value) < 2 or len(value) % 2 != 0:
+        return value
+    half = len(value) // 2
+    if value[:half] != value[half:]:
+        return value
+    x = value[:half]
+    if all(ord(c) < 128 for c in value):
+        # ASCII composing 翻倍：阈值 >= 4
+        return x if len(value) >= 4 else value
+    # 非 ASCII commit 翻倍：last_value 区分合法连续
+    return x if last_value != x else value
+
+
 def _vline_off_at_x(visual_lines, vline_idx: int, x: float) -> int | None:
     """在指定视觉行上用 X 像素命中 raw 偏移（vline.start_raw + local_off）。"""
     if vline_idx < 0 or vline_idx >= len(visual_lines):

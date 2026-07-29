@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import BlockType, Line  # noqa: E402
 from views._editor_helpers import (  # noqa: E402
+    _fix_ime_doubling,
     _shift_cursor_off,
     _snap_indent_down,
     _snap_indent_up,
@@ -100,6 +101,57 @@ def test_table_cells_empty():
 
 def test_table_cells_single():
     assert _table_cells(Line(BlockType.TABLE, "| solo |")) == ["solo"]
+
+
+# ---------------- _fix_ime_doubling ----------------
+def test_ime_doubling_cjk_single_commit_new_session():
+    """五笔/拼音单次上屏翻倍：新会话 last_value="" 时 '你你' → '你'。"""
+    assert _fix_ime_doubling("你你", "") == "你"
+
+
+def test_ime_doubling_cjk_after_composing():
+    """composing 编码转上屏翻倍：last_value='wq' 时 '你你' → '你'。"""
+    assert _fix_ime_doubling("你你", "wq") == "你"
+
+
+def test_ime_doubling_cjk_legitimate_repeat():
+    """合法连续输入两个'好'：last_value='好' 时 '好好' 不折叠。"""
+    assert _fix_ime_doubling("好好", "好") == "好好"
+
+
+def test_ime_doubling_ascii_compose_doubled():
+    """ASCII composing 翻倍：'wqwq' → 'wq'（阈值 >=4）。"""
+    assert _fix_ime_doubling("wqwq", "") == "wq"
+    assert _fix_ime_doubling("wqwq", "wq") == "wq"
+
+
+def test_ime_doubling_ascii_double_strike_not_folded():
+    """ASCII len=2 双叠不折叠：避免误伤 'ww'、'//' 连击。"""
+    assert _fix_ime_doubling("ww", "w") == "ww"
+    assert _fix_ime_doubling("//", "") == "//"
+
+
+def test_ime_doubling_no_doubling_passthrough():
+    """非双叠 / 奇数长度 / 空串：原样返回。"""
+    assert _fix_ime_doubling("你好", "") == "你好"
+    assert _fix_ime_doubling("abcd", "") == "abcd"
+    assert _fix_ime_doubling("你", "") == "你"
+    assert _fix_ime_doubling("", "") == ""
+
+
+def test_ime_doubling_cjk_long_doubled():
+    """非 ASCII 长串翻倍：'你你你你' last_value='' → '你你'。"""
+    assert _fix_ime_doubling("你你你你", "") == "你你"
+
+
+def test_ime_doubling_cjk_long_legitimate():
+    """非 ASCII 长串合法连续：'你你你你' last_value='你你' → 不折叠。"""
+    assert _fix_ime_doubling("你你你你", "你你") == "你你你你"
+
+
+def test_ime_doubling_mixed_not_folded():
+    """混合 ASCII/非 ASCII 非双叠：原样返回。"""
+    assert _fix_ime_doubling("a你b你", "") == "a你b你"
 
 
 # ---------------- _vline_off_at_x ----------------

@@ -1,20 +1,46 @@
 """段（Segment）共享常量与显示逻辑。
 
-依赖项：models（SegType / Segment）。
+依赖项：models（SegType / Segment / BlockType）。
 对外接口：
+- FENCE_BLOCK_TYPES：tuple[BlockType]，围栏岛屿块类型（CODE/MATH/HR/TOC/TABLE）
 - PREFIX_SEGTYPES：tuple[SegType]，块级前缀段类型集合
 - MONO_SEGTYPES：tuple[SegType]，等宽字体段类型集合
 - WRAP_SYNTAX：dict[SegType, tuple[str, str]]，包裹型段的开闭标记
 - display_text(seg: Segment) -> str：渲染态展示文本
 - split_seg_for_display(seg: Segment) -> list[tuple[str, bool]]：拆段为 [(text, is_marker), ...]
+- is_fence(line: Line) -> bool：围栏块判断
+- line_raw(line: Line) -> str：整行 Markdown 源码
 
 消除重复：原先 _PREFIX_SEGTYPES / _WRAP_CHAR / _WRAP_MAP / _WRAP_SYNTAX /
 _display_text / _seg_display_text / _split_seg_for_display 在 parser.py、
 segment_view.py、rendered_line.py、editor.py 多处重复定义，此处统一。
-所有视图与解析层都从此处导入，保证段显示行为一致。
+FENCE_BLOCK_TYPES 统一 editor.py _FENCE_BLOCKS 与 pixel_layout.py
+_FENCE_BLOCK_TYPES 两处重复定义。所有视图与解析层都从此处导入，保证一致。
+line_raw / is_fence 从 editor.py 模块级函数迁入，供 parser/selection、
+views/_editor_helpers 等无循环依赖复用（editor.py 反向导入）。
 """
 
-from models import SegType, Segment
+from models import BlockType, Line, Segment, SegType
+
+# 围栏岛屿块类型：自管理独立岛屿，不参与光标导航/合并/软换行
+# （CODE/MATH 走原生控件，HR/TOC/TABLE 为占位单 vline）
+FENCE_BLOCK_TYPES: tuple[BlockType, ...] = (
+    BlockType.CODE,
+    BlockType.MATH,
+    BlockType.HR,
+    BlockType.TOC,
+    BlockType.TABLE,
+)
+
+
+def is_fence(line: Line) -> bool:
+    """围栏块判断：CODE / MATH / HR / TOC / TABLE。"""
+    return line.block_type in FENCE_BLOCK_TYPES
+
+
+def line_raw(line: Line) -> str:
+    """整行 Markdown 源码（line.raw 优先，回退段 raw 拼接）。"""
+    return line.raw or "".join(s.raw for s in line.segments)
 
 # 块级前缀段（# / - / >）：渲染态透明、编辑态灰色
 PREFIX_SEGTYPES: tuple[SegType, ...] = (

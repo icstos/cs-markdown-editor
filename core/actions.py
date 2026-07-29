@@ -8,9 +8,10 @@
 对外接口：EditorActions。
 
 行为约束（来自项目 memory Hard Constraints）：
-- main.py 的 on_key 通过 actions.move_left() 等属性访问（替代 nav["move_left"]()）
-- 必填字段在 dataclass 构造时即校验，缺失立即报错（替代静默失败）
-- cursor_ref 为 ft.Ref[CursorState]：main.py 通过 actions.cursor_ref.current.base
+- app/ 包（原 main.py 拆分）的 on_key 通过 actions.move_left() 等属性访问
+  （替代 nav["move_left"]() 字符串下标）
+- 必填字段在 dataclass 构造时即校验，缺失立即报错（替代 nav.get("xxx") 静默失败）
+- cursor_ref 为 ft.Ref[CursorState]：app/ 包通过 actions.cursor_ref.current.base
   / .extent 实时读取光标位置（这些值在 on_selection_change 中直接修改，非
   set_state 触发，不能用渲染期快照字段）
 
@@ -32,15 +33,21 @@ import flet as ft
 
 from models import BlockType, Line
 
+# PEP 695 类型别名：向外选区与滚动状态，替代裸 tuple 注解
+type OutwardSel = tuple[int, int, int, int] | None  # (anchor_li, anchor_off, active_li, active_off)
+type ScrollState = tuple[float, float, float]  # (offset, max_scroll_extent, viewport_height)
 
-@dataclass
+
+@dataclass(slots=True)
 class EditorActions:
-    """编辑器在每次渲染时上抛给 App 层（main.py on_key / KeyDispatcher / 状态栏）的动作集合。
+    """编辑器在每次渲染时上抛给 App 层（app/ 包 on_key / KeyDispatcher / 状态栏）的动作集合。
 
     所有字段在构造时必填——缺失即报错，避免 nav.get("xxx") 静默失败。
+    装配流程：views/editor/_actions.py build_actions(ctx) 构造实例，
+    经 EditorContext 上抛，app/_keyboard.py 的 KeyDispatcher 消费。
     """
 
-    # ---- 当前状态（每次渲染重建，main.py 据此判断 browse/edit 层）----
+    # ---- 当前状态（每次渲染重建，app/ 包据此判断 browse/edit 层）----
     cursor_li: int | None  # 激活行号 | None（浏览态）
     cursor_off: int  # 行级 raw 偏移 0..len(line.raw)
     active_line: Line | None  # = lines[cursor_li] if cursor_li is not None else None
@@ -96,7 +103,7 @@ class EditorActions:
 
     # ---- 向外选区（Shift+Click / Shift+Arrow / 拖拽 起始的跨行选区）----
     # outward_sel = (anchor_li, anchor_off, active_li, active_off) | None
-    outward_sel: tuple | None = None
+    outward_sel: OutwardSel = None
     # ---- 块级公式（点击进入编辑态的独立岛屿）----
     math_focus_ref: ft.Ref | None = None
     shift_pressed_ref: ft.Ref | None = None  # Shift 键状态（editor 内部跟踪）
@@ -122,5 +129,5 @@ class EditorActions:
     #   供 main.py 读取当前滚动位置做同步对齐。
     # scroll_to_offset：同步调度异步 scroll_to(offset, duration=0)，对外非阻塞。
     #   duration=0 保证跟随滚轮即时响应，无动画延迟。
-    get_scroll_state: Callable[[], tuple[float, float, float]] | None = None
+    get_scroll_state: Callable[[], ScrollState] | None = None
     scroll_to_offset: Callable[[float], None] | None = None

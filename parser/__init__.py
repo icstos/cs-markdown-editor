@@ -6,7 +6,7 @@
 - block：块级解析（parse_markdown）← _engine + inline + utils.table_helpers
 - reparse：行重解析（reparse_line / reparse_line_atomic / staging_reparse）← _engine + block
 - serialize：序列化（serialize / to_html）← _engine
-- selection：选区操作（compute/delete/apply/match）← reparse + utils.segment_helpers
+- selection：选区操作（compute/delete/apply/match/extract_outward_text）← reparse + utils.segment_helpers
 
 对外接口（保持 `import parser; parser.xxx` 与 `from parser import xxx` 兼容）：
 - parse_markdown(text) -> Document
@@ -15,6 +15,7 @@
 - serialize(doc) / to_html(text)
 - compute_markdown_from_selections / match_text_to_selections / compute_markdown_from_text
 - apply_inline_format_to_selections / delete_selections
+- extract_outward_text(lines, a_li, a_off, b_li, b_off)
 - parse_inline(content)
 
 设计要点：
@@ -38,23 +39,25 @@ from parser.selection import (
     compute_markdown_from_selections,
     compute_markdown_from_text,
     delete_selections,
+    extract_outward_text,
     match_text_to_selections,
 )
 from parser.serialize import serialize, to_html
 
 __all__ = [
-    "parse_markdown",
+    "apply_inline_format_to_selections",
+    "compute_markdown_from_selections",
+    "compute_markdown_from_text",
+    "delete_selections",
+    "extract_outward_text",
+    "line_to_raw",
+    "match_text_to_selections",
     "parse_inline",
+    "parse_markdown",
     "reparse_line",
     "reparse_line_atomic",
     "segment_raw",
-    "staging_reparse",
-    "line_to_raw",
     "serialize",
+    "staging_reparse",
     "to_html",
-    "compute_markdown_from_selections",
-    "match_text_to_selections",
-    "compute_markdown_from_text",
-    "apply_inline_format_to_selections",
-    "delete_selections",
 ]

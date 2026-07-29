@@ -28,13 +28,12 @@ VisualLine。渲染层与光标测量共用同一换行函数，换行点天然�
 - utils.text_layout：measure_text_offsets（cluster 级光标偏移）/ measure_text_width（文本像素宽度）
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from models import BlockType, Line, SegType, Segment
 from styles import FONT_MAIN, FONT_MONO, block_text_size
 from utils.segment_helpers import (
+    FENCE_BLOCK_TYPES,
     MONO_SEGTYPES,
     PREFIX_SEGTYPES,
     display_text,
@@ -48,11 +47,20 @@ _PAD_V = 2.0
 _LIST_INDENT = 20
 # 引用每层缩进（与 _wrap_block 每层 left=12 一致）
 _QUOTE_INDENT = 12
-# 围栏岛屿块类型（不参与软换行，走原生控件自管理布局）
-_FENCE_BLOCK_TYPES = (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC, BlockType.TABLE)
 
 
-@dataclass
+@dataclass(slots=True)
+class VisualLine:
+    """一行逻辑行被 wrap_width 切出的单个视觉行。"""
+
+    vline_idx: int  # 0-based，逻辑行内序号
+    start_raw: int  # 起始 raw 偏移（含）；vline[k].end_raw == vline[k+1].start_raw
+    end_raw: int  # 结束 raw 偏移（含）
+    offsets_x: list[float]  # 行内 X，len = end_raw-start_raw+1，[0]=0.0
+    width: float  # 行内最大 X（= offsets_x[-1]）
+
+
+@dataclass(slots=True)
 class LineLayout:
     """单行像素布局结果（支持软换行：N 视觉行）。
 
@@ -170,7 +178,7 @@ class LineLayoutCache:
             base = block_text_size(line.block_type, line.level)
             text_h = base * self._line_height
             pad_top, pad_bottom, left_pad = _block_padding(line)
-            if line.block_type in _FENCE_BLOCK_TYPES:
+            if line.block_type in FENCE_BLOCK_TYPES:
                 # 围栏岛屿：不参与换行，占位单 vline
                 visual_lines = [VisualLine(0, 0, 0, [0.0], 0.0)]
                 num_vlines = 1
@@ -378,17 +386,6 @@ def hit_test_line_x(line: Line, x: float, base: int, cursor_raw_offset: int | No
 # ---------------------------------------------------------------------------
 # 软换行（2D 视觉行布局）
 # ---------------------------------------------------------------------------
-@dataclass(slots=True)
-class VisualLine:
-    """一行逻辑行被 wrap_width 切出的单个视觉行。"""
-
-    vline_idx: int  # 0-based，逻辑行内序号
-    start_raw: int  # 起始 raw 偏移（含）；vline[k].end_raw == vline[k+1].start_raw
-    end_raw: int  # 结束 raw 偏移（含）
-    offsets_x: list[float]  # 行内 X，len = end_raw-start_raw+1，[0]=0.0
-    width: float  # 行内最大 X（= offsets_x[-1]）
-
-
 def _make_visual_line(vline_idx: int, start: int, end: int, offsets_x: list[float]) -> VisualLine:
     """从 1D offsets_x 截取 [start, end] 并 rebase 到 0。"""
     sub = [offsets_x[j] - offsets_x[start] for j in range(start, end + 1)]

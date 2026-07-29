@@ -124,7 +124,7 @@ class KeyDispatcher:
         paste_old_draft: ft.Ref,
         app_callbacks: dict[str, Callable[[], None]],
         # 期望键：save / new / open / toggle_sidebar / toggle_theme / open_settings
-        capturing: tuple = (None, None),
+        capturing: tuple[str | None, str | None] = (None, None),
         on_capture: Callable[[str, str, str], None] | None = None,
         on_cancel_capture: Callable[[], None] | None = None,
     ):
@@ -246,7 +246,7 @@ class KeyDispatcher:
                     if page is not None:
                         page.run_task(actions.handle_outward_cut)
                 return
-            if norm == "esc":
+            if norm == "escape":
                 if actions.clear_outward_sel is not None:
                     actions.clear_outward_sel()
                 return

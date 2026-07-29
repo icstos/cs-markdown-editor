@@ -12,8 +12,6 @@ parse_markdown 既有行为：分隔行不创建为独立 Line（被跳过），
 不依赖 UI 层（flet），仅验证 utils.table_helpers 与 parser 的数据链路。
 """
 
-from __future__ import annotations
-
 import os
 import sys
 

@@ -1,27 +1,37 @@
 """views/_editor_helpers 纯函数单元测试。
 
-覆盖从 MarkdownEditor 闭包剥离的 5 个无状态助手：
-_snap_indent_up / _snap_indent_down / _shift_cursor_off / _vline_off_at_x / _table_cells。
+覆盖从 MarkdownEditor 闭包剥离的无状态助手：
+_snap_indent_up / _snap_indent_down / _shift_cursor_off / _vline_off_at_x / _table_cells /
+_fix_ime_doubling / _rebuild_list_prefix / _char_kind / _select_word_bounds /
+_build_highlight_map / _step_left / _step_right / _build_offset_prefix /
+_make_snapshot / _compute_delete_result。
 不依赖 UI 层（flet 组件渲染），仅验证纯计算逻辑。
 """
-
-from __future__ import annotations
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import BlockType, Line  # noqa: E402
-from views._editor_helpers import (  # noqa: E402
+from models import BlockType, Line
+from views._editor_helpers import (
+    _build_highlight_map,
+    _build_offset_prefix,
+    _char_kind,
+    _compute_delete_result,
     _fix_ime_doubling,
+    _make_snapshot,
+    _rebuild_list_prefix,
+    _select_word_bounds,
     _shift_cursor_off,
     _snap_indent_down,
     _snap_indent_up,
+    _step_left,
+    _step_right,
     _table_cells,
     _vline_off_at_x,
 )
-from views.pixel_layout import VisualLine  # noqa: E402
+from views.pixel_layout import VisualLine
 
 
 # ---------------- _snap_indent_up ----------------
@@ -171,6 +181,283 @@ def test_vline_off_exact_match():
     """单点视觉行：X 命中起点 → start_raw + 0。"""
     vline = VisualLine(vline_idx=0, start_raw=2, end_raw=2, offsets_x=[0.0], width=0.0)
     assert _vline_off_at_x([vline], 0, 0.0) == 2
+
+
+# ---------------- _rebuild_list_prefix ----------------
+def test_rebuild_list_prefix_uo():
+    """无序列表前缀：保留原 marker 符号。"""
+    assert _rebuild_list_prefix(2, "- body", BlockType.LIST_UO, False, False, False) == "  - "
+    assert _rebuild_list_prefix(0, "* body", BlockType.LIST_UO, False, False, False) == "* "
+    assert _rebuild_list_prefix(4, "+ body", BlockType.LIST_UO, False, False, False) == "    + "
+
+
+def test_rebuild_list_prefix_o_keep_num():
+    """有序列表前缀：restart_num=False 时保留原序号。"""
+    assert _rebuild_list_prefix(0, "3. body", BlockType.LIST_O, False, False, False) == "3. "
+    assert _rebuild_list_prefix(2, "10. body", BlockType.LIST_O, False, False, False) == "  10. "
+
+
+def test_rebuild_list_prefix_o_restart():
+    """有序列表前缀：restart_num=True 时序号重置为 1。"""
+    assert _rebuild_list_prefix(2, "5. body", BlockType.LIST_O, False, False, True) == "  1. "
+
+
+def test_rebuild_list_prefix_task():
+    """任务列表前缀：保留 marker + 勾选状态。"""
+    assert _rebuild_list_prefix(0, "- [ ] body", BlockType.LIST_UO, True, False, False) == "- [ ] "
+    assert _rebuild_list_prefix(2, "- [x] body", BlockType.LIST_UO, True, True, False) == "  - [x] "
+
+
+def test_rebuild_list_prefix_fallback_marker():
+    """body 无有效 marker 时回退默认符号。"""
+    assert _rebuild_list_prefix(0, "body", BlockType.LIST_UO, False, False, False) == "- "
+    assert _rebuild_list_prefix(0, "body", BlockType.LIST_O, False, False, False) == "1. "
+
+
+# ---------------- _char_kind ----------------
+def test_char_kind_space():
+    assert _char_kind(" ") == "space"
+    assert _char_kind("\t") == "space"
+
+
+def test_char_kind_cjk():
+    assert _char_kind("你") == "cjk"
+    assert _char_kind("あ") == "cjk"  # 平假名
+    assert _char_kind("ア") == "cjk"  # 片假名
+    assert _char_kind("한") == "cjk"  # 韩文
+
+
+def test_char_kind_word():
+    assert _char_kind("a") == "word"
+    assert _char_kind("Z") == "word"
+    assert _char_kind("0") == "word"
+    assert _char_kind("_") == "word"
+
+
+def test_char_kind_punct():
+    assert _char_kind("*") == "punct"
+    assert _char_kind("#") == "punct"
+    assert _char_kind("-") == "punct"
+    assert _char_kind(".") == "punct"
+
+
+# ---------------- _select_word_bounds ----------------
+def test_select_word_bounds_word():
+    """英文单词：扩展到词边界。"""
+    assert _select_word_bounds("hello world", 0) == (0, 5)
+    assert _select_word_bounds("hello world", 4) == (0, 5)
+    assert _select_word_bounds("hello world", 6) == (6, 11)
+
+
+def test_select_word_bounds_cjk():
+    """CJK：连续 CJK 视为一词。"""
+    assert _select_word_bounds("你好世界", 0) == (0, 4)
+    assert _select_word_bounds("你好世界", 2) == (0, 4)
+
+
+def test_select_word_bounds_mixed_cjk_word():
+    """中英混排：CJK 与 word 互相合并。"""
+    assert _select_word_bounds("你好abc世界", 2) == (0, 7)  # 7 = len("你好abc世界")
+
+
+def test_select_word_bounds_punct():
+    """标点：连续标点视为一词。"""
+    assert _select_word_bounds("**bold**", 0) == (0, 2)
+    assert _select_word_bounds("**bold**", 6) == (6, 8)
+
+
+def test_select_word_bounds_space_skip_left():
+    """空白：向左找首个非空字符。"""
+    assert _select_word_bounds("a   b", 2) == (0, 1)
+
+
+def test_select_word_bounds_space_skip_right():
+    """空白：左侧无非空时向右找。"""
+    assert _select_word_bounds("   b", 1) == (3, 4)
+
+
+def test_select_word_bounds_all_space():
+    """整行全空白：返回 None。"""
+    assert _select_word_bounds("   ", 1) is None
+
+
+def test_select_word_bounds_empty():
+    """空串：返回 None。"""
+    assert _select_word_bounds("", 0) is None
+
+
+def test_select_word_bounds_off_past_end():
+    """off == len(raw) 时按 punct 处理（与原闭包一致）。"""
+    bounds = _select_word_bounds("abc", 3)
+    assert bounds is not None
+    start, end = bounds
+    assert start <= 3 and end >= 3
+
+
+# ---------------- _build_highlight_map ----------------
+def test_build_highlight_map_none():
+    """无选区：返回空 dict。"""
+    assert _build_highlight_map([], None) == {}
+
+
+def test_build_highlight_map_single_line():
+    """单行选区：该行 (a_off, b_off)。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello world")]
+    result = _build_highlight_map(lines, (0, 2, 0, 7))
+    assert result == {0: (2, 7)}
+
+
+def test_build_highlight_map_multi_line():
+    """多行选区：首行 (a_off, len)，中间行 (0, len)，尾行 (0, b_off)。"""
+    lines = [
+        Line(BlockType.PARAGRAPH, "first"),
+        Line(BlockType.PARAGRAPH, "middle"),
+        Line(BlockType.PARAGRAPH, "last"),
+    ]
+    result = _build_highlight_map(lines, (0, 2, 2, 3))
+    assert result == {0: (2, 5), 1: (0, 6), 2: (0, 3)}
+
+
+def test_build_highlight_map_reversed():
+    """反向选区：自动归一化。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello")]
+    result = _build_highlight_map(lines, (0, 4, 0, 1))
+    assert result == {0: (1, 4)}
+
+
+# ---------------- _step_left / _step_right ----------------
+def test_step_left_in_line():
+    """行内左移。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello")]
+    assert _step_left(lines, 0, 3) == (0, 2)
+
+
+def test_step_left_cross_line():
+    """行首跳上一行尾。"""
+    lines = [Line(BlockType.PARAGRAPH, "first"), Line(BlockType.PARAGRAPH, "second")]
+    assert _step_left(lines, 1, 0) == (0, 5)
+
+
+def test_step_left_at_doc_start():
+    """文档起点返回 None。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello")]
+    assert _step_left(lines, 0, 0) is None
+
+
+def test_step_left_skip_fence():
+    """上一行为围栏块时返回 None。"""
+    lines = [Line(BlockType.CODE, "```py"), Line(BlockType.PARAGRAPH, "text")]
+    assert _step_left(lines, 1, 0) is None
+
+
+def test_step_right_in_line():
+    """行内右移。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello")]
+    assert _step_right(lines, 0, 2) == (0, 3)
+
+
+def test_step_right_cross_line():
+    """行尾跳下一行首。"""
+    lines = [Line(BlockType.PARAGRAPH, "first"), Line(BlockType.PARAGRAPH, "second")]
+    assert _step_right(lines, 0, 5) == (1, 0)
+
+
+def test_step_right_at_doc_end():
+    """文档末尾返回 None。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello")]
+    assert _step_right(lines, 0, 5) is None
+
+
+def test_step_right_skip_fence():
+    """下一行为围栏块时返回 None。"""
+    lines = [Line(BlockType.PARAGRAPH, "text"), Line(BlockType.CODE, "```py")]
+    assert _step_right(lines, 0, 4) is None
+
+
+# ---------------- _build_offset_prefix ----------------
+def test_build_offset_prefix_basic():
+    """前缀和：prefix[i] = sum(heights[0..i-1])。"""
+    assert _build_offset_prefix([10.0, 20.0, 30.0]) == [0.0, 10.0, 30.0, 60.0]
+
+
+def test_build_offset_prefix_empty():
+    """空列表：prefix = [0.0]。"""
+    assert _build_offset_prefix([]) == [0.0]
+
+
+def test_build_offset_prefix_single():
+    """单元素：prefix = [0.0, h]。"""
+    assert _build_offset_prefix([15.0]) == [0.0, 15.0]
+
+
+# ---------------- _make_snapshot ----------------
+def test_make_snapshot_basic():
+    """构造快照：字段透传。"""
+    snap = _make_snapshot(3, 10, False, "", "# Title\n")
+    assert snap.cursor_li == 3
+    assert snap.cursor_off == 10
+    assert snap.raw_mode is False
+    assert snap.raw_draft == ""
+    assert snap.markdown == "# Title\n"
+
+
+def test_make_snapshot_browse_mode():
+    """浏览态：cursor_li=None。"""
+    snap = _make_snapshot(None, 0, False, "", "")
+    assert snap.cursor_li is None
+    assert snap.cursor_off == 0
+
+
+def test_make_snapshot_raw_mode():
+    """原文模式：markdown = raw_draft。"""
+    snap = _make_snapshot(0, 5, True, "raw draft", "raw draft")
+    assert snap.raw_mode is True
+    assert snap.raw_draft == "raw draft"
+    assert snap.markdown == "raw draft"
+
+
+# ---------------- _compute_delete_result ----------------
+def test_compute_delete_single_line():
+    """单行删除：返回同列表引用 + 新 raw。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello world")]
+    result = _compute_delete_result(lines, 0, 2, 0, 7)
+    assert result is not None
+    merge_li, merged_raw, new_lines = result
+    assert merge_li == 0
+    assert merged_raw == "heorld"
+    assert new_lines is lines  # 同引用，行数不变
+
+
+def test_compute_delete_multi_line():
+    """多行删除：返回新列表 + 合并行 raw。"""
+    lines = [
+        Line(BlockType.PARAGRAPH, "first"),
+        Line(BlockType.PARAGRAPH, "middle"),
+        Line(BlockType.PARAGRAPH, "last"),
+    ]
+    result = _compute_delete_result(lines, 0, 2, 2, 2)
+    assert result is not None
+    merge_li, merged_raw, new_lines = result
+    assert merge_li == 0
+    assert merged_raw == "fist"  # "fi" + "st"
+    assert len(new_lines) == 1  # 3行 → 1行
+    assert new_lines is not lines  # 新列表
+
+
+def test_compute_delete_invalid_bounds():
+    """行号越界：返回 None。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello")]
+    assert _compute_delete_result(lines, 0, 0, 5, 0) is None
+    assert _compute_delete_result(lines, -1, 0, 0, 0) is None
+
+
+def test_compute_delete_whole_line_content():
+    """删除整行内容：merged_raw = ""。"""
+    lines = [Line(BlockType.PARAGRAPH, "hello")]
+    result = _compute_delete_result(lines, 0, 0, 0, 5)
+    assert result is not None
+    _, merged_raw, _ = result
+    assert merged_raw == ""
 
 
 if __name__ == "__main__":

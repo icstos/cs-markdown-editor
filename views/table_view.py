@@ -9,10 +9,7 @@
 - table_nav_ref 供 editor.py _on_key_down 调用 Tab/Escape 导航
 """
 
-from __future__ import annotations
-
 import asyncio
-import re
 from collections.abc import Callable
 
 import flet as ft
@@ -32,8 +29,7 @@ from styles import (
     _current_colors,
     card_shadow,
 )
-
-_ALIGN_RE = re.compile(r"^:?-{3,}:?$")
+from utils.table_helpers import ALIGN_RE
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +56,7 @@ def _parse_table_lines(
         # 分隔行判定：单元格必须非空且匹配 :?-{3,}:?。原先 `c or "---"` 会把空
         # 单元格回退成 "---"，导致新增的空数据行 |  |  | 被误判为分隔行，从而
         # 不进入 row_indices，表格渲染时丢失该行（"增加行按钮无效"的根因）。
-        if all(c and _ALIGN_RE.fullmatch(c) for c in cells):
+        if all(c and ALIGN_RE.fullmatch(c) for c in cells):
             aligns = cells
             sep_idx = i
         elif not seen_header:

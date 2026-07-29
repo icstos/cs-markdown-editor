@@ -28,8 +28,14 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP"]
-ignore = ["E501"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",   # 行长由格式化工具管
+    # 中文项目：RUF001/002/003 对全角标点（，。：（）等）大量误报，关闭
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

@@ -30,19 +30,46 @@ from collections.abc import Callable
 
 import flet as ft
 
+import parser
 from core.actions import EditorActions
 from core.cursor import CursorState
 from core.history import EditHistory, EditorSnapshot, LineEditSnapshot
 from models import BlockType, Document, Line, Segment, SegType
-import parser
 from styles import (
     FONT_MAIN,
-    FONT_MONO,
     _current_colors,
     block_text_size,
 )
 from utils.segment_helpers import WRAP_SYNTAX
-from views._editor_helpers import _fix_ime_doubling, _shift_cursor_off, _snap_indent_down, _snap_indent_up, _table_cells, _vline_off_at_x
+from utils.segment_helpers import is_fence as _is_fence
+from utils.segment_helpers import line_raw as _line_raw
+from utils.table_helpers import ALIGN_RE
+from views._editor_helpers import (
+    _build_highlight_map as _build_highlight_map_impl,
+)
+from views._editor_helpers import (
+    _build_offset_prefix,
+    _fix_ime_doubling,
+    _rebuild_list_prefix,
+    _select_word_bounds,
+    _shift_cursor_off,
+    _snap_indent_down,
+    _snap_indent_up,
+    _table_cells,
+    _vline_off_at_x,
+)
+from views._editor_helpers import (
+    _compute_delete_result as _compute_delete_result_impl,
+)
+from views._editor_helpers import (
+    _make_snapshot as _make_snapshot_impl,
+)
+from views._editor_helpers import (
+    _step_left as _step_left_impl,
+)
+from views._editor_helpers import (
+    _step_right as _step_right_impl,
+)
 from views.line_view import LineView
 from views.raw_editor import RawEditor
 from views.table_view import TableView, _align_marker, _join_row
@@ -87,20 +114,12 @@ def _build_diff_gap(height: float, c) -> ft.Control:
     )
 
 
-# 围栏块：自管理独立岛屿，不参与光标导航/合并
-_FENCE_BLOCKS = (BlockType.CODE, BlockType.MATH, BlockType.HR, BlockType.TOC, BlockType.TABLE)
-
-_ALIGN_RE_TABLE = re.compile(r"^:?-{3,}:?$")
-
-
-def _is_fence(line: Line) -> bool:
-    """围栏块判断：CODE / MATH / HR / TOC / TABLE。"""
-    return line.block_type in _FENCE_BLOCKS
-
-
-def _line_raw(line: Line) -> str:
-    """整行 Markdown 源码。"""
-    return line.raw or "".join(s.raw for s in line.segments)
+# 围栏块：自管理独立岛屿，不参与光标导航/合并（统一来源 utils.segment_helpers）
+# 列表/任务标记正则：模块级预编译，避免热路径重复 re.match 编译开销
+_RE_TASK_MARKER = re.compile(r"^([-*+])\s+\[[ xX]\]\s+")  # 任务项前缀 - [ ] / - [x]
+_RE_UO_MARKER = re.compile(r"^([-*+])\s+")  # 无序列表标记 - / * / +
+_RE_O_MARKER = re.compile(r"^(\d+)\.\s+")  # 有序列表标记 N.
+_RE_O_PREFIX = re.compile(r"^\d+\.$")  # 有序列表纯前缀 N.（续行判定）
 
 
 def _inline_content(line: Line) -> str:
@@ -123,11 +142,11 @@ def _next_line_raw(line: Line) -> str:
         indent_sp = " " * (line.level or 0)
         prefix = line.segments[0].raw if line.segments else "- "
         body = prefix.lstrip()
-        if m := re.match(r"^([-*+])\s+\[[ xX]\]\s+", body):
+        if m := _RE_TASK_MARKER.match(body):
             return f"{indent_sp}{m.group(1)} [ ] "
-        if m := re.match(r"^([-*+])\s+", body):
+        if m := _RE_UO_MARKER.match(body):
             return f"{indent_sp}{m.group(1)} "
-        if m := re.match(r"^(\d+)\.\s+", body):
+        if m := _RE_O_MARKER.match(body):
             return f"{indent_sp}{int(m.group(1)) + 1}. "
         return f"{indent_sp}- "
     if line.block_type == BlockType.QUOTE:
@@ -282,14 +301,9 @@ def MarkdownEditor(
 
     # ============ 撤销 / 重做 ============
     def _make_snapshot() -> EditorSnapshot:
+        # 纯构造已抽取到 _editor_helpers._make_snapshot（可单测）
         md = raw_draft if raw_mode else parser.serialize(document)
-        return EditorSnapshot(
-            markdown=md,
-            cursor_li=cursor_li,
-            cursor_off=_cursor_base(),
-            raw_mode=raw_mode,
-            raw_draft=raw_draft,
-        )
+        return _make_snapshot_impl(cursor_li, _cursor_base(), raw_mode, raw_draft, md)
 
     def _push_history():
         if restoring.current:
@@ -740,7 +754,7 @@ def MarkdownEditor(
                 mark_dirty()
                 _set_cursor(li, 0)
                 return
-            if line.block_type == BlockType.LIST_O and re.match(r"^\d+\.$", before.rstrip()):
+            if line.block_type == BlockType.LIST_O and _RE_O_PREFIX.match(before.rstrip()):
                 _reparse_atomic(line, after.lstrip())
                 mark_dirty()
                 _set_cursor(li, 0)
@@ -1021,28 +1035,7 @@ def MarkdownEditor(
         _move_vline(1, 1)
 
     # ============ 缩进 ============
-    def _rebuild_list_prefix(level: int, body: str, block_type, task: bool, checked: bool,
-                            restart_num: bool) -> str:
-        """按缩进级别重建列表前缀。
-
-        restart_num=True 时有序列表序号重置为 1（嵌套子列表自然重新计数）。
-        任务列表保留原标记符号与勾选状态。
-        """
-        indent_sp = " " * level
-        if task:
-            m = re.match(r"^([-*+])\s+", body)
-            marker = m.group(1) if m else "-"
-            return f"{indent_sp}{marker} [{'x' if checked else ' '}] "
-        if block_type == BlockType.LIST_O:
-            if restart_num:
-                num = "1"
-            else:
-                m = re.match(r"^(\d+)\.\s+", body)
-                num = m.group(1) if m else "1"
-            return f"{indent_sp}{num}. "
-        m = re.match(r"^([-*+])\s+", body)
-        marker = m.group(1) if m else "-"
-        return f"{indent_sp}{marker} "
+    # _rebuild_list_prefix 已抽取到 views/_editor_helpers.py（纯函数，可单测）
 
     def indent_or_outdent(delta: int):
         """Tab / Shift+Tab：列表缩进 / 引用层级（桌面端直觉式）。
@@ -1449,8 +1442,7 @@ def MarkdownEditor(
         prefix_raw = line.segments[0].raw if line.segments else "- "
         content = _inline_content(line)
         body = prefix_raw.lstrip()
-        marker_match = re.match(r"^([-*+])\s+", body)
-        marker = marker_match.group(1) if marker_match else "-"
+        marker = m.group(1) if (m := _RE_UO_MARKER.match(body)) else "-"
         new_prefix = f"{' ' * (line.level or 0)}{marker} [{'x' if line.checked else ' '}] "
         new_raw = new_prefix + content
         _reparse_atomic(line, new_raw)
@@ -1628,7 +1620,7 @@ def MarkdownEditor(
         def _find_sep_line(start: int) -> int:
             if start + 1 < len(lines) and lines[start + 1].block_type == BlockType.TABLE:
                 cells = [c.strip() for c in lines[start + 1].raw.strip().strip("|").split("|")]
-                if all(c and _ALIGN_RE_TABLE.fullmatch(c) for c in cells):
+                if all(c and ALIGN_RE.fullmatch(c) for c in cells):
                     return start + 1
             return start + 1
 
@@ -1846,28 +1838,12 @@ def MarkdownEditor(
             selection_text_ref.current = ""
 
     # ============ 向外选区 ============
+    # _step_left / _step_right 纯计算已抽取到 _editor_helpers（接收 lines 参数）
     def _step_left(li: int, off: int) -> tuple[int, int] | None:
-        if off > 0:
-            return (li, off - 1)
-        if li <= 0:
-            return None
-        prev = document.lines[li - 1]
-        if _is_fence(prev):
-            return None
-        return (li - 1, len(_line_raw(prev)))
+        return _step_left_impl(document.lines, li, off)
 
     def _step_right(li: int, off: int) -> tuple[int, int] | None:
-        if not (0 <= li < len(document.lines)):
-            return None
-        cur_raw = _line_raw(document.lines[li])
-        if off < len(cur_raw):
-            return (li, off + 1)
-        if li >= len(document.lines) - 1:
-            return None
-        nxt = document.lines[li + 1]
-        if _is_fence(nxt):
-            return None
-        return (li + 1, 0)
+        return _step_right_impl(document.lines, li, off)
 
     def _step_up(li: int, off: int) -> tuple[int, int] | None:
         """视觉行向上步进（向外选区 Shift+Up 用）。"""
@@ -1999,76 +1975,20 @@ def MarkdownEditor(
 
         从 raw_off 向左右扩展到同类边界，构造 outward_sel。
         退出光标编辑态（set_cursor_li(None)），与拖拽选区路径一致。
+
+        纯计算（_char_kind + _select_word_bounds）已抽取到 _editor_helpers，
+        此处仅保留闭包执行（设 outward_sel + 退出光标态）。
         """
         if not (0 <= li < len(document.lines)):
             return
-        raw = _line_raw(document.lines[li])
-        if not raw:
-            return
-        n = len(raw)
-        off = max(0, min(raw_off, n))
         # 围栏行不参与选词
         if _is_fence(document.lines[li]):
             return
-
-        def _char_kind(ch: str) -> str:
-            if ch.isspace():
-                return "space"
-            # CJK 统一表意文字 + 日韩文：连续视为一词（VSCode 风格）
-            cp = ord(ch)
-            if (
-                0x4E00 <= cp <= 0x9FFF  # CJK 统一表意
-                or 0x3040 <= cp <= 0x30FF  # 平假名 + 片假名
-                or 0xAC00 <= cp <= 0xD7AF  # 韩文音节
-                or 0x3400 <= cp <= 0x4DBF  # CJK 扩展 A
-                or 0xF900 <= cp <= 0xFAFF  # CJK 兼容表意
-            ):
-                return "cjk"
-            if ch.isalnum() or ch == "_":
-                return "word"
-            return "punct"
-
-        kind = _char_kind(raw[off]) if off < n else "punct"
-        # 空白字符不选（VSCode 行为：双击空白不选中），改为选最近的非空字符
-        if kind == "space":
-            # 向左找首个非空
-            left = off
-            while left > 0 and raw[left - 1].isspace():
-                left -= 1
-            if left > 0 and not raw[left - 1].isspace():
-                left -= 1
-                kind = _char_kind(raw[left])
-                off = left
-            else:
-                # 向右找首个非空
-                right = off
-                while right < n and raw[right].isspace():
-                    right += 1
-                if right < n:
-                    off = right
-                    kind = _char_kind(raw[off])
-                else:
-                    return  # 整行全空白，不选
-        # 同类向左扩展
-        start = off
-        if kind == "cjk":
-            # CJK：连续 CJK 视为一词，但遇到 word 类别也合并（中英混排词）
-            while start > 0 and _char_kind(raw[start - 1]) in ("cjk", "word"):
-                start -= 1
-        elif kind == "word":
-            while start > 0 and _char_kind(raw[start - 1]) in ("cjk", "word"):
-                start -= 1
-        else:  # punct
-            while start > 0 and _char_kind(raw[start - 1]) == "punct":
-                start -= 1
-        # 同类向右扩展
-        end = off + 1
-        if kind in ("cjk", "word"):
-            while end < n and _char_kind(raw[end]) in ("cjk", "word"):
-                end += 1
-        else:  # punct
-            while end < n and _char_kind(raw[end]) == "punct":
-                end += 1
+        raw = _line_raw(document.lines[li])
+        bounds = _select_word_bounds(raw, raw_off)
+        if bounds is None:
+            return  # 空行 / 整行全空白
+        start, end = bounds
         # 退出光标编辑态，设为 outward_sel
         if cursor_li is not None:
             suppress_blur.current = True
@@ -2093,26 +2013,17 @@ def MarkdownEditor(
         _push_history()
         undo_push_pending.current = True
         try:
-            if start_li == end_li:
-                if not (0 <= start_li < len(document.lines)):
-                    return
-                line = document.lines[start_li]
-                cur_raw = _line_raw(line)
-                new_raw = cur_raw[:start_off] + cur_raw[end_off:]
-                # 单行编辑：行数不变，_reparse_atomic 的 line.notify() 已触发重渲染
-                # （与 handle_char_input 同路径），无需复制整个列表赋值 document.lines
-                # 触发额外通知。省 O(n) 列表复制，_set_outward_sel/_set_cursor 的
-                # state 更新进一步保障重渲染。
-                _reparse_atomic(line, new_raw)
-            else:
-                if not (0 <= start_li < len(document.lines) and 0 <= end_li < len(document.lines)):
-                    return
-                start_line = document.lines[start_li]
-                end_line = document.lines[end_li]
-                merged = _line_raw(start_line)[:start_off] + _line_raw(end_line)[end_off:]
-                _reparse_atomic(start_line, merged)
-                # 多行删除：行数变化，必须赋值新列表触发 document.lines 结构通知
-                document.lines = document.lines[:start_li + 1] + document.lines[end_li + 1:]
+            # 纯决策已抽取到 _editor_helpers._compute_delete_result（可单测）
+            result = _compute_delete_result_impl(
+                document.lines, start_li, start_off, end_li, end_off)
+            if result is None:
+                return
+            merge_li, merged_raw, new_lines = result
+            # 单行：new_lines is document.lines（行数不变），仅 reparse 触发重渲染
+            # 多行：new_lines 是新列表，reparse 后赋值 document.lines 触发结构通知
+            _reparse_atomic(document.lines[merge_li], merged_raw)
+            if new_lines is not document.lines:
+                document.lines = new_lines
         except Exception:
             return
         mark_dirty()
@@ -2129,23 +2040,12 @@ def MarkdownEditor(
         _delete_raw_range(a_li, a_off, b_li, b_off)
 
     def _extract_outward_text(a_li: int, a_off: int, b_li: int, b_off: int) -> str:
-        """提取已排序选区 [a_li,a_off]..[b_li,b_off] 的文本（行级 raw 拼接）。
+        """提取已排序选区文本（行级 raw 拼接）。
 
-        cut/copy 共用：统一边界检查，避免重复逻辑。返回行级 Markdown 源码
-        拼接（含语法标记），直接写入剪贴板，粘贴时恢复格式。
+        纯计算已抽取到 parser.selection.extract_outward_text（可单测），
+        此处仅传入 document.lines 适配闭包签名。
         """
-        try:
-            if not (0 <= a_li < len(document.lines) and 0 <= b_li < len(document.lines)):
-                return ""
-            if a_li == b_li:
-                return _line_raw(document.lines[a_li])[a_off:b_off]
-            parts = [_line_raw(document.lines[a_li])[a_off:]]
-            for i in range(a_li + 1, b_li):
-                parts.append(_line_raw(document.lines[i]))
-            parts.append(_line_raw(document.lines[b_li])[:b_off])
-            return "\n".join(parts)
-        except Exception:
-            return ""
+        return parser.extract_outward_text(document.lines, a_li, a_off, b_li, b_off)
 
     async def handle_outward_cut() -> None:
         if outward_sel is None:
@@ -2307,8 +2207,8 @@ def MarkdownEditor(
             if layout is not None:
                 return layout.num_vlines * base * line_height + 4
         # 回退：用 measure_text_width 估算视觉行数
-        from views.pixel_layout import _compute_wrap_width, _block_padding
         from utils.text_layout import measure_text_width
+        from views.pixel_layout import _block_padding, _compute_wrap_width
         _, _, left_pad = _block_padding(line)
         cw = content_width if content_width is not None else float("inf")
         wrap_width = _compute_wrap_width(cw, left_pad)
@@ -2334,9 +2234,8 @@ def MarkdownEditor(
         n = len(document.lines)
         prefix = _offset_prefix_ref.current
         if prefix is None or len(prefix) != n + 1:
-            prefix = [0.0] * (n + 1)
-            for j in range(n):
-                prefix[j + 1] = prefix[j] + _estimate_line_height(j)
+            # 前缀和构建已抽取到 _editor_helpers._build_offset_prefix（可单测）
+            prefix = _build_offset_prefix([_estimate_line_height(j) for j in range(n)])
             _offset_prefix_ref.current = prefix
         if 0 <= li <= n:
             return prefix[li]
@@ -2532,26 +2431,8 @@ def MarkdownEditor(
     # 依赖 outward_sel + 行数：选区存在期间不编辑（输入会清空选区），边界行
     # raw 长度不会变化，故无需依赖行内容签名。
     def _build_highlight_map() -> dict[int, tuple[int, int]]:
-        if outward_sel is None:
-            return {}
-        a_li, a_off, b_li, b_off = outward_sel
-        if (a_li, a_off) > (b_li, b_off):
-            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
-        n = len(document.lines)
-        lo = max(a_li, 0)
-        hi = min(b_li, n - 1)
-        result: dict[int, tuple[int, int]] = {}
-        for li in range(lo, hi + 1):
-            line_raw_len = len(_line_raw(document.lines[li]))
-            if li == a_li and li == b_li:
-                result[li] = (a_off, b_off)
-            elif li == a_li:
-                result[li] = (a_off, line_raw_len)
-            elif li == b_li:
-                result[li] = (0, b_off)
-            else:
-                result[li] = (0, line_raw_len)
-        return result
+        # 纯计算已抽取到 _editor_helpers（接收 lines + outward_sel 参数）
+        return _build_highlight_map_impl(document.lines, outward_sel)
 
     _highlight_map = ft.use_memo(_build_highlight_map, [outward_sel, len(document.lines)])
 

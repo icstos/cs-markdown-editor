@@ -11,6 +11,7 @@ main.py 仅持有 ShortcutManager 实例，设置面板（SettingsDialog）与 K
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import flet as ft
 
@@ -164,19 +165,31 @@ _INLINE_FORMAT_ACTIONS: tuple[str, ...] = (
 )
 
 
+# 键别名词典：把用户/系统多种写法归一化为 _combo 输出的规范形式。
+# - escape ↔ esc：_combo 把 KeyboardEvent.key="escape" 映射为 "esc"，
+#   而 DEFAULT_SHORTCUTS 中 toggle_sidebar(edit) 用 "escape"，需归一化才能匹配。
+# - comma ↔ ,：open_settings 默认 "ctrl+comma"，_combo 把 "," 保持为 ","，
+#   归一化后 "ctrl+comma" 与 "ctrl+," 等价。
+_KEY_ALIASES: dict[str, str] = {"escape": "esc", "comma": ","}
+
+
 def normalize(combo: str) -> str:
-    """规范化快捷键字符串：去空格、小写、ctrl+comma → ctrl+,。"""
+    """规范化快捷键字符串：去空格、小写、按 '+' 拆分后逐段应用键别名。
+
+    例：ctrl+comma → ctrl+,；escape → esc；Ctrl+Shift+Z → ctrl+shift+z。
+    使 _combo（KeyboardEvent 规范化）输出与 settings 中的多种写法可比较，
+    matches 据此实现对称匹配。
+    """
     combo = (combo or "").strip().lower().replace(" ", "")
-    if combo == "ctrl+comma":
-        return "ctrl+,"
-    return combo
+    if not combo:
+        return ""
+    parts = [_KEY_ALIASES.get(p, p) for p in combo.split("+")]
+    return "+".join(parts)
 
 
 def matches(combo: str, target: str) -> bool:
-    """判断 combo 是否匹配 target（兼容 ctrl+comma ↔ ctrl+, 写法）。"""
-    return combo == target or (
-        target == "ctrl+," and combo in {"ctrl+comma", "ctrl+,"}
-    )
+    """判断 combo 是否匹配 target（双侧规范化后比较，对称且兼容别名写法）。"""
+    return normalize(combo) == normalize(target)
 
 
 class ShortcutManager:
@@ -186,7 +199,7 @@ class ShortcutManager:
     通过 get(layer) 读取当前键位。
     """
 
-    def __init__(self, settings: dict, update_setting: Callable[[str, object], None]):
+    def __init__(self, settings: dict[str, Any], update_setting: Callable[[str, object], None]):
         self._settings = settings
         self._update_setting = update_setting
 

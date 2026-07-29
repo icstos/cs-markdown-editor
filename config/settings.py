@@ -18,14 +18,18 @@
 
 import json
 import os
+from typing import Any
 
 from services.shortcuts import DEFAULT_SHORTCUTS
+
+# PEP 695 类型别名：应用设置字典
+type Settings = dict[str, Any]
 
 SETTINGS_PATH: str = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "settings.json"
 )
 
-DEFAULT_SETTINGS: dict = {
+DEFAULT_SETTINGS: Settings = {
     "content_max_width": 1080,
     "content_padding": 36,
     "content_padding_top": 24,
@@ -49,7 +53,7 @@ DEFAULT_SETTINGS: dict = {
 }
 
 
-def load_settings() -> dict:
+def load_settings() -> Settings:
     """读取 settings.json 并与 DEFAULT_SETTINGS 深合并。
 
     深合并策略：顶层键用用户值覆盖默认值；shortcuts 子键按层深合并，
@@ -65,7 +69,7 @@ def load_settings() -> dict:
         merged.update(data)
 
         user_sc = data.get("shortcuts", {})
-        merged_sc: dict = {}
+        merged_sc: dict[str, dict[str, str]] = {}
         if isinstance(user_sc, dict):
             for layer, def_layer in DEFAULT_SETTINGS["shortcuts"].items():
                 merged_sc[layer] = {**def_layer, **user_sc.get(layer, {})}
@@ -77,7 +81,7 @@ def load_settings() -> dict:
         return dict(DEFAULT_SETTINGS)
 
 
-def save_settings(settings: dict) -> None:
+def save_settings(settings: Settings) -> None:
     """持久化设置到 settings.json。IO 失败静默忽略。"""
     try:
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:

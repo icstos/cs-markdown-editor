@@ -171,11 +171,37 @@ cs-markdown-editor
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  main.py            入口：App、多文档标签（含 diff）、文件 IO、│
-│                     对比同步滚动、主题、侧边栏、状态栏、组装   │
+│  main.py            入口：注册字体/主题、page.render(App)     │
+├──────────────────────────────────────────────────────────────┤
+│  app/               App 组件（AppContext + 控制器模式）       │
+│    __init__.py      App：hooks → ctx → 控制器装配 → render    │
+│    _context.py      AppContext：状态容器（稳定区+快照区+装配槽）│
+│    _tab_management  标签 CRUD + 关闭确认                      │
+│    _file_io_ops     文件读写/打开/保存/导出                   │
+│    _file_dialogs    对话框 + 右键菜单分发                     │
+│    _diff_controller 对比标签创建/脏状态                       │
+│    _settings_...    设置/主题/快捷键捕获/侧边栏               │
+│    _split_editor    拆分/对比焦点视口切换                     │
+│    _focus_router    焦点路由/跳转/脏状态上报                  │
+│    _keyboard        KeyDispatcher 装配 + 绑定                 │
+│    _render          渲染树：sidebar/editor_area/footer/Stack  │
+│    _tab_helpers     纯函数（is_blank_untitled 等）            │
+│    autosave.py      自动保存（debounce 2s）                   │
+│    diff_scroll_sync DiffScrollSync（对比双视口同步滚动）      │
 ├──────────────────────────────────────────────────────────────┤
 │  views/             声明式 Flet 视图组件                      │
-│    editor.py        编辑器根组件（Stack 双层状态编排）         │
+│    editor/          编辑器根组件包（EditorContext + 工厂模式） │
+│      __init__.py    MarkdownEditor：hooks → ctx → 工厂 → 渲染 │
+│      _context.py    EditorContext：状态容器（双区 + 装配槽）  │
+│      _cursor.py     光标/IME 输入核心组（紧耦合不拆散）       │
+│      _navigation    光标移动（视觉行/垂直导航/记忆列）        │
+│      _scroll.py     滚动/行高缓存/命中测试/跳转              │
+│      _outward.py    向外选区（步进/扩展/删除/剪切/复制）      │
+│      _clipboard.py  剪贴板/SelectionArea 选区                │
+│      _fence.py      围栏岛屿（CODE/MATH/TABLE）编辑           │
+│      _render.py     行控件列表构造（LineView/TableView/diff） │
+│      _history/_indent/_blocks/_inline_format/                │
+│      _raw_mode/_focus/_key/_actions/_helpers  其他工厂       │
 │    line_view.py     行视图（围栏岛屿 / RenderedLine + Stack）  │
 │    rendered_line.py 渲染层：TextSpan + GestureDetector 命中   │
 │    cursor_layer.py  透明光标 TextField（IME 友好）            │
@@ -435,7 +461,7 @@ page.on_keyboard_event → KeyDispatcher.handle(e)
 
 ```
 cs-markdown-editor/
-├── main.py                  # 入口：App 组件、多文档标签模型（含 diff 标签）、文件操作、对比同步滚动、主题、侧边栏、状态栏组装
+├── main.py                  # 入口：注册字体/主题、page.render(App)
 ├── parser.py                # Markdown 解析：行级 / 段级 / 选区↔源码 / HTML 导出
 ├── styles.py                # 主题配色、段→TextStyle、标题字重、列表色阶、Border 工具
 ├── settings.json            # 用户设置（内容宽度、边距、字号、行高、主题、代码高亮、快捷键等）
@@ -444,11 +470,26 @@ cs-markdown-editor/
 │   ├── fonts/
 │   │   └── AlibabaPuHuiTi-3-55-Regular.otf
 │   └── images/              # 示例图片等资源
+├── app/                     # App 组件包（AppContext + 控制器模式）
+│   ├── __init__.py          # App 组件：hooks → ctx 构造 → 控制器装配 → render
+│   ├── _context.py          # AppContext dataclass（kw_only：稳定区+快照区+装配槽）
+│   ├── _tab_management.py   # 标签 CRUD / 切换 / 批量关闭 / 关闭确认
+│   ├── _file_io_ops.py      # 文件读写 / 打开 / 保存 / 导出 / 最近文件
+│   ├── _file_dialogs.py     # 文件操作对话框 + 标签/侧边栏右键菜单分发
+│   ├── _diff_controller.py  # 对比标签创建 / 选源 / 脏状态上报
+│   ├── _settings_controller.py # 设置更新 / 主题 / 快捷键捕获 / 侧边栏 / 导入导出
+│   ├── _split_editor.py     # 拆分编辑器 / 对比焦点视口切换
+│   ├── _focus_router.py     # 焦点路由 / 跳转 / 脏状态上报
+│   ├── _keyboard.py         # KeyDispatcher 构造 + page.on_keyboard_event 绑定
+│   ├── _render.py           # 渲染树：sidebar/editor_area/footer/tab_bar/dialogs/Stack
+│   ├── _tab_helpers.py      # 纯函数：is_blank_untitled / tab_display_name / tab_is_dirty / tab_paths
+│   ├── autosave.py          # 自动保存（debounce 2s，AutosaveContext 注入依赖）
+│   └── diff_scroll_sync.py  # DiffScrollSync：对比双视口同步滚动状态机（4-ref + 60ms 追赶）
 ├── config/
 │   ├── settings.py          # DEFAULT_SETTINGS / load_settings / save_settings（深合并 shortcuts）
 │   └── sample.py            # 示例文档 SAMPLE_MD
 ├── core/
-│   ├── actions.py           # EditorActions dataclass：editor → main/key_bindings 动作契约（含滚动同步接口）
+│   ├── actions.py           # EditorActions dataclass：editor → App/key_bindings 动作契约
 │   ├── cursor.py            # CursorState：base / extent / draft_len 光标状态
 │   └── history.py           # EditHistory：撤销/重做栈（EditorSnapshot | LineEditSnapshot）
 ├── models/
@@ -462,7 +503,25 @@ cs-markdown-editor/
 │   ├── table_helpers.py     # 表格行解析与拼接、对齐正则
 │   └── file_helpers.py      # 文件名派生等文件工具
 └── views/
-    ├── editor.py            # 编辑器根组件：Stack 双层状态编排、光标导航、向外选区、撤销/重做、行内格式、diff 标记/间隙/滚动同步
+    ├── editor/              # 编辑器根组件包（EditorContext + 工厂模式）
+    │   ├── __init__.py      # MarkdownEditor：hooks → ctx → 工厂调用 → 装配 → 渲染
+    │   ├── _context.py      # EditorContext dataclass（双区：稳定区 + 快照区）
+    │   ├── _helpers.py      # _make_stable_cb / _noop / 模块级常量与 re.compile
+    │   ├── _cursor.py       # 光标/IME 输入核心组（set_cursor/handle_char_input/handle_paste/backspace/delete）
+    │   ├── _navigation.py   # 光标移动（left/right/home/end/up/down/视觉行/记忆列）
+    │   ├── _scroll.py       # 滚动/行高缓存/命中测试/跳转/页面滚动
+    │   ├── _outward.py      # 向外选区（步进/扩展/选词/删除/剪切/复制/全选/切行）
+    │   ├── _clipboard.py    # 剪贴板/SelectionArea 选区/行内格式包裹
+    │   ├── _fence.py        # 围栏岛屿编辑（CODE/MATH/TABLE 聚焦/失焦/防抖历史）
+    │   ├── _blocks.py       # 块级操作（标题/任务/表格/语言切换/新行）
+    │   ├── _inline_format.py # 行内格式（加粗/斜体/代码/删除线/链接）
+    │   ├── _indent.py       # 缩进/反缩进/新行后
+    │   ├── _history.py      # 撤销/重做（快照/行编辑/防抖）
+    │   ├── _raw_mode.py     # 原文模式/聚焦模式
+    │   ├── _focus.py        # 光标/公式 TextField 聚焦
+    │   ├── _key.py          # 键盘事件（on_key_down/up）
+    │   ├── _actions.py      # EditorActions 装配（37 字段写入 nav_ref）
+    │   └── _render.py       # 行控件列表构造（LineView/TableView/diff 间隙合并）
     ├── line_view.py         # 行视图：围栏岛屿分支 + RenderedLine + Stack + 跳转高亮 + diff 行级背景着色
     ├── rendered_line.py     # 渲染层：raw_to_visible_spans + GestureDetector 命中测试
     ├── cursor_layer.py      # 透明光标 TextField（IME 友好，StrutStyle 行高对齐）
@@ -476,6 +535,8 @@ cs-markdown-editor/
     ├── tab_bar.py           # 顶部多文档标签栏（含 diff 标签渲染）+ ConfirmCloseDialog + 右键菜单
     ├── sidebar.py           # 侧边栏：文件树 / 大纲（点击跳转带高亮脉冲）/ 搜索
     ├── settings_dialog.py   # 设置对话框：五分区配置面板 + 快捷键捕获式自定义
+    ├── raw_editor.py        # 原文模式编辑器（RawEditor）
+    ├── tool_area.py         # 工具栏区域容器
     └── status_bar.py        # 状态栏：光标行列 / 段落数 / 词数 / 字符数 / 阅读时长 / 换行 / 拆分指示
 ```
 

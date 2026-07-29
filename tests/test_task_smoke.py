@@ -1,4 +1,4 @@
-﻿"""任务列表关键链路冒烟测试：解析 / toggle 切换 / format_task 转换。
+"""任务列表关键链路冒烟测试：解析 / toggle 切换 / format_task 转换。
 
 验证内容：
 1. 解析 `- [ ] foo` → Line.task=True, Line.checked=False
@@ -10,8 +10,6 @@
 
 不依赖 UI 层（flet），仅验证数据层解析与重建逻辑。
 """
-
-from __future__ import annotations
 
 import os
 import re

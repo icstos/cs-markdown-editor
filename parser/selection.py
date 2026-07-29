@@ -3,7 +3,7 @@
 依赖项：
 - parser.reparse（reparse_line）
 - models（Line / Segment / SegType）
-- utils.segment_helpers（WRAP_SYNTAX / display_text / PREFIX_SEGTYPES）
+- utils.segment_helpers（WRAP_SYNTAX / display_text / PREFIX_SEGTYPES / line_raw）
 
 对外接口：
 - compute_markdown_from_selections(lines, selections)：选区 → Markdown 源码
@@ -11,17 +11,18 @@
 - compute_markdown_from_text(lines, plain_text)：纯文本 → Markdown 源码
 - apply_inline_format_to_selections(lines, selections, wrap, kind)：选区应用行内格式
 - delete_selections(lines, selections)：删除选中内容
+- extract_outward_text(lines, a_li, a_off, b_li, b_off)：向外选区 → Markdown 源码
 
 设计要点：
 - 偏移约定：selections 的 offset 相对于该行 ft.Text 显示文本
   （所有段 display_text 拼接，前缀段透明）。
 - 全段选中 → 用 seg.raw（含完整语法）；部分选中 → 用 _wrap_partial 包裹。
+- extract_outward_text 的偏移相对于行级 raw（与 editor 的光标/选区偏移一致）。
 """
 
-from models import Line, SegType, Segment
-from utils.segment_helpers import PREFIX_SEGTYPES, WRAP_SYNTAX, display_text
-
+from models import Line, Segment, SegType
 from parser.reparse import reparse_line
+from utils.segment_helpers import PREFIX_SEGTYPES, WRAP_SYNTAX, display_text, line_raw
 
 
 def _wrap_partial(seg: Segment, selected_text: str) -> str:
@@ -429,3 +430,28 @@ def delete_selections(
     # 删除中间行和尾行
     new_lines = lines[:first_li + 1] + lines[last_li + 1:]
     return new_lines, first_li, cursor_si, cursor_offset
+
+
+def extract_outward_text(
+    lines: list[Line], a_li: int, a_off: int, b_li: int, b_off: int,
+) -> str:
+    """提取已排序选区 [a_li,a_off]..[b_li,b_off] 的文本（行级 raw 拼接）。
+
+    cut/copy 共用：统一边界检查，避免重复逻辑。返回行级 Markdown 源码
+    拼接（含语法标记），直接写入剪贴板，粘贴时恢复格式。
+
+    偏移约定：a_off / b_off 为行级 raw 偏移（与 editor 光标/选区偏移一致）。
+    边界无效时返回空串（与原 editor 闭包行为一致，吞异常）。
+    """
+    try:
+        if not (0 <= a_li < len(lines) and 0 <= b_li < len(lines)):
+            return ""
+        if a_li == b_li:
+            return line_raw(lines[a_li])[a_off:b_off]
+        parts = [line_raw(lines[a_li])[a_off:]]
+        for i in range(a_li + 1, b_li):
+            parts.append(line_raw(lines[i]))
+        parts.append(line_raw(lines[b_li])[:b_off])
+        return "\n".join(parts)
+    except Exception:
+        return ""

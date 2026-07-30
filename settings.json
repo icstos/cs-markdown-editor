@@ -9,14 +9,14 @@
   "auto_save": false,
   "remember_focus_mode": false,
   "show_toolbar": true,
-  "word_wrap": false,
+  "word_wrap": true,
   "show_line_numbers": false,
   "code_theme_dark": "ATOM_ONE_DARK",
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
   "sidebar_panel": "search",
-  "sidebar_width": 254,
+  "sidebar_width": 422,
   "recent_files": [
     "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md"
   ],

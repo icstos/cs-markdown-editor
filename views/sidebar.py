@@ -851,6 +851,12 @@ def Sidebar(
     # ---- 拖拽调宽手柄：use_memo 提取（仅主题变化重建）----
     def _on_pan_start(e: ft.DragStartEvent):
         set_dragging(True)
+        # 标记侧边栏拖拽中：编辑器 _on_content_resize 据此跳过 set_viewport_w，
+        # 避免开启换行时拖拽过程每帧触发全量软换行重算（HarfBuzz 测量）导致卡顿。
+        # 用 page 属性传递标志，免去跨组件 props 链路改动。
+        page = ft.context.page
+        if page is not None:
+            page.sidebar_dragging = True
 
     def _on_pan_update(e: ft.DragUpdateEvent):
         new_w = int(max(_MIN_W, min(_MAX_W, width_ref.current + e.local_delta.x)))
@@ -860,6 +866,9 @@ def Sidebar(
 
     def _on_pan_end(e):
         set_dragging(False)
+        page = ft.context.page
+        if page is not None:
+            page.sidebar_dragging = False
         cb = _cb_ref.current.get("on_width_change")
         if cb is not None:
             cb(width_ref.current)

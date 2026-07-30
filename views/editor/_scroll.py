@@ -106,11 +106,20 @@ def build_scroll(ctx):
         程序尺寸变化时 Container 宽度变化 → set_viewport_w 触发重渲染 →
         content_width 重算为 min(视口宽度, content_max_width) → 文本按新宽度换行。
         去重：宽度变化 >1px 才更新 state，避免 sub-pixel 抖动引发频繁重渲染。
+
+        侧边栏拖拽中跳过 set_viewport_w：开启换行时每帧全量软换行重算（HarfBuzz
+        测量）会导致卡顿。viewport_w_ref 已记录最新宽度，拖拽结束后由 editor
+        use_effect([settings]) 一次性同步（page.sidebar_dragging 标志由 Sidebar
+        _on_pan_start/_on_pan_end 设置）。
         """
         try:
             new_w = float(e.width) if e.width else 0.0
             if new_w > 0 and abs(new_w - ctx.viewport_w_ref.current) > 1:
                 ctx.viewport_w_ref.current = new_w
+                # 侧边栏拖拽中：只更新 ref，跳过 set_viewport_w 避免换行重算卡顿
+                page = ft.context.page
+                if getattr(page, "sidebar_dragging", False):
+                    return
                 ctx.set_viewport_w(new_w)
         except Exception:
             pass

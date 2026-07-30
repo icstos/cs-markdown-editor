@@ -446,6 +446,21 @@ def MarkdownEditor(
     # ============ use_effect：文档行数变化时清空行高缓存 ============
     ft.use_effect(scroll_cbs["reset_line_heights"], [len(document.lines), word_wrap, viewport_w])
 
+    # ============ use_effect：侧边栏拖拽结束后同步 viewport_w ============
+    # 拖拽中 _on_content_resize 跳过了 set_viewport_w（page.sidebar_dragging=True，
+    # 避免开启换行时每帧全量软换行重算 HarfBuzz 测量导致卡顿），viewport_w_ref 已
+    # 记录最新宽度。拖拽结束 on_width_change→update_setting 改变 settings→App 重渲染
+    # →此处 effect 触发，一次性 set_viewport_w 同步最终宽度。拖拽中即使 settings
+    # 变化触发 effect，也因 sidebar_dragging=True 跳过，避免中途换行重算。
+    def _sync_viewport_after_sidebar_drag():
+        page = ft.context.page
+        if getattr(page, "sidebar_dragging", False):
+            return
+        if viewport_w_ref.current != viewport_w and viewport_w_ref.current > 0:
+            set_viewport_w(viewport_w_ref.current)
+
+    ft.use_effect(_sync_viewport_after_sidebar_drag, [settings])
+
     # ============ use_effect：状态栏光标位置命令式上报 ============
     # 依赖 cursor_li/cursor_off/cursor_line/nav_seq：覆盖所有光标状态变化路径
     #（含围栏块 set_cursor_line、undo/redo nav_seq 递增、IME 会话结束 set_cursor_off），

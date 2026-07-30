@@ -182,7 +182,7 @@ class EditorContext:
     scroll_to_offset: Callable[[float], None] = field(default=lambda *a: None)
     on_content_resize: Callable[[Any], None] = field(default=lambda *a: None)
     on_line_size_change: Callable[[int, float], None] = field(default=lambda *a: None)
-    ensure_visible: Callable[[int], None] = field(default=lambda *a: None)
+    ensure_visible: Callable[..., None] = field(default=lambda *a: None)
     safe_scroll_to: Any = field(default=None)
     estimate_line_height: Callable[[int], float] = field(default=lambda *a: 0.0)
     estimate_line_offset: Callable[[int], float] = field(default=lambda *a: 0.0)

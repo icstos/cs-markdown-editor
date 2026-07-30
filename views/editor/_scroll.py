@@ -254,25 +254,38 @@ def build_scroll(ctx):
         except Exception:
             pass
 
-    def _ensure_visible(li: int):
+    def _ensure_visible(li: int, only_when_offscreen: bool = False):
         """确保光标所在视觉行可见（vline 级精确滚动）。
 
         计算光标在行内的 Y 偏移（vline_idx × text_h），传给 _safe_scroll_to
         实现软换行场景下的精确滚动：长行只滚到光标所在视觉行，而非整行顶部。
+
+        only_when_offscreen=True：仅当目标行未构建时才滚动。用于常规点击编辑
+        场景——用户点击的必然是可见行（已构建），跳过滚动避免文档上下滚动调整。
+        用 line_heights 缓存判断行是否已构建（有实测高度），不依赖
+        _estimate_line_offset 估算——文档含表格/公式/代码块时视口外行高度为
+        估算值，累加产生累积误差，滚动条滚动后会误判已可见行为视口外触发滚动。
+        键盘导航场景仍用默认 False，保留 40px 安全边距以保证光标有可视空间。
         """
         page = ft.context.page
-        if page is not None:
-            cursor_y_in_line = 0.0
-            if 0 <= li < len(ctx.document.lines):
-                off = ctx.cursor_base()
-                info = ctx.cursor_vline_info(li, off)
-                if info is not None:
-                    _, vline, _ = info
-                    base = block_text_size(
-                        ctx.document.lines[li].block_type, ctx.document.lines[li].level
-                    )
-                    cursor_y_in_line = vline.vline_idx * base * ctx.line_height
-            page.run_task(_safe_scroll_to, li, cursor_y_in_line=cursor_y_in_line)
+        if page is None:
+            return
+        # 点击场景：用户点击的行必然已构建（可见才能点击），line_heights 缓存
+        # 有实测高度 -> 跳过滚动。零误差判断，不受估算累积偏差影响。
+        if only_when_offscreen:
+            if ctx.line_heights_ref.current.get(li, 0.0) > 0:
+                return
+        cursor_y_in_line = 0.0
+        if 0 <= li < len(ctx.document.lines):
+            off = ctx.cursor_base()
+            info = ctx.cursor_vline_info(li, off)
+            if info is not None:
+                _, vline, _ = info
+                base = block_text_size(
+                    ctx.document.lines[li].block_type, ctx.document.lines[li].level
+                )
+                cursor_y_in_line = vline.vline_idx * base * ctx.line_height
+        page.run_task(_safe_scroll_to, li, cursor_y_in_line=cursor_y_in_line)
 
     def _hit_test_line_x(li: int, x: float) -> int:
         """跨行拖拽用：返回目标行 raw 偏移。"""

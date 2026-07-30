@@ -118,7 +118,10 @@ def build_cursor(ctx):
         # 点击同一位置时 cursor_li/cursor_off 不变，use_effect 不触发重新聚焦；
         # 但点击已使 cursor TextField 失焦——递增 focus_seq 强制重聚焦，避免光标丢失。
         ctx.set_focus_seq(ctx.focus_seq + 1)
-        ctx.ensure_visible(li)
+        # 常规点击编辑：用户点击的行必然已构建（可见才能点击），ensure_visible
+        # 据 line_heights 缓存判定跳过滚动，避免滚动条滚动后估算偏差导致文档
+        # 上下滚动调整。行未构建的兜底由 _focus_cursor_field 内部处理。
+        ctx.ensure_visible(li, only_when_offscreen=True)
 
     def handle_char_input(value: str):
         """字符输入：增量式编辑（IME 友好，3 分支模型）。"""

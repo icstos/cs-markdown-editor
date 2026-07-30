@@ -31,6 +31,7 @@ from styles import (
     card_shadow,
 )
 from utils.table_helpers import ALIGN_RE
+from views.line_view import _copy_code_to_clipboard
 from views.segment_view import segment_to_span
 
 
@@ -218,6 +219,8 @@ def TableView(
     edit_cell, set_edit_cell = ft.use_state(None)  # (line_idx, col_idx) | None
     edit_draft, set_edit_draft = ft.use_state("")
     edit_draft_ref = ft.use_ref("")
+    # 复制按钮反馈：复制成功后图标切换为 ✓ 1.2s 后复位（与代码块复制按钮一致）
+    copied, set_copied = ft.use_state(False)
     edit_draft_ref.current = edit_draft
     pending_blur_ref = ft.use_ref(False)
     nav_seq, set_nav_seq = ft.use_state(0)
@@ -721,6 +724,30 @@ def TableView(
         alignment=ft.Alignment.CENTER_LEFT,
     )
 
+    # ---- 复制按钮（参考代码块复制按钮样式）----
+    # 复制整张表格的 markdown 源码（连续 TABLE 行的 raw 拼接），粘贴到其他
+    # markdown 编辑器可保持表格格式。复用 line_view._copy_code_to_clipboard
+    # 的剪贴板写入 + 图标反馈逻辑（✓ 1.2s 后复位）。
+    table_end = line_idx
+    while table_end < len(lines) and lines[table_end].block_type == BlockType.TABLE:
+        table_end += 1
+    table_md = "\n".join(lines[i].raw for i in range(line_idx, table_end))
+    copy_btn = ft.IconButton(
+        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+        icon_size=14,
+        tooltip="已复制" if copied else "复制表格",
+        padding=ft.Padding.all(Spacing.MD),
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
+            color=ft.Colors.GREEN if copied else c.muted,
+        ),
+        on_click=lambda e: (
+            page.run_task(_copy_code_to_clipboard, clipboard_ref, table_md, set_copied)
+            if page is not None and not copied and clipboard_ref is not None
+            else None
+        ),
+    )
+
     toolbar = ft.Row(
         controls=[
             ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=14, color=c.muted),
@@ -734,6 +761,7 @@ def TableView(
             _tb_btn("删行", lambda e: _do_delete_row(), tooltip="删除行"),
             _tb_btn("删列", lambda e: _do_delete_col(), tooltip="删除列"),
             align_dropdown,
+            copy_btn,
         ],
         spacing=4,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,

@@ -31,6 +31,8 @@
   update_setting_ref.current = settings_cbs["update_setting"]
 """
 
+import asyncio
+
 import flet as ft
 
 import parser
@@ -49,6 +51,8 @@ from config.sample import SAMPLE_MD
 from config.settings import load_settings
 from services.shortcuts import ShortcutManager
 from styles import get_colors
+from views.diff_view import compute_diff_for_editors
+from views.status_bar import _compute_counts
 
 
 @ft.component
@@ -124,6 +128,20 @@ def App():
     # 修复 use_effect(_bind_keyboard, []) 空依赖导致 _handler 闭包捕获首次渲染
     # dispatcher 的过期问题——改快捷键后新键位才能立即生效（无需重启）。
     dispatcher_ref = ft.use_ref(None)
+    # close_tab_ref：渲染期同步赋值最新 close_tab（控制器装配产物，每次渲染新建但
+    # 行为一致——仅读稳定 ref/setter）。供稳定化的 close_current_tab 读取最新实例，
+    # 打破「lambda 捕获 ctx.close_tab 导致 DiffHeader on_close 身份不稳定」问题。
+    close_tab_ref = ft.use_ref(None)
+    # 状态栏命令式更新器注册点：StatusBar 在渲染期写入 update_cursor/update_counts
+    status_ref = ft.use_ref(None)
+    # 字数防抖：mark_dirty 触发 on_content_change → 300ms 防抖后重算计数并命令式推送。
+    # count_token_ref 递增 token 做防抖 + 跨标签竞态防护：过期任务醒来校验失败即丢弃。
+    count_token_ref = ft.use_ref(0)
+    # 文件系统版本号：文件增删改后递增，驱动侧边栏文件树异步重扫。
+    # fs_version_ref 持最新值供 bump 闭包读取（避免闭包捕获渲染期快照）。
+    fs_version, set_fs_version = ft.use_state(0)
+    fs_version_ref = ft.use_ref(0)
+    fs_version_ref.current = fs_version
 
     # ============ 派生值 ============
     # 当前激活标签的派生值（供下游闭包与渲染使用）
@@ -157,6 +175,39 @@ def App():
         [id(settings)],
     )
 
+    # ============ diff 计算 memoize ============
+    # 对比标签下 serialize(left/right)+difflib 较耗时，非内容变化的 App 重渲染
+    # （主题切换 / 侧边栏面板切换 / 宽度拖拽 / 滚动同步）不应重复计算。
+    # 签名含左右文档 id + 行 raw 元组：内容不变则复用缓存结果。
+    # 非对比标签签名为 ()，工厂早退返回 None，零开销。
+    if is_diff_tab:
+        _ld = cur_tab.get("left_doc")
+        _rd = cur_tab.get("right_doc")
+        _diff_sig = (
+            id(_ld), id(_rd),
+            tuple(ln.raw for ln in _ld.lines) if _ld is not None else (),
+            tuple(ln.raw for ln in _rd.lines) if _rd is not None else (),
+        )
+    else:
+        _diff_sig = ()
+
+    def _compute_diff_result():
+        if not is_diff_tab:
+            return None
+        _ld = cur_tab.get("left_doc")
+        _rd = cur_tab.get("right_doc")
+        if _ld is None or _rd is None:
+            return None
+        _ltext = parser.serialize(_ld)
+        _rtext = parser.serialize(_rd)
+        marks_l, marks_r, gaps_l, gaps_r = compute_diff_for_editors(_ltext, _rtext)
+        _added = sum(1 for v in marks_r.values() if v == "added")
+        _removed = sum(1 for v in marks_l.values() if v == "removed")
+        _modified = sum(1 for v in marks_r.values() if v == "modified")
+        return (marks_l, marks_r, gaps_l, gaps_r, _added, _removed, _modified)
+
+    _diff_result = ft.use_memo(_compute_diff_result, [_diff_sig])
+
     # ============ 构造 AppContext ============
     ctx = AppContext(
         # State 值
@@ -175,6 +226,7 @@ def App():
         capturing=capturing,
         split_editor=split_editor,
         active_pane=active_pane,
+        fs_version=fs_version,
         # 派生值
         cur_tab=cur_tab,
         is_diff_tab=is_diff_tab,
@@ -182,6 +234,7 @@ def App():
         file_path=file_path,
         shortcut_mgr=shortcut_mgr,
         diff_sync=diff_sync,
+        diff_result=_diff_result,
         # Setters
         set_tabs=set_tabs,
         set_active_index=set_active_index,
@@ -213,6 +266,7 @@ def App():
         active_index_ref=active_index_ref,
         dispatcher_ref=dispatcher_ref,
         paste_old_draft=paste_old_draft,
+        status_ref=status_ref,
     )
 
     # ============ 控制器装配（拓扑序）============
@@ -229,6 +283,9 @@ def App():
     ctx.do_close_many = tab_cbs["do_close_many"]
     ctx.request_close = tab_cbs["request_close"]
     ctx.close_tab = tab_cbs["close_tab"]
+    # 渲染期同步：close_tab 每次渲染新建但行为一致（仅读稳定 ref/setter），
+    # 写入 ref 供稳定化的 close_current_tab 读取最新实例。
+    close_tab_ref.current = tab_cbs["close_tab"]
     ctx.save_and_close_pending = tab_cbs["save_and_close_pending"]
     ctx.close_without_save = tab_cbs["close_without_save"]
     ctx.cancel_close = tab_cbs["cancel_close"]
@@ -295,6 +352,97 @@ def App():
     update_setting_ref.current = settings_cbs["update_setting"]
     # 渲染期同步：每次重渲染把最新 dispatcher 写入 ref，_handler 即可读到最新值
     dispatcher_ref.current = keyboard_cbs["dispatcher"]
+
+    # ============ 状态栏命令式更新装配 ============
+    # push_cursor_to_status(row, col)：async，直接调 status_ref.update_cursor。
+    # schedule_status_count_update()：sync，300ms 防抖后异步重算计数并推送。
+    # 由 _render.py 按焦点视口包装（拆分/对比模式下非焦点视口上报被丢弃）。
+    #
+    # 稳定化：两个更新器用 use_memo([]) 创建一次——它们仅读稳定 ref（status_ref /
+    # count_token_ref / page_ref / tabs_ref / active_index_ref / diff_active_pane_ref），
+    # 行为与每次渲染重建一致（读取 ref 的最新值），但函数身份跨渲染不变 →
+    # on_cursor_move / on_content_change prop 身份稳定，MarkdownEditor @ft.component
+    # memo 在光标/内容 prop 上成立，App 重渲染（侧边栏切换 / 主题切换）不再因此
+    # 触发编辑器全量重跑。这是规则 2（高频局部 UI 稳定回调身份）的关键一环。
+
+    # 文件系统变更信号：文件增删改后递增 fs_version，驱动侧边栏文件树异步重扫。
+    # 在文件操作控制器之前装配，供 on_file_dialog_confirm / duplicate 等回调调用。
+    def _bump_fs_version():
+        fs_version_ref.current += 1
+        set_fs_version(fs_version_ref.current)
+
+    ctx.bump_fs_version = _bump_fs_version
+
+    def _make_push_cursor():
+        async def _push(row: int, col: int):
+            s = status_ref.current
+            if s is not None:
+                await s.update_cursor(row, col)
+        return _push
+
+    def _make_schedule_count():
+        def _schedule():
+            # token 防抖：每次调用递增 token，_do_count 醒来后校验 token 是否仍是最新，
+            # 过期任务（防抖期间又有新编辑 / 切标签）直接丢弃，等价于取消未触发的定时器。
+            count_token_ref.current += 1
+            my_token = count_token_ref.current
+            page = page_ref.current
+            if page is None:
+                return
+
+            async def _do_count():
+                await asyncio.sleep(0.3)
+                # 防抖期间又有新编辑 → token 已变，本任务放弃
+                if count_token_ref.current != my_token:
+                    return
+                # 取当前焦点视口的文档（diff 模式按 diff_active_pane 选侧）
+                ts = tabs_ref.current
+                ai = active_index_ref.current
+                if not (0 <= ai < len(ts)):
+                    return
+                tab = ts[ai]
+                if tab.get("type") == "diff":
+                    doc = (tab.get("right_doc") if diff_active_pane_ref.current == 1
+                           else tab.get("left_doc"))
+                else:
+                    doc = tab.get("document")
+                if doc is None:
+                    return
+                # 跨标签竞态校验：doc 引用须仍是当前焦点侧文档
+                ts2 = tabs_ref.current
+                ai2 = active_index_ref.current
+                if not (0 <= ai2 < len(ts2)):
+                    return
+                tab2 = ts2[ai2]
+                cur_doc = (tab2.get("right_doc") if (tab2.get("type") == "diff"
+                            and diff_active_pane_ref.current == 1)
+                           else (tab2.get("left_doc") if tab2.get("type") == "diff"
+                                 else tab2.get("document")))
+                if doc is not cur_doc:
+                    return
+                word, char, para, reading = _compute_counts(doc)
+                s = status_ref.current
+                if s is not None:
+                    await s.update_counts(word, char, para, reading)
+
+            page.run_task(_do_count)
+        return _schedule
+
+    ctx.push_cursor_to_status = ft.use_memo(_make_push_cursor, [])
+    ctx.schedule_status_count_update = ft.use_memo(_make_schedule_count, [])
+
+    # 稳定化「关闭当前标签」：供 DiffHeader on_close 使用。@ft.memo 要求 prop 身份
+    # 跨渲染不变，原 lambda: ctx.close_tab(ctx.active_index) 每次渲染新建会击穿 memo。
+    # 读 close_tab_ref.current（渲染期同步最新 close_tab）+ active_index_ref.current，
+    # 行为与原 lambda 一致，身份稳定 → DiffHeader memo 成立。
+    def _make_close_current_tab():
+        def _close():
+            fn = close_tab_ref.current
+            if fn is not None:
+                fn(active_index_ref.current)
+        return _close
+
+    ctx.close_current_tab = ft.use_memo(_make_close_current_tab, [])
 
     # ============ use_effect（hooks 顺序约束：函数体顶层调用）============
     ft.use_effect(settings_cbs["mount_picker"], [])

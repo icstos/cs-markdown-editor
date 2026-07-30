@@ -12,6 +12,7 @@
 大纲/搜索由 Sidebar 从 document.lines 自行派生（document 是 @ft.observable，实时刷新）。
 """
 
+import asyncio
 import os
 from collections.abc import Callable
 
@@ -155,6 +156,7 @@ def _wrap_context_menu(
     is_dir: bool,
     on_action: Callable[[str, str], None],
     compare_source: str | None = None,
+    key: str | None = None,
 ) -> ft.ContextMenu:
     """将列表项包裹在右键菜单中。
 
@@ -163,6 +165,7 @@ def _wrap_context_menu(
     文件夹菜单：新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 删除
     （文件夹无"打开"、"比较"和"创建副本"）
     compare_source 非空时，文件项显示「与已选项目进行比较」。
+    key 透传至 ft.ContextMenu，供 ListView 按路径复用项实例（虚拟化 reconciliation）。
     """
     items: list[ft.PopupMenuItem] = []
 
@@ -243,6 +246,7 @@ def _wrap_context_menu(
     return ft.ContextMenu(
         content=content,
         secondary_items=items,
+        key=key,
     )
 
 
@@ -286,10 +290,12 @@ def _list_item(
     on_click: Callable | None = None,
     indent: int = Spacing.XL,
     active: bool = False,
+    key: str | None = None,
 ) -> ft.Control:
     """通用列表项：左侧缩进、hover ink 反馈。
 
     active=True 时以主题色半透明背景高亮（用于标记当前打开的文件）。
+    key 透传至 Container，供 ListView 按唯一标识复用项实例。
     """
     return ft.Container(
         content=content,
@@ -298,6 +304,7 @@ def _list_item(
         ink=True,
         bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
         border_radius=Radius.LG,
+        key=key,
     )
 
 
@@ -342,7 +349,10 @@ def _resolve_files_root(
 def _render_files_panel(
     file_path: str | None,
     recent_files: list[str],
-    workspace_folder: str | None,
+    root_dir: str | None,
+    root_label: str | None,
+    is_workspace: bool,
+    flat: list[tuple[str, str, str | None, int]],
     file_filter: str,
     set_file_filter: Callable[[str], None],
     on_open_file: Callable[[str], None],
@@ -353,17 +363,12 @@ def _render_files_panel(
 ) -> ft.Control:
     """文件面板：有根目录显示文件树+过滤；否则显示最近文件列表。
 
-    根目录优先级：workspace_folder（显式「打开文件夹」锚定的工作区）>
-    当前文件所在目录。工作区模式下打开子目录文件时，文件树仍以工作区
-    根排布，不随当前文件目录漂移。工作区模式下顶部显示文件夹名头与
-    关闭按钮，并在树中高亮当前打开的文件。
-
-    每个文件/文件夹项包裹 ft.ContextMenu，右键提供完整文件操作菜单。
-    compare_source 非空时，文件项的右键菜单显示「与已选项目进行比较」。
+    文件树扫描与扁平化由 Sidebar 异步预计算后传入（flat），本函数仅负责
+    渲染：根目录模式渲染搜索框 + ListView（虚拟化，仅构建可见行）；
+    无根目录模式渲染最近文件 ListView。每个文件/文件夹项包裹
+    ft.ContextMenu 提供右键菜单；compare_source 非空时文件项显示「比较」。
+    flat 为空且 root_dir 存在时显示「无匹配 / 无文件」或异步加载提示。
     """
-    # 根目录优先级：工作区文件夹 > 当前文件所在目录 > None
-    root_dir, root_label, is_workspace = _resolve_files_root(workspace_folder, file_path)
-
     # 无根目录：最近文件列表
     if not root_dir:
         existing = [p for p in recent_files if os.path.exists(p)]
@@ -395,6 +400,7 @@ def _render_files_panel(
                 is_dir=False,
                 on_action=on_file_context_action,
                 compare_source=compare_source,
+                key=f"recent-{p}",
             )
             for p in existing
         ]
@@ -409,13 +415,12 @@ def _render_files_panel(
                         font_family=FONT_MAIN,
                     ),
                 ),
-                ft.Container(
+                ft.ListView(
+                    controls=items,
+                    spacing=0,
                     expand=True,
-                    content=ft.Column(
-                        controls=items,
-                        spacing=0,
-                        scroll=ft.ScrollMode.AUTO,
-                    ),
+                    first_item_prototype=True,
+                    padding=ft.Padding.symmetric(vertical=Spacing.XS),
                 ),
             ],
             spacing=0,
@@ -423,14 +428,12 @@ def _render_files_panel(
         )
 
     # 有根目录：搜索框 + 文件树
-    full_tree = _scan_markdown_files(root_dir)
-    filtered = _filter_tree(full_tree, file_filter)
-    flat = _flatten_tree(filtered, root_dir=root_dir)
-
     # 当前打开文件绝对路径（用于高亮活动文件行）
     active_abs = os.path.abspath(file_path) if file_path else None
 
     if not flat:
+        # flat 为空可能是真无文件，也可能是异步扫描进行中（首帧）。
+        # 有过滤词时提示无匹配，否则提示无文件（异步加载完成后 fs_version 变化会刷新）。
         body: ft.Control = _empty_hint(
             "无匹配文件" if file_filter.strip() else "该目录下无 Markdown 文件",
             c,
@@ -478,6 +481,7 @@ def _render_files_panel(
                         is_dir=False,
                         on_action=on_file_context_action,
                         compare_source=compare_source,
+                        key=f"tree-{abspath}",
                     )
                 )
             else:
@@ -508,11 +512,15 @@ def _render_files_panel(
                         abspath or "",
                         is_dir=True,
                         on_action=on_file_context_action,
+                        key=f"tree-{abspath}",
                     )
                 )
-        body = ft.Container(
+        body = ft.ListView(
+            controls=rows,
+            spacing=0,
             expand=True,
-            content=ft.Column(controls=rows, spacing=0, scroll=ft.ScrollMode.AUTO),
+            first_item_prototype=True,
+            padding=ft.Padding.symmetric(vertical=Spacing.XS),
         )
 
     # 工作区模式：顶部文件夹名头 + 关闭按钮（VSCode 风格资源管理器标题栏）
@@ -599,12 +607,16 @@ def _render_outline_panel(
             c,
             on_click=lambda e, li=li: on_jump_to_line(li),
             indent=(lvl - 1) * 14 + Spacing.XL,
+            key=f"toc-{li}",
         )
         for li, lvl, text in toc_entries
     ]
-    return ft.Container(
+    return ft.ListView(
+        controls=items,
+        spacing=0,
         expand=True,
-        content=ft.Column(controls=items, spacing=0, scroll=ft.ScrollMode.AUTO),
+        first_item_prototype=True,
+        padding=ft.Padding.symmetric(vertical=Spacing.XS),
     )
 
 
@@ -669,6 +681,7 @@ def _render_search_panel(
             ),
             c,
             on_click=lambda e, li=li: on_jump_to_line(li),
+            key=f"search-{li}",
         )
         for li, preview in search_results
     ]
@@ -689,9 +702,11 @@ def _render_search_panel(
                     font_family=FONT_MAIN,
                 ),
             ),
-            ft.Container(
+            ft.ListView(
+                controls=items,
+                spacing=0,
                 expand=True,
-                content=ft.Column(controls=items, spacing=0, scroll=ft.ScrollMode.AUTO),
+                padding=ft.Padding.symmetric(vertical=Spacing.XS),
             ),
         ],
         spacing=0,
@@ -713,6 +728,7 @@ def Sidebar(
     on_file_context_action: Callable[[str, str], None] | None = None,
     on_close_folder: Callable[[], None] | None = None,
     compare_source: str | None = None,
+    fs_version: int = 0,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
@@ -720,11 +736,18 @@ def Sidebar(
     工作区）> 当前文件所在目录 > None（最近文件列表）。工作区模式下打开子目录
     文件时文件树仍以工作区根排布。
 
+    性能设计（组件树拆分 + 派生数据 memoize + 长列表虚拟化）：
+    - 大纲 / 搜索结果按行内容签名 use_memo 缓存，文档编辑未触及相关行时不重算；
+    - 文件树异步扫描（asyncio.to_thread 移出 UI 线程），scan_token 防竞态，
+      fs_version 由 App 在文件增删改后递增驱动重扫；
+    - 过滤 / 扁平化按 (file_tree, file_filter) / (filtered, root_dir) memoize；
+    - 文件树 / 大纲 / 搜索 / 最近文件四处长列表全部用 ListView 虚拟化 + 唯一 key；
+    - 拖拽手柄 / 顶部 Tab 用 use_memo 提取为静态控件（仅主题 / 面板变化重建），
+      回调经 _cb_ref 读取最新值，避免闭包过期。
+
     on_file_context_action(action, path)：文件/文件夹右键菜单回调。
-    action ∈ {"open","select_for_compare","compare_with_selected","new_file","new_folder",
-    "copy_path","reveal","rename","duplicate","delete"}。
     on_close_folder()：关闭工作区文件夹（清空 workspace_folder，回退到当前文件目录）。
-    compare_source 非空时，文件项右键菜单显示「与已选项目进行比较」。
+    fs_version：文件系统版本号，App 在文件增删改后递增以触发文件树重扫。
     """
     c = _current_colors()
 
@@ -743,10 +766,72 @@ def Sidebar(
     # 派生数据
     recent_files = settings.get("recent_files", [])
     workspace_folder = settings.get("workspace_folder")
-    toc_entries = _compute_toc(document)
-    search_results = _match_lines(document, search_query)
+    root_dir, root_label, is_workspace = _resolve_files_root(workspace_folder, file_path)
 
-    # ---- 拖拽调宽 ----
+    # ---- 回调稳定化：供 use_memo 提取的静态控件读取最新回调（避免闭包过期）----
+    _cb_ref = ft.use_ref({})
+    _cb_ref.current = {
+        "on_change_panel": on_change_panel,
+        "on_width_change": on_width_change,
+    }
+
+    # ---- 大纲：use_memo 按标题行签名缓存（仅标题增删改才重算）----
+    # 签名为 tuple of (i, level, raw)，未编辑行 raw 引用稳定 → 比较近乎 O(1)。
+    _toc_sig = tuple(
+        (i, ln.level, ln.raw)
+        for i, ln in enumerate(document.lines)
+        if ln.block_type == BlockType.HEADING
+    ) if document is not None else ()
+    toc_entries = ft.use_memo(lambda: _compute_toc(document), [_toc_sig])
+
+    # ---- 搜索：use_memo 按查询词 + 行内容签名缓存 ----
+    # 行签名 tuple of raw（指针复制 O(n)，远轻于每次重跑子串匹配）；查询词空时早退 []。
+    _lines_sig = tuple(ln.raw for ln in document.lines) if document is not None else ()
+    search_results = ft.use_memo(
+        lambda: _match_lines(document, search_query),
+        [search_query, _lines_sig],
+    )
+
+    # ---- 文件树：异步扫描 + scan_token 防竞态 ----
+    # use_effect 依赖 [root_dir, fs_version]：根目录切换 / 文件增删改后重扫。
+    # asyncio.to_thread 把同步磁盘扫描移出 UI 线程；scan_token 丢弃过期结果。
+    file_tree, set_file_tree = ft.use_state(())
+    scan_token_ref = ft.use_ref(0)
+    page_ref = ft.use_ref(None)
+    page_ref.current = ft.context.page
+
+    def _scan_fs():
+        if not root_dir or not os.path.isdir(root_dir):
+            set_file_tree(())
+            return
+        page = page_ref.current
+        if page is None:
+            return
+        scan_token_ref.current += 1
+        my_token = scan_token_ref.current
+
+        async def _do_scan():
+            tree = await asyncio.to_thread(_scan_markdown_files, root_dir)
+            # 过期任务（已切目录 / 又有新变更），丢弃避免覆盖最新树
+            if scan_token_ref.current != my_token:
+                return
+            set_file_tree(tuple(tree))
+
+        page.run_task(_do_scan)
+
+    ft.use_effect(_scan_fs, [root_dir, fs_version])
+
+    # ---- 文件树过滤 + 扁平化：use_memo 缓存（仅文件树 / 过滤词变化才重算）----
+    filtered = ft.use_memo(
+        lambda: _filter_tree(list(file_tree), file_filter),
+        [file_tree, file_filter],
+    )
+    flat = ft.use_memo(
+        lambda: (_flatten_tree(filtered, root_dir=root_dir) if root_dir else []),
+        [filtered, root_dir],
+    )
+
+    # ---- 拖拽调宽手柄：use_memo 提取（仅主题变化重建）----
     def _on_pan_update(e: ft.DragUpdateEvent):
         new_w = int(max(_MIN_W, min(_MAX_W, width_ref.current + e.local_delta.x)))
         if new_w != width_ref.current:
@@ -754,52 +839,58 @@ def Sidebar(
             set_width(new_w)
 
     def _on_pan_end(e):
-        if on_width_change is not None:
-            on_width_change(width_ref.current)
+        cb = _cb_ref.current.get("on_width_change")
+        if cb is not None:
+            cb(width_ref.current)
 
-    drag_handle = ft.GestureDetector(
-        mouse_cursor=ft.MouseCursor.RESIZE_COLUMN,
-        on_pan_update=_on_pan_update,
-        on_pan_end=_on_pan_end,
-        content=ft.Container(
-            width=4,
-            bgcolor=ft.Colors.with_opacity(0.0, c.link),
-            expand=True,
+    drag_handle = ft.use_memo(
+        lambda: ft.GestureDetector(
+            mouse_cursor=ft.MouseCursor.RESIZE_COLUMN,
+            on_pan_update=_on_pan_update,
+            on_pan_end=_on_pan_end,
+            content=ft.Container(
+                width=4,
+                bgcolor=ft.Colors.with_opacity(0.0, c.link),
+                expand=True,
+            ),
         ),
+        [theme_mode],
     )
 
-    # ---- 顶部 Tab 切换 ----
-    def _panel_tab(key: str, icon: str, label: str) -> ft.Control:
-        active = active_panel == key
-        return ft.Container(
-            expand=True,
-            border_radius=Radius.MD,
-            bgcolor=ft.Colors.with_opacity(0.10, c.link) if active else None,
-            content=ft.IconButton(
-                icon=icon,
-                tooltip=label,
-                icon_size=18,
-                on_click=lambda e: on_change_panel(key),
-                style=ft.ButtonStyle(
-                    color=c.link if active else c.muted,
-                    padding=Spacing.MD,
+    # ---- 顶部 Tab 切换：use_memo 提取（仅面板 / 主题变化重建）----
+    def _build_tabs():
+        def _panel_tab(key: str, icon: str, label: str) -> ft.Control:
+            active = active_panel == key
+            return ft.Container(
+                expand=True,
+                border_radius=Radius.MD,
+                bgcolor=ft.Colors.with_opacity(0.10, c.link) if active else None,
+                content=ft.IconButton(
+                    icon=icon,
+                    tooltip=label,
+                    icon_size=18,
+                    on_click=lambda e, k=key: _cb_ref.current["on_change_panel"](k),
+                    style=ft.ButtonStyle(
+                        color=c.link if active else c.muted,
+                        padding=Spacing.MD,
+                    ),
                 ),
+            )
+        return ft.Container(
+            bgcolor=c.toolbar_bg,
+            border=only_border(bottom=ft.BorderSide(1, c.border)),
+            padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.LG),
+            content=ft.Row(
+                controls=[
+                    _panel_tab("files", ft.Icons.FOLDER_OUTLINED, "文件"),
+                    _panel_tab("outline", ft.Icons.FORMAT_LIST_BULLETED, "大纲"),
+                    _panel_tab("search", ft.Icons.SEARCH, "搜索"),
+                ],
+                spacing=Spacing.XS,
             ),
         )
 
-    tabs = ft.Container(
-        bgcolor=c.toolbar_bg,
-        border=only_border(bottom=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.LG),
-        content=ft.Row(
-            controls=[
-                _panel_tab("files", ft.Icons.FOLDER_OUTLINED, "文件"),
-                _panel_tab("outline", ft.Icons.FORMAT_LIST_BULLETED, "大纲"),
-                _panel_tab("search", ft.Icons.SEARCH, "搜索"),
-            ],
-            spacing=Spacing.XS,
-        ),
-    )
+    tabs = ft.use_memo(_build_tabs, [active_panel, theme_mode])
 
     # ---- 面板选择 ----
     # 文件面板右键回调：未提供时用 no-op 避免崩溃
@@ -808,7 +899,10 @@ def Sidebar(
         panel: ft.Control = _render_files_panel(
             file_path,
             recent_files,
-            workspace_folder,
+            root_dir,
+            root_label,
+            is_workspace,
+            flat,
             file_filter,
             set_file_filter,
             on_open_file,

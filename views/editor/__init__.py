@@ -26,7 +26,7 @@
 - IME 热路径必须用 reparse_line_atomic（仅 1 次 observable 通知）
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import flet as ft
 
@@ -83,6 +83,11 @@ def MarkdownEditor(
     # 滚动同步回调：滚动时上报 (offset, max_scroll, viewport_h)，供 diff 对比模式
     # 驱动另一侧同步滚动。None 时不同步（单编辑器 / 拆分编辑器）。
     on_scroll_change: Callable[[float, float, float], None] | None = None,
+    # 状态栏命令式上报（高频局部 UI，跳过 set_state 全量重建）：
+    # on_cursor_move(row, col)：光标位置变化时异步推送至状态栏（仅焦点视口上报）。
+    # on_content_change()：文档内容变化（mark_dirty）时触发，App 防抖重算字数。
+    on_cursor_move: Callable[[int, int], Awaitable[None] | None] | None = None,
+    on_content_change: Callable[[], None] | None = None,
 ):
     # ============ 派生设置 ============
     c = _current_colors()
@@ -178,6 +183,10 @@ def MarkdownEditor(
             document.dirty = True
         if on_dirty_change:
             on_dirty_change(True)
+        # 状态栏字数防抖重算：在 reparse_line_atomic 之后调用，document 状态已更新。
+        # on_content_change 仅调度防抖任务，不阻塞 IME 热路径。
+        if on_content_change:
+            on_content_change()
 
     # ============ content_width：段落换行宽度 ============
     # word_wrap=False：inf（不换行）
@@ -217,6 +226,8 @@ def MarkdownEditor(
         diff_marks=diff_marks,
         diff_gaps=diff_gaps,
         on_scroll_change=on_scroll_change,
+        on_cursor_move=on_cursor_move,
+        on_content_change=on_content_change,
         # 派生设置
         c=c,
         content_max_width=content_max_width,
@@ -435,6 +446,25 @@ def MarkdownEditor(
     # ============ use_effect：文档行数变化时清空行高缓存 ============
     ft.use_effect(scroll_cbs["reset_line_heights"], [len(document.lines), word_wrap, viewport_w])
 
+    # ============ use_effect：状态栏光标位置命令式上报 ============
+    # 依赖 cursor_li/cursor_off/cursor_line/nav_seq：覆盖所有光标状态变化路径
+    #（含围栏块 set_cursor_line、undo/redo nav_seq 递增、IME 会话结束 set_cursor_off），
+    # 无需 instrument _set_cursor 的 15+ 散点。use_effect 在 commit 后触发，状态栏
+    # 更新比光标渲染晚一帧（~16ms，人眼不可察）。on_cursor_move 由 App 路由到
+    # 焦点视口的状态栏（拆分/对比模式下非焦点视口上报被丢弃）。
+    async def _report_cursor():
+        if on_cursor_move is None:
+            return
+        if cursor_li is not None and 0 <= cursor_li < len(document.lines):
+            row, col = cursor_li + 1, cursor_off + 1
+        else:
+            row, col = cursor_line + 1, 1
+        res = on_cursor_move(row, col)
+        if res is not None:
+            await res
+
+    ft.use_effect(_report_cursor, [cursor_li, cursor_off, cursor_line, nav_seq])
+
     # ============ use_effect：清空 cursor TextField 内部 value ============
     ft.use_effect(focus_cbs["clear_cursor_value"], [clear_value_seq])
 
@@ -592,15 +622,17 @@ def MarkdownEditor(
                     expand=True,
                     on_change=clipboard_cbs["on_selection_area_change"],
                     content=ft.Container(
-                        content=ft.Column(
+                        content=ft.ListView(
                             ref=list_view_ref,
                             controls=line_controls,
                             expand=True,
                             spacing=0,
-                            # 用 Column(scroll=AUTO) 替代 ListView：
-                            # Column 底层是 SingleChildScrollView，首次布局即测量
-                            # 所有子项高度，maxScrollExtent 精确且稳定。
-                            scroll=ft.ScrollMode.AUTO,
+                            # ListView 虚拟化（build_controls_on_demand=True 默认）：
+                            # 仅构建视口内可见行，数千行文档不卡顿。maxScrollExtent
+                            # 由首项高度估算，_scroll.py 的两步滚动逻辑已为此设计
+                            # （视口外行无实测高度 → 先估算滚动触发构建再精确贴顶）。
+                            # padding 保留在外层 Container：顶部 content_padding_top
+                            # 作为固定留白不随内容滚动。
                             on_scroll=scroll_cbs["on_scroll"],
                         ),
                         expand=True,

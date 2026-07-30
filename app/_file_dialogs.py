@@ -110,12 +110,14 @@ def build_file_dialogs(ctx):
             try:
                 path = file_ops.create_file(target, value)
                 ctx.open_file_by_path(path)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
                 show_snack(f"已创建：{os.path.basename(path)}")
             except Exception as e:
                 show_snack(f"创建失败：{e}")
         elif action == "new_folder":
             try:
                 file_ops.create_folder(target, value)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
                 show_snack(f"已创建文件夹：{value}")
             except Exception as e:
                 show_snack(f"创建失败：{e}")
@@ -123,6 +125,7 @@ def build_file_dialogs(ctx):
             try:
                 new_path = file_ops.rename_path(target, value)
                 update_tab_for_renamed_file(target, new_path)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
                 show_snack(f"已重命名为：{os.path.basename(new_path)}")
             except Exception as e:
                 show_snack(f"重命名失败：{e}")
@@ -131,6 +134,7 @@ def build_file_dialogs(ctx):
                 fname = os.path.basename(target)
                 file_ops.delete_path(target)
                 close_tabs_for_path(target)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
                 show_snack(f"已删除：{fname}")
             except Exception as e:
                 show_snack(f"删除失败：{e}")
@@ -253,6 +257,7 @@ def build_file_dialogs(ctx):
                 try:
                     new_path = file_ops.duplicate_file(path)
                     ctx.open_file_by_path(new_path)
+                    ctx.bump_fs_version()  # 刷新侧边栏文件树
                     show_snack(f"已创建副本：{os.path.basename(new_path)}")
                 except Exception as e:
                     show_snack(f"创建副本失败：{e}")
@@ -312,6 +317,7 @@ def build_file_dialogs(ctx):
                 try:
                     new_path = file_ops.duplicate_file(path)
                     ctx.open_file_by_path(new_path)
+                    ctx.bump_fs_version()  # 刷新侧边栏文件树
                     show_snack(f"已创建副本：{os.path.basename(new_path)}")
                 except Exception as e:
                     show_snack(f"创建副本失败：{e}")

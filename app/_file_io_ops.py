@@ -202,6 +202,7 @@ def build_file_io_ops(ctx):
         path = tab.get("file_path")
         if doc is None:
             return False
+        _is_new_file = not path  # 另存为：原 path 为空，写盘后新增文件需刷新侧边栏文件树
         if not path:
             picker = ctx.picker_holder.current
             if picker is None:
@@ -230,6 +231,8 @@ def build_file_io_ops(ctx):
         ctx.set_tabs(latest)
         ctx.tabs_ref.current = latest
         push_recent_file(path)
+        if _is_new_file:
+            ctx.bump_fs_version()  # 新文件入树，刷新侧边栏
         return True
 
     async def export_doc():

@@ -59,6 +59,9 @@ class EditorContext:
     diff_marks: dict[int, str] | None
     diff_gaps: dict[int, list[float]] | None
     on_scroll_change: Callable[[float, float, float], None] | None
+    # 状态栏命令式上报：光标移动 / 内容变化（高频局部 UI，跳过 set_state 全量重建）
+    on_cursor_move: Callable[[int, int], None] | None
+    on_content_change: Callable[[], None] | None
 
     # ============ 派生设置 ============
     c: Any  # colors 对象

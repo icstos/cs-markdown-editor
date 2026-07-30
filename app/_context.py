@@ -53,6 +53,7 @@ class AppContext:
     capturing: tuple
     split_editor: bool
     active_pane: int
+    fs_version: int  # 文件系统版本号：文件增删改后递增，驱动侧边栏文件树重扫
 
     # ============ 派生值 ============
     cur_tab: dict
@@ -61,6 +62,7 @@ class AppContext:
     file_path: str | None
     shortcut_mgr: Any  # ShortcutManager
     diff_sync: Any  # DiffScrollSync
+    diff_result: Any  # memoized (marks_l, marks_r, gaps_l, gaps_r, added, removed, modified) | None
 
     # ============ Setters（稳定区）============
     set_tabs: Callable
@@ -94,6 +96,7 @@ class AppContext:
     active_index_ref: ft.Ref
     dispatcher_ref: ft.Ref  # KeyDispatcher 实例
     paste_old_draft: ft.Ref  # 粘贴前 draft 快照（供 handle_paste 做 diff 定位）
+    status_ref: ft.Ref  # 状态栏命令式更新器（update_cursor / update_counts）
 
     # ============ 装配槽（跨控制器调用，控制器装配后写入）============
     # tab_management 组
@@ -105,9 +108,12 @@ class AppContext:
     do_close_many: Callable = field(default=lambda *a: None)
     request_close: Callable = field(default=lambda *a: None)
     close_tab: Callable = field(default=lambda *a: None)
+    # 稳定化「关闭当前标签」：use_memo 实例，读 close_tab_ref + active_index_ref，
+    # 身份跨渲染不变 → DiffHeader @ft.memo 的 on_close prop 稳定，头部 memo 成立。
+    close_current_tab: Callable = field(default=lambda: None)
     save_and_close_pending: Callable = field(default=lambda: None)
     close_without_save: Callable = field(default=lambda: None)
-    cancel_close: Callable = field(default=lambda: None)
+    cancel_close: Callable = field(default=lambda *a: None)
     on_tab_context_action: Callable = field(default=lambda *a: None)
 
     # file_io_ops 组
@@ -168,3 +174,10 @@ class AppContext:
 
     # keyboard 组
     bind_keyboard: Callable = field(default=lambda: None)
+
+    # 状态栏命令式更新装配槽（__init__.py 装配后写入）
+    push_cursor_to_status: Callable = field(default=lambda *a: None)
+    schedule_status_count_update: Callable = field(default=lambda: None)
+
+    # 文件系统变更信号（文件增删改后递增，驱动侧边栏文件树异步重扫）
+    bump_fs_version: Callable = field(default=lambda: None)

@@ -729,6 +729,7 @@ def Sidebar(
     on_close_folder: Callable[[], None] | None = None,
     compare_source: str | None = None,
     fs_version: int = 0,
+    sidebar_open: bool = True,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
@@ -756,6 +757,22 @@ def Sidebar(
     width, set_width = ft.use_state(_INIT_W)
     width_ref = ft.use_ref(_INIT_W)
     width_ref.current = width
+
+    # 拖拽中标志：控制外层 Container animate（拖拽时 None 即时跟随，否则 200ms 动画）
+    dragging, set_dragging = ft.use_state(False)
+
+    # 外部 settings → 内部 width state 同步：
+    # use_state 初始值仅首次挂载生效，reset_settings / 外部改 settings 后需 effect
+    # 主动同步。拖拽结束 pan_end→update_setting→_ext_w 变化时 width_ref 已等于 _ext_w，
+    # effect 跳过避免冗余更新；reset_settings 时 _ext_w≠width_ref.current 触发同步。
+    _ext_w = settings.get("sidebar_width", 256)
+
+    def _sync_from_settings():
+        if width_ref.current != _ext_w:
+            width_ref.current = _ext_w
+            set_width(_ext_w)
+
+    ft.use_effect(_sync_from_settings, [_ext_w])
 
     _MIN_W, _MAX_W = 180, 600
 
@@ -832,6 +849,9 @@ def Sidebar(
     )
 
     # ---- 拖拽调宽手柄：use_memo 提取（仅主题变化重建）----
+    def _on_pan_start(e: ft.DragStartEvent):
+        set_dragging(True)
+
     def _on_pan_update(e: ft.DragUpdateEvent):
         new_w = int(max(_MIN_W, min(_MAX_W, width_ref.current + e.local_delta.x)))
         if new_w != width_ref.current:
@@ -839,6 +859,7 @@ def Sidebar(
             set_width(new_w)
 
     def _on_pan_end(e):
+        set_dragging(False)
         cb = _cb_ref.current.get("on_width_change")
         if cb is not None:
             cb(width_ref.current)
@@ -846,11 +867,12 @@ def Sidebar(
     drag_handle = ft.use_memo(
         lambda: ft.GestureDetector(
             mouse_cursor=ft.MouseCursor.RESIZE_COLUMN,
+            on_pan_start=_on_pan_start,
             on_pan_update=_on_pan_update,
             on_pan_end=_on_pan_end,
             content=ft.Container(
-                width=4,
-                bgcolor=ft.Colors.with_opacity(0.0, c.link),
+                width=3,
+                bgcolor=ft.Colors.with_opacity(0.15, c.text),
                 expand=True,
             ),
         ),
@@ -922,18 +944,29 @@ def Sidebar(
             c,
         )
 
-    return ft.Row(
-        controls=[
-            ft.Container(
-                width=width,
-                bgcolor=c.surface,
-                content=ft.Column(
-                    controls=[tabs, panel],
-                    spacing=0,
+    # 外层 Container 统一控制宽度 / 动画 / 裁剪（原 sidebar_container 逻辑内移）：
+    # - width 与内部 width state 同源，拖拽时 set_width 即时驱动外层，无 clip 裁剪
+    # - dragging 时 animate=None 即时跟随，否则 200ms 动画（展开/折叠平滑过渡）
+    # - 内容 Container 用 expand=True 撑满减去 drag_handle(6px) 的空间，零溢出
+    # - STRETCH 让 drag_handle 竖向填满，全高可抓
+    return ft.Container(
+        width=width if sidebar_open else 0,
+        animate=None if dragging else ft.Animation(200, ft.AnimationCurve.EASE_OUT),
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        content=ft.Row(
+            controls=[
+                ft.Container(
                     expand=True,
+                    bgcolor=c.surface,
+                    content=ft.Column(
+                        controls=[tabs, panel],
+                        spacing=0,
+                        expand=True,
+                    ),
                 ),
-            ),
-            drag_handle,
-        ],
-        spacing=0,
+                drag_handle,
+            ],
+            spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+        ),
     )

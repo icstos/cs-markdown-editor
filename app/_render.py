@@ -16,8 +16,8 @@ body 根据 is_diff_tab / split_editor 分三种模式：
 
 设计要点：
 - 对比标签下 document=None，需传当前焦点侧文档以保持大纲/搜索可用。
-- 侧边栏始终渲染，外层 Container 宽度动画 0↔sidebar_width，
-  clip_behavior=HARD_EDGE 在收拢时裁剪内容，实现 VSCode 式平滑开合。
+- 侧边栏始终渲染，Sidebar 内部统一控制宽度动画 0↔width + clip_behavior
+  + 拖拽调宽（dragging 时禁用动画即时跟随），实现 VSCode 式平滑开合。
   始终保持 Sidebar 挂载可保留内部状态（搜索词 / 文件过滤 / 滚动位置）。
 - 状态栏贯穿侧边栏 + 编辑区全宽，对比标签时反映当前焦点对比视口。
 - diff 标记 / 间隙 / 统计由 App use_memo 预计算（按左右文档行内容签名缓存），
@@ -82,8 +82,8 @@ def build_render(ctx) -> ft.Control:
 
     # ============ 侧边栏 ============
     sidebar_open = ctx.settings.get("sidebar_open", False)
-    # 侧边栏：始终渲染 Sidebar，外层 Container 宽度动画 0↔sidebar_width，
-    # clip_behavior=HARD_EDGE 在收拢时裁剪内容，实现 VSCode 式平滑开合。
+    # 侧边栏：始终渲染 Sidebar，内部统一控制宽度动画 0↔width + clip_behavior
+    # + 拖拽调宽（dragging 时禁用动画即时跟随），实现 VSCode 式平滑开合。
     # 始终保持 Sidebar 挂载可保留内部状态（搜索词 / 文件过滤 / 滚动位置）。
     # 对比标签下 document=None，需传当前焦点侧文档以保持大纲/搜索可用。
     if ctx.is_diff_tab:
@@ -92,26 +92,21 @@ def build_render(ctx) -> ft.Control:
     else:
         _sidebar_doc = ctx.document
         _sidebar_path = ctx.file_path
-    sidebar_width = ctx.settings.get("sidebar_width", 256)
-    sidebar_container = ft.Container(
-        width=sidebar_width if sidebar_open else 0,
-        animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
-        clip_behavior=ft.ClipBehavior.HARD_EDGE,
-        content=Sidebar(
-            document=_sidebar_doc,
-            file_path=_sidebar_path,
-            theme_mode=ctx.theme_mode,
-            settings=ctx.settings,
-            active_panel=ctx.settings.get("sidebar_panel", "files"),
-            on_change_panel=ctx.change_sidebar_panel,
-            on_open_file=ctx.open_file_by_path,
-            on_jump_to_line=ctx.jump_to_line,
-            on_width_change=ctx.change_sidebar_width,
-            on_file_context_action=ctx.on_sidebar_context_action,
-            on_close_folder=lambda: ctx.update_setting("workspace_folder", None),
-            compare_source=ctx.compare_source,
-            fs_version=ctx.fs_version,
-        ),
+    sidebar = Sidebar(
+        document=_sidebar_doc,
+        file_path=_sidebar_path,
+        theme_mode=ctx.theme_mode,
+        settings=ctx.settings,
+        active_panel=ctx.settings.get("sidebar_panel", "files"),
+        on_change_panel=ctx.change_sidebar_panel,
+        on_open_file=ctx.open_file_by_path,
+        on_jump_to_line=ctx.jump_to_line,
+        on_width_change=ctx.change_sidebar_width,
+        on_file_context_action=ctx.on_sidebar_context_action,
+        on_close_folder=lambda: ctx.update_setting("workspace_folder", None),
+        compare_source=ctx.compare_source,
+        fs_version=ctx.fs_version,
+        sidebar_open=sidebar_open,
     )
 
     # ============ 编辑器区 ============
@@ -165,7 +160,7 @@ def build_render(ctx) -> ft.Control:
 
     body = ft.Row(
         controls=[
-            sidebar_container,
+            sidebar,
             editor_area,
         ],
         spacing=0,

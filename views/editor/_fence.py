@@ -1,6 +1,6 @@
 """围栏岛屿（CODE/MATH/TABLE）编辑处理器工厂（从 views/editor.py 闭包抽取）。
 
-闭包组：on_change_code / on_code_focus / on_code_blur /
+闭包组：on_change_code / on_code_focus / on_code_blur / handle_code_backspace /
 on_change_math / on_math_focus / on_math_blur /
 on_change_cell / on_table_op / on_table_focus / on_table_blur
 
@@ -24,6 +24,8 @@ on_change_cell / on_table_op / on_table_focus / on_table_blur
 
 import parser
 from models import BlockType, Line, Segment, SegType
+from utils.segment_helpers import is_fence as _is_fence
+from utils.segment_helpers import line_raw as _line_raw
 from utils.table_helpers import ALIGN_RE
 from views._editor_helpers import _table_cells
 from views.table_view import _align_marker, _join_row
@@ -36,7 +38,7 @@ def build_fence(ctx):
     """构造围栏岛屿（CODE/MATH/TABLE）编辑处理器闭包组。
 
     返回 dict[str, Callable]：
-    on_change_code / on_code_focus / on_code_blur /
+    on_change_code / on_code_focus / on_code_blur / handle_code_backspace /
     on_change_math / on_math_focus / on_math_blur /
     on_change_cell / on_table_op / on_table_focus / on_table_blur
     """
@@ -83,6 +85,43 @@ def build_fence(ctx):
         # 注意：快照已在第一次修改时推入历史，此处不再重复推入
         ctx.code_edit_snapshot.current = None
         ctx.code_edit_changed.current = False
+
+    def handle_code_backspace(li: int) -> bool:
+        """空代码块 Backspace 删除：替换为空白段落行（Typora 式）。
+
+        返回 True 表示已处理（消费 Backspace，阻止传给原生 CodeEditor）；
+        False 表示未处理（非空代码块 / 非代码块 / 越界，继续走原生删除）。
+
+        触发场景：CodeEditor 聚焦时全局 KeyDispatcher 检测到 BackSpace，
+        先尝试本函数；若代码块内容为空（含仅空白字符）则整体删除。
+        删除后进入段落编辑态（光标定位到行首），与 set_block 的早返回模式一致。
+        """
+        if not (0 <= li < len(ctx.document.lines)):
+            return False
+        line = ctx.document.lines[li]
+        if line.block_type != BlockType.CODE:
+            return False
+        # 代码块内容为空（含仅空白字符）才触发整体删除
+        code = line.segments[0].text if line.segments else ""
+        if code.strip():
+            return False
+        # 替换为空白段落行（保持光标行位置），push_history 记录删除前状态供撤销
+        ctx.push_history()
+        ctx.undo_push_pending.current = True
+        new_line = Line(block_type=BlockType.PARAGRAPH, raw="")
+        new_line.segments = [Segment(SegType.TEXT, "", "")]
+        ctx.document.lines = ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1:]
+        ctx.mark_dirty()
+        # 清理代码块聚焦状态（模拟 on_code_blur 的清理，防止 CodeEditor 卸载时
+        # on_blur 未触发导致 code_focus_ref 残留，_native_field_focused 误判）
+        ctx.code_focus_ref.current = None
+        ctx.code_edit_snapshot.current = None
+        ctx.code_edit_changed.current = False
+        # 进入段落编辑态（光标定位到行首）；suppress_blur 防 CodeEditor 卸载
+        # 级联 blur 干扰新聚焦的 cursor TextField
+        ctx.suppress_blur.current = True
+        ctx.set_cursor(li, 0)
+        return True
 
     # ============ 块级公式 ============
     def on_change_math(li: int, value: str) -> None:
@@ -261,6 +300,7 @@ def build_fence(ctx):
         "on_change_code": on_change_code,
         "on_code_focus": on_code_focus,
         "on_code_blur": on_code_blur,
+        "handle_code_backspace": handle_code_backspace,
         "on_change_math": on_change_math,
         "on_math_focus": on_math_focus,
         "on_math_blur": on_math_blur,

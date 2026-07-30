@@ -15,10 +15,10 @@
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
-  "sidebar_panel": "search",
+  "sidebar_panel": "files",
   "sidebar_width": 256,
   "recent_files": [],
-  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-35\\test_open_folder_atomic_merge_0\\workspace",
+  "workspace_folder": null,
   "shortcuts": {
     "browse": {
       "save": "ctrl+s",

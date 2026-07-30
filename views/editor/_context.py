@@ -238,6 +238,8 @@ class EditorContext:
     on_change_code: Callable[[int, str], None] = field(default=lambda *a: None)
     on_code_focus: Callable[[int], None] = field(default=lambda *a: None)
     on_code_blur: Callable[[int], None] = field(default=lambda *a: None)
+    # 空代码块 Backspace 删除：返回 True 已处理（消费 Backspace），False 未处理
+    handle_code_backspace: Callable[[int], bool] = field(default=lambda *a: False)
     on_change_math: Callable[[int, str], None] = field(default=lambda *a: None)
     on_math_focus: Callable[[int], None] = field(default=lambda *a: None)
     on_math_blur: Callable[[int], None] = field(default=lambda *a: None)

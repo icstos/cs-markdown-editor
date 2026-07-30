@@ -42,6 +42,7 @@ def make_actions(
     active_line: Line | None = None,
     outward_sel: tuple | None = None,
     native_focused: bool = False,
+    code_backspace_ret: bool | None = None,
 ) -> EditorActions:
     """构造带记录桩的 EditorActions。每个动作 append 自己的名字到 calls。"""
     def rec(name):
@@ -61,6 +62,18 @@ def make_actions(
     sel_text_ref = FakeRef("")
     shift_ref = FakeRef(False)
     ctrl_ref = FakeRef(False)
+
+    # 空代码块 Backspace 删除桩：code_backspace_ret 非 None 时模拟聚焦代码块（code_ref
+    # 持有行号 0）并返回给定布尔值；否则返回 False 不拦截（保持现有测试行为）
+    if code_backspace_ret is not None:
+        code_ref = FakeRef(0)
+
+        def _code_backspace(li):
+            calls.append(("handle_code_backspace", li))
+            return code_backspace_ret
+    else:
+        def _code_backspace(li):
+            return False
 
     actions = EditorActions(
         cursor_li=cursor_li,
@@ -99,6 +112,7 @@ def make_actions(
         format_task=rec("format_task"),
         format_table=rec("format_table"),
         code_focus_ref=code_ref,
+        handle_code_backspace=_code_backspace,
         table_focus_ref=table_ref,
         get_cursor_row_col=lambda: (1, 1),
         outward_sel=outward_sel,
@@ -695,6 +709,52 @@ def test_ctrl_state_synced_to_ref():
     d, _, _ = make_dispatcher(actions, [])
     d.handle(evt("a", ctrl=True))
     assert actions.ctrl_pressed_ref.current is True
+
+
+# ---------------- 空代码块 Backspace 删除（Typora 式）----------------
+def test_empty_code_block_backspace_deletes_block():
+    """空代码块聚焦 + Backspace（无修饰键）→ handle_code_backspace 消费按键。"""
+    calls: list = []
+    actions = make_actions(calls, code_backspace_ret=True)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("backspace"))
+    # handle_code_backspace 被调用且传入聚焦行号 0
+    assert ("handle_code_backspace", 0) in calls
+    # 按键被消费，不路由到 backspace_core
+    assert "backspace_core" not in calls
+
+
+def test_nonempty_code_block_backspace_passthrough():
+    """非空代码块（handle_code_backspace 返回 False）→ 交由原生 CodeEditor 处理。"""
+    calls: list = []
+    actions = make_actions(calls, code_backspace_ret=False)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("backspace"))
+    # handle_code_backspace 被调用但返回 False
+    assert ("handle_code_backspace", 0) in calls
+    # 放行给原生控件（不在全局路由），backspace_core 不被调用
+    assert "backspace_core" not in calls
+
+
+def test_code_block_ctrl_backspace_not_intercepted():
+    """代码块聚焦 + Ctrl+Backspace → 不触发 handle_code_backspace（修饰键守卫）。"""
+    calls: list = []
+    actions = make_actions(calls, code_backspace_ret=True)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("backspace", ctrl=True))
+    # 修饰键按下时不进入 handle_code_backspace 路由
+    assert not any(c == "handle_code_backspace" or isinstance(c, tuple) for c in calls)
+
+
+def test_table_focused_backspace_not_intercepted():
+    """表格聚焦（code_focus_ref 为 None）+ Backspace → 不触发 handle_code_backspace。"""
+    calls: list = []
+    # native_focused=True 使 table_ref.current 为真值，code_ref.current 仍为 None
+    actions = make_actions(calls, native_focused=True)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("backspace"))
+    # 表格聚焦走原生放行，不调用代码块删除
+    assert not any(c == "handle_code_backspace" or isinstance(c, tuple) for c in calls)
 
 
 if __name__ == "__main__":

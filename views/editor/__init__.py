@@ -396,6 +396,7 @@ def MarkdownEditor(
     ctx.on_change_code = fence_cbs["on_change_code"]
     ctx.on_code_focus = fence_cbs["on_code_focus"]
     ctx.on_code_blur = fence_cbs["on_code_blur"]
+    ctx.handle_code_backspace = fence_cbs["handle_code_backspace"]
     ctx.on_change_math = fence_cbs["on_change_math"]
     ctx.on_math_focus = fence_cbs["on_math_focus"]
     ctx.on_math_blur = fence_cbs["on_math_blur"]

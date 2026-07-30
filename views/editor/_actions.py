@@ -74,6 +74,7 @@ def build_actions(ctx) -> EditorActions | None:
         format_table=ctx.format_table,
         # ---- 代码块 ----
         code_focus_ref=ctx.code_focus_ref,
+        handle_code_backspace=ctx.handle_code_backspace,
         # ---- 表格 ----
         table_focus_ref=ctx.table_focus_ref,
         # ---- 状态栏 ----

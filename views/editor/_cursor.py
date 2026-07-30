@@ -21,7 +21,7 @@ handle_char_input / handle_paste / backspace_core / delete_core / on_submit
 - models（BlockType）
 - utils.segment_helpers（is_fence / line_raw）
 - views._editor_helpers（_fix_ime_doubling）
-- views.editor._helpers（_next_line_raw / _RE_O_PREFIX）
+- views.editor._helpers（_next_line_raw / _RE_O_PREFIX / _RE_FENCE_TRIGGER / _make_code_line）
 """
 
 import parser
@@ -29,7 +29,7 @@ from models import BlockType
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import _fix_ime_doubling
-from views.editor._helpers import _RE_O_PREFIX, _next_line_raw
+from views.editor._helpers import _RE_FENCE_TRIGGER, _RE_O_PREFIX, _make_code_line, _next_line_raw
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -302,6 +302,23 @@ def build_cursor(ctx):
         off = max(0, min(off, len(raw)))
         before = raw[:off]
         after = raw[off:]
+
+        # Typora 式：```[lang] 独占一行 + 回车（光标在行尾）→ 当前行转为代码块。
+        # 仅段落行触发（标题/列表/引用的 before 含前缀，正则不匹配，自然不触发）。
+        # 代码块创建走 _make_code_line（parse_markdown 合并围栏），不能用 _reparse_atomic
+        # （后者无法把段落转为 CODE 块）。创建后退出光标编辑态，CodeEditor 待点击聚焦。
+        if (
+            line.block_type == BlockType.PARAGRAPH
+            and not after.strip()
+            and (m := _RE_FENCE_TRIGGER.match(before)) is not None
+        ):
+            new_line = _make_code_line(m.group(1), "")
+            ctx.document.lines = ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1:]
+            ctx.mark_dirty()
+            ctx.suppress_blur.current = True
+            ctx.set_cursor_line(li)
+            ctx.set_cursor_li(None)
+            return
 
         # 标题：before 空 → 清空前缀；否则分割成两行
         if line.block_type == BlockType.HEADING:

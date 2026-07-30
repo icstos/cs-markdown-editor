@@ -6,6 +6,7 @@
 - _build_diff_gap：diff 对齐间隙容器
 - _inline_content：取行内内容源码（去块级前缀）
 - _next_line_raw：回车续行 raw 计算
+- _make_code_line：通过 parse_markdown 构造可靠 CODE 行（围栏合并）
 - 模块级预编译正则 + 列表/引用常量
 
 依赖项：
@@ -18,6 +19,7 @@ import re
 
 import flet as ft
 
+import parser
 from models import BlockType, Line, SegType
 
 
@@ -70,6 +72,24 @@ _LIST_INDENT_UNIT = 2
 _LIST_MAX_SPACES = 10
 # 引用最大嵌套层级：对应 6 级彩色边框（heading_colors 红→紫）。
 _QUOTE_MAX_LEVEL = 6
+
+# Typora 式代码块触发：```[lang]（3+ 反引号 + 可选语言标识）独占一行 + 回车 → 代码块。
+# lang 字符集覆盖常见语言名（python / c++ / f# / obj-c 等）。
+_RE_FENCE_TRIGGER = re.compile(r"^`{3,}\s*([A-Za-z0-9_+#.-]*)$")
+
+
+def _make_code_line(lang: str, content: str) -> Line:
+    """通过 parse_markdown 构造可靠的 CODE 行（围栏合并为单编辑单元）。
+
+    `_reparse_atomic` 无法把段落行转为 CODE 块：其普通块分支调用 `_build_line` →
+    `_detect_block`，而后者不识别围栏（围栏仅在 `parse_markdown` 全量解析时合并）。
+    故代码块创建统一走 `parse_markdown` 全量解析取首行，保证 block_type=CODE、
+    lang 与 body 正确（含空内容 + lang 的情形）。
+
+    被 set_block(CODE) 与 on_submit 的 ```+Enter 触发共用。
+    """
+    raw = f"```{lang}\n{content}\n```"
+    return parser.parse_markdown(raw).lines[0]
 
 
 def _inline_content(line: Line) -> str:

@@ -17,14 +17,14 @@ format_task / format_table / change_lang
 - parser（reparse_line_atomic）
 - models（BlockType / Line / Segment / SegType）
 - utils.segment_helpers（line_raw）
-- views.editor._helpers（_inline_content / _RE_UO_MARKER）
+- views.editor._helpers（_inline_content / _RE_UO_MARKER / _make_code_line）
 - views.table_view（_join_row）
 """
 
 import parser
 from models import BlockType, Line, Segment, SegType
 from utils.segment_helpers import line_raw as _line_raw
-from views.editor._helpers import _RE_UO_MARKER, _inline_content
+from views.editor._helpers import _RE_UO_MARKER, _inline_content, _make_code_line
 from views.table_view import _join_row
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
@@ -68,7 +68,18 @@ def build_blocks(ctx):
         elif block_type == BlockType.QUOTE:
             new_raw = "> " + content
         elif block_type == BlockType.CODE:
-            new_raw = "```\n" + content + "\n```"
+            # CODE 是围栏岛屿（整行 ```\n...\n``` 合并为单编辑单元），不能用
+            # _reparse_atomic：其普通块分支走 _build_line/_detect_block，而后者不
+            # 识别围栏（围栏仅在 parse_markdown 全量解析时合并），会导致行停留在
+            # PARAGRAPH（工具栏"代码块"按钮曾因此失效）。改用 _make_code_line
+            # （基于 parse_markdown）整体替换，与 TABLE 一致的早返回模式。
+            new_line = _make_code_line("", content)
+            ctx.document.lines = ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1:]
+            ctx.mark_dirty()
+            # 退出光标编辑态，代码块 CodeEditor 待用户点击聚焦编辑
+            ctx.set_cursor_line(li)
+            ctx.set_cursor_li(None)
+            return
         elif block_type == BlockType.MATH:
             new_raw = f"$$\n{content}\n$$"
         elif block_type == BlockType.TABLE:
@@ -101,10 +112,7 @@ def build_blocks(ctx):
             new_raw = content
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
-        if block_type == BlockType.CODE:
-            ctx.set_cursor_line(li)
-            ctx.set_cursor_li(None)
-        elif block_type == BlockType.MATH:
+        if block_type == BlockType.MATH:
             # 公式块：退出光标编辑态，自动进入公式编辑态（Typora 式：插入后立即可输入）
             ctx.set_cursor_line(li)
             ctx.set_cursor_li(None)

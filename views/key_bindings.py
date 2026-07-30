@@ -206,6 +206,19 @@ class KeyDispatcher:
         # 等）不在跳过清单内，仍正常处理。表格的 Tab/Escape 由 editor.py 的 _on_key_down
         # 通过 table_nav_ref 路由到 TableView 单元格导航逻辑。
         if self._native_field_focused(actions):
+            # Typora 式：空代码块聚焦时按 Backspace（无修饰键）→ 删除整个代码块。
+            # 必须在 _NATIVE_NAV_KEYS 放行之前拦截：backspace 在放行清单内，否则会
+            # 直接 return 交由原生 CodeEditor 处理（空内容时原生 Backspace 无效果）。
+            # code_focus_ref.current 非 None 精确锁定代码块（表格/公式走各自 ref）。
+            if (
+                norm == "backspace"
+                and not (e.ctrl or e.meta or e.alt)
+                and getattr(actions, "handle_code_backspace", None) is not None
+                and getattr(actions, "code_focus_ref", None) is not None
+                and actions.code_focus_ref.current is not None
+            ):
+                if actions.handle_code_backspace(actions.code_focus_ref.current):
+                    return
             if not (e.ctrl or e.meta or e.alt):
                 if norm in self._NATIVE_NAV_KEYS:
                     return

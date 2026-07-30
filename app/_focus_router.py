@@ -45,12 +45,14 @@ def build_focus_router(ctx):
             return
         page.update()
 
-    def jump_to_line(li: int):
+    def jump_to_line(li: int, off: int | None = None):
         # 跳转到当前焦点视口（diff / 拆分 / 单编辑器统一路由）
+        # off=None 退化为行首（向后兼容大纲等仅传 li 的调用方）；
+        # off=int 跳到精确 raw 偏移（侧边栏搜索结果点击关键词位置）
         active_nav = get_active_nav()
         actions = active_nav.current
         if actions is not None:
-            actions.jump_to_line(li)
+            actions.jump_to_line(li, off)
 
     def on_dirty_change(d: bool):
         """编辑器上报脏状态变化时，更新当前标签的 dirty（仅状态变化时写，避免每键重渲染）。

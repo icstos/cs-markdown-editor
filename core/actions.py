@@ -83,7 +83,7 @@ class EditorActions:
     # ---- 全局动作 ----
     undo: Callable[[], None]
     redo: Callable[[], None]
-    jump_to_line: Callable[[int], None]
+    jump_to_line: Callable[[int, int | None], None]  # (li, off=None)；off=None 退化为行首
     toggle_raw: Callable[[], None]
     toggle_focus_mode: Callable[[], None]
     set_block: Callable[[BlockType, int], None]  # 切换当前行块类型（Ctrl+0~6 标题级别）

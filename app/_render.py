@@ -104,6 +104,9 @@ def build_render(ctx) -> ft.Control:
         on_width_change=ctx.change_sidebar_width,
         on_file_context_action=ctx.on_sidebar_context_action,
         on_close_folder=lambda: ctx.update_setting("workspace_folder", None),
+        # 搜索增强：跨文件结果点击（open + pending jump）+ 选项持久化（复用 update_setting）
+        on_open_file_and_jump=ctx.open_file_and_jump,
+        on_update_setting=ctx.update_setting,
         compare_source=ctx.compare_source,
         fs_version=ctx.fs_version,
         sidebar_open=sidebar_open,

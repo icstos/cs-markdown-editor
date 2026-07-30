@@ -66,6 +66,12 @@ def App():
     )
     active_index, set_active_index = ft.use_state(0)
     session, set_session = ft.use_state(0)  # 切换标签时自增，强制编辑器重置内部状态
+    # 跨文件"打开后跳转"：open_file_by_path(path, jump_to=(li, off)) 暂存跳转任务，
+    # session 变化（重建 MarkdownEditor）或 sig 变化（文件已是当前 tab，session 不变）
+    # 时 _fire_pending_jump effect 消费并调用 jump_to_line(li, off)。
+    # 双触发器设计：session 处理"切换/打开新 tab"，sig 处理"同 tab 重复点击搜索结果"。
+    pending_jump_ref = ft.use_ref(None)  # (li, off) | None
+    pending_jump_sig, set_pending_jump_sig = ft.use_state(0)
     confirm_close, set_confirm_close = ft.use_state(None)  # 待确认关闭的 tab index | None
     # 文件操作对话框状态：{"mode":"input"|"confirm", "action":..., "target":...} | None
     # 由右键菜单触发（新建文件/文件夹/重命名/删除），确认后执行对应文件操作
@@ -214,6 +220,9 @@ def App():
         tabs=tabs,
         active_index=active_index,
         session=session,
+        pending_jump_ref=pending_jump_ref,
+        pending_jump_sig=pending_jump_sig,
+        set_pending_jump_sig=set_pending_jump_sig,
         confirm_close=confirm_close,
         file_dialog=file_dialog,
         compare_source=compare_source,
@@ -293,6 +302,14 @@ def App():
     file_cbs = build_file_io_ops(ctx)
     ctx.push_recent_file = file_cbs["push_recent_file"]
     ctx.open_file_by_path = file_cbs["open_file_by_path"]
+
+    # 跨文件"打开后跳转"：供侧边栏跨文件搜索结果点击调用。
+    # 内部转调 open_file_by_path(path, jump_to=(li, off))，由 pending_jump 机制处理时序。
+    def _open_file_and_jump(path: str, li: int, off: int | None = None):
+        ctx.open_file_by_path(path, jump_to=(li, off))
+
+    ctx.open_file_and_jump = _open_file_and_jump
+
     ctx.new_doc = file_cbs["new_doc"]
     ctx.open_doc = file_cbs["open_doc"]
     ctx.open_folder = file_cbs["open_folder"]
@@ -448,6 +465,22 @@ def App():
     ft.use_effect(settings_cbs["mount_picker"], [])
     ft.use_effect(settings_cbs["apply_theme"], [theme_mode])
     ft.use_effect(keyboard_cbs["bind_keyboard"], [])
+
+    # 跨文件"打开后跳转"：消费 pending_jump_ref。
+    # 触发条件：session 变化（切换/打开 tab 重建编辑器）或 pending_jump_sig 变化
+    # （文件已是当前 tab，session 不变）。Flet effect 在子组件渲染后执行，此时
+    # nav_ref.current 已是新的 EditorActions，可安全调用 jump_to_line(li, off)。
+    # 消费即清，避免重复跳转。
+    def _fire_pending_jump():
+        job = pending_jump_ref.current
+        if job is None:
+            return
+        pending_jump_ref.current = None
+        li, off = job
+        # ctx.jump_to_line 已路由到当前焦点视口（diff/拆分/单编辑器统一）
+        ctx.jump_to_line(li, off)
+
+    ft.use_effect(_fire_pending_jump, [session, pending_jump_sig])
 
     # ============ 渲染树 ============
     return build_render(ctx)

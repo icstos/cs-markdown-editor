@@ -51,6 +51,11 @@ DEFAULT_SETTINGS: Settings = {
     "recent_files": [],
     # 工作区文件夹：显式「打开文件夹」后锚定文件树根目录；为 None 时回退到当前文件所在目录
     "workspace_folder": None,
+    # 侧边栏搜索选项（默认全 False，符合"搜索当前文档、不区分大小写"惯例）
+    "search_folder": False,        # 开启时跨文件搜索（沿用文件树根目录）
+    "search_case_sensitive": False,  # 区分大小写
+    "search_whole_word": False,    # 查找整个单词（\b 边界）
+    "search_regex": False,         # 正则表达式
     "shortcuts": {k: dict(v) for k, v in DEFAULT_SHORTCUTS.items()},
 }
 

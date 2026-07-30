@@ -16,11 +16,17 @@
   "export_format": "html",
   "sidebar_open": true,
   "sidebar_panel": "search",
-  "sidebar_width": 422,
+  "sidebar_width": 256,
   "recent_files": [
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\CHANGELOG.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md"
   ],
   "workspace_folder": "C:\\Users\\aigcs\\Desktop\\测试文档",
+  "search_folder": true,
+  "search_case_sensitive": false,
+  "search_whole_word": false,
+  "search_regex": false,
   "shortcuts": {
     "browse": {
       "save": "ctrl+s",

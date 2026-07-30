@@ -374,7 +374,14 @@ def build_scroll(ctx):
         except Exception:
             pass
 
-    def jump_to(li: int):
+    def jump_to(li: int, off: int | None = None):
+        """跳转到指定行（可选精确 offset）。
+
+        off=None 时退化为 off=0（向后兼容大纲 / [toc] / 测试 mock 等仅传 li 的调用方）；
+        off=int 时跳到精确 raw 偏移（侧边栏搜索结果点击关键词位置）。
+        围栏块（CODE/MATH/HR/TOC/TABLE）无法定位 offset，fallback 到浏览态。
+        set_cursor 内部会钳制 off 到 [0, len(raw)]，越界安全。
+        """
         if not (0 <= li < len(ctx.document.lines)):
             return
         line = ctx.document.lines[li]
@@ -382,7 +389,7 @@ def build_scroll(ctx):
             ctx.set_cursor_line(li)
             ctx.set_cursor_li(None)
         else:
-            ctx.set_cursor(li, 0)
+            ctx.set_cursor(li, off if off is not None else 0)
         # 跳转目标行脉冲高亮：置 flash_li 触发重渲染，1.2s 后异步清回 -1 淡出
         ctx.set_flash_li(li)
         page = ft.context.page

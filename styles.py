@@ -55,6 +55,9 @@ class Colors:
     border: str
     highlight_bg: str = "#FFF3BF"  # ==高亮== 背景
     supsub_fg: str = "#8A919E"  # 上下标文字色
+    # 搜索匹配段高亮（区别于 ==高亮== 语法，独立 token 便于单独调色）
+    search_match_bg: str = "#FFE082"  # 搜索匹配段背景（亮黄）
+    search_match_fg: str = "#1F2329"  # 搜索匹配段文字
     heading_colors: dict[int, str] = field(default_factory=dict)
     # diff 对比配色（GitHub 风格绿增红删）
     diff_add_bg: str = "#e6ffed"       # 新增行背景
@@ -114,6 +117,8 @@ _DARK = Colors(
     toolbar_bg="#161B22",
     border="#30363D",
     highlight_bg="#4D3E00",  # 暗琥珀高亮
+    search_match_bg="#5D4E1A",  # 暗琥珀搜索匹配（与 highlight_bg 同色系）
+    search_match_fg="#E6EDF3",
     supsub_fg="#B0B8C1",
     diff_add_bg="#1a2e22",       # 暗色新增行背景
     diff_del_bg="#2e1a1d",       # 暗色删除行背景

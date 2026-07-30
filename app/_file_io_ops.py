@@ -55,19 +55,33 @@ def build_file_io_ops(ctx):
         recent = recent[:10]
         ctx.update_setting("recent_files", recent)
 
-    def open_file_by_path(path: str):
+    def open_file_by_path(
+        path: str,
+        jump_to: tuple[int, int | None] | None = None,
+    ):
         """从绝对路径打开文件（供侧边栏文件树点击与 open_doc 复用）。
 
         - 该路径已打开过 → 切换到对应标签，不重复开
         - 当前标签为空白未命名 → 复用该标签加载
         - 否则 → 追加新标签并激活
+
+        jump_to=(li, off) 非空时，打开后跳转到指定行 offset（侧边栏跨文件搜索结果点击）。
+        时序：open 触发 session 变化重建 MarkdownEditor，EditorActions 写入 nav_ref 后，
+        _fire_pending_jump effect 消费 pending_jump_ref 调用 jump_to_line(li, off)。
+        文件已是当前 tab 时 session 不变，靠 pending_jump_sig 递增触发 effect。
         """
+        # 先登记 pending jump（无论后续 session 是否变化，effect 都会触发）
+        if jump_to is not None:
+            ctx.pending_jump_ref.current = jump_to
+            ctx.set_pending_jump_sig(ctx.pending_jump_sig + 1)
+
         # 已在某普通编辑标签打开：直接切换（对比标签不算重复打开）
         for i, t in enumerate(ctx.tabs):
             if t.get("file_path") == path:
                 if i != ctx.active_index:
                     ctx.set_active_index(i)
                     ctx.set_session(ctx.session + 1)
+                # 同 tab 也需触发 jump —— pending_jump_sig 已递增，effect 会跑
                 return
         try:
             text = read_text(path)

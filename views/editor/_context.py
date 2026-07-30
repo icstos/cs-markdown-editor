@@ -170,7 +170,7 @@ class EditorContext:
     move_vline: Callable[[int, int], None] = field(default=lambda *a: None)
     page_up: Callable[[], None] = field(default=lambda: None)
     page_down: Callable[[], None] = field(default=lambda: None)
-    jump_to: Callable[[int], None] = field(default=lambda *a: None)
+    jump_to: Callable[[int, int | None], None] = field(default=lambda *a: None)
     cursor_vline_info: Callable[..., Any] = field(default=lambda *a: None)
     get_line_visual_lines: Callable[..., Any] = field(default=lambda *a: None)
 

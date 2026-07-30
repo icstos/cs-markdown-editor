@@ -119,6 +119,14 @@ class AppContext:
     # file_io_ops 组
     push_recent_file: Callable = field(default=lambda *a: None)
     open_file_by_path: Callable = field(default=lambda *a: None)
+    # 跨文件"打开后跳转"：open_file_by_path(path, jump_to=(li, off)) 写入 pending_jump_ref，
+    # session/pending_jump_sig 变化时 _fire_pending_jump effect 消费并调用 jump_to_line(li, off)。
+    # 解决 EditorActions 重建时序：open 触发 session++ 重建 MarkdownEditor，子组件先于父 effect
+    # 渲染，nav_ref.current 已就位。
+    pending_jump_ref: Any = field(default=None)  # ft.Ref[(li, off) | None]
+    pending_jump_sig: int = field(default=0)
+    set_pending_jump_sig: Callable = field(default=lambda *a: None)
+    open_file_and_jump: Callable = field(default=lambda *a: None)
     new_doc: Callable = field(default=lambda: None)
     open_doc: Callable = field(default=lambda: None)
     open_folder: Callable = field(default=lambda: None)

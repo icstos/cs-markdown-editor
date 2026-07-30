@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover
     DataTable2 = ft.DataTable
 
 from models import BlockType, Line
+import parser
 from styles import (
     FONT_MAIN,
     FONT_MONO,
@@ -30,6 +31,7 @@ from styles import (
     card_shadow,
 )
 from utils.table_helpers import ALIGN_RE
+from views.segment_view import segment_to_span
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +87,25 @@ def _normalize_rows(rows: list[list[str]]) -> list[list[str]]:
 
 def _cell_text(cell: str) -> str:
     return cell.strip() or "\u00A0"  # 不换行空格：确保空单元格有可测量宽度
+
+
+def _render_cell_spans(cell_text: str, base_size: int = 14) -> list[ft.TextSpan]:
+    """把单元格文本解析为行内 markdown 并渲染为 TextSpan 列表（Typora 式）。
+
+    复用 parse_inline + segment_to_span：**bold** *italic* `code` ~~strike~~
+    ==hl== [link](url) 等行内语法正确渲染样式，标记折叠仅显示内容文本。
+    - 链接段保留 on_click 打开 URL（DataCell.on_tap 不冲突：TextSpan 点击优先）
+    - 其余段不绑定点击（on_activate=None），由 DataCell.on_tap 进入编辑
+    - 空单元格返回单个不换行空格 span，确保空格可点击进入编辑
+    """
+    text = cell_text.strip()
+    if not text:
+        return [ft.TextSpan(text="\u00A0", style=ft.TextStyle(size=base_size))]
+    segs = parser.parse_inline(text)
+    spans: list[ft.TextSpan] = []
+    for i, seg in enumerate(segs):
+        spans.append(segment_to_span(seg, i, on_activate=None, base_size=base_size))
+    return spans or [ft.TextSpan(text=text, style=ft.TextStyle(size=base_size))]
 
 
 def _safe_color(color: str, opacity: float) -> str:
@@ -610,7 +631,11 @@ def TableView(
             else:
                 inner = ft.Container(
                     content=ft.Text(
-                        value=_cell_text(row[ci]),
+                        # 行内 markdown 渲染：**bold** *italic* `code` ~~strike~~
+                        # ==hl== [link](url) 等语法渲染为带样式 TextSpan，标记折叠
+                        # 仅显示内容（Typora 式）。外层 style 作为基础样式兜底，
+                        # segment_style 对 TEXT 段仅设 size+color，font_family 由此继承。
+                        spans=_render_cell_spans(row[ci], base_size=14),
                         style=ft.TextStyle(
                             font_family=FONT_MAIN, color=c.text, size=14,
                         ),

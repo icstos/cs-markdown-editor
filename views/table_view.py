@@ -519,7 +519,7 @@ def TableView(
                     filled=True,
                     fill_color=_safe_color(c.link, 0.10),
                     dense=True,
-                    content_padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                    content_padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                     text_style=ft.TextStyle(
                         font_family=FONT_MAIN, color=c.text, size=14,
                         weight=ft.FontWeight.W_600,
@@ -561,7 +561,7 @@ def TableView(
                     spacing=4,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                padding=ft.Padding.symmetric(vertical=8, horizontal=8),
+                padding=ft.Padding.symmetric(vertical=6, horizontal=8),
                 border_radius=6,
             )
             label = ft.ContextMenu(
@@ -591,7 +591,7 @@ def TableView(
                         filled=True,
                         fill_color=_safe_color(c.link, 0.10),
                         dense=True,
-                        content_padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                        content_padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                         text_style=ft.TextStyle(
                             font_family=FONT_MAIN, color=c.text, size=14,
                         ),
@@ -623,7 +623,7 @@ def TableView(
                     # 仅靠 text_align 数据行永远左对齐（表头用 Row+expand=True
                     # 能生效，数据行无 Row 需通过 Container.alignment 补齐）。
                     alignment=_align_container(aligns[ci]),
-                    padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                     border_radius=6,
                 )
                 # 用 DataCell.on_tap 而非 GestureDetector 包裹：DataCell 的 on_tap
@@ -652,6 +652,8 @@ def TableView(
         )
 
     # ---- 工具栏 ----
+    # visual_density=COMPACT 收缩 Material 默认最小触摸目标（TextButton ~36px → ~28px），
+    # 配合 padding 垂直 2px 让工具栏行高与 Dropdown(28) 对齐，整体顶部操作区紧凑。
     def _tb_btn(label: str, on_click, icon: str | None = None, tooltip: str = ""):
         ctrl = ft.TextButton(
             label,
@@ -662,28 +664,36 @@ def TableView(
                 text_style=ft.TextStyle(size=12, color=c.text),
                 padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                 bgcolor=ft.Colors.TRANSPARENT,
+                visual_density=ft.VisualDensity.COMPACT,
             ),
         )
         return ctrl
 
     current_align = aligns[sel_ci] if sel_ci < len(aligns) else "left"
-    align_dropdown = ft.Dropdown(
-        value=current_align,
-        options=[
-            ft.DropdownOption(key="left", text="左对齐"),
-            ft.DropdownOption(key="center", text="居中"),
-            ft.DropdownOption(key="right", text="右对齐"),
-        ],
-        width=88,
-        text_size=12,
-        dense=True,
-        content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
-        border=ft.InputBorder.NONE,
-        fill_color=ft.Colors.TRANSPARENT,
-        on_select=lambda e: (
-            _do_set_align(e.control.value)
-            if e.control.value is not None else None
+    # 对齐下拉框：dense + content_padding 自然紧凑，不强制 height 避免
+    # InputDecorator 内容被挤压偏下。外层 Container 包一层确保在 Row 中
+    # 垂直居中（CrossAxisAlignment.CENTER 对齐 Row baseline），bgcolor
+    # 保持透明，不影响视觉。
+    align_dropdown = ft.Container(
+        content=ft.Dropdown(
+            value=current_align,
+            options=[
+                ft.DropdownOption(key="left", text="左对齐"),
+                ft.DropdownOption(key="center", text="居中"),
+                ft.DropdownOption(key="right", text="右对齐"),
+            ],
+            width=88,
+            text_size=12,
+            dense=True,
+            content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
+            border=ft.InputBorder.NONE,
+            fill_color=ft.Colors.TRANSPARENT,
+            on_select=lambda e: (
+                _do_set_align(e.control.value)
+                if e.control.value is not None else None
+            ),
         ),
+        alignment=ft.Alignment.CENTER_LEFT,
     )
 
     toolbar = ft.Row(
@@ -714,8 +724,8 @@ def TableView(
         rows=data_rows,
         column_spacing=12,
         horizontal_margin=8,
-        data_row_height=48,
-        heading_row_height=44,
+        data_row_height=40,
+        heading_row_height=36,
         divider_thickness=1,
         horizontal_lines=ft.BorderSide(1, _safe_color(c.border, 0.08)),
         vertical_lines=ft.BorderSide(1, _safe_color(c.border, 0.06)),
@@ -745,13 +755,15 @@ def TableView(
     container_border = _safe_color(c.border, 0.08)
 
     # is_current_line 高亮
+    # 顶部操作区紧凑：移除工具栏与表格间的固定间隔器（Column spacing=0 即贴合），
+    # 外层垂直 padding 由 Spacing.LG(8) 收紧至 Spacing.SM(4)，整体顶部高度更紧凑。
     content = ft.Container(
         content=ft.Column(
-            controls=[toolbar, ft.Container(height=Spacing.SM), table],
+            controls=[toolbar, table],
             spacing=0,
         ),
         width=float("inf"),
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.LG),
+        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.XS),
         bgcolor=container_bg,
         border_radius=Radius.XXL,
         border=ft.Border.all(1, container_border),

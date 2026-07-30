@@ -12,7 +12,15 @@ from collections.abc import Callable
 
 import flet as ft
 
-from styles import FONT_MAIN, Elevation, Radius, Spacing, card_shadow, get_colors, only_border
+from styles import (
+    FONT_MAIN,
+    Elevation,
+    Radius,
+    Spacing,
+    card_shadow,
+    get_colors,
+    only_border,
+)
 
 # 危险操作（删除）的确认按钮红色
 _DANGER_COLOR = "#E5484D"
@@ -94,7 +102,9 @@ def FileActionDialog(
                     font_family=FONT_MAIN,
                     max_lines=2,
                     overflow=ft.TextOverflow.ELLIPSIS,
-                ) if location_hint else ft.Container(height=0),
+                )
+                if location_hint
+                else ft.Container(height=0),
                 ft.Container(height=Spacing.SM),
                 ft.TextField(
                     value=text_value,

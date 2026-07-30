@@ -115,6 +115,7 @@ class AppContext:
     open_file_by_path: Callable = field(default=lambda *a: None)
     new_doc: Callable = field(default=lambda: None)
     open_doc: Callable = field(default=lambda: None)
+    open_folder: Callable = field(default=lambda: None)
     save_doc: Callable = field(default=lambda *a: None)
     export_doc: Callable = field(default=lambda: None)
 

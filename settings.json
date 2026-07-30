@@ -1,9 +1,9 @@
 {
-  "content_max_width": 960,
+  "content_max_width": 1080,
   "content_padding": 36,
   "content_padding_top": 24,
   "show_footer": true,
-  "body_font_size": 14,
+  "body_font_size": 16,
   "line_height": 1.6,
   "font_family": "Alibaba",
   "auto_save": false,
@@ -15,17 +15,10 @@
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
-  "sidebar_panel": "outline",
-  "sidebar_width": 181,
-  "recent_files": [
-    "C:\\Users\\aigcs\\CSTOS\\projects\\Tools\\cs-markdown-editor\\优化说明.md",
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\README.md",
-    "C:\\Users\\aigcs\\CSTOS\\projects\\Tools\\cs-markdown-editor\\重构架构说明书.md",
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md",
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\Untitled.md",
-    "C:\\Users\\aigcs\\Desktop\\README.md"
-  ],
+  "sidebar_panel": "search",
+  "sidebar_width": 256,
+  "recent_files": [],
+  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-35\\test_open_folder_atomic_merge_0\\workspace",
   "shortcuts": {
     "browse": {
       "save": "ctrl+s",

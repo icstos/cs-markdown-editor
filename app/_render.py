@@ -103,6 +103,7 @@ def build_render(ctx) -> ft.Control:
             on_jump_to_line=ctx.jump_to_line,
             on_width_change=ctx.change_sidebar_width,
             on_file_context_action=ctx.on_sidebar_context_action,
+            on_close_folder=lambda: ctx.update_setting("workspace_folder", None),
             compare_source=ctx.compare_source,
         ),
     )
@@ -114,6 +115,7 @@ def build_render(ctx) -> ft.Control:
         "file_path": ctx.file_path,
         "on_new": ctx.new_doc,
         "on_open": lambda: ctx.page_ref.current.run_task(ctx.open_doc),
+        "on_open_folder": lambda: ctx.page_ref.current.run_task(ctx.open_folder),
         "on_save": lambda: ctx.page_ref.current.run_task(ctx.save_doc),
         "on_export": lambda: ctx.page_ref.current.run_task(ctx.export_doc),
         "on_dirty_change": ctx.on_dirty_change,
@@ -297,6 +299,7 @@ def _build_diff_area(ctx, sidebar_open: bool) -> ft.Control:
     _diff_common = {
         "on_new": ctx.new_doc,
         "on_open": lambda: ctx.page_ref.current.run_task(ctx.open_doc),
+        "on_open_folder": lambda: ctx.page_ref.current.run_task(ctx.open_folder),
         "on_export": lambda: ctx.page_ref.current.run_task(ctx.export_doc),
         "clipboard_ref": ctx.clipboard_holder,
         "theme_mode": ctx.theme_mode,

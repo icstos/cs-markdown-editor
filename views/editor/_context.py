@@ -40,6 +40,7 @@ class EditorContext:
     file_path: str | None
     on_new: Callable[[], None] | None
     on_open: Callable[[], None] | None
+    on_open_folder: Callable[[], None] | None
     on_save: Callable[[], None] | None
     on_export: Callable[[], None] | None
     on_dirty_change: Callable[[bool], None] | None

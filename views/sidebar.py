@@ -1,7 +1,10 @@
 """左侧侧边栏：文件 / 大纲 / 搜索三面板。
 
-- 文件面板：当前打开文件所在目录的 .md/.markdown 文件树 + 搜索过滤；
-  无 file_path 时显示最近文件列表（来自 settings.recent_files）。
+- 文件面板：.md/.markdown 文件树 + 搜索过滤。根目录优先级：
+  settings.workspace_folder（显式「打开文件夹」锚定的工作区）>
+  当前打开文件所在目录 > 最近文件列表（settings.recent_files）。
+  工作区模式下打开子目录文件时文件树仍以工作区根排布，不随当前文件目录漂移；
+  顶部显示文件夹名头与关闭按钮，并在树中高亮当前打开的文件。
 - 大纲面板：从 document.lines 派生标题树，点击跳转到对应行。
 - 搜索面板：当前文档内行级子串匹配，点击跳转。
 
@@ -282,13 +285,18 @@ def _list_item(
     c,
     on_click: Callable | None = None,
     indent: int = Spacing.XL,
+    active: bool = False,
 ) -> ft.Control:
-    """通用列表项：左侧缩进、hover ink 反馈。"""
+    """通用列表项：左侧缩进、hover ink 反馈。
+
+    active=True 时以主题色半透明背景高亮（用于标记当前打开的文件）。
+    """
     return ft.Container(
         content=content,
         padding=ft.Padding.only(left=indent, top=Spacing.SM, bottom=Spacing.SM, right=Spacing.LG),
         on_click=on_click,
         ink=True,
+        bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
         border_radius=Radius.LG,
     )
 
@@ -311,22 +319,50 @@ def _outline_color_bar(level: int, c) -> ft.Control:
 # ---- 面板渲染 ----
 
 
+def _resolve_files_root(
+    workspace_folder: str | None, file_path: str | None
+) -> tuple[str | None, str | None, bool]:
+    """计算文件面板根目录与展示标签。
+
+    优先级：workspace_folder（显式「打开文件夹」锚定的工作区，须为现存目录）>
+    当前文件所在目录 > None（最近文件列表）。
+
+    返回 (root_dir, root_label, is_workspace)：
+    - 工作区模式：root_label 为文件夹名，is_workspace=True
+    - 文件目录模式：root_label=None，is_workspace=False
+    - 无根：root_dir=None，is_workspace=False
+    """
+    if workspace_folder and os.path.isdir(workspace_folder):
+        return workspace_folder, os.path.basename(workspace_folder) or workspace_folder, True
+    if file_path:
+        return os.path.dirname(file_path), None, False
+    return None, None, False
+
+
 def _render_files_panel(
     file_path: str | None,
     recent_files: list[str],
+    workspace_folder: str | None,
     file_filter: str,
     set_file_filter: Callable[[str], None],
     on_open_file: Callable[[str], None],
     on_file_context_action: Callable[[str, str], None],
+    on_close_folder: Callable[[], None] | None,
     c,
     compare_source: str | None = None,
 ) -> ft.Control:
-    """文件面板：有 file_path 显示目录树+过滤；否则显示最近文件列表。
+    """文件面板：有根目录显示文件树+过滤；否则显示最近文件列表。
+
+    根目录优先级：workspace_folder（显式「打开文件夹」锚定的工作区）>
+    当前文件所在目录。工作区模式下打开子目录文件时，文件树仍以工作区
+    根排布，不随当前文件目录漂移。工作区模式下顶部显示文件夹名头与
+    关闭按钮，并在树中高亮当前打开的文件。
 
     每个文件/文件夹项包裹 ft.ContextMenu，右键提供完整文件操作菜单。
     compare_source 非空时，文件项的右键菜单显示「与已选项目进行比较」。
     """
-    root_dir = os.path.dirname(file_path) if file_path else None
+    # 根目录优先级：工作区文件夹 > 当前文件所在目录 > None
+    root_dir, root_label, is_workspace = _resolve_files_root(workspace_folder, file_path)
 
     # 无根目录：最近文件列表
     if not root_dir:
@@ -391,6 +427,9 @@ def _render_files_panel(
     filtered = _filter_tree(full_tree, file_filter)
     flat = _flatten_tree(filtered, root_dir=root_dir)
 
+    # 当前打开文件绝对路径（用于高亮活动文件行）
+    active_abs = os.path.abspath(file_path) if file_path else None
+
     if not flat:
         body: ft.Control = _empty_hint(
             "无匹配文件" if file_filter.strip() else "该目录下无 Markdown 文件",
@@ -400,6 +439,12 @@ def _render_files_panel(
         rows = []
         for kind, name, abspath, depth in flat:
             indent = depth * 14 + Spacing.XL
+            is_active = (
+                kind == "file"
+                and active_abs is not None
+                and abspath is not None
+                and os.path.abspath(abspath) == active_abs
+            )
             if kind == "file":
                 rows.append(
                     _wrap_context_menu(
@@ -409,13 +454,14 @@ def _render_files_panel(
                                     ft.Icon(
                                         ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
                                         size=13,
-                                        color=c.muted,
+                                        color=c.link if is_active else c.muted,
                                     ),
                                     ft.Text(
                                         name,
                                         size=12,
                                         color=c.text,
                                         font_family=FONT_MAIN,
+                                        weight=ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL,
                                         max_lines=1,
                                         overflow=ft.TextOverflow.ELLIPSIS,
                                         expand=True,
@@ -426,6 +472,7 @@ def _render_files_panel(
                             c,
                             on_click=lambda e, p=abspath: on_open_file(p),
                             indent=indent,
+                            active=is_active,
                         ),
                         abspath or "",
                         is_dir=False,
@@ -468,8 +515,45 @@ def _render_files_panel(
             content=ft.Column(controls=rows, spacing=0, scroll=ft.ScrollMode.AUTO),
         )
 
+    # 工作区模式：顶部文件夹名头 + 关闭按钮（VSCode 风格资源管理器标题栏）
+    header_controls: list = []
+    if is_workspace:
+        header_controls.append(
+            ft.Container(
+                padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.FOLDER_OPEN, size=14, color=c.muted),
+                        ft.Text(
+                            root_label,
+                            size=11,
+                            color=c.muted,
+                            font_family=FONT_MAIN,
+                            weight=ft.FontWeight.W_600,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            expand=True,
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE,
+                            tooltip="关闭文件夹",
+                            on_click=lambda e: on_close_folder() if on_close_folder else None,
+                            icon_size=14,
+                            style=ft.ButtonStyle(
+                                color=c.muted,
+                                padding=Spacing.XS,
+                            ),
+                        ),
+                    ],
+                    spacing=Spacing.SM,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            )
+        )
+
     return ft.Column(
         controls=[
+            *header_controls,
             ft.Container(
                 padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
                 content=_search_box(file_filter, set_file_filter, "过滤文件…", c),
@@ -627,13 +711,19 @@ def Sidebar(
     on_jump_to_line: Callable[[int], None],
     on_width_change: Callable[[int], None] | None = None,
     on_file_context_action: Callable[[str, str], None] | None = None,
+    on_close_folder: Callable[[], None] | None = None,
     compare_source: str | None = None,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
+    文件面板根目录优先级：settings.workspace_folder（显式「打开文件夹」锚定的
+    工作区）> 当前文件所在目录 > None（最近文件列表）。工作区模式下打开子目录
+    文件时文件树仍以工作区根排布。
+
     on_file_context_action(action, path)：文件/文件夹右键菜单回调。
     action ∈ {"open","select_for_compare","compare_with_selected","new_file","new_folder",
     "copy_path","reveal","rename","duplicate","delete"}。
+    on_close_folder()：关闭工作区文件夹（清空 workspace_folder，回退到当前文件目录）。
     compare_source 非空时，文件项右键菜单显示「与已选项目进行比较」。
     """
     c = _current_colors()
@@ -652,6 +742,7 @@ def Sidebar(
 
     # 派生数据
     recent_files = settings.get("recent_files", [])
+    workspace_folder = settings.get("workspace_folder")
     toc_entries = _compute_toc(document)
     search_results = _match_lines(document, search_query)
 
@@ -717,10 +808,12 @@ def Sidebar(
         panel: ft.Control = _render_files_panel(
             file_path,
             recent_files,
+            workspace_folder,
             file_filter,
             set_file_filter,
             on_open_file,
             _file_ctx,
+            on_close_folder,
             c,
             compare_source=compare_source,
         )

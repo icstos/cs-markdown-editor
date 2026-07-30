@@ -32,6 +32,7 @@ def ToolArea(
     raw_mode: bool,
     on_new: Callable[[], None],
     on_open: Callable[[], None],
+    on_open_folder: Callable[[], None],
     on_save: Callable[[], None],
     on_open_settings: Callable[[], None],
     set_block: Callable[..., None],
@@ -54,6 +55,7 @@ def ToolArea(
     menu_items = [
         ft.PopupMenuItem(content="新建", on_click=lambda e: on_new()),
         ft.PopupMenuItem(content="打开...", on_click=lambda e: on_open()),
+        ft.PopupMenuItem(content="打开文件夹...", on_click=lambda e: on_open_folder()),
         ft.PopupMenuItem(content="保存", on_click=lambda e: on_save()),
         ft.PopupMenuItem(),
         ft.PopupMenuItem(content="设置", on_click=lambda e: on_open_settings()),

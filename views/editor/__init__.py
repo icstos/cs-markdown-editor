@@ -61,6 +61,7 @@ def MarkdownEditor(
     file_path: str | None = None,
     on_new: Callable[[], None] | None = None,
     on_open: Callable[[], None] | None = None,
+    on_open_folder: Callable[[], None] | None = None,
     on_save: Callable[[], None] | None = None,
     on_export: Callable[[], None] | None = None,
     on_dirty_change: Callable[[bool], None] | None = None,
@@ -197,6 +198,7 @@ def MarkdownEditor(
         file_path=file_path,
         on_new=on_new,
         on_open=on_open,
+        on_open_folder=on_open_folder,
         on_save=on_save,
         on_export=on_export,
         on_dirty_change=on_dirty_change,
@@ -524,6 +526,7 @@ def MarkdownEditor(
     _tool_cb_ref.current = {
         "on_new": on_new or _noop,
         "on_open": on_open or _noop,
+        "on_open_folder": on_open_folder or _noop,
         "on_save": on_save or _noop,
         "on_open_settings": on_open_settings or _noop,
         "set_block": blocks_cbs["set_block"],
@@ -535,7 +538,7 @@ def MarkdownEditor(
         "on_raw_change": raw_mode_cbs["on_raw_change"],
     }
     _TOOL_CB_KEYS = (
-        "on_new", "on_open", "on_save", "on_open_settings",
+        "on_new", "on_open", "on_open_folder", "on_save", "on_open_settings",
         "set_block", "apply_inline_format", "toggle_raw",
         "on_export", "toggle_focus_mode", "on_toggle_theme",
         "on_raw_change",
@@ -565,6 +568,7 @@ def MarkdownEditor(
                     raw_mode=raw_mode,
                     on_new=_tool_stable["on_new"],
                     on_open=_tool_stable["on_open"],
+                    on_open_folder=_tool_stable["on_open_folder"],
                     on_save=_tool_stable["on_save"],
                     on_open_settings=_tool_stable["on_open_settings"],
                     set_block=_tool_stable["set_block"],

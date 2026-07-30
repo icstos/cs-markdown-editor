@@ -1,10 +1,11 @@
 """文件 IO 控制器（从 main.py 闭包抽取）。
 
 闭包组：push_recent_file / open_file_by_path / new_doc / open_doc /
-save_doc / export_doc
+open_folder / save_doc / export_doc
 
 跨组依赖（通过 ctx 装配槽，调用时读取）：
-- settings_controller 组：update_setting（push_recent_file 持久化最近文件）
+- settings_controller 组：update_setting（push_recent_file 持久化最近文件；
+  open_folder 写入 workspace_folder 并展开侧边栏）
 - file_dialogs 组：show_snack（错误/成功提示）
 - tab_management 组：update_active（复用空白标签时不可变更新）
 
@@ -14,19 +15,24 @@ save_doc / export_doc
 - save_doc 返回 bool：用户取消另存对话框或失败时返回 False，供
   save_and_close_pending 中止批量关闭。
 - 文件路径打开时去重：已在某普通编辑标签打开则直接切换，避免重复开。
+- open_folder 锚定工作区根目录（settings.workspace_folder），打开子目录文件时
+  侧边栏文件树仍以工作区根排布，不随当前文件目录漂移。
 
 依赖项：
-- parser（解析/序列化/转 HTML）
+- os / parser（解析/序列化/转 HTML）
 - services.file_io（read_text / write_text）
 - app._tab_helpers（is_blank_untitled）
 - utils.file_helpers（file_name）
 - flet（FilePickerFileType）
 """
 
+import os
+
 import flet as ft
 
 import parser
 from app._tab_helpers import is_blank_untitled
+from config.settings import save_settings
 from services.file_io import read_text, write_text
 from utils.file_helpers import file_name
 
@@ -111,6 +117,35 @@ def build_file_io_ops(ctx):
         if not files:
             return
         open_file_by_path(files[0].path)
+
+    async def open_folder():
+        """打开文件夹作为工作区：锚定侧边栏文件树根目录为该文件夹。
+
+        - 通过 FilePicker.get_directory_path 选择目录
+        - 持久化到 settings.workspace_folder（跨会话保留）
+        - 自动展开侧边栏并切到「文件」面板，确保用户立即看到文件树
+        - 在该文件夹内打开子目录文件时，文件树仍以工作区根为锚点
+          （open_file_by_path 不再改写 workspace_folder）
+
+        单次原子合并：一次性写入 workspace_folder + sidebar_open + sidebar_panel。
+        若分多次调 update_setting，每次基于渲染期快照重建会覆盖前序写入
+        （Flet 批量提交 set_settings，末次值生效），故此处直接合并后单次提交。
+        """
+        picker = ctx.picker_holder.current
+        if picker is None:
+            return
+        folder = await picker.get_directory_path(dialog_title="打开文件夹")
+        if not folder:
+            return
+        # 原子合并：基于最新 ctx.settings 一次性写入三个键
+        next_settings = dict(ctx.settings)
+        next_settings["workspace_folder"] = folder
+        next_settings["sidebar_open"] = True
+        next_settings["sidebar_panel"] = "files"
+        ctx.set_settings(next_settings)
+        save_settings(next_settings)
+        ctx.apply_content_layout()
+        ctx.show_snack(f"已打开文件夹：{os.path.basename(folder) or folder}")
 
     async def save_doc(tab_index: int | None = None) -> bool:
         """保存指定标签（默认激活标签）。返回是否真正保存成功（用户取消另存则 False）。
@@ -229,6 +264,7 @@ def build_file_io_ops(ctx):
         "open_file_by_path": open_file_by_path,
         "new_doc": new_doc,
         "open_doc": open_doc,
+        "open_folder": open_folder,
         "save_doc": save_doc,
         "export_doc": export_doc,
     }

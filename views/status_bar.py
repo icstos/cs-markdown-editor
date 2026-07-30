@@ -3,16 +3,18 @@
 从 main.py 的 _build_footer 抽出，封装为独立组件。显示侧边栏切换、脏标记、
 文件名、光标行列、字数与字符数。
 
-性能设计（命令式局部更新，跳过 set_state 全量重建）：
-- 5 个高频 Text（cursor/word/char/para/reading）各挂 ft.use_ref，由 App 经
-  status_ref 注入命令式更新器 update_cursor / update_counts，直接改 .value
-  + await control.update()，避免光标移动/打字时整棵状态栏重建。
-- 首次渲染 / 切标签 / 切主题 时仍从 document 声明式算初值，保证正确性；
-  其后高频增量由命令式更新器覆盖。
-- 其余低频控件（侧边栏切换、脏标记图标、文件名、换行/拆分开关）保持声明式。
+性能设计（组件内 state 隔离，仅本组件重渲染）：
+- 光标位置 / 字数统计为 StatusBar 内部 use_state，由 App 经 status_ref 注入
+  更新器 update_cursor / update_counts 调用 set_state。更新只触发 StatusBar
+  本组件重渲染（~10 控件重建，微秒级），不波及 App / 编辑器，光标移动 / 打字
+  不会重建编辑器控件树。
+- 切标签 / 打开文件时 use_effect 按 document 身份重置 state，从新文档重算初值。
+- 其余低频控件（侧边栏切换、脏标记图标、文件名、换行/拆分开关）随 props 声明式更新。
+
+注：Flet 0.86 声明式模型渲染后控件被冻结（Frozen controls cannot be updated），
+故不能再用 ref.value=…; ref.update() 命令式改属性，须走 set_state 触发重渲染。
 """
 
-import contextlib
 import os
 import re
 from collections.abc import Awaitable, Callable
@@ -63,52 +65,45 @@ def StatusBar(
 ):
     """底部状态栏。
 
-    cursor_row_col 已移除：光标位置改由 App 经 status_ref 命令式更新器
-    update_cursor(row, col) 实时推送，避免光标移动触发整页重建。
-    字数/字符/段数/阅读时长同理由 update_counts 命令式推送（防抖）。
+    光标位置 / 字数统计为本组件内部 use_state：App 经 status_ref 注入的更新器
+    update_cursor / update_counts 调用 set_state，仅触发本组件重渲染，不波及
+    App / 编辑器（避免光标移动触发编辑器控件树重建）。切标签时 use_effect 按
+    document 身份重置，从新文档重算初值。
     """
     c = get_colors(theme_mode)
 
-    # 高频 Text 控件引用：命令式局部 update 的锚点
-    cursor_text_ref = ft.use_ref(None)
-    word_text_ref = ft.use_ref(None)
-    char_text_ref = ft.use_ref(None)
-    para_text_ref = ft.use_ref(None)
-    reading_text_ref = ft.use_ref(None)
+    # 高频更新状态（仅本组件重渲染）：cursor_pos=(row,col)；counts=None 时从
+    # document 派生初值，tuple 时用命令式更新值。
+    cursor_pos, set_cursor_pos = ft.use_state((1, 1))
+    counts, set_counts = ft.use_state(None)
 
-    # 初值（首屏 / 切标签 / 切主题 声明式渲染保证正确，命令式更新器随后覆盖）
-    word_count, char_count, para_count, reading_min = _compute_counts(document)
+    # document 变化（切标签 / 打开文件）时重置高频状态，从新文档重算初值。
+    # 用 id(document) 作依赖：document 引用变即触发。
+    def _reset_on_doc_change():
+        set_cursor_pos((1, 1))
+        set_counts(None)
+
+    ft.use_effect(_reset_on_doc_change, [id(document)])
+
+    # 字数统计初值：counts=None 从 document 算；否则用命令式更新值
+    if counts is None:
+        word_count, char_count, para_count, reading_min = _compute_counts(document)
+    else:
+        word_count, char_count, para_count, reading_min = counts
+
+    row, col = cursor_pos
     fname = _file_name(file_path)
 
-    # ============ 命令式更新器注册 ============
+    # ============ 更新器注册 ============
     # 注册进 status_ref.current 供 App 调用：update_cursor / update_counts。
-    # 更新器闭包捕获 use_ref 对象（稳定），调用时读 .current 拿最新控件实例，
-    # 故主题切换重建 Text 后仍指向新实例。render 期写入保证 status_ref 始终最新
-    # （同 tabs_ref.current = tabs 的代码库模式）。
+    # 更新器调 set_state（仅本组件重渲染），async 以满足 App 侧 await 契约。
+    # render 期写入保证 status_ref 始终最新（同 tabs_ref.current = tabs 模式）。
     if status_ref is not None:
-        async def _update_cursor(row: int, col: int):
-            ref = cursor_text_ref.current
-            if ref is None:
-                return
-            ref.value = f"行 {row}  列 {col}"
-            with contextlib.suppress(Exception):
-                await ref.update()
+        async def _update_cursor(r: int, cc: int):
+            set_cursor_pos((r, cc))
 
         async def _update_counts(w: int, ch: int, pa: int, rm: int):
-            for ref, val in (
-                (word_text_ref.current, f"{w} 词"),
-                (char_text_ref.current, f"{ch} 字符"),
-                (para_text_ref.current, f"{pa} 段"),
-                (reading_text_ref.current, f"阅读 {rm} min" if rm > 0 else "阅读 0 min"),
-            ):
-                if ref is not None:
-                    ref.value = val
-            # 4 个控件一次性 patch（逐个 await update）
-            for ref in (word_text_ref, char_text_ref, para_text_ref, reading_text_ref):
-                ctrl = ref.current
-                if ctrl is not None:
-                    with contextlib.suppress(Exception):
-                        await ctrl.update()
+            set_counts((w, ch, pa, rm))
 
         status_ref.current = _StatusBarUpdaters(_update_cursor, _update_counts)
 
@@ -143,11 +138,10 @@ def StatusBar(
                 ),
                 ft.Container(expand=True),
                 ft.Text(
-                    value="行 1  列 1",
+                    value=f"行 {row}  列 {col}",
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,
-                    ref=cursor_text_ref,
                 ),
                 ft.Container(width=Spacing.XXL),
                 ft.Container(
@@ -183,7 +177,6 @@ def StatusBar(
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,
-                    ref=para_text_ref,
                 ),
                 ft.Container(width=Spacing.XXL),
                 ft.Text(
@@ -191,7 +184,6 @@ def StatusBar(
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,
-                    ref=word_text_ref,
                 ),
                 ft.Container(width=Spacing.XL),
                 ft.Text(
@@ -199,7 +191,6 @@ def StatusBar(
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,
-                    ref=char_text_ref,
                 ),
                 ft.Container(width=Spacing.XL),
                 ft.Text(
@@ -207,7 +198,6 @@ def StatusBar(
                     size=12,
                     color=c.muted,
                     font_family=FONT_MAIN,
-                    ref=reading_text_ref,
                 ),
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -216,10 +206,11 @@ def StatusBar(
 
 
 class _StatusBarUpdaters:
-    """状态栏命令式更新器容器，写入 status_ref.current 供 App 调用。
+    """状态栏更新器容器，写入 status_ref.current 供 App 调用。
 
     update_cursor(row, col) / update_counts(word, char, para, reading) 均为
-    async：直接改 Text.value + await control.update()，跳过 set_state 全量重建。
+    async：调 set_state 触发仅本组件重渲染（不波及 App / 编辑器）。async 以
+    满足 App 侧 await 契约。
     """
 
     __slots__ = ("update_cursor", "update_counts")

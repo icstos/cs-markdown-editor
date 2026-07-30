@@ -465,8 +465,10 @@ def MarkdownEditor(
 
     ft.use_effect(_report_cursor, [cursor_li, cursor_off, cursor_line, nav_seq])
 
-    # ============ use_effect：清空 cursor TextField 内部 value ============
-    ft.use_effect(focus_cbs["clear_cursor_value"], [clear_value_seq])
+    # cursor TextField value 清空：已改由 _end_input_session 递增 nav_seq 重建控件
+    # 实现（key 含 nav_seq → 新控件 value=""）。原 use_effect([clear_value_seq])
+    # → _clear_cursor_value 的 ref.value=""; ref.update() 命令式清空在 Flet 0.86
+    # 声明式模型下控件冻结会抛异常（虽 suppress 不崩但清空失效），故移除。
 
     # ============ use_effect：聚焦公式 TextField ============
     ft.use_effect(focus_cbs["focus_math_field"], [math_focus_li])

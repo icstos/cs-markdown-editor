@@ -220,7 +220,8 @@ def build_inline_format(ctx):
         ctx.set_cursor(a_li, a_off + len(char))
         # 不递增 nav_seq：避免 TextField 重建→异步重新聚焦间隙丢失后续快速输入。
         # cursor_li 由 _set_cursor 设置，LineView 据其重渲染刷新 TextField 的 left/on_change；
-        # 旧 value 由 _end_input_session→_clear_cursor_value effect 清空。
+        # 旧 value 由 _end_input_session 递增 nav_seq 重建 cursor TextField 清空
+        # （key 含 nav_seq → 新控件 value="" 天然清空，无需命令式 ref.value=""）。
 
     return {
         "apply_inline_format": apply_inline_format,

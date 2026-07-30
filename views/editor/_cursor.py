@@ -51,13 +51,23 @@ def build_cursor(ctx):
         return base
 
     def _end_input_session():
-        """结束 IME 输入会话：同步 cursor_off + 重置状态 + 触发清空 value。"""
+        """结束 IME 输入会话：同步 cursor_off + 重置状态 + 重建 cursor TextField 清空 value。
+
+        Flet 0.86 声明式模型渲染后控件冻结，不能再用 ref.value=""; ref.update()
+        命令式清空（会抛 Frozen controls cannot be updated）。改为递增 nav_seq：
+        cursor TextField 的 key 含 nav_seq，key 变即重建控件，新控件 value=""
+        天然清空，避免旧 value 残留导致下次输入插入陈旧文本。重建后由
+        use_effect([cursor_li, nav_seq, focus_seq]) → focus_cursor_field 重聚焦。
+        仅在确有活动会话时递增（无会话的浏览态切换不重建，减少无效重建）。
+        """
         state = ctx.input_session_ref.current
-        if state["li"] >= 0 and state["start_off"] >= 0:
+        had_session = state["li"] >= 0 and state["start_off"] >= 0
+        if had_session:
             ctx.set_cursor_off(state["start_off"] + len(state["last_value"]))
             ctx.set_cursor_line(state["li"])
         ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
-        ctx.set_clear_value_seq(ctx.clear_value_seq + 1)
+        if had_session:
+            ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def _set_cursor(li: int | None, off: int = 0, *, clear_preferred: bool = True):
         """设置光标位置：cursor_li + cursor_off（不递增 nav_seq 以保 IME 组合态）。"""

@@ -78,10 +78,14 @@ def build_focus(ctx):
         return cache.get(li, 0.0) > 0
 
     async def _clear_cursor_value():
-        if ctx.cursor_field_ref.current is not None:
-            with contextlib.suppress(Exception):
-                ctx.cursor_field_ref.current.value = ""
-                await ctx.cursor_field_ref.current.update()
+        """已废弃（no-op）：保留仅为兼容 ctx.clear_cursor_value 装配槽接口。
+
+        cursor TextField value 清空已改由 _end_input_session 递增 nav_seq 重建控件
+        实现（key 含 nav_seq → 新控件 value="" 天然清空）。原 ref.value="";
+        ref.update() 命令式清空在 Flet 0.86 声明式模型下控件冻结会抛
+        Frozen controls cannot be updated，故移除实现体。
+        """
+        pass
 
     async def _focus_math_field():
         if ctx.math_focus_li is not None and ctx.math_field_ref.current is not None:

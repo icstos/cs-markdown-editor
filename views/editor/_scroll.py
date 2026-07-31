@@ -159,9 +159,12 @@ def build_scroll(ctx):
             code_lines = max(1, code.count("\n") + 1)
             # 头部工具栏(~28) + 代码行(14×line_height) + 容器 padding(~12)
             return 28 + code_lines * 14 * ctx.line_height + 12
-        # 围栏块（MATH/HR/TOC/TABLE）：占位单行高（实际高度由原生控件决定）
-        if line.block_type in (BlockType.MATH, BlockType.HR, BlockType.TOC, BlockType.TABLE):
+        # 围栏块（MATH/TOC/TABLE）：占位单行高（实际高度由原生控件决定）
+        if line.block_type in (BlockType.MATH, BlockType.TOC, BlockType.TABLE):
             return base * ctx.line_height + 4
+        # HR 行：padding 8+8（与 _block_padding 一致），单视觉行文本 + 上下间距
+        if line.block_type == BlockType.HR:
+            return base * ctx.line_height + 16
         # 普通行：估算视觉行数（软换行）
         # 优先用 LineLayoutCache 的精确视觉行数
         layout_cache = ctx.layout_cache_ref.current

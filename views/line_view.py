@@ -196,10 +196,12 @@ def _wrap_block(
                 border=only_border(left=ft.BorderSide(3, color)),
             )
 
+    # HR 行 padding 8+8（与 pixel_layout._block_padding HR 分支一致，保证光标 Y 对齐）
+    pad_v = Spacing.LG if line.block_type == BlockType.HR else Spacing.XS
     kwargs: dict = {
         "key": f"line-{line_idx}" if line_idx is not None else None,
         "content": content,
-        "padding": ft.Padding.only(left=pad_left, top=Spacing.XS, bottom=Spacing.XS),
+        "padding": ft.Padding.only(left=pad_left, top=pad_v, bottom=pad_v),
         "margin": ft.Margin.all(0),
         "ink": False,
     }
@@ -570,18 +572,26 @@ def LineView(
             diff_mark=diff_mark,
         )
 
-    # ============ 分隔线 HR（视图态）============
-    if line.block_type == BlockType.HR:
+    # ============ 分隔线 HR（Typora 式 WYSIWYG：浏览态横线，激活态 fall through 显示源码）============
+    if line.block_type == BlockType.HR and not is_active:
         content = ft.Container(
-            content=ft.Divider(height=1, thickness=1, color=c.quote_bar),
+            content=ft.Container(
+                height=1,
+                bgcolor=ft.Colors.with_opacity(0.25, c.muted),
+                border_radius=0.5,
+                width=float("inf"),
+            ),
             padding=ft.Padding.symmetric(vertical=Spacing.LG),
+            alignment=ft.Alignment.CENTER,
             ink=True,
+            on_click=lambda e, raw=line.raw: on_tap(line_idx, len(raw) if raw else 0) if on_tap else None,
         )
         return _wrap_block(
             content, line, base, line_idx,
             is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
             diff_mark=diff_mark,
         )
+    # HR 激活态：fall through 到下方普通文本路径（显示 --- 源码 + 光标，可编辑）
 
     # ============ 目录 [toc] ============
     if line.block_type == BlockType.TOC:

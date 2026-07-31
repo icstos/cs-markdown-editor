@@ -312,6 +312,19 @@ def raw_to_visible_spans(
                     )
         else:
             base_style = segment_style(seg, base_size)
+            # HR 激活态：---/***/___ 整体为语法标记，显示为 muted 灰色
+            # （Typora 式语法字符淡化，与 # - > 前缀灰色设计语言一致；
+            # 仅此渲染路径生效，浏览态走 line_view 横线分支不调用本函数）
+            if line.block_type == BlockType.HR:
+                base_style = ft.TextStyle(
+                    size=base_style.size,
+                    weight=base_style.weight,
+                    color=c.muted,
+                    italic=base_style.italic,
+                    font_family=base_style.font_family,
+                    decoration=base_style.decoration,
+                    bgcolor=base_style.bgcolor,
+                )
             # 标题级别覆盖（颜色/字重）
             if heading_level > 0:
                 is_strong = seg.seg_type == SegType.STRONG or SegType.STRONG in (seg.marks or ())

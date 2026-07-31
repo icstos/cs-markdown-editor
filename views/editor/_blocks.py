@@ -120,7 +120,11 @@ def build_blocks(ctx):
             ctx.math_edit_changed.current = False
             ctx.math_focus_ref.current = li
             ctx.set_math_focus_li(li)
-        elif block_type in (BlockType.HR, BlockType.TOC):
+        elif block_type == BlockType.HR:
+            # HR 创建后进入编辑态，光标在 --- 末尾（Typora 式：插入即可编辑）
+            ctx.set_cursor_line(li)
+            ctx.set_cursor(li, len(new_raw))
+        elif block_type == BlockType.TOC:
             ctx.set_cursor_line(li)
             ctx.set_cursor_li(None)
         else:

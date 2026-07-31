@@ -305,6 +305,17 @@ def build_cursor(ctx):
         if _is_fence(line):
             return
         off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
+        # HR 行行首 Backspace：删除 HR 转为空段落（不合并 --- 到前一行，Typora 式）
+        if line.block_type == BlockType.HR and off == 0:
+            ctx.push_history()
+            ctx.undo_push_pending.current = True
+            new_line = parser.parse_markdown("").lines[0]
+            ctx.document.lines[li] = new_line
+            ctx.document.notify()
+            ctx.mark_dirty()
+            ctx.suppress_blur.current = True
+            ctx.set_cursor(li, 0)
+            return
         if off > 0:
             raw = _line_raw(line)
             ctx.push_line_edit(li, raw)
@@ -346,6 +357,17 @@ def build_cursor(ctx):
             return
         raw = _line_raw(line)
         off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
+        # HR 行行尾 Delete：删除 HR 转为空段落（不合并下一行，Typora 式）
+        if line.block_type == BlockType.HR and off >= len(raw):
+            ctx.push_history()
+            ctx.undo_push_pending.current = True
+            new_line = parser.parse_markdown("").lines[0]
+            ctx.document.lines[li] = new_line
+            ctx.document.notify()
+            ctx.mark_dirty()
+            ctx.suppress_blur.current = True
+            ctx.set_cursor(li, 0)
+            return
         if off < len(raw):
             ctx.push_line_edit(li, raw)
             new_raw = raw[:off] + raw[off + 1:]
@@ -412,6 +434,15 @@ def build_cursor(ctx):
 
         ctx.push_history()
         ctx.undo_push_pending.current = True
+        # HR 行 Enter：在下方插入新空行（不分割 ---，Typora 式）
+        if line.block_type == BlockType.HR:
+            new_line = parser.parse_markdown("").lines[0]
+            ctx.document.lines.insert(li + 1, new_line)
+            ctx.document.notify()
+            ctx.mark_dirty()
+            ctx.suppress_blur.current = True
+            ctx.set_cursor(li + 1, 0)
+            return
         raw = _line_raw(line)
         off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
         off = max(0, min(off, len(raw)))

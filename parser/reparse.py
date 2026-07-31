@@ -24,7 +24,7 @@ import copy
 
 from models import BlockType, Line, SegType, Segment
 
-from parser._engine import _RE_CODE_FENCE, _RE_MATH_BLOCK
+from parser._engine import _RE_CODE_FENCE, _RE_HR, _RE_MATH_BLOCK
 from parser.block import _build_line
 
 
@@ -65,8 +65,10 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
         return
 
     if line.block_type == BlockType.HR:
-        line.segments = [Segment(SegType.TEXT, raw, raw)]
-        return
+        if _RE_HR.match(raw):
+            line.segments = [Segment(SegType.TEXT, raw, raw)]
+            return
+        # 不再匹配 HR 语法：fall through 到普通块重建（变为段落）
 
     if line.block_type == BlockType.MATH:
         m = _RE_MATH_BLOCK.match(raw)
@@ -117,9 +119,11 @@ def reparse_line_atomic(line: Line, new_raw: str) -> None:
         return
 
     if line.block_type == BlockType.HR:
-        object.__setattr__(line, "segments", [Segment(SegType.TEXT, raw, raw)])
-        line.notify()
-        return
+        if _RE_HR.match(raw):
+            object.__setattr__(line, "segments", [Segment(SegType.TEXT, raw, raw)])
+            line.notify()
+            return
+        # 不再匹配 HR 语法：fall through 到普通块重建（变为段落）
 
     if line.block_type == BlockType.MATH:
         m = _RE_MATH_BLOCK.match(raw)

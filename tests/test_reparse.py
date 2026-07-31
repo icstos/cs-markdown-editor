@@ -92,6 +92,42 @@ def test_reparse_hr():
     _assert_reparse_equivalent("---", 0, "***")
 
 
+def test_reparse_hr_to_paragraph():
+    """HR 编辑成非 HR 语法（--）后应 fall through 变为段落。"""
+    _assert_reparse_equivalent("---", 0, "--")
+    doc = parse_markdown("---")
+    reparse_line(doc.lines[0], "--")
+    assert doc.lines[0].block_type.name == "PARAGRAPH"
+
+
+def test_reparse_hr_keeps_longer_marker():
+    """HR 编辑成 ----（4+ 标记）仍保持 HR（_RE_HR 匹配 3+）。"""
+    _assert_reparse_equivalent("---", 0, "----")
+    doc = parse_markdown("---")
+    reparse_line_atomic(doc.lines[0], "----")
+    assert doc.lines[0].block_type.name == "HR"
+
+
+def test_hr_segments_preserve_original_raw():
+    """HR 行 segments 保留原 raw（*** / ___），不强制 ---。"""
+    for raw in ("***", "___"):
+        doc = parse_markdown(raw)
+        line = doc.lines[0]
+        assert line.block_type.name == "HR"
+        assert line.segments[0].raw == raw
+        assert line.raw == raw
+
+
+def test_hr_not_fence():
+    """HR 不再是围栏块（走普通文本路径，可承载光标）。"""
+    from models import BlockType
+    from utils.segment_helpers import FENCE_BLOCK_TYPES, is_fence
+
+    doc = parse_markdown("---")
+    assert not is_fence(doc.lines[0])
+    assert BlockType.HR not in FENCE_BLOCK_TYPES
+
+
 def test_reparse_nested_list_indent():
     _assert_reparse_equivalent("- 一级\n  - 二级", 1, "    - 新二级")
 

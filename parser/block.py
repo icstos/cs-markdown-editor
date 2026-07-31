@@ -148,7 +148,9 @@ def _build_line(raw: str) -> Line:
         return line
 
     if bt == BlockType.HR:
-        line.segments = [Segment(SegType.TEXT, "---", "---")]
+        # 保留原 raw（---/***/___），确保 line.raw == "".join(s.raw)，
+        # 激活态编辑时光标位置与 raw 同步
+        line.segments = [Segment(SegType.TEXT, raw, raw)]
         return line
 
     if bt == BlockType.MATH:

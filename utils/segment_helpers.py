@@ -2,7 +2,7 @@
 
 依赖项：models（SegType / Segment / BlockType）。
 对外接口：
-- FENCE_BLOCK_TYPES：tuple[BlockType]，围栏岛屿块类型（CODE/MATH/HR/TOC/TABLE）
+- FENCE_BLOCK_TYPES：tuple[BlockType]，围栏岛屿块类型（CODE/MATH/TOC/TABLE；HR 走普通文本路径可编辑）
 - PREFIX_SEGTYPES：tuple[SegType]，块级前缀段类型集合
 - MONO_SEGTYPES：tuple[SegType]，等宽字体段类型集合
 - WRAP_SYNTAX：dict[SegType, tuple[str, str]]，包裹型段的开闭标记
@@ -23,18 +23,18 @@ views/_editor_helpers 等无循环依赖复用（editor.py 反向导入）。
 from models import BlockType, Line, Segment, SegType
 
 # 围栏岛屿块类型：自管理独立岛屿，不参与光标导航/合并/软换行
-# （CODE/MATH 走原生控件，HR/TOC/TABLE 为占位单 vline）
+# （CODE/MATH 走原生控件，TOC/TABLE 为占位单 vline；HR 走普通文本路径，可承载
+# 光标编辑——Typora 式 WYSIWYG：浏览态横线、激活态显示 --- 源码）
 FENCE_BLOCK_TYPES: tuple[BlockType, ...] = (
     BlockType.CODE,
     BlockType.MATH,
-    BlockType.HR,
     BlockType.TOC,
     BlockType.TABLE,
 )
 
 
 def is_fence(line: Line) -> bool:
-    """围栏块判断：CODE / MATH / HR / TOC / TABLE。"""
+    """围栏块判断：CODE / MATH / TOC / TABLE（HR 走普通文本路径，可承载光标）。"""
     return line.block_type in FENCE_BLOCK_TYPES
 
 

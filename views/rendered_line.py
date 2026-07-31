@@ -256,25 +256,37 @@ def RenderedLine(
     def _pan_target_off(pos) -> tuple[int, int]:
         """根据 pan 坐标估算 (target_li, target_off)。跨行用 y 估算。
 
-        优先调用 on_hit_test_xy（LineLayoutCache 精确命中：Y 二分 + 行内 X），
+        行内多视觉行（pos.y 在当前行视觉行范围内）：用内部 vlayout 按 Y 定 vline
+        后 X 命中，与渲染层一致，避免外部 LineLayoutCache 的 content_width 一致性
+        问题（cache num_vlines 错为 1 时第二视觉行命中到第一行）。与 _tap_raw_off
+        共用同一份 _get_vlayout，换行点天然一致。
+
+        跨行：优先 on_hit_test_xy（LineLayoutCache.hit_test：Y 二分定行 + 行内 X），
         解决标题/普通/列表/引用混合行高不一致时 round(y/base*lh) 估算偏差。
         无 on_hit_test_xy 时回退到原等高估算 + on_hit_test_x。
-
-        激活行命中本行时：缓存按浏览态构建（所有标记零宽度折叠），但激活行视觉上
-        光标所在段标记变灰可见占宽度，二者布局不匹配——须改用 _hit_raw_off
-        （cursor_raw_offset=cursor_off）匹配视觉布局，修复拖拽起止点偏移。
         """
         if pos is None:
             return (line_idx, 0)
-        # 优先：精确命中（LineLayoutCache.hit_test 透传）
+        # 行内多视觉行：用内部 vlayout 精确命中（避免 cache 一致性问题）
+        _, vlines = _get_vlayout()
+        if len(vlines) > 1:
+            text_h = base * line_height
+            if text_h > 0 and 0 <= pos.y < len(vlines) * text_h:
+                vline_idx = min(int(pos.y // text_h), len(vlines) - 1)
+                vline = vlines[vline_idx]
+                local_x = pos.x
+                if line.task and vline.vline_idx == 0 and line.segments:
+                    prefix_raw = line.segments[0].raw
+                    prefix_len = len(prefix_raw) if prefix_raw else 0
+                    if 0 < prefix_len < len(vline.offsets_x):
+                        local_x += vline.offsets_x[prefix_len]
+                local_off = hit_test_line_x_raw(vline.offsets_x, local_x)
+                return (line_idx, vline.start_raw + local_off)
+        # 跨行：优先精确命中（LineLayoutCache.hit_test 透传）
         if on_hit_test_xy is not None:
             result = on_hit_test_xy(line_idx, pos.x, pos.y)
             if result is not None:
-                target_li, target_off = result
-                # 激活行本行：缓存浏览态偏移与视觉（标记可见）不匹配，重算
-                if target_li == line_idx and cursor_off is not None:
-                    return (target_li, _hit_raw_off(pos.x))
-                return (target_li, target_off)
+                return (result[0], result[1])
         # 回退：按 base * line_height 等高估算行号
         _line_h = base * line_height
         line_dy = round(pos.y / _line_h) if _line_h > 0 else 0
@@ -289,24 +301,43 @@ def RenderedLine(
         return (target_li, 0)
 
     def _tap_raw_off(pos) -> int:
-        """点击命中 raw_off：优先用 LineLayoutCache 精确命中（缓存 offsets），
-        回退到 _hit_raw_off（重算 measure_text_offsets）。
+        """点击命中 raw_off：多视觉行按 Y 定视觉行后 X 命中，单视觉行走 _hit_raw_off。
 
-        激活行（cursor_off is not None）例外：视觉上光标所在段的标记变灰可见占宽度，
-        而缓存按浏览态构建（所有标记零宽度折叠），二者布局不匹配——点击标记/内容
-        边界会偏移到段外（如 **粗体** 点击"体"与"*"之间落到行尾），导致光标离开段、
-        标记折叠成"渲染态"无法编辑。故激活行须用 _hit_raw_off（cursor_raw_offset
-        =cursor_off）匹配视觉布局。非激活行缓存与视觉一致（标记全折叠），用缓存更快。
+        多视觉行（word_wrap）时直接用 RenderedLine 内部 _get_vlayout() 的视觉行
+        布局（与渲染层共用同一 _line_visual_layout，换行点天然一致）：
+        - 按 pos.y // text_h 定位 vline_idx（GestureDetector 局部 Y 相对 Stack 顶）
+        - 在该 vline.offsets_x 上做 X 命中（已 rebase 到 0 的单调数组，二分查找正确）
+        - raw_off = vline.start_raw + local_off
+
+        不依赖外部 LineLayoutCache：该 cache 为跨行拖拽设计，惰性构建且 content_width
+        一致性受构建时机/闭包捕获影响——若构建时 content_width 未就绪（inf/0）或
+        闭包未随 content_width 更新，cache 中 num_vlines 错为 1，hit_test 会把第二
+        视觉行点击强制映射到第一行（vline_idx=0）。内部 vlayout 始终用当前
+        content_width + cursor_off，与渲染完全一致，彻底绕过该问题。
+
+        任务行 vline 0：Checkbox 替代前缀，pos.x 相对内容起点，需加回 vlayout 中
+        前缀段折叠宽度（offsets_x[prefix_len]）对齐到整行 offsets；vline 1+ 起点已
+        在内容区，无需加回。
         """
         if pos is None:
             return 0
-        # 激活行：标记可见，须用 _hit_raw_off 匹配视觉布局（缓存浏览态会偏移）
-        if cursor_off is not None:
-            return _hit_raw_off(pos.x)
-        if on_hit_test_xy is not None:
-            result = on_hit_test_xy(line_idx, pos.x, pos.y)
-            if result is not None:
-                return result[1] if isinstance(result, tuple) else result
+        _, vlines = _get_vlayout()
+        if len(vlines) > 1:
+            text_h = base * line_height
+            vline_idx = max(0, min(
+                int(pos.y // text_h) if text_h > 0 else 0, len(vlines) - 1
+            ))
+            vline = vlines[vline_idx]
+            local_x = pos.x
+            # 任务行 vline 0：前缀段在 offsets_x 占折叠宽度，pos.x 相对内容起点需加回
+            if line.task and vline.vline_idx == 0 and line.segments:
+                prefix_raw = line.segments[0].raw
+                prefix_len = len(prefix_raw) if prefix_raw else 0
+                if 0 < prefix_len < len(vline.offsets_x):
+                    local_x += vline.offsets_x[prefix_len]
+            local_off = hit_test_line_x_raw(vline.offsets_x, local_x)
+            return vline.start_raw + local_off
+        # 单视觉行或未换行：整行 offsets_x 单调，二分查找正确
         return _hit_raw_off(pos.x)
 
     def _on_double_tap_down(e: ft.TapEvent):

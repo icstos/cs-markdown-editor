@@ -444,12 +444,18 @@ def MarkdownEditor(
     )
 
     # ============ use_effect：聚焦 cursor TextField ============
-    # 依赖 cursor_li + nav_seq + focus_seq：
+    # 依赖 cursor_li + nav_seq + focus_seq + word_wrap + viewport_w：
     # - cursor_li 变化：切换行，TextField key 含 li，key 变 → 新控件需聚焦
     # - nav_seq 变化：撤销/重做，TextField key 含 seq，key 变 → 新控件需聚焦
     # - focus_seq 变化：点击同一位置（cursor_li/off 均不变，但点击已使 TextField
     #   失焦），须强制重聚焦避免光标丢失
-    ft.use_effect(focus_cbs["focus_cursor_field"], [cursor_li, nav_seq, focus_seq])
+    # - word_wrap/viewport_w 变化：视觉行布局变化更新 TextField 的 left/top/width
+    #   属性，Flutter 端 widget 属性更新可能短暂移除焦点；此时 cursor_li/nav_seq/
+    #   focus_seq 均不变，若不重新触发 effect 光标会丢失（长段落切换换行后光标
+    #   所在行视觉行数变化，cursor_px_y 从 0 变 vline_idx*text_h 或反向，TextField
+    #   属性大幅更新触发失焦）。此 effect 在 reset_line_heights（下方）之前执行，
+    #   line_heights_ref 仍有旧实测高度，_line_built()=True 直接聚焦，无需延迟重试。
+    ft.use_effect(focus_cbs["focus_cursor_field"], [cursor_li, nav_seq, focus_seq, word_wrap, viewport_w])
 
     # ============ use_effect：文档行数变化时清空行高缓存 ============
     ft.use_effect(scroll_cbs["reset_line_heights"], [len(document.lines), word_wrap, viewport_w])

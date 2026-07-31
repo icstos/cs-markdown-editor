@@ -50,15 +50,14 @@ def build_cursor(ctx):
             base = max(0, min(base, raw_len))
         return base
 
-    def _end_input_session():
-        """结束 IME 输入会话：同步 cursor_off + 重置状态 + 重建 cursor TextField 清空 value。
+    def _end_input_session(*, rebuild: bool = True):
+        """结束 IME 输入会话：同步 cursor_off + 重置状态 + 清空 cursor_field_value。
 
-        Flet 0.86 声明式模型渲染后控件冻结，不能再用 ref.value=""; ref.update()
-        命令式清空（会抛 Frozen controls cannot be updated）。改为递增 nav_seq：
-        cursor TextField 的 key 含 nav_seq，key 变即重建控件，新控件 value=""
-        天然清空，避免旧 value 残留导致下次输入插入陈旧文本。重建后由
-        use_effect([cursor_li, nav_seq, focus_seq]) → focus_cursor_field 重聚焦。
-        仅在确有活动会话时递增（无会话的浏览态切换不重建，减少无效重建）。
+        rebuild=True（默认）：递增 nav_seq 强制 TextField 重建（key 变 → 控件销毁
+        +重建+重聚焦）。用于同行会话结束（光标位置不连续但 li 不变）。
+        rebuild=False：不递增 nav_seq，仅靠 cursor_field_value="" 通过 Flet diff
+        同步清空 TextField 内部值。用于跨行场景（cursor_li 变化已使 TextField
+        key 变化 → 自动重建，nav_seq++ 冗余）。
         """
         state = ctx.input_session_ref.current
         had_session = state["li"] >= 0 and state["start_off"] >= 0
@@ -67,7 +66,7 @@ def build_cursor(ctx):
             ctx.set_cursor_line(state["li"])
         ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
         ctx.set_cursor_field_value("")
-        if had_session:
+        if had_session and rebuild:
             ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def _set_cursor(li: int | None, off: int = 0, *, clear_preferred: bool = True):
@@ -85,7 +84,9 @@ def build_cursor(ctx):
         state = ctx.input_session_ref.current
         if state["li"] >= 0:
             if state["li"] != li:
-                _end_input_session()
+                # 跨行：cursor_li 变化已使 TextField key 变化 → 自动重建，
+                # nav_seq++ 冗余，用 rebuild=False 跳过（减少 1 次 state 更新）
+                _end_input_session(rebuild=False)
             elif state["start_off"] >= 0:
                 expected_off = state["start_off"] + len(state["last_value"])
                 if off != expected_off:
@@ -282,9 +283,9 @@ def build_cursor(ctx):
             middle = [parser.parse_markdown(p).lines[0] for p in parts[1:-1]]
             last_raw = parts[-1] + after
             last_line = parser.parse_markdown(last_raw).lines[0]
-            ctx.document.lines = (
-                ctx.document.lines[:li + 1] + middle + [last_line] + ctx.document.lines[li + 1:]
-            )
+            # 原地插入多行 + notify()，避免 O(N) 列表重建
+            ctx.document.lines[li + 1:li + 1] = middle + [last_line]
+            ctx.document.notify()
             ctx.mark_dirty()
             last_li = li + 1 + len(middle)
             ctx.suppress_blur.current = True
@@ -323,7 +324,9 @@ def build_cursor(ctx):
             junction = len(prev_raw)
             merged = prev_raw + cur_raw
             _reparse_atomic(prev, merged)
-            ctx.document.lines = ctx.document.lines[:li] + ctx.document.lines[li + 1:]
+            # 原地删除行 + notify()，避免 O(N) 列表重建
+            del ctx.document.lines[li]
+            ctx.document.notify()
             ctx.mark_dirty()
             ctx.suppress_blur.current = True
             _set_cursor(li - 1, junction)
@@ -359,7 +362,9 @@ def build_cursor(ctx):
             junction = len(raw)
             merged = raw + _line_raw(nxt)
             _reparse_atomic(line, merged)
-            ctx.document.lines = ctx.document.lines[:li + 1] + ctx.document.lines[li + 2:]
+            # 原地删除行 + notify()，避免 O(N) 列表重建
+            del ctx.document.lines[li + 1]
+            ctx.document.notify()
             ctx.mark_dirty()
             ctx.suppress_blur.current = True
             _set_cursor(li, junction)
@@ -423,7 +428,9 @@ def build_cursor(ctx):
             and (m := _RE_FENCE_TRIGGER.match(before)) is not None
         ):
             new_line = _make_code_line(m.group(1), "")
-            ctx.document.lines = ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1:]
+            # 原地替换行 + notify()，避免 O(N) 列表重建
+            ctx.document.lines[li] = new_line
+            ctx.document.notify()
             ctx.mark_dirty()
             ctx.suppress_blur.current = True
             ctx.set_cursor_line(li)
@@ -439,7 +446,9 @@ def build_cursor(ctx):
                 return
             _reparse_atomic(line, before)
             new_line = parser.parse_markdown(after).lines[0]
-            ctx.document.lines = [*ctx.document.lines[:li + 1], new_line, *ctx.document.lines[li + 1:]]
+            # 原地插入行 + notify()，避免 O(N) 列表重建
+            ctx.document.lines.insert(li + 1, new_line)
+            ctx.document.notify()
             ctx.mark_dirty()
             ctx.suppress_blur.current = True
             _set_cursor(li + 1, 0)
@@ -470,7 +479,9 @@ def build_cursor(ctx):
         cont_prefix = _next_line_raw(line)
         _reparse_atomic(line, before)
         new_line = parser.parse_markdown(cont_prefix + after).lines[0]
-        ctx.document.lines = [*ctx.document.lines[:li + 1], new_line, *ctx.document.lines[li + 1:]]
+        # 原地插入行 + notify()，避免 O(N) 列表重建
+        ctx.document.lines.insert(li + 1, new_line)
+        ctx.document.notify()
         ctx.mark_dirty()
         ctx.suppress_blur.current = True
         _set_cursor(li + 1, len(cont_prefix))

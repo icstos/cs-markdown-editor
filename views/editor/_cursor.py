@@ -98,6 +98,36 @@ def build_cursor(ctx):
             ctx.preferred_col_ref.current = None
         ctx.cursor_ref.current.reset(off, raw_len)
 
+    def _move_cursor_inline(li: int, new_off: int, new_raw_len: int):
+        """同行内轻量光标移动：不递增 nav_seq，不重建 TextField。
+
+        用于 Backspace 等同行编辑，避免 _set_cursor → _end_input_session →
+        nav_seq++ → TextField 重建的性能开销（每次 Backspace 重建控件+重聚焦）。
+
+        策略：
+        - 光标在会话末尾删除最后字符 → 缩短 last_value + cursor_field_value，
+          保持会话连续（下次输入不需重建会话，省 push_line_edit）
+        - 光标不在会话末尾 → 静默清空会话（cursor_field_value="" 不重建，
+          Flet diff 同步空串到 Flutter 清理 IME 内部状态）
+        - 无活动会话 → 仅更新 cursor_off + cursor_ref
+        """
+        state = ctx.input_session_ref.current
+        if state["li"] == li and state["start_off"] >= 0:
+            old_lv = state["last_value"]
+            sess_end = state["start_off"] + len(old_lv)
+            if new_off == sess_end - 1 and old_lv:
+                # 光标在会话末尾删除最后字符：缩短 last_value，保持会话连续
+                new_lv = old_lv[:-1]
+                state["last_value"] = new_lv
+                ctx.set_cursor_field_value(new_lv)
+            else:
+                # 光标不在会话末尾：静默清空会话（不递增 nav_seq）
+                ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
+                ctx.set_cursor_field_value("")
+        ctx.set_cursor_off(new_off)
+        ctx.preferred_col_ref.current = None
+        ctx.cursor_ref.current.reset(new_off, new_raw_len)
+
     def _on_tap_line(li: int, raw_off: int):
         """渲染层点击：定位光标到 (li, raw_off)。"""
         if not (0 <= li < len(ctx.document.lines)):
@@ -217,11 +247,12 @@ def build_cursor(ctx):
         state["last_value"] = new_value
         new_off = start_off + len(new_value)
         ctx.cursor_ref.current.reset(new_off, len(new_raw))
+        # 先设置 cursor_field_value（state），再触发 observable 通知：
+        # 确保 line.notify() 引发的重渲染使用最新的 cursor_field_value，
+        # 避免双重渲染（render #1 用旧 value → IME 重复 on_change）。
+        ctx.set_cursor_field_value(new_value)
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
-        # 同步 cursor_field_value：重渲染时 Flet 同步 value 到 Flutter 端，
-        # 避免 value 被重置为空导致 IME 重新触发 on_change（字符吞没根因）。
-        ctx.set_cursor_field_value(new_value)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
         """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。"""
@@ -279,7 +310,8 @@ def build_cursor(ctx):
             new_raw = raw[:off - 1] + raw[off:]
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
-            _set_cursor(li, off - 1)
+            # 轻量光标更新：不递增 nav_seq，避免 TextField 重建（性能优化）
+            _move_cursor_inline(li, off - 1, len(new_raw))
         elif li > 0:
             prev = ctx.document.lines[li - 1]
             if _is_fence(prev):
@@ -316,7 +348,8 @@ def build_cursor(ctx):
             new_raw = raw[:off] + raw[off + 1:]
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
-            _set_cursor(li, off)
+            # 光标位置不变，仅更新 cursor_ref 的 raw_len（不触发 _set_cursor 开销）
+            ctx.cursor_ref.current.reset(off, len(new_raw))
         elif li < len(ctx.document.lines) - 1:
             nxt = ctx.document.lines[li + 1]
             if _is_fence(nxt):

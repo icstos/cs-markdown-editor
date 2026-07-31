@@ -181,10 +181,12 @@ def MarkdownEditor(
         set_outward_sel(value)
 
     def mark_dirty():
-        # 守卫：dirty 已为 True 时不再赋值，避免 True→True 触发额外 observable 通知
-        if not document.dirty:
+        # 守卫：dirty 已为 True 时不再赋值/通知，避免 True→True 触发额外 observable
+        # 通知和 on_dirty_change 回调（热路径每次按键调用，跳过冗余回调减少开销）
+        was_dirty = document.dirty
+        if not was_dirty:
             document.dirty = True
-        if on_dirty_change:
+        if on_dirty_change and not was_dirty:
             on_dirty_change(True)
         # 状态栏字数防抖重算：在 reparse_line_atomic 之后调用，document 状态已更新。
         # on_content_change 仅调度防抖任务，不阻塞 IME 热路径。

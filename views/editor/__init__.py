@@ -115,6 +115,9 @@ def MarkdownEditor(
     input_session_ref = ft.use_ref({"li": -1, "start_off": -1, "last_value": ""})
     # value 清空序列号：_end_input_session 递增 → use_effect 触发清空 TextField value
     clear_value_seq, set_clear_value_seq = ft.use_state(0)
+    # cursor TextField value 镜像：重渲染时 Flet 同步 value 到 Flutter，避免
+    # value 被重置为空导致 IME 重新触发 on_change（连续输入字符吞没根因）。
+    cursor_field_value, set_cursor_field_value = ft.use_state("")
 
     # 光标跟踪（ref 而非 state）：避免 on_selection_change 触发重渲染导致光标跳动
     cursor_ref = ft.use_ref(CursorState())
@@ -245,6 +248,7 @@ def MarkdownEditor(
         focus_seq=focus_seq,
         cursor_line=cursor_line,
         clear_value_seq=clear_value_seq,
+        cursor_field_value=cursor_field_value,
         raw_mode=raw_mode,
         raw_draft=raw_draft,
         viewport_w=viewport_w,
@@ -259,6 +263,7 @@ def MarkdownEditor(
         set_focus_seq=set_focus_seq,
         set_cursor_line=set_cursor_line,
         set_clear_value_seq=set_clear_value_seq,
+        set_cursor_field_value=set_cursor_field_value,
         set_raw_mode=set_raw_mode,
         set_raw_draft=set_raw_draft,
         set_viewport_w=set_viewport_w,

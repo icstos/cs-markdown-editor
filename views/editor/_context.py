@@ -81,6 +81,7 @@ class EditorContext:
     focus_seq: int
     cursor_line: int
     clear_value_seq: int
+    cursor_field_value: str
     raw_mode: bool
     raw_draft: str
     viewport_w: float
@@ -96,6 +97,7 @@ class EditorContext:
     set_focus_seq: Callable[[int], None]
     set_cursor_line: Callable[[int], None]
     set_clear_value_seq: Callable[[int], None]
+    set_cursor_field_value: Callable[[str], None]
     set_raw_mode: Callable[[bool], None]
     set_raw_draft: Callable[[str], None]
     set_viewport_w: Callable[[float], None]

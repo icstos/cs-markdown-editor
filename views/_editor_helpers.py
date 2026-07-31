@@ -73,13 +73,17 @@ def _fix_ime_doubling(value: str, last_value: str) -> str:
     - ASCII（composing 编码，如 "wqwq"）：阈值 >= 4 才折叠。避免误伤 "ww"、"//"
       等快速连击——len=2 双叠更可能是用户连击而非 IME 翻倍，折叠会丢字
       （last_value 已含首字符，折叠后 value==last_value 触发 ignore 吞掉第二个）。
+      len>=4 时再用 last_value 区分合法连续输入：连续输入相同字符时 value 逐步
+      累积（每次 +1 字符），last_value 是 value 去掉末字符，满足
+      len(value)==len(last_value)+1 且 value.startswith(last_value)；IME 翻倍时
+      value=X+X，len(value)=2*len(X)，不满足该条件（如 "wqwq" len=4 != len("wq")+1=3）。
 
     - 非 ASCII（commit 上屏中文/日文等，如 "你你"）：阈值 >= 2，但用 last_value
       区分 IME 翻倍 vs 合法连续输入：
       - last_value != X → IME 翻倍（新会话单次上屏 / composing 转上屏翻倍）→ 折叠
       - last_value == X → 合法连续（上一次已上屏 X，本次再上屏 X）→ 不折叠
 
-    既修复单次上屏 "你你" 翻倍，又不误伤 "好好" 合法连续输入。
+    既修复单次上屏 "你你" 翻倍，又不误伤 "好好" / "aaaa" 合法连续输入。
     """
     if len(value) < 2 or len(value) % 2 != 0:
         return value
@@ -89,9 +93,53 @@ def _fix_ime_doubling(value: str, last_value: str) -> str:
     x = value[:half]
     if all(ord(c) < 128 for c in value):
         # ASCII composing 翻倍：阈值 >= 4
-        return x if len(value) >= 4 else value
+        if len(value) >= 4:
+            # 合法连续输入（value = last_value + 1 字符）不折叠：
+            # 连续输入相同字符时 value 逐步累积，last_value 是 value 去掉末字符，
+            # 满足 len(value)==len(last_value)+1 且 value.startswith(last_value)。
+            # IME 翻倍时 value=X+X，len(value)=2*len(X)，不满足该条件。
+            if last_value and len(value) == len(last_value) + 1 and value.startswith(last_value):
+                return value
+            return x
+        return value
     # 非 ASCII commit 翻倍：last_value 区分合法连续
     return x if last_value != x else value
+
+
+def _detect_ime_compose(value: str, last_value: str) -> bool:
+    """检测 IME 组合完成（composing ASCII 后缀被上屏非 ASCII 字符替换）。
+
+    通用检测：value 与 last_value 共享已上屏前缀 P；last_value 的后缀 C 是
+    composing ASCII（如 "vb"），value 的后缀 X 是上屏非 ASCII（如 "好"）。
+    命中时 handle_char_input 走 replace 分支，把 [start_off, start_off+len(last_value)]
+    区域整体替换为 value。
+
+    背景：旧条件 `all(ord<128 for c in last_value)` 仅捕获首字上屏（last_value 为
+    纯 ASCII composing，如 "wq"→"你"）。连续上屏第二字起 last_value 已含已上屏
+    中文（如 "你vb"），条件失败 → 误走 append 把 "你好" 追加到 "你vb" 后，产生
+    "你vb你好"（五笔输入 "你好啊" 错写成 "你vb你好kb你好啊" 的根因）。
+
+    示例：
+      ("你", "wq")        → True  （首字上屏：composing "wq" → "你"）
+      ("你好", "你vb")    → True  （第二字上屏：composing "vb" → "好"）
+      ("你好啊", "你好kb")→ True  （第三字上屏：composing "kb" → "啊"）
+      ("你v", "你")       → False （composing 中：composing 后缀为空，属 append）
+      ("好好", "好")      → False （合法连续：composing 后缀为空，属 append）
+      ("abcd", "abc")     → False （ASCII 连续输入：committed 全 ASCII，属 append）
+    """
+    if not last_value:
+        return False
+    # 最长公共前缀长度（已上屏稳定前缀 P）
+    cp = 0
+    while cp < len(value) and cp < len(last_value) and value[cp] == last_value[cp]:
+        cp += 1
+    composing = last_value[cp:]  # 待替换的 composing ASCII 后缀
+    committed = value[cp:]  # 上屏字符（非 ASCII）
+    return bool(
+        composing
+        and all(ord(c) < 128 for c in composing)
+        and any(ord(c) > 127 for c in committed)
+    )
 
 
 def _vline_off_at_x(visual_lines, vline_idx: int, x: float) -> int | None:

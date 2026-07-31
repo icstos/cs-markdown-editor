@@ -219,6 +219,7 @@ def _cursor_overlay(
     li: int,
     nav_seq: int,
     field_ref: ft.Ref | None,
+    cursor_value: str,
     on_change: Callable[[str], None],
     on_submit: Callable[[str], None] | None,
     on_focus: Callable | None,
@@ -227,6 +228,7 @@ def _cursor_overlay(
     *,
     precomputed_vlines: list | None = None,
     precomputed_wrap_width: float | None = None,
+    pos_value: str | None = None,
 ) -> ft.TextField:
     """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off（2D 视觉行）。
 
@@ -268,6 +270,11 @@ def _cursor_overlay(
     # 找到 cursor_off 所在视觉行
     vline = _find_vline_for_raw(visual_lines, cursor_off)
     text_h = base * line_height
+    # 定位与 TextField value 均使用 _eff_value：
+    # 优先 pos_value（input_session_ref 的 last_value，ref 即时同步 cursor_ref），
+    # 避免 cursor_field_value state 滞后于 cursor_ref.current.base 导致 start_local
+    # 偏移、光标与内容距离累积增大（连续输入漂移根因）。
+    _eff_value = pos_value if pos_value is not None else cursor_value
     if vline is None:
         cursor_px_x = 0.0
         cursor_px_y = 0.0
@@ -276,6 +283,14 @@ def _cursor_overlay(
         local_off = max(0, min(local_off, len(vline.offsets_x) - 1))
         cursor_px_x = vline.offsets_x[local_off]
         cursor_px_y = vline.vline_idx * text_h
+        # value 文本起始位置：TextField 显示 value（透明但占宽度），
+        # 需将 left 调整为 value 起始位置，使光标落在 cursor_off 对应的像素位置。
+        # start_local = local_off - len(value)，对应 value 首字符的像素位置。
+        if _eff_value:
+            start_local = local_off - len(_eff_value)
+            if 0 <= start_local < len(vline.offsets_x):
+                cursor_px_x = vline.offsets_x[start_local]
+            # start_local < 0：value 跨视觉行，保持当前 cursor_px_x（视觉行起点）
 
     # 任务行前缀宽度扣除（仅 vline 0：前缀占宽度，需相对内容起点定位光标）
     if line.task and line.segments and vline is not None and vline.vline_idx == 0:
@@ -291,6 +306,7 @@ def _cursor_overlay(
         line_height_px=text_h,  # 单视觉行高（TextField 高度，Stack 高 = N * text_h）
         base_size=base,
         line_height=line_height,
+        value=_eff_value,
         on_change=on_change,
         on_submit=on_submit,
         on_focus=on_focus,
@@ -448,6 +464,8 @@ def LineView(
     cursor_ref: ft.Ref | None = None,
     nav_seq: int = 0,
     field_ref: ft.Ref | None = None,
+    input_session_ref: ft.Ref | None = None,
+    cursor_value: str = "",
     content_width: float | None = None,
     line_height: float = 1.6,
     is_current_line: bool = False,
@@ -685,12 +703,24 @@ def LineView(
 
     overlay = None
     if is_active and on_cursor_change is not None:
+        # 定位用 value：优先 input_session_ref 的 last_value（ref，与
+        # cursor_ref.current.base 在同一 handle_char_input 调用中即时更新），
+        # 避免 cursor_field_value state 滞后导致 start_local 偏移、光标与内容
+        # 距离累积增大（连续输入漂移根因）。会话不在本行或已结束时回退 cursor_value。
+        pos_value = cursor_value
+        if input_session_ref is not None and input_session_ref.current is not None:
+            _sess = input_session_ref.current
+            if _sess.get("li") == line_idx and _sess.get("start_off", -1) >= 0:
+                _lv = _sess.get("last_value")
+                if _lv is not None:
+                    pos_value = _lv
         overlay = _cursor_overlay(
             line, base, line_height, effective_cursor_off, content_width, line_idx, nav_seq,
-            field_ref, on_cursor_change, on_cursor_submit, on_cursor_focus,
+            field_ref, cursor_value, on_cursor_change, on_cursor_submit, on_cursor_focus,
             on_cursor_blur, on_selection_change,
             precomputed_vlines=shared_vlayout[1] if shared_vlayout else None,
             precomputed_wrap_width=shared_vlayout[0] if shared_vlayout else None,
+            pos_value=pos_value,
         )
 
     inner = RenderedLine(

@@ -47,6 +47,8 @@ def build_line_controls(
     cursor_ref = ctx.cursor_ref
     nav_seq = ctx.nav_seq
     cursor_field_ref = ctx.cursor_field_ref
+    cursor_field_value = ctx.cursor_field_value
+    input_session_ref = ctx.input_session_ref
     content_width = ctx.content_width
     line_height = ctx.line_height
     flash_li = ctx.flash_li
@@ -120,6 +122,8 @@ def build_line_controls(
                     cursor_ref=cursor_ref if is_act else None,
                     nav_seq=nav_seq if is_act else 0,
                     field_ref=cursor_field_ref if is_act else None,
+                    input_session_ref=input_session_ref if is_act else None,
+                    cursor_value=cursor_field_value if is_act else "",
                     content_width=content_width,
                     line_height=line_height,
                     is_current_line=is_act,

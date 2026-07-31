@@ -2,7 +2,7 @@
 
 覆盖从 MarkdownEditor 闭包剥离的无状态助手：
 _snap_indent_up / _snap_indent_down / _shift_cursor_off / _vline_off_at_x / _table_cells /
-_fix_ime_doubling / _rebuild_list_prefix / _char_kind / _select_word_bounds /
+_fix_ime_doubling / _detect_ime_compose / _rebuild_list_prefix / _char_kind / _select_word_bounds /
 _build_highlight_map / _step_left / _step_right / _build_offset_prefix /
 _make_snapshot / _compute_delete_result。
 不依赖 UI 层（flet 组件渲染），仅验证纯计算逻辑。
@@ -19,6 +19,7 @@ from views._editor_helpers import (
     _build_offset_prefix,
     _char_kind,
     _compute_delete_result,
+    _detect_ime_compose,
     _fix_ime_doubling,
     _make_snapshot,
     _rebuild_list_prefix,
@@ -141,6 +142,32 @@ def test_ime_doubling_ascii_double_strike_not_folded():
     assert _fix_ime_doubling("//", "") == "//"
 
 
+def test_ime_doubling_ascii_repeat_chars_not_folded():
+    """连续输入相同 ASCII 字符不折叠（修复 'aaaa' 被误折叠导致第4字被吞 BUG）。
+
+    连续输入时 value 逐步累积（每次 +1 字符），last_value 是 value 去掉末字符，
+    满足 len(value)==len(last_value)+1 且 value.startswith(last_value)。
+    """
+    # 4 个 a：last_value='aaa'（第3次后），value='aaaa' → 不折叠
+    assert _fix_ime_doubling("aaaa", "aaa") == "aaaa"
+    # 6 个 a：last_value='aaaaa'，value='aaaaaa' → 不折叠
+    assert _fix_ime_doubling("aaaaaa", "aaaaa") == "aaaaaa"
+    # 4 个 w：last_value='www'，value='wwww' → 不折叠
+    assert _fix_ime_doubling("wwww", "www") == "wwww"
+    # 4 个 /：last_value='///'，value='////' → 不折叠
+    assert _fix_ime_doubling("////", "///") == "////"
+
+
+def test_ime_doubling_ascii_compose_still_folded():
+    """IME composing 翻倍仍折叠：'wqwq' last_value='wq' → 'wq'（len 4 != 3）。"""
+    # composing 翻倍：last_value='wq'，value='wqwq'，len(4) != len('wq')+1(3) → 折叠
+    assert _fix_ime_doubling("wqwq", "wq") == "wq"
+    # 新会话 composing 翻倍：last_value=''，value='wqwq' → 折叠
+    assert _fix_ime_doubling("wqwq", "") == "wq"
+    # 长串 composing 翻倍：'abcabc' last_value='abc' → 'abc'（len 6 != 4）
+    assert _fix_ime_doubling("abcabc", "abc") == "abc"
+
+
 def test_ime_doubling_no_doubling_passthrough():
     """非双叠 / 奇数长度 / 空串：原样返回。"""
     assert _fix_ime_doubling("你好", "") == "你好"
@@ -162,6 +189,71 @@ def test_ime_doubling_cjk_long_legitimate():
 def test_ime_doubling_mixed_not_folded():
     """混合 ASCII/非 ASCII 非双叠：原样返回。"""
     assert _fix_ime_doubling("a你b你", "") == "a你b你"
+
+
+# ---------------- _detect_ime_compose ----------------
+def test_ime_compose_first_commit_pure_ascii():
+    """首字上屏：last_value 为纯 ASCII composing（'wq'→'你'）→ True。"""
+    assert _detect_ime_compose("你", "wq") is True
+
+
+def test_ime_compose_second_commit_mixed():
+    """连续上屏第二字：last_value 已含已上屏中文（'你vb'→'你好'）→ True。
+
+    五笔输入 '你好啊' 错写成 '你vb你好kb你好啊' 的根因用例：旧条件
+    all(ord<128 for c in last_value) 在此场景失败（last_value 含 '你'）。
+    """
+    assert _detect_ime_compose("你好", "你vb") is True
+
+
+def test_ime_compose_third_commit_mixed():
+    """连续上屏第三字：last_value='你好kb'→'你好啊' → True。"""
+    assert _detect_ime_compose("你好啊", "你好kb") is True
+
+
+def test_ime_compose_pinyin_multi_char_commit():
+    """拼音整句上屏：'niha'→'你好'（一次上屏多字）→ True。"""
+    assert _detect_ime_compose("你好", "niha") is True
+
+
+def test_ime_compose_phrase_after_commit():
+    """已上屏后再输入词组：'你好hao'→'你好世界' → True（公共前缀 '你好'）。"""
+    assert _detect_ime_compose("你好世界", "你好hao") is True
+
+
+def test_ime_compose_composing_append():
+    """composing 进行中（追加 ASCII）：'你'→'你v' → False（composing 后缀为空，属 append）。"""
+    assert _detect_ime_compose("你v", "你") is False
+
+
+def test_ime_compose_composing_grow():
+    """composing 增长：'你v'→'你vb' → False（committed='b' 全 ASCII，属 append）。"""
+    assert _detect_ime_compose("你vb", "你v") is False
+
+
+def test_ime_compose_legitimate_cjk_repeat():
+    """合法连续输入两个'好'：'好'→'好好' → False（composing 后缀为空，属 append）。"""
+    assert _detect_ime_compose("好好", "好") is False
+
+
+def test_ime_compose_ascii_continuous():
+    """ASCII 连续输入：'abc'→'abcd' → False（committed 全 ASCII，属 append）。"""
+    assert _detect_ime_compose("abcd", "abc") is False
+
+
+def test_ime_compose_empty_last_value():
+    """新会话 last_value 为空 → False（无 composing 可替换，由 append 分支处理）。"""
+    assert _detect_ime_compose("你", "") is False
+
+
+def test_ime_compose_equal_values():
+    """value == last_value → False（公共前缀为整体，composing 后缀为空）。"""
+    assert _detect_ime_compose("你好", "你好") is False
+
+
+def test_ime_compose_ascii_composing_replaced_by_ascii():
+    """composing ASCII 被另一 ASCII 串替换（非 IME 上屏）→ False。"""
+    assert _detect_ime_compose("abx", "abc") is False
 
 
 # ---------------- _vline_off_at_x ----------------

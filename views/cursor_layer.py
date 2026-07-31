@@ -27,6 +27,7 @@ from collections.abc import Callable
 import flet as ft
 
 from styles import FONT_MAIN, _current_colors
+from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING
 
 
 def make_strut(base_size: int, line_height: float, font_family: str = FONT_MAIN) -> ft.StrutStyle:
@@ -53,6 +54,7 @@ def cursor_text_field(
     line_height_px: float,
     base_size: int,
     line_height: float = 1.6,
+    value: str = "",
     on_change: Callable[[str], None],
     on_submit: Callable[[str], None] | None = None,
     on_focus: Callable | None = None,
@@ -86,10 +88,10 @@ def cursor_text_field(
       输入后 value 清空由 editor 端 _end_input_session 异步执行（光标移动时触发）。
 
     value 属性策略（IME 关键）：
-      不设置 value 属性！让 Flet 不参与 value 同步。
-      若设置 value=""，每次重渲染 Flet 会将 value="" 同步到 Flutter 端，
-      重置 TextField 内部 value，打断 IME composing region。
-      不设置 value → Flutter 端 value 完全由 IME/键盘管理 → 组合态保持。
+      设置 value=cursor_field_value（input_session 的 last_value 镜像）。
+      重渲染时 Flet 同步 value 到 Flutter 端，避免 value 被重置为空导致
+      IME 重新触发 on_change（连续输入字符吞没根因）。
+      _end_input_session 递增 nav_seq 重建控件清空 value（新控件 value=""）。
 
     宽度策略（IME 修复）：
       从光标位置撑到行尾（right=0 或 width=content_width - cursor_px_x），
@@ -109,9 +111,11 @@ def cursor_text_field(
     kwargs: dict = {
         # key = li + nav_seq：同行输入不重建（保 IME），切行/撤销时重建
         "key": f"cursor-field-li-{li}-seq-{nav_seq}",
-        # 不设置 value 属性！避免 Flet 重渲染时同步 value="" 打断 IME 组合态。
-        # Flutter 端 TextField 的 value 完全由 IME/键盘管理。
-        # 清空 value 由 editor 端 _end_input_session 在光标移动时异步执行。
+        # value 属性：镜像 input_session 的 last_value，重渲染时 Flet 同步 value
+        # 到 Flutter 端，避免 value 被重置为空导致 IME 重新触发 on_change
+        # （连续输入字符吞没根因）。_end_input_session 递增 nav_seq 重建控件
+        # 清空 value（新控件 value="" 天然清空）。
+        "value": value,
         # 不设 autofocus！autofocus 在每次重渲染时都会发送到 Flutter，导致
         # TextField 重新聚焦，IME 重新触发 on_change（双发问题的根因）。
         # 聚焦由 editor 端 use_effect([cursor_li]) 在切行时异步执行。
@@ -128,6 +132,12 @@ def cursor_text_field(
         "text_style": ft.TextStyle(
             font_family=FONT_MAIN,
             color=ft.Colors.TRANSPARENT,
+            # letter_spacing 必须与 HarfBuzz 测量端（_FLET_DEFAULT_LETTER_SPACING）
+            # 及渲染层 ft.Text 默认值（0.25）对齐。TextField 的 text_style 默认
+            # letter_spacing=None（Flutter 标准 0.0），若不显式设置，TextField
+            # 内文字宽度比 HarfBuzz 测量值每字少 0.25px，连续输入时光标与渲染
+            # 内容距离线性累积（N 字 → N×0.25px 偏移）。
+            letter_spacing=_FLET_DEFAULT_LETTER_SPACING,
         ),
         # 行高与渲染层共用同一 strut 实例参数
         "strut_style": make_strut(base_size, line_height, FONT_MAIN),

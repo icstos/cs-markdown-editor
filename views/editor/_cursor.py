@@ -20,7 +20,7 @@ handle_char_input / handle_paste / backspace_core / delete_core / on_submit
 - parser（parse_markdown / reparse_line_atomic）
 - models（BlockType）
 - utils.segment_helpers（is_fence / line_raw）
-- views._editor_helpers（_fix_ime_doubling）
+- views._editor_helpers（_fix_ime_doubling / _detect_ime_compose）
 - views.editor._helpers（_next_line_raw / _RE_O_PREFIX / _RE_FENCE_TRIGGER / _make_code_line）
 """
 
@@ -28,12 +28,11 @@ import parser
 from models import BlockType
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
-from views._editor_helpers import _fix_ime_doubling
+from views._editor_helpers import _detect_ime_compose, _fix_ime_doubling
 from views.editor._helpers import _RE_FENCE_TRIGGER, _RE_O_PREFIX, _make_code_line, _next_line_raw
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
-
 
 def build_cursor(ctx):
     """构造光标核心闭包组（IME 核心组，紧耦合不拆散）。
@@ -66,6 +65,7 @@ def build_cursor(ctx):
             ctx.set_cursor_off(state["start_off"] + len(state["last_value"]))
             ctx.set_cursor_line(state["li"])
         ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
+        ctx.set_cursor_field_value("")
         if had_session:
             ctx.set_nav_seq(ctx.nav_seq + 1)
 
@@ -154,6 +154,7 @@ def build_cursor(ctx):
             if off + len(value) <= len(raw) and raw[off:off + len(value)] == value:
                 state["li"], state["start_off"], state["last_value"] = li, off, value
                 ctx.cursor_ref.current.reset(off + len(value), len(raw))
+                ctx.set_cursor_field_value(value)
                 return
             ctx.push_line_edit(li, raw)
             state["li"] = li
@@ -172,12 +173,12 @@ def build_cursor(ctx):
         raw = _line_raw(line)
         end_off = start_off + len(last_value)
 
-        # 分支 2: replace（IME 组合完成）
-        is_ime_compose = (
-            last_value
-            and any(ord(c) > 127 for c in value)
-            and all(ord(c) < 128 for c in last_value)
-        )
+        # 分支 2: replace（IME 组合完成：composing ASCII 后缀被上屏非 ASCII 替换）
+        # 通用检测见 _detect_ime_compose：基于 value 与 last_value 的公共前缀定位
+        # composing 后缀。旧条件 all(ord<128 for c in last_value) 仅捕获首字上屏
+        # （last_value 纯 ASCII），连续上屏第二字起 last_value 已含已上屏中文
+        # （如 "你vb"）条件失败 → 误走 append 产生 "你vb你好"（五笔连续输入 BUG）。
+        is_ime_compose = _detect_ime_compose(value, last_value)
         if is_ime_compose:
             new_raw = raw[:start_off] + value + raw[end_off:]
         # 分支 3: append
@@ -195,6 +196,9 @@ def build_cursor(ctx):
         ctx.cursor_ref.current.reset(new_off, len(new_raw))
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
+        # 同步 cursor_field_value：重渲染时 Flet 同步 value 到 Flutter 端，
+        # 避免 value 被重置为空导致 IME 重新触发 on_change（字符吞没根因）。
+        ctx.set_cursor_field_value(value)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
         """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。"""

@@ -142,6 +142,38 @@ def _detect_ime_compose(value: str, last_value: str) -> bool:
     )
 
 
+def _compute_composing_trim(value: str, last_value: str) -> str | None:
+    """计算回车时未上屏 IME composing 的裁剪结果（on_submit 专用）。
+
+    中文输入法 composing 期间（未上屏）按回车，IME 放弃 composing，TextField
+    on_submit 的 value 仅含已上屏部分（value 是 last_value 的真前缀）。文档行
+    区域 [start_off, start_off+len(last_value)] 当前为 last_value（含 composing
+    英文），handle_char_input 的 ignore 分支（last_value.startswith(value)）不会
+    回写移除，导致 composing 英文残留。本函数返回裁剪后的已上屏文本，供 on_submit
+    替换文档区域移除废字符。
+
+    返回值：
+      - value 是 last_value 的真前缀（composing 取消）→ 返回 value（已上屏文本，
+        可能为空串，表 composing 全部放弃）
+      - value == last_value（无 composing / 直接输入 / composing 已上屏）→ None
+      - value 非前缀（异常形态）→ None（保守不裁剪，避免误伤）
+
+    与 handle_char_input ignore 分支的同形条件区别：ignore 在 on_change 期间触发
+    （composing 可能仍活跃，保留文档）；本函数仅在 on_submit（回车）触发，此时
+    IME 已放弃 composing，value 反映已上屏部分，裁剪是安全的。
+
+    示例：
+      ("你", "你vb")    → "你"  （composing "vb" 放弃，保留已上屏 "你"）
+      ("", "vb")        → ""    （composing 全部放弃，无已上屏文本）
+      ("你vb", "你vb")  → None  （无 composing，直接输入）
+      ("abc", "abc")    → None  （ASCII 直接输入，不裁剪）
+      ("你好", "你vb")  → None  （value 非前缀，保守不裁剪）
+    """
+    if not last_value or value == last_value:
+        return None
+    return value if last_value.startswith(value) else None
+
+
 def _vline_off_at_x(visual_lines, vline_idx: int, x: float) -> int | None:
     """在指定视觉行上用 X 像素命中 raw 偏移（vline.start_raw + local_off）。"""
     if vline_idx < 0 or vline_idx >= len(visual_lines):

@@ -2,9 +2,9 @@
 
 覆盖从 MarkdownEditor 闭包剥离的无状态助手：
 _snap_indent_up / _snap_indent_down / _shift_cursor_off / _vline_off_at_x / _table_cells /
-_fix_ime_doubling / _detect_ime_compose / _rebuild_list_prefix / _char_kind / _select_word_bounds /
-_build_highlight_map / _step_left / _step_right / _build_offset_prefix /
-_make_snapshot / _compute_delete_result。
+_fix_ime_doubling / _detect_ime_compose / _compute_composing_trim / _rebuild_list_prefix /
+_char_kind / _select_word_bounds / _build_highlight_map / _step_left / _step_right /
+_build_offset_prefix / _make_snapshot / _compute_delete_result。
 不依赖 UI 层（flet 组件渲染），仅验证纯计算逻辑。
 """
 
@@ -19,6 +19,7 @@ from views._editor_helpers import (
     _build_offset_prefix,
     _char_kind,
     _compute_delete_result,
+    _compute_composing_trim,
     _detect_ime_compose,
     _fix_ime_doubling,
     _make_snapshot,
@@ -254,6 +255,62 @@ def test_ime_compose_equal_values():
 def test_ime_compose_ascii_composing_replaced_by_ascii():
     """composing ASCII 被另一 ASCII 串替换（非 IME 上屏）→ False。"""
     assert _detect_ime_compose("abx", "abc") is False
+
+
+# ---------------- _compute_composing_trim ----------------
+def test_composing_trim_cancel_keeps_committed():
+    """composing 取消：'你vb'→'你'，保留已上屏 '你'，移除 'vb'。"""
+    assert _compute_composing_trim("你", "你vb") == "你"
+
+
+def test_composing_trim_cancel_third_char():
+    """第三字 composing 取消：'你好kb'→'你好'。"""
+    assert _compute_composing_trim("你好", "你好kb") == "你好"
+
+
+def test_composing_trim_full_cancel_empty():
+    """composing 全部放弃（无已上屏文本）：'vb'→''。"""
+    assert _compute_composing_trim("", "vb") == ""
+
+
+def test_composing_trim_pinyin_cancel():
+    """拼音 composing 取消：'你ha'→'你'。"""
+    assert _compute_composing_trim("你", "你ha") == "你"
+
+
+def test_composing_trim_no_composing_direct_input():
+    """无 composing（直接输入）：value==last_value → None（不裁剪）。"""
+    assert _compute_composing_trim("abc", "abc") is None
+
+
+def test_composing_trim_cjk_direct_input():
+    """中文直接输入（已上屏）：value==last_value → None。"""
+    assert _compute_composing_trim("你好", "你好") is None
+
+
+def test_composing_trim_ascii_continuous_not_trimmed():
+    """ASCII 连续输入不裁剪：'abcd'==last_value → None。"""
+    assert _compute_composing_trim("abcd", "abcd") is None
+
+
+def test_composing_trim_empty_last_value():
+    """无活动会话（last_value 空）→ None。"""
+    assert _compute_composing_trim("你", "") is None
+
+
+def test_composing_trim_value_not_prefix():
+    """value 非 last_value 前缀（异常形态）→ None（保守不裁剪）。"""
+    assert _compute_composing_trim("你好", "你vb") is None
+    assert _compute_composing_trim("xyz", "abc") is None
+
+
+def test_composing_trim_shrink_mid_composing():
+    """composing 缩短（仍活跃）：'你vb'→'你v'，value 是真前缀 → 返回 '你v'。
+
+    on_submit 专用：回车时若 value 是真前缀即视为 composing 放弃并裁剪。
+    （composing 缩短本身不会触发 on_submit，仅在回车时发生。）
+    """
+    assert _compute_composing_trim("你v", "你vb") == "你v"
 
 
 # ---------------- _vline_off_at_x ----------------

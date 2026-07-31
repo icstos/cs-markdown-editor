@@ -20,7 +20,7 @@ handle_char_input / handle_paste / backspace_core / delete_core / on_submit
 - parser（parse_markdown / reparse_line_atomic）
 - models（BlockType）
 - utils.segment_helpers（is_fence / line_raw）
-- views._editor_helpers（_fix_ime_doubling / _detect_ime_compose）
+- views._editor_helpers（_fix_ime_doubling / _detect_ime_compose / _compute_composing_trim）
 - views.editor._helpers（_next_line_raw / _RE_O_PREFIX / _RE_FENCE_TRIGGER / _make_code_line）
 """
 
@@ -28,7 +28,7 @@ import parser
 from models import BlockType
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
-from views._editor_helpers import _detect_ime_compose, _fix_ime_doubling
+from views._editor_helpers import _compute_composing_trim, _detect_ime_compose, _fix_ime_doubling
 from views.editor._helpers import _RE_FENCE_TRIGGER, _RE_O_PREFIX, _make_code_line, _next_line_raw
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
@@ -125,8 +125,17 @@ def build_cursor(ctx):
 
     def handle_char_input(value: str):
         """字符输入：增量式编辑（IME 友好，3 分支模型）。"""
-        if ctx.cursor_li is None or not value:
+        if ctx.cursor_li is None:
             return
+        # 空值处理：composing 全部放弃时 on_change value="" 需清理文档区域
+        # （last_value 非空 → 裁剪为空），不能直接 return（否则 composing 英文
+        # 残留）。仅在无活动会话或 last_value 也为空时跳过空值。
+        _early_sess = ctx.input_session_ref.current
+        if not value:
+            if (_early_sess is None
+                    or _early_sess.get("li", -1) < 0
+                    or not _early_sess.get("last_value")):
+                return
         # 有 outward 选区时忽略 IME 输入：on_pan_start_outward 不清 cursor_li
         # （避免重渲染中断 pan 手势），选区期间的字符替换由 KeyDispatcher
         # 路由到 handle_outward_type_char 处理，此处显式拦截防止 TextField
@@ -164,16 +173,31 @@ def build_cursor(ctx):
         start_off = state["start_off"]
         last_value = state["last_value"]
 
-        # 分支 1: ignore
+        # 分支 1: 相同值 → 忽略（防重复 on_change）
         if value == last_value:
-            return
-        if last_value and last_value.startswith(value):
             return
 
         raw = _line_raw(line)
         end_off = start_off + len(last_value)
 
-        # 分支 2: replace（IME 组合完成：composing ASCII 后缀被上屏非 ASCII 替换）
+        # 分支 2: composing 取消/缩短（value 是 last_value 的真前缀）
+        # IME composing 期间按回车/Esc/Backspace，IME 放弃或缩短 composing，
+        # on_change 的 value 仅含已上屏部分（last_value 的真前缀）。文档区域
+        # [start_off, end_off] 当前为 last_value（含 composing 英文），需据 value
+        # 裁剪区域移除废字符。典型场景：五笔 composing "你vb" 按 Enter → IME 放弃
+        # "vb" → value="你"；此时若 on_submit 未触发（IME 消费了 Enter），仅靠
+        # 此分支清理 composing 残留，避免废字符留在编辑区。
+        if last_value and last_value.startswith(value):
+            new_raw = raw[:start_off] + value + raw[end_off:]
+            state["last_value"] = value
+            new_off = start_off + len(value)
+            ctx.cursor_ref.current.reset(new_off, len(new_raw))
+            _reparse_atomic(line, new_raw)
+            ctx.mark_dirty()
+            ctx.set_cursor_field_value(value)
+            return
+
+        # 分支 3: replace（IME 组合完成：composing ASCII 后缀被上屏非 ASCII 替换）
         # 通用检测见 _detect_ime_compose：基于 value 与 last_value 的公共前缀定位
         # composing 后缀。旧条件 all(ord<128 for c in last_value) 仅捕获首字上屏
         # （last_value 纯 ASCII），连续上屏第二字起 last_value 已含已上屏中文
@@ -181,7 +205,7 @@ def build_cursor(ctx):
         is_ime_compose = _detect_ime_compose(value, last_value)
         if is_ime_compose:
             new_raw = raw[:start_off] + value + raw[end_off:]
-        # 分支 3: append
+        # 分支 4: append
         else:
             if value.startswith(last_value):
                 new_part = value[len(last_value):]
@@ -312,14 +336,38 @@ def build_cursor(ctx):
         """Enter：在光标处分割行，续行加列表/引用前缀。"""
         if ctx.cursor_li is None:
             return
-        ctx.push_history()
-        ctx.undo_push_pending.current = True
         li = ctx.cursor_li
         if not (0 <= li < len(ctx.document.lines)):
             return
         line = ctx.document.lines[li]
         if _is_fence(line):
             return
+
+        # 回车前清理未上屏 IME composing 文本（安全网）：composing 期间按回车，
+        # IME 放弃 composing，on_change 的 value 为已上屏前缀，handle_char_input
+        # 分支 2 已裁剪文档区域。但部分 IME 可能不触发 on_change（仅 on_submit），
+        # 或事件顺序不确定 → 此处据 value 再次检测裁剪，确保 composing 残留被清除。
+        # 若 handle_char_input 已裁剪（last_value==value），_compute_composing_trim
+        # 返回 None，不会重复裁剪。
+        # push_history 之前执行：未上屏 composing 不应进入撤销栈（undo 不恢复废字符）。
+        _sess = ctx.input_session_ref.current
+        if _sess is not None and _sess.get("li") == li and _sess.get("start_off", -1) >= 0:
+            _lv = _sess.get("last_value", "")
+            _trimmed = _compute_composing_trim(value, _lv)
+            if _trimmed is not None:
+                _so = _sess["start_off"]
+                _raw = _line_raw(line)
+                _eo = _so + len(_lv)
+                if 0 <= _so and _eo <= len(_raw):
+                    _new_raw = _raw[:_so] + _trimmed + _raw[_eo:]
+                    _reparse_atomic(line, _new_raw)
+                    _sess["last_value"] = _trimmed
+                    ctx.cursor_ref.current.reset(_so + len(_trimmed), len(_new_raw))
+                    ctx.set_cursor_field_value(_trimmed)
+                    ctx.mark_dirty()
+
+        ctx.push_history()
+        ctx.undo_push_pending.current = True
         raw = _line_raw(line)
         off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
         off = max(0, min(off, len(raw)))

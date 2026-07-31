@@ -107,71 +107,21 @@ def _fix_ime_doubling(value: str, last_value: str) -> str:
 
 
 def _detect_ime_compose(value: str, last_value: str) -> bool:
-    """检测 IME 组合完成（composing ASCII 后缀被上屏非 ASCII 字符替换）。
+    """已废弃：delta 模型统一处理 IME composing 场景，此函数不再被调用。
 
-    通用检测：value 与 last_value 共享已上屏前缀 P；last_value 的后缀 C 是
-    composing ASCII（如 "vb"），value 的后缀 X 是上屏非 ASCII（如 "好"）。
-    命中时 handle_char_input 走 replace 分支，把 [start_off, start_off+len(last_value)]
-    区域整体替换为 value。
-
-    背景：旧条件 `all(ord<128 for c in last_value)` 仅捕获首字上屏（last_value 为
-    纯 ASCII composing，如 "wq"→"你"）。连续上屏第二字起 last_value 已含已上屏
-    中文（如 "你vb"），条件失败 → 误走 append 把 "你好" 追加到 "你vb" 后，产生
-    "你vb你好"（五笔输入 "你好啊" 错写成 "你vb你好kb你好啊" 的根因）。
-
-    示例：
-      ("你", "wq")        → True  （首字上屏：composing "wq" → "你"）
-      ("你好", "你vb")    → True  （第二字上屏：composing "vb" → "好"）
-      ("你好啊", "你好kb")→ True  （第三字上屏：composing "kb" → "啊"）
-      ("你v", "你")       → False （composing 中：composing 后缀为空，属 append）
-      ("好好", "好")      → False （合法连续：composing 后缀为空，属 append）
-      ("abcd", "abc")     → False （ASCII 连续输入：committed 全 ASCII，属 append）
+    保留函数签名以避免外部 import 报错，但逻辑已内联到 handle_char_input 的
+    公共前缀 delta 计算中。后续可安全删除。
     """
-    if not last_value:
-        return False
-    # 最长公共前缀长度（已上屏稳定前缀 P）
-    cp = 0
-    while cp < len(value) and cp < len(last_value) and value[cp] == last_value[cp]:
-        cp += 1
-    composing = last_value[cp:]  # 待替换的 composing ASCII 后缀
-    committed = value[cp:]  # 上屏字符（非 ASCII）
-    return bool(
-        composing
-        and all(ord(c) < 128 for c in composing)
-        and any(ord(c) > 127 for c in committed)
-    )
+    return False
 
 
 def _compute_composing_trim(value: str, last_value: str) -> str | None:
-    """计算回车时未上屏 IME composing 的裁剪结果（on_submit 专用）。
+    """已废弃：delta 模型统一处理 composing 裁剪，此函数不再被调用。
 
-    中文输入法 composing 期间（未上屏）按回车，IME 放弃 composing，TextField
-    on_submit 的 value 仅含已上屏部分（value 是 last_value 的真前缀）。文档行
-    区域 [start_off, start_off+len(last_value)] 当前为 last_value（含 composing
-    英文），handle_char_input 的 ignore 分支（last_value.startswith(value)）不会
-    回写移除，导致 composing 英文残留。本函数返回裁剪后的已上屏文本，供 on_submit
-    替换文档区域移除废字符。
-
-    返回值：
-      - value 是 last_value 的真前缀（composing 取消）→ 返回 value（已上屏文本，
-        可能为空串，表 composing 全部放弃）
-      - value == last_value（无 composing / 直接输入 / composing 已上屏）→ None
-      - value 非前缀（异常形态）→ None（保守不裁剪，避免误伤）
-
-    与 handle_char_input ignore 分支的同形条件区别：ignore 在 on_change 期间触发
-    （composing 可能仍活跃，保留文档）；本函数仅在 on_submit（回车）触发，此时
-    IME 已放弃 composing，value 反映已上屏部分，裁剪是安全的。
-
-    示例：
-      ("你", "你vb")    → "你"  （composing "vb" 放弃，保留已上屏 "你"）
-      ("", "vb")        → ""    （composing 全部放弃，无已上屏文本）
-      ("你vb", "你vb")  → None  （无 composing，直接输入）
-      ("abc", "abc")    → None  （ASCII 直接输入，不裁剪）
-      ("你好", "你vb")  → None  （value 非前缀，保守不裁剪）
+    保留函数签名以避免外部 import 报错，但逻辑已内联到 on_submit 的
+    公共前缀 delta 计算中。后续可安全删除。
     """
-    if not last_value or value == last_value:
-        return None
-    return value if last_value.startswith(value) else None
+    return None
 
 
 def _vline_off_at_x(visual_lines, vline_idx: int, x: float) -> int | None:

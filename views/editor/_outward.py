@@ -222,6 +222,28 @@ def build_outward(ctx):
         else:
             _extend_outward(target_li, target_off)
 
+    def on_pan_start_outward(target_li: int, target_off: int) -> None:
+        """拖拽起始：以命中点为选区 anchor（不沿用光标位置）。
+
+        与 on_extend_outward 的区别：后者在 cursor_li 非空时以光标为起点
+        （供 Shift+点击从光标扩展选区）；鼠标拖拽应以按下点为起点，否则
+        会把上次光标位置作为 anchor、命中点作为 target，造成选区错位。
+
+        不清 cursor_li：避免 set_cursor_li(None) 触发的重渲染中断 pan 手势
+        （第一次拖拽失效问题——pan_update 不触发，选区停留零长度不可见）。
+        cursor_li 保持，outward_sel 非 None 时渲染层通过 is_act 判断自动
+        隐藏光标（_render.py: is_act 加 outward_sel is None 条件）。
+        cursor_li 在下次 tap（on_tap_line）或选区操作（删除/剪切）时自然清理。
+        """
+        if not (0 <= target_li < len(ctx.document.lines)):
+            return
+        target_off = max(0, min(target_off, len(ctx.document.lines[target_li].raw or "")))
+        # 抑制 on_blur：TextField 失焦时不触发副作用（on_blur 非抑制分支本就空操作，保险）
+        ctx.suppress_blur.current = True
+        # 只设 outward_sel：以命中点同时作为 anchor 和 target 构造零长度选区，
+        # 后续 pan_update 走 _extend_outward 扩展 target 端。
+        ctx.set_outward_sel((target_li, target_off, target_li, target_off))
+
     def _delete_raw_range(start_li: int, start_off: int, end_li: int, end_off: int) -> None:
         ctx.push_history()
         ctx.undo_push_pending.current = True
@@ -320,6 +342,7 @@ def build_outward(ctx):
         "extend_outward_step": _extend_outward_step,
         "select_word_at": _select_word_at,
         "on_extend_outward": on_extend_outward,
+        "on_pan_start_outward": on_pan_start_outward,
         "clear_outward_sel": clear_outward_sel,
         "delete_raw_range": _delete_raw_range,
         "handle_outward_delete": handle_outward_delete,

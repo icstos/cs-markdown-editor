@@ -349,13 +349,16 @@ def RenderedLine(
             on_tap(line_idx, raw_off)
 
     def _on_pan_start(e: ft.DragStartEvent):
-        if on_extend_outward is None:
+        # pan_start 用专用 on_pan_start 回调：以命中点为 anchor（不沿用光标位置）。
+        # 回退兼容：未提供 on_pan_start 时退用 on_extend_outward（保留旧行为）。
+        cb = on_pan_start if on_pan_start is not None else on_extend_outward
+        if cb is None:
             return
-        # 拖拽起始：先清除已有选区，再以当前点为新起点（修复沿用上次起点 BUG）
+        # 拖拽起始：先清除已有选区，再以当前点为新起点
         if on_clear_outward is not None:
             on_clear_outward()
         t_li, t_off = _pan_target_off(e.local_position)
-        on_extend_outward(t_li, t_off)
+        cb(t_li, t_off)
 
     def _on_pan_update(e: ft.DragUpdateEvent):
         if on_extend_outward is None:

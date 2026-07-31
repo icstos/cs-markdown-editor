@@ -205,6 +205,7 @@ class EditorContext:
     extend_outward_step: Callable[..., None] = field(default=lambda *a: None)
     select_word_at: Callable[[int, int], None] = field(default=lambda *a: None)
     on_extend_outward: Callable[..., None] = field(default=lambda *a: None)
+    on_pan_start_outward: Callable[..., None] = field(default=lambda *a: None)
     delete_raw_range: Callable[..., None] = field(default=lambda *a: None)
     handle_outward_delete: Callable[[], None] = field(default=lambda: None)
     handle_outward_cut: Any = field(default=None)

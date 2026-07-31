@@ -127,6 +127,12 @@ def build_cursor(ctx):
         """字符输入：增量式编辑（IME 友好，3 分支模型）。"""
         if ctx.cursor_li is None or not value:
             return
+        # 有 outward 选区时忽略 IME 输入：on_pan_start_outward 不清 cursor_li
+        # （避免重渲染中断 pan 手势），选区期间的字符替换由 KeyDispatcher
+        # 路由到 handle_outward_type_char 处理，此处显式拦截防止 TextField
+        # 意外聚焦时 IME 输入写到旧光标位置。
+        if ctx.outward_sel_ref.current is not None:
+            return
 
         # IME 翻倍修正
         _last_val = (ctx.input_session_ref.current or {}).get("last_value", "")

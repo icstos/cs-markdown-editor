@@ -376,6 +376,7 @@ def MarkdownEditor(
     ctx.extend_outward_step = outward_cbs["extend_outward_step"]
     ctx.select_word_at = outward_cbs["select_word_at"]
     ctx.on_extend_outward = outward_cbs["on_extend_outward"]
+    ctx.on_pan_start_outward = outward_cbs["on_pan_start_outward"]
     ctx.delete_raw_range = outward_cbs["delete_raw_range"]
     ctx.handle_outward_delete = outward_cbs["handle_outward_delete"]
     ctx.handle_outward_cut = outward_cbs["handle_outward_cut"]
@@ -525,7 +526,10 @@ def MarkdownEditor(
     _cb_ref = ft.use_ref({})
     _cb_ref.current = {
         "on_tap": cursor_cbs["on_tap_line"],
-        "on_pan_start": outward_cbs["on_extend_outward"],
+        # pan_start 用专用闭包：以命中点为 anchor（不沿用光标位置），
+        # 避免"有光标时拖拽把光标处作为选区起点"BUG。
+        # pan_update 仍用 on_extend_outward：已有选区时仅更新 target 端。
+        "on_pan_start": outward_cbs["on_pan_start_outward"],
         "on_pan_update": outward_cbs["on_extend_outward"],
         "on_toggle_task": blocks_cbs["toggle_task"],
         "on_change_code": fence_cbs["on_change_code"],

@@ -19,7 +19,10 @@
 特殊行：
 - 空行：渲染单个空格 TextSpan，可承载光标
 - 任务列表项：Checkbox + 内容 Text（光标 overlay 叠在内容 Text 上）
-- 图片行：ft.Image 列表（不承载光标）
+- 图片行：ft.Image 列表（浏览态）
+  · 左键点击 → on_tap(line_idx, seg_raw_off) 进入图片 Markdown 编辑
+    （激活行 cursor_overlay 非 None，跳过图片分支，渲染 ![alt](url) 源码 + 光标）
+  · 右键 → ft.ContextMenu：拷贝 Markdown / 拷贝图片 / 另存为 / 删除
 
 依赖项：
 - models：BlockType / Line / SegType
@@ -152,6 +155,9 @@ def RenderedLine(
     on_hit_test_x: Callable[[int, float], int] | None = None,
     on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
     on_double_tap: Callable[[int, int], None] | None = None,
+    # 图片右键菜单操作：(action, line_idx, seg_idx, url, alt)
+    # action ∈ {"copy_md","copy_image","save_as","delete"}，由 editor 分发
+    on_image_action: Callable[[str, int, int, str, str], None] | None = None,
 ) -> ft.Control:
     """渲染层行组件（Stack 底层）。
 
@@ -474,6 +480,8 @@ def RenderedLine(
         )
 
     # ============ 图片行 ============
+    # 浏览态：ft.Image 列表；左键进入图片 Markdown 编辑，右键弹出上下文菜单。
+    # 激活态（cursor_overlay 非 None）跳过此分支，走普通文本渲染显示 ![alt](url) 源码。
     if (img_idxs := _image_seg_indices(line)) and cursor_overlay is None:
         img_controls: list[ft.Control] = []
         for seg_idx in img_idxs:
@@ -501,7 +509,51 @@ def RenderedLine(
                 kw["width"] = w
             if h is not None:
                 kw["height"] = h
-            img_controls.append(ft.Container(content=ft.Image(**kw), ink=True))
+            img = ft.Image(**kw)
+
+            # 图片段起始 raw 偏移：左键点击定位光标到此处，触发激活行渲染源码
+            seg_raw_off = sum(len(s.raw) for s in line.segments[:seg_idx])
+
+            def _on_img_tap(e: ft.TapEvent, off=seg_raw_off):
+                # 清除既有向外选区，再定位光标到图片段（与普通行点击一致）
+                if outward_range is not None and on_clear_outward is not None:
+                    on_clear_outward()
+                if on_tap is not None:
+                    on_tap(line_idx, off)
+
+            # 右键上下文菜单（Typora 式）：拷贝 Markdown / 拷贝图片 / 另存为 / 删除
+            # url_text/alt_text/si 均通过默认参数绑定，避免闭包捕获循环变量末值
+            # （多图片行时每个菜单项回调须用各自图片的 url/alt）
+            alt_text = seg.text or ""
+            url_text = seg.url or ""
+            if on_image_action is not None:
+                def _mi(label, icon, action, si=seg_idx, u=url_text, al=alt_text):
+                    return ft.PopupMenuItem(
+                        content=label, icon=icon,
+                        on_click=lambda e, act=action, idx=si, url=u, alt=al:
+                            on_image_action(act, line_idx, idx, url, alt),
+                    )
+
+                menu_items: list[ft.PopupMenuItem] = [
+                    _mi("拷贝图片 Markdown", ft.Icons.CONTENT_COPY, "copy_md"),
+                    _mi("拷贝图片", ft.Icons.IMAGE_OUTLINED, "copy_image"),
+                    _mi("将图像另存为", ft.Icons.SAVE_OUTLINED, "save_as"),
+                    ft.PopupMenuItem(),  # 分隔
+                    _mi("删除图片", ft.Icons.DELETE_OUTLINE, "delete"),
+                ]
+                wrapped = ft.ContextMenu(
+                    content=ft.GestureDetector(
+                        content=ft.Container(content=img, ink=True),
+                        on_tap=_on_img_tap,
+                    ),
+                    secondary_items=menu_items,
+                )
+            else:
+                wrapped = ft.GestureDetector(
+                    content=ft.Container(content=img, ink=True),
+                    on_tap=_on_img_tap,
+                )
+            img_controls.append(wrapped)
         return ft.Column(
             controls=img_controls, spacing=Spacing.SM,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,

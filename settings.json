@@ -15,15 +15,15 @@
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
-  "sidebar_panel": "search",
+  "sidebar_panel": "outline",
   "sidebar_width": 256,
   "recent_files": [],
-  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-94\\test_open_folder_atomic_merge_0\\workspace",
+  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-113\\test_open_folder_atomic_merge_0\\workspace",
   "search_folder": false,
   "search_case_sensitive": false,
   "search_whole_word": false,
   "search_regex": false,
-  "search_replace_expanded": true,
+  "search_replace_expanded": false,
   "shortcuts": {
     "browse": {
       "save": "ctrl+s",

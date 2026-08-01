@@ -43,6 +43,7 @@ from views.editor._fence import build_fence
 from views.editor._focus import build_focus
 from views.editor._helpers import _make_stable_cb, _noop
 from views.editor._history import build_history
+from views.editor._image import build_image
 from views.editor._indent import build_indent
 from views.editor._inline_format import build_inline_format
 from views.editor._key import build_key
@@ -68,6 +69,7 @@ def MarkdownEditor(
     on_dirty_change: Callable[[bool], None] | None = None,
     nav_ref: ft.Ref | None = None,
     clipboard_ref: ft.Ref | None = None,
+    picker_ref: ft.Ref | None = None,
     theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
     on_toggle_theme: Callable[[], None] | None = None,
     settings: dict | None = None,
@@ -219,6 +221,7 @@ def MarkdownEditor(
         on_dirty_change=on_dirty_change,
         nav_ref=nav_ref,
         clipboard_ref=clipboard_ref,
+        picker_ref=picker_ref,
         theme_mode=theme_mode,
         on_toggle_theme=on_toggle_theme,
         settings=settings,
@@ -319,6 +322,7 @@ def MarkdownEditor(
     raw_mode_cbs = build_raw_mode(ctx)
     focus_cbs = build_focus(ctx)
     key_cbs = build_key(ctx)
+    image_cbs = build_image(ctx)
 
     # ============ 装配槽填充（跨工厂调用通过 ctx 属性）============
     # 共享
@@ -438,6 +442,8 @@ def MarkdownEditor(
     # key 组
     ctx.on_key_down = key_cbs["on_key_down"]
     ctx.on_key_up = key_cbs["on_key_up"]
+    # image 组
+    ctx.on_image_action = image_cbs["on_image_action"]
 
     # ============ use_memo：向外选区高亮映射 ============
     _highlight_map = ft.use_memo(
@@ -560,13 +566,14 @@ def MarkdownEditor(
         "on_hit_test_x": scroll_cbs["hit_test_line_x"],
         "on_hit_test_xy": scroll_cbs["hit_test_xy"],
         "on_double_tap": outward_cbs["select_word_at"],
+        "on_image_action": image_cbs["on_image_action"],
     }
     _STABLE_CB_KEYS = (
         "on_tap", "on_pan_start", "on_pan_update", "on_toggle_task",
         "on_change_code", "on_code_focus", "on_code_blur", "on_change_lang",
         "on_change_math", "on_math_focus", "on_math_blur", "on_jump_to",
         "on_line_size_change", "on_extend_outward", "on_clear_outward",
-        "on_hit_test_x", "on_hit_test_xy", "on_double_tap",
+        "on_hit_test_x", "on_hit_test_xy", "on_double_tap", "on_image_action",
     )
     _stable_cbs = ft.use_memo(
         lambda: {k: _make_stable_cb(_cb_ref, k) for k in _STABLE_CB_KEYS},

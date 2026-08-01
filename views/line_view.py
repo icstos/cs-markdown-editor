@@ -522,6 +522,8 @@ def LineView(
     on_hit_test_x: Callable[[int, float], int] | None = None,
     on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
     on_double_tap: Callable[[int, int], None] | None = None,
+    # 图片右键菜单操作：(action, line_idx, seg_idx, url, alt)，透传至 RenderedLine
+    on_image_action: Callable[[str, int, int, str, str], None] | None = None,
     # diff 对比：行级背景着色标记（"added"|"removed"|"modified"|None）
     diff_mark: str | None = None,
 ) -> ft.Control:
@@ -754,6 +756,7 @@ def LineView(
         on_hit_test_x=on_hit_test_x,
         on_hit_test_xy=on_hit_test_xy,
         on_double_tap=on_double_tap,
+        on_image_action=on_image_action,
     )
     return _wrap_block(
         inner, line, base, line_idx,

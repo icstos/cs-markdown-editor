@@ -46,6 +46,7 @@ class EditorContext:
     on_dirty_change: Callable[[bool], None] | None
     nav_ref: ft.Ref | None
     clipboard_ref: ft.Ref | None
+    picker_ref: ft.Ref | None
     theme_mode: ft.ThemeMode
     on_toggle_theme: Callable[[], None] | None
     settings: dict[str, Any]
@@ -274,3 +275,6 @@ class EditorContext:
     # replace 组（搜索面板触发，作用于当前文档；new_text 已完成反向引用展开）
     replace_match_in_doc: Callable = field(default=lambda *a: None)
     replace_all_in_doc: Callable = field(default=lambda *a: 0)
+
+    # image 组（图片右键菜单操作分发，由 build_image 装配）
+    on_image_action: Callable[[str, int, int, str, str], None] = field(default=lambda *a: None)

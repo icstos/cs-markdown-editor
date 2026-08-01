@@ -176,6 +176,7 @@ class EditorContext:
     jump_to: Callable[[int, int | None], None] = field(default=lambda *a: None)
     cursor_vline_info: Callable[..., Any] = field(default=lambda *a: None)
     get_line_visual_lines: Callable[..., Any] = field(default=lambda *a: None)
+    link_tab_jump: Callable[[int], bool] = field(default=lambda *a: False)
 
     # scroll 组
     on_scroll: Callable[[Any], None] = field(default=lambda *a: None)
@@ -230,6 +231,7 @@ class EditorContext:
 
     # inline_format 组
     apply_inline_format: Callable[[str], None] = field(default=lambda *a: None)
+    insert_inline_at: Callable[[str, int, int], None] = field(default=lambda *a: None)
     apply_outward_wrap: Callable[[str], None] = field(default=lambda *a: None)
     handle_outward_type_char: Callable[[str], None] = field(default=lambda *a: None)
 

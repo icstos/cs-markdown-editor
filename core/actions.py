@@ -67,6 +67,7 @@ class EditorActions:
     move_down: Callable[[], None]
     page_up: Callable[[], None]  # PageUp：光标上移一页 / 浏览态纯滚动
     page_down: Callable[[], None]  # PageDown：光标下移一页 / 浏览态纯滚动
+    link_tab_jump: Callable[[int], bool]  # 链接段内 Tab/Shift+Tab 字段跳转（text↔url↔段尾）；返回 True 已处理，False 走默认缩进
 
     # ---- 删除 / 缩进 ----
     backspace_core: Callable[[], None]
@@ -124,7 +125,7 @@ class EditorActions:
 
     # ---- 向外选区打字替换（通用基础编辑行为：浏览态选中→输入即替换）----
     # 链接编辑回归常规文本编辑：光标在链接段内时渲染层显示完整语法，离开则折叠；
-    # 无需 Tab 字段跳转等专用动作。
+    # Tab 字段跳转由 link_tab_jump 处理（text↔url↔段尾），不依赖专用状态机。
     handle_outward_type_char: Callable[[str], None] | None = None
 
     # ---- 滚动同步（diff 对比模式：左右编辑器像素偏移同步）----

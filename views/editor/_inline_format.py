@@ -36,6 +36,47 @@ def build_inline_format(ctx):
     """
 
     # ============ 行内格式（光标级包裹）============
+    def insert_inline_at(fmt: str, li: int, off: int):
+        """在指定 (li, off) 插入空语法骨架并进入编辑态。
+
+        apply_inline_format（编辑态，光标处插入）与 apply_inline_format_to_selection
+        （浏览态无选区，当前行激活插入）共用。link 插入 []() 光标落 text 位置；
+        其余格式插入成对标记，光标落两标记之间。
+        """
+        if not (0 <= li < len(ctx.document.lines)):
+            return
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            return
+        raw = _line_raw(line)
+        off = max(0, min(off, len(raw)))
+        ctx.push_history()
+        ctx.undo_push_pending.current = True
+        if fmt == "link":
+            # 插入空链接骨架 []()，光标在 [] 内（text 位置）。
+            # Tab 在 text/url/段尾间字段跳转（见 navigation.link_tab_jump），
+            # 无需 URL 占位符——空 URL 利于 Tab 跳转后直接输入。
+            new_raw = raw[:off] + "[]()" + raw[off:]
+            _reparse_atomic(line, new_raw)
+            ctx.mark_dirty()
+            ctx.set_cursor(li, off + 1)  # 光标落在 [ 后（text 位置）
+            return
+        seg_type = {
+            "bold": SegType.STRONG,
+            "italic": SegType.EMPHASIS,
+            "highlight": SegType.HIGHLIGHT,
+            "strike": SegType.STRIKE,
+            "code": SegType.CODESPAN,
+            "inline_math": SegType.INLINE_MATH,
+        }.get(fmt)
+        if seg_type is None:
+            return
+        wrap = WRAP_SYNTAX.get(seg_type, ("", ""))[0]
+        new_raw = raw[:off] + wrap + wrap + raw[off:]
+        _reparse_atomic(line, new_raw)
+        ctx.mark_dirty()
+        ctx.set_cursor(li, off + len(wrap))  # 光标落在两标记之间
+
     def apply_inline_format(fmt: str):
         """行内格式快捷键：有 outward 选区包裹/取消同段选区；否则在光标处插入空语法。
 
@@ -50,36 +91,11 @@ def build_inline_format(ctx):
         li = ctx.cursor_li
         if not (0 <= li < len(ctx.document.lines)):
             return
-        line = ctx.document.lines[li]
-        if _is_fence(line):
+        if _is_fence(ctx.document.lines[li]):
             return
-        ctx.push_history()
-        ctx.undo_push_pending.current = True
-        raw = _line_raw(line)
+        raw = _line_raw(ctx.document.lines[li])
         off = ctx.cursor_base(len(raw))  # IME 实时光标，避免输入后立即 Ctrl+B 位置错位
-        if fmt == "link":
-            # 插入空链接骨架 []()，光标在 [] 内（text 位置）
-            # 空 URL 避免 Tab 跳到 URL 后需删除占位符；Tab 在 text/url 间切换
-            new_raw = raw[:off] + "[]()" + raw[off:]
-            _reparse_atomic(line, new_raw)
-            ctx.mark_dirty()
-            ctx.set_cursor(li, off + 1)  # 光标落在 [ 后（text 位置）
-        else:
-            seg_type = {
-                "bold": SegType.STRONG,
-                "italic": SegType.EMPHASIS,
-                "highlight": SegType.HIGHLIGHT,
-                "strike": SegType.STRIKE,
-                "code": SegType.CODESPAN,
-                "inline_math": SegType.INLINE_MATH,
-            }.get(fmt)
-            if seg_type is None:
-                return
-            wrap = WRAP_SYNTAX.get(seg_type, ("", ""))[0]
-            new_raw = raw[:off] + wrap + wrap + raw[off:]
-            _reparse_atomic(line, new_raw)
-            ctx.mark_dirty()
-            ctx.set_cursor(li, off + len(wrap))  # 光标落在两标记之间
+        insert_inline_at(fmt, li, off)
 
     def _apply_outward_wrap(fmt: str):
         """渲染态 outward 选区 toggle 行内格式（仅同段选区）。
@@ -116,8 +132,9 @@ def build_inline_format(ctx):
             # 包裹为 [selected]()，光标定位到 URL 位置（]( 与 ) 之间）。
             # 链接编辑视为常规文本编辑：光标在链接段内时渲染层（raw_to_visible_spans /
             # split_seg_for_display）显示完整语法含 URL，光标离开段后自动折叠为
-            # display_text。无需 Tab 字段跳转 / URL 占位符等特殊状态机，亦无 set_nav_seq
-            # 重建，避免异步重新聚焦间隙丢失快速输入。
+            # display_text。无 URL 占位符等特殊状态机，亦无 set_nav_seq 重建，避免异步
+            # 重新聚焦间隙丢失快速输入。Tab 字段跳转（text↔url↔段尾）由 link_tab_jump
+            # 处理，仅移动光标无状态机。
             new_raw = raw[:a_off] + f"[{selected}]()" + raw[b_off:]
             _reparse_atomic(line, new_raw)
             new_lines = list(ctx.document.lines)
@@ -225,6 +242,7 @@ def build_inline_format(ctx):
 
     return {
         "apply_inline_format": apply_inline_format,
+        "insert_inline_at": insert_inline_at,
         "apply_outward_wrap": _apply_outward_wrap,
         "handle_outward_type_char": handle_outward_type_char,
     }

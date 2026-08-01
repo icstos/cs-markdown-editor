@@ -427,7 +427,10 @@ class KeyDispatcher:
             active_bt = getattr(actions.active_line, "block_type", None) if actions.active_line else None
             if active_bt in (BlockType.CODE, BlockType.TABLE):
                 return True
-            # 链接编辑视为常规文本编辑：Tab 不做字段跳转，按默认缩进/插空格处理。
+            # 链接段内 Tab/Shift+Tab 字段跳转（Typora 式 text↔url↔段尾），
+            # 避免在 []() 内插入空格破坏语法；非链接段走默认缩进/插空格。
+            if actions.link_tab_jump is not None and actions.link_tab_jump(-1 if e.shift else 1):
+                return True
             if e.shift:
                 if actions.indent_or_outdent:
                     actions.indent_or_outdent(-1)

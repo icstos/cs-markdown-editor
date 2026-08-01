@@ -378,6 +378,7 @@ def MarkdownEditor(
     ctx.move_vline = nav_cbs["move_vline"]
     ctx.cursor_vline_info = nav_cbs["cursor_vline_info"]
     ctx.get_line_visual_lines = nav_cbs["get_line_visual_lines"]
+    ctx.link_tab_jump = nav_cbs["link_tab_jump"]
     # outward 组
     ctx.step_left = outward_cbs["step_left"]
     ctx.step_right = outward_cbs["step_right"]
@@ -407,6 +408,7 @@ def MarkdownEditor(
     ctx.change_lang = blocks_cbs["change_lang"]
     # inline_format 组
     ctx.apply_inline_format = inline_fmt_cbs["apply_inline_format"]
+    ctx.insert_inline_at = inline_fmt_cbs["insert_inline_at"]
     ctx.apply_outward_wrap = inline_fmt_cbs["apply_outward_wrap"]
     ctx.handle_outward_type_char = inline_fmt_cbs["handle_outward_type_char"]
     # clipboard 组

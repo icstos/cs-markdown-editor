@@ -51,6 +51,7 @@ def build_actions(ctx) -> EditorActions | None:
         move_down=ctx.move_down,
         page_up=ctx.page_up,
         page_down=ctx.page_down,
+        link_tab_jump=ctx.link_tab_jump,
         # ---- 删除 / 缩进 ----
         backspace_core=ctx.backspace_core,
         delete_core=ctx.delete_core,

@@ -301,6 +301,56 @@ def build_navigation(ctx):
             return
         _move_vline(1, 1)
 
+    def link_tab_jump(delta: int) -> bool:
+        """链接段内 Tab/Shift+Tab 字段跳转（Typora 式 text↔url↔段尾）。返回 True 已处理。
+
+        光标在 LINK 段 [text](url) 内时：
+        - Tab（delta>0）：text → url → 段尾（跳到下一字段起点）
+        - Shift+Tab（delta<0）：段尾 → url → text → 段前（跳到上一字段起点）
+        光标不在 LINK 段内返回 False，交由默认 Tab 缩进/插空格逻辑。
+        避免在 []() 内按 Tab 插入空格破坏链接语法。
+        """
+        if ctx.cursor_li is None:
+            return False
+        li = ctx.cursor_li
+        if not (0 <= li < len(ctx.document.lines)):
+            return False
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            return False
+        off = ctx.cursor_base(len(_line_raw(line)))
+        seg_start = 0
+        for seg in line.segments:
+            seg_end = seg_start + len(seg.raw)
+            if (
+                seg.seg_type == SegType.LINK
+                and seg_start <= off <= seg_end
+                and seg.raw.startswith("[")
+                and "](" in seg.raw
+            ):
+                idx = seg.raw.index("](")
+                # text 区域 [seg_start+1, seg_start+idx)，url 区域 [seg_start+idx+2, seg_end-1)
+                text_start = seg_start + 1
+                text_end = seg_start + idx
+                url_start = seg_start + idx + 2  # 跳过 "]("
+                if delta > 0:
+                    if off < url_start:
+                        ctx.set_cursor(li, url_start)  # text/marker前部 → url 起点
+                    elif off < seg_end:
+                        ctx.set_cursor(li, seg_end)    # url/marker后部 → 段尾
+                    else:
+                        return False                    # 已在段尾，走默认
+                else:
+                    if off > text_end:
+                        ctx.set_cursor(li, text_start)  # url/marker后部 → text 起点
+                    elif off > seg_start:
+                        ctx.set_cursor(li, seg_start)   # text/marker前部 → 段前
+                    else:
+                        return False                    # 已在段前，走默认
+                return True
+            seg_start = seg_end
+        return False
+
     return {
         "move_left": move_left,
         "move_right": move_right,
@@ -313,4 +363,5 @@ def build_navigation(ctx):
         "move_vline": _move_vline,
         "cursor_vline_info": _cursor_vline_info,
         "get_line_visual_lines": _get_line_visual_lines,
+        "link_tab_jump": link_tab_jump,
     }

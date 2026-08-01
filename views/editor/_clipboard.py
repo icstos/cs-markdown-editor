@@ -112,16 +112,22 @@ def build_clipboard(ctx):
         ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def apply_inline_format_to_selection(fmt: str, combo: str):
-        """渲染态选区包裹行内格式：有 outward_sel 走精确包裹，无则受 SelectionArea 限制。
+        """渲染态行内格式入口：有 outward_sel 走精确包裹，无则在当前行激活插入空语法。
 
         outward 选区有明确 raw 偏移，apply_inline_format 可精确包裹选区文本；
-        无 outward_sel 时 Flet SelectionArea 仅提供纯文本无偏移，无法可靠定位
-        包裹位置——建议用 outward 选区做格式包裹。
+        无 outward_sel 时（浏览态未选中），在当前光标行（cursor_line）行尾插入空语法
+        骨架并进入编辑态——Typora 式：浏览态按 Ctrl+K / Ctrl+B 即插入 []() / **** 等
+        并进入编辑，无需先点击激活。空行场景尤为自然：按 Ctrl+K 立即显示 []() 进入编辑。
         """
         if ctx.outward_sel_ref.current is not None:
             ctx.apply_inline_format(fmt)
             return
-        # SelectionArea 选区无偏移，无法可靠包裹（保持当前行为）
+        # 无 outward 选区：在当前光标行行尾插入空语法骨架并进入编辑态
+        li = ctx.cursor_line
+        if li is None or not (0 <= li < len(ctx.document.lines)):
+            return
+        off = len(_line_raw(ctx.document.lines[li]))
+        ctx.insert_inline_at(fmt, li, off)
 
     def on_selection_area_change(e):
         """SelectionArea 选区变化：上报纯文本。"""

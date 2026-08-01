@@ -67,9 +67,15 @@ from views.segment_view import (
 
 
 def _has_visible_text(line: Line) -> bool:
-    """是否有可见文本或前缀段。"""
+    """是否有可见内容（文本/前缀/行内格式骨架）。
+
+    空链接 []()、空图片 ![]()、空加粗 ** 等骨架段虽 text 为空，渲染层仍产生
+    可见内容（编辑态显示语法标记，浏览态显示 '链接'/'图片' 等占位符），不应被
+    误判为空行而只渲染单空格占位。任何非 TEXT 段都是格式段或前缀段，其 raw 骨架
+    非空，必有可见渲染。
+    """
     for s in line.segments:
-        if s.text or s.seg_type in PREFIX_SEGTYPES:
+        if s.text or s.seg_type != SegType.TEXT:
             return True
     return False
 

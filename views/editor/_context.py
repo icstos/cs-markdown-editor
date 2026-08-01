@@ -270,3 +270,7 @@ class EditorContext:
     # key 组
     on_key_down: Callable[[Any], None] = field(default=lambda *a: None)
     on_key_up: Callable[[Any], None] = field(default=lambda *a: None)
+
+    # replace 组（搜索面板触发，作用于当前文档；new_text 已完成反向引用展开）
+    replace_match_in_doc: Callable = field(default=lambda *a: None)
+    replace_all_in_doc: Callable = field(default=lambda *a: 0)

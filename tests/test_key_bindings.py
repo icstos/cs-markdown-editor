@@ -183,6 +183,10 @@ def make_dispatcher(
         "prev_tab": make_cb("prev_tab"),
         "toggle_word_wrap": make_cb("toggle_word_wrap"),
         "toggle_split_editor": make_cb("toggle_split_editor"),
+        "focus_search": make_cb("focus_search"),
+        "toggle_replace_bar": make_cb("toggle_replace_bar"),
+        "replace_current": make_cb("replace_current"),
+        "replace_all": make_cb("replace_all"),
     }
     d = KeyDispatcher(
         shortcut_mgr=shortcut_mgr,
@@ -436,6 +440,83 @@ def test_ctrl_backslash_toggle_split():
     d, app_calls, _ = make_dispatcher(None, app_calls)
     d.handle(evt("\\", ctrl=True))
     assert "toggle_split_editor" in app_calls
+
+
+# ---------------- 搜索/替换快捷键（两层均生效）----------------
+def test_ctrl_f_focus_search_browse_mode():
+    """Ctrl+F 浏览态：聚焦搜索面板。"""
+    app_calls: list = []
+    d, app_calls, _ = make_dispatcher(None, app_calls)
+    d.handle(evt("f", ctrl=True))
+    assert "focus_search" in app_calls
+
+
+def test_ctrl_f_focus_search_edit_mode():
+    """Ctrl+F 编辑态：两层均生效。"""
+    app_calls: list = []
+    calls: list = []
+    actions = make_actions(calls, cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls)
+    d.handle(evt("f", ctrl=True))
+    assert "focus_search" in app_calls
+
+
+def test_ctrl_h_toggle_replace_bar_browse_mode():
+    """Ctrl+H 浏览态：展开/收起替换栏。"""
+    app_calls: list = []
+    d, app_calls, _ = make_dispatcher(None, app_calls)
+    d.handle(evt("h", ctrl=True))
+    assert "toggle_replace_bar" in app_calls
+
+
+def test_ctrl_h_toggle_replace_bar_edit_mode():
+    """Ctrl+H 编辑态：两层均生效。"""
+    app_calls: list = []
+    calls: list = []
+    actions = make_actions(calls, cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls)
+    d.handle(evt("h", ctrl=True))
+    assert "toggle_replace_bar" in app_calls
+
+
+def test_alt_enter_replace_current_browse_mode():
+    """Alt+Enter 浏览态：替换当前匹配。"""
+    app_calls: list = []
+    d, app_calls, _ = make_dispatcher(None, app_calls)
+    d.handle(evt("enter", alt=True))
+    assert "replace_current" in app_calls
+
+
+def test_alt_enter_replace_current_edit_mode():
+    """Alt+Enter 编辑态：两层均生效（不触发 toggle_raw）。"""
+    app_calls: list = []
+    calls: list = []
+    actions = make_actions(calls, cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls)
+    d.handle(evt("enter", alt=True))
+    assert "replace_current" in app_calls
+    # Alt+Enter 不应触发 toggle_raw（那是 Ctrl+Enter）
+    assert "toggle_raw" not in calls
+
+
+def test_ctrl_alt_enter_replace_all_browse_mode():
+    """Ctrl+Alt+Enter 浏览态：全部替换。"""
+    app_calls: list = []
+    d, app_calls, _ = make_dispatcher(None, app_calls)
+    d.handle(evt("enter", ctrl=True, alt=True))
+    assert "replace_all" in app_calls
+
+
+def test_ctrl_alt_enter_replace_all_edit_mode():
+    """Ctrl+Alt+Enter 编辑态：两层均生效。"""
+    app_calls: list = []
+    calls: list = []
+    actions = make_actions(calls, cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls)
+    d.handle(evt("enter", ctrl=True, alt=True))
+    assert "replace_all" in app_calls
+    # 不应触发 toggle_raw（那是 Ctrl+Enter，无 Alt）
+    assert "toggle_raw" not in calls
 
 
 # ---------------- PageUp / PageDown ----------------

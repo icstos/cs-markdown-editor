@@ -342,6 +342,26 @@ class KeyDispatcher:
                     actions.select_all()
             return
 
+        # Ctrl+F：聚焦搜索面板（两层均生效，VSCode 风格）
+        if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
+            cb["focus_search"]()
+            return
+
+        # Ctrl+H：展开/收起替换栏（两层均生效，VSCode 风格）
+        if matches(combo, browse_sc.get("toggle_replace_bar", "ctrl+h")):
+            cb["toggle_replace_bar"]()
+            return
+
+        # Alt+Enter：替换当前匹配（两层均生效，搜索面板未激活时 no-op）
+        if matches(combo, browse_sc.get("replace_current", "alt+enter")):
+            cb["replace_current"]()
+            return
+
+        # Ctrl+Alt+Enter：全部替换（两层均生效）
+        if matches(combo, browse_sc.get("replace_all", "ctrl+alt+enter")):
+            cb["replace_all"]()
+            return
+
         layer = "edit" if actions is not None and actions.cursor_li is not None else "browse"
         shortcuts = self._shortcut_mgr.get(layer)
 

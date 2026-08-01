@@ -56,6 +56,7 @@ DEFAULT_SETTINGS: Settings = {
     "search_case_sensitive": False,  # 区分大小写
     "search_whole_word": False,    # 查找整个单词（\b 边界）
     "search_regex": False,         # 正则表达式
+    "search_replace_expanded": False,  # 替换栏展开状态（VSCode 风格可折叠，Ctrl+H 切换）
     "shortcuts": {k: dict(v) for k, v in DEFAULT_SHORTCUTS.items()},
 }
 

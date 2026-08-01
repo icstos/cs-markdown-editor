@@ -189,3 +189,10 @@ class AppContext:
 
     # 文件系统变更信号（文件增删改后递增，驱动侧边栏文件树异步重扫）
     bump_fs_version: Callable = field(default=lambda: None)
+
+    # 搜索/替换快捷键桥接（KeyDispatcher → App 稳定闭包 → sidebar_replace_ref）
+    toggle_replace_bar: Callable = field(default=lambda: None)
+    replace_current: Callable = field(default=lambda: None)
+    replace_all: Callable = field(default=lambda: None)
+    focus_search: Callable = field(default=lambda: None)
+    sidebar_replace_ref: Any = field(default=None)  # ft.Ref[dict]

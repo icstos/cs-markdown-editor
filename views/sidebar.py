@@ -221,6 +221,144 @@ def _search_in_file(
     return results
 
 
+def _flatten_matches(
+    search_results: list[tuple[int, list[tuple[int, int]]]],
+) -> list[tuple[int, int, int]]:
+    """将当前文档搜索结果扁平化为 [(li, s, e), ...]。
+
+    供"替换当前"按索引取匹配、导航上下翻、计数显示用。
+    """
+    flat: list[tuple[int, int, int]] = []
+    for li, matches in search_results:
+        for s, e in matches:
+            flat.append((li, s, e))
+    return flat
+
+
+def _flatten_cross_matches(
+    cross_results: list[tuple[str, str, list[tuple[int, list[tuple[int, int]]]]]],
+) -> list[tuple[str, int, int, int]]:
+    """将跨文件搜索结果扁平化为 [(path, li, s, e), ...]。"""
+    flat: list[tuple[str, int, int, int]] = []
+    for path, _name, hits in cross_results:
+        for li, matches in hits:
+            for s, e in matches:
+                flat.append((path, li, s, e))
+    return flat
+
+
+def _convert_vscode_backrefs(replace_text: str) -> str:
+    r"""将 VSCode 风格 $N 反向引用转换为 Python \g<N> 语法。
+
+    match.expand() 仅识别 \\1 / \\g<1>（Python re 语法），VSCode/Typora 用户
+    习惯 $1 / $2 写法。此处做一次性转换，两种语法并存：
+    - $$ → 字面量 $
+    - $N（N 为 1 位或多位数字）→ \\g<N>
+    - $ 后非数字 → 字面量 $（如 $abc 保持不变）
+    - \\1 / \\g<1> 等 Python 语法原样保留，match.expand() 原生处理
+    """
+    # $$ → 临时占位符（避免被 $N 规则误匹配）
+    result = replace_text.replace("$$", "\x00")
+    # $N → \g<N>
+    result = re.sub(r"\$(\d+)", r"\\g<\1>", result)
+    # 恢复字面量 $
+    return result.replace("\x00", "$")
+
+
+def _expand_replacement(
+    match: re.Match,
+    replace_text: str,
+    regex_mode: bool,
+) -> str:
+    r"""展开替换文本中的反向引用。
+
+    regex 模式：同时支持 VSCode 风格 $1/$2 与 Python 风格 \1/\g<1>。
+    先把 $N 转为 \g<N>，再交 match.expand() 统一展开。
+    非 regex 模式：$ 和 \ 为字面量，直接返回 replace_text 不做展开。
+    """
+    if regex_mode:
+        try:
+            return match.expand(_convert_vscode_backrefs(replace_text))
+        except (re.error, ValueError):
+            return replace_text
+    # 非 regex：$ 和 \ 无特殊含义，直接返回字面量
+    return replace_text
+
+
+def _find_match_at(
+    pattern: re.Pattern,
+    raw: str,
+    start: int,
+    end: int,
+) -> re.Match | None:
+    """在 raw 中查找起始/结束位置与 (start, end) 匹配的 re.Match 对象。
+
+    供 _expand_replacement 需要完整 Match（含捕获组）时使用。
+    """
+    for m in pattern.finditer(raw):
+        if m.start() == start and m.end() == end:
+            return m
+        if m.start() > start:
+            break
+    return None
+
+
+def _replace_in_string(
+    raw: str,
+    pattern: re.Pattern,
+    spans: list[tuple[int, int]],
+    replace_text: str,
+    regex_mode: bool,
+) -> tuple[str, int]:
+    """行内替换所有匹配区间，右→左处理保偏移。返回 (new_raw, count)。
+
+    regex 模式用 pattern.finditer 重建 Match 做反向引用展开；
+    非 regex 模式直接用 replace_text 字面量替换。
+    """
+    if not spans:
+        return raw, 0
+    # regex 模式：预建 (start,end)→Match 映射，供 expand 使用
+    match_map: dict[tuple[int, int], re.Match] = {}
+    if regex_mode:
+        for m in pattern.finditer(raw):
+            match_map[(m.start(), m.end())] = m
+
+    new_raw = raw
+    count = 0
+    # 右→左：左侧替换不破坏右侧偏移
+    for s, e in sorted(spans, key=lambda t: t[0], reverse=True):
+        if s < 0 or e > len(new_raw) or s > e:
+            continue
+        if regex_mode and (s, e) in match_map:
+            replacement = _expand_replacement(match_map[(s, e)], replace_text, True)
+        else:
+            replacement = replace_text
+        new_raw = new_raw[:s] + replacement + new_raw[e:]
+        count += 1
+    return new_raw, count
+
+
+def _replace_in_file_text(
+    text: str,
+    pattern: re.Pattern,
+    replace_text: str,
+    regex_mode: bool,
+) -> tuple[str, int]:
+    """跨文件单文件文本替换：按 \\n 切行逐行替换。返回 (new_text, count)。
+
+    与 _search_in_file 的行切分方式一致（text.split("\\n")），保证 line_idx 对齐。
+    """
+    lines = text.split("\n")
+    total = 0
+    for i, raw in enumerate(lines):
+        spans = [(m.start(), m.end()) for m in pattern.finditer(raw)]
+        if spans:
+            new_raw, count = _replace_in_string(raw, pattern, spans, replace_text, regex_mode)
+            lines[i] = new_raw
+            total += count
+    return "\n".join(lines), total
+
+
 def _collect_md_paths(tree: list) -> list[str]:
     """从嵌套文件树扁平化提取所有 .md 文件绝对路径（深度优先，字母序）。
 
@@ -810,11 +948,37 @@ def _render_search_toolbar(
     on_toggle: Callable[[str, bool], None],
     count_text: str,
     c,
+    on_prev: Callable[[], None] | None = None,
+    on_next: Callable[[], None] | None = None,
 ) -> ft.Control:
-    """搜索选项工具栏：4 个切换按钮 + 右侧结果计数。
+    """搜索选项工具栏：4 个切换按钮 + 右侧结果计数 + 上下翻导航。
 
-    布局：[📁文件夹] [Aa大小写] [ab整词] [.*正则]  ----  [N 个结果]
+    布局：[📁文件夹] [Aa大小写] [ab整词] [.*正则]  ----  [N 个结果] [↑] [↓]
+    on_prev/on_next 非 None 时显示导航按钮（当前文档模式有匹配时）。
     """
+    right_controls: list = [
+        ft.Text(count_text, size=11, color=c.muted, font_family=FONT_MAIN),
+    ]
+    if on_prev is not None:
+        right_controls.append(
+            ft.IconButton(
+                icon=ft.Icons.KEYBOARD_ARROW_UP,
+                tooltip="上一个匹配 (Shift+Enter)",
+                icon_size=14,
+                on_click=lambda e: on_prev(),
+                style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
+            )
+        )
+    if on_next is not None:
+        right_controls.append(
+            ft.IconButton(
+                icon=ft.Icons.KEYBOARD_ARROW_DOWN,
+                tooltip="下一个匹配 (Enter)",
+                icon_size=14,
+                on_click=lambda e: on_next(),
+                style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
+            )
+        )
     return ft.Container(
         padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
         content=ft.Row(
@@ -836,7 +1000,70 @@ def _render_search_toolbar(
                     opts["regex"], lambda v: on_toggle("regex", v), c,
                 ),
                 ft.Container(expand=True),
-                ft.Text(count_text, size=11, color=c.muted, font_family=FONT_MAIN),
+                *right_controls,
+            ],
+            spacing=Spacing.XS,
+        ),
+    )
+
+
+def _render_replace_bar(
+    replace_text: str,
+    set_replace_text: Callable[[str], None],
+    replace_expanded: bool,
+    on_replace_current: Callable[[], None],
+    on_replace_all: Callable[[], None],
+    has_query: bool,
+    c,
+) -> ft.Control:
+    """替换栏：折叠时 height=0；展开时替换输入 + 替换/全部替换按钮。
+
+    VSCode 风格：替换栏在搜索框下方、选项工具栏上方，折叠时完全隐藏。
+    has_query=False 时按钮禁用（无搜索词时无法替换）。
+    """
+    if not replace_expanded:
+        return ft.Container(height=0)
+    return ft.Container(
+        padding=ft.Padding.only(
+            left=Spacing.XL + 28,  # 对齐搜索框（减去 chevron 宽度）
+            right=Spacing.LG,
+            top=Spacing.XS,
+            bottom=Spacing.XS,
+        ),
+        content=ft.Row(
+            controls=[
+                ft.TextField(
+                    value=replace_text,
+                    hint_text="替换为…",
+                    dense=True,
+                    border=ft.InputBorder.UNDERLINE,
+                    text_size=12,
+                    content_padding=ft.Padding.symmetric(
+                        horizontal=Spacing.SM, vertical=Spacing.LG
+                    ),
+                    on_change=lambda e: set_replace_text(e.control.value or ""),
+                    expand=True,
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.FIND_REPLACE,
+                    tooltip="替换当前 (Alt+Enter)",
+                    icon_size=14,
+                    on_click=lambda e: on_replace_current(),
+                    style=ft.ButtonStyle(
+                        color=c.link if has_query else c.muted,
+                        padding=Spacing.XS,
+                    ),
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.AUTORENEW_OUTLINED,
+                    tooltip="全部替换 (Ctrl+Alt+Enter)",
+                    icon_size=14,
+                    on_click=lambda e: on_replace_all(),
+                    style=ft.ButtonStyle(
+                        color=c.link if has_query else c.muted,
+                        padding=Spacing.XS,
+                    ),
+                ),
             ],
             spacing=Spacing.XS,
         ),
@@ -857,21 +1084,61 @@ def _render_search_panel(
     on_open_file_and_jump: Callable[[str, int, int | None], None],
     root_dir: str | None,
     c,
+    # 替换相关参数
+    replace_text: str = "",
+    set_replace_text: Callable[[str], None] | None = None,
+    replace_expanded: bool = False,
+    on_set_replace_expanded: Callable[[bool], None] | None = None,
+    on_replace_current: Callable[[], None] | None = None,
+    on_replace_all: Callable[[], None] | None = None,
+    current_match_idx: int = 0,
+    total_matches: int = 0,
+    on_prev_match: Callable[[], None] | None = None,
+    on_next_match: Callable[[], None] | None = None,
 ) -> ft.Control:
-    """搜索面板：搜索框 + 选项工具栏 + 结果列表（当前文档 / 跨文件分组）。
+    """搜索面板：搜索框（+折叠按钮）+ 替换栏 + 选项工具栏 + 结果列表。
 
     - search_opts：4 选项当前值（folder/case/word/regex）
     - search_results：当前文档结果 [(li, [(s,e),...]), ...]
     - cross_results：跨文件分组 [(path, name, [(li, [(s,e),...]), ...]), ...]
     - regex_invalid：正则编译失败时显示错误提示
+    - replace_expanded：替换栏展开状态（VSCode 风格 Ctrl+H 切换）
+    - current_match_idx/total_matches：当前匹配索引/总数（"X / Y" 显示）
     """
     placeholder = "在文件夹中查找…" if search_opts["folder"] else "在当前文档中查找…"
+    has_query = bool(search_query.strip())
 
-    # 头部：搜索框 + 选项工具栏（始终展示，便于随时切换）
+    # 搜索框 + 左侧折叠 chevron（VSCode 风格）
+    _chevron = ft.Icons.ARROW_DROP_DOWN if replace_expanded else ft.Icons.ARROW_RIGHT
+    _on_toggle_replace = on_set_replace_expanded or (lambda v: None)
+    search_row = ft.Row(
+        controls=[
+            ft.IconButton(
+                icon=_chevron,
+                tooltip="展开/收起替换栏 (Ctrl+H)",
+                icon_size=16,
+                on_click=lambda e: _on_toggle_replace(not replace_expanded),
+                style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
+            ),
+            _search_box(search_query, set_search_query, placeholder, c),
+        ],
+        spacing=Spacing.XS,
+    )
+
+    # 头部：搜索框 + 替换栏 + 选项工具栏
     header = [
         ft.Container(
             padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-            content=_search_box(search_query, set_search_query, placeholder, c),
+            content=search_row,
+        ),
+        _render_replace_bar(
+            replace_text,
+            set_replace_text or (lambda v: None),
+            replace_expanded,
+            on_replace_current or (lambda: None),
+            on_replace_all or (lambda: None),
+            has_query,
+            c,
         ),
         _render_search_toolbar(search_opts, on_toggle_opt, "", c),
     ]
@@ -912,16 +1179,24 @@ def _render_search_panel(
                 expand=True,
                 padding=ft.Padding.symmetric(vertical=Spacing.XS),
             )
-            # 计数塞到工具栏右侧（重渲染工具栏）
             header[-1] = _render_search_toolbar(
-                search_opts, on_toggle_opt, f"{total} 个结果 / {len(cross_results)} 文件", c,
+                search_opts, on_toggle_opt,
+                f"{total} 个结果 / {len(cross_results)} 文件", c,
             )
         return ft.Column(controls=[*header, body], spacing=0, expand=True)
 
     # 当前文档模式
     if not search_results:
+        header[-1] = _render_search_toolbar(search_opts, on_toggle_opt, "无匹配结果", c)
         body = _empty_hint("无匹配结果", c)
         return ft.Column(controls=[*header, body], spacing=0, expand=True)
+
+    # 计数 + 导航：有匹配时显示 "X / Y" 和上下翻按钮
+    _count_text = f"{current_match_idx + 1} / {total_matches}" if total_matches > 0 else ""
+    header[-1] = _render_search_toolbar(
+        search_opts, on_toggle_opt, _count_text, c,
+        on_prev=on_prev_match, on_next=on_next_match,
+    )
 
     items = [
         _render_search_result_item(
@@ -930,9 +1205,6 @@ def _render_search_panel(
         )
         for li, matches in search_results
     ]
-    header[-1] = _render_search_toolbar(
-        search_opts, on_toggle_opt, f"{len(search_results)} 个结果", c,
-    )
     body = ft.ListView(
         controls=items,
         spacing=0,
@@ -1044,6 +1316,11 @@ def Sidebar(
     compare_source: str | None = None,
     fs_version: int = 0,
     sidebar_open: bool = True,
+    # 替换功能：当前文档内存替换 + 跨文件写盘 + 快捷键桥接
+    on_replace_match_in_doc: Callable[[int, int, int, str], None] | None = None,
+    on_replace_all_in_doc: Callable[[list], int] | None = None,
+    on_bump_fs_version: Callable[[], None] | None = None,
+    replace_actions_ref: ft.Ref | None = None,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
@@ -1093,6 +1370,10 @@ def Sidebar(
     # 内部状态：文件过滤与文档搜索词
     file_filter, set_file_filter = ft.use_state("")
     search_query, set_search_query = ft.use_state("")
+    # 替换状态：替换文本、当前匹配索引、替换后跳转索引
+    replace_text, set_replace_text = ft.use_state("")
+    current_match_idx, set_current_match_idx = ft.use_state(0)
+    pending_jump_idx, set_pending_jump_idx = ft.use_state(-1)  # -1 = 无待跳转
 
     # 派生数据
     recent_files = settings.get("recent_files", [])
@@ -1202,6 +1483,258 @@ def Sidebar(
         page.run_task(_do)
 
     ft.use_effect(_search_cross_files, [pattern, _search_folder, root_dir, fs_version])
+
+    # ---- 替换栏展开状态（从 settings 读取，持久化）----
+    _replace_expanded = settings.get("search_replace_expanded", False)
+    # 跨文件替换防竞态 token
+    replace_token_ref = ft.use_ref(0)
+
+    def _on_set_replace_expanded(v: bool):
+        if on_update_setting is not None:
+            on_update_setting("search_replace_expanded", v)
+
+    # ---- 当前匹配扁平化 + 索引修正 ----
+    flat_matches = _flatten_matches(search_results)
+    total_matches = len(flat_matches)
+
+    # search_results 变化时修正 current_match_idx（越界则回退）
+    def _clamp_match_idx():
+        if total_matches == 0:
+            if current_match_idx != 0:
+                set_current_match_idx(0)
+        elif current_match_idx >= total_matches:
+            set_current_match_idx(total_matches - 1)
+
+    ft.use_effect(_clamp_match_idx, [total_matches])
+
+    # ---- 替换后跳转：search_results 变化 + pending_jump_idx >= 0 时跳到下一个匹配 ----
+    # 替换使 line.raw 变 → _lines_sig 变 → search_results use_memo 重算（少一条匹配）
+    # → effect 取 flat_matches[idx]（自然成为下一个匹配）→ on_jump_to_line。
+    def _do_jump_after_replace():
+        if pending_jump_idx < 0:
+            return
+        # 清除 pending（无论是否找到匹配，避免重复跳转）
+        set_pending_jump_idx(-1)
+        if not flat_matches:
+            return
+        idx = min(pending_jump_idx, len(flat_matches) - 1)
+        if idx < 0:
+            idx = 0
+        set_current_match_idx(idx)
+        li, s, _e = flat_matches[idx]
+        on_jump_to_line(li, s)
+
+    ft.use_effect(_do_jump_after_replace, [search_results, pending_jump_idx])
+
+    # ---- 替换回调 ----
+    def _expand_for_match(li: int, s: int, e: int) -> str:
+        """对当前文档的单个匹配展开反向引用。"""
+        if document is None or not (0 <= li < len(document.lines)):
+            return replace_text
+        raw = document.lines[li].raw or ""
+        if _regex and pattern is not None:
+            m = _find_match_at(pattern, raw, s, e)
+            if m is not None:
+                return _expand_replacement(m, replace_text, True)
+        return replace_text
+
+    def _on_replace_current():
+        if not search_query.strip() or pattern is None:
+            return
+        if _search_folder:
+            _do_replace_current_cross()
+            return
+        # 当前文档模式
+        if not flat_matches:
+            return
+        idx = min(current_match_idx, len(flat_matches) - 1)
+        if idx < 0:
+            idx = 0
+        li, s, e = flat_matches[idx]
+        new_text = _expand_for_match(li, s, e)
+        if on_replace_match_in_doc is not None:
+            on_replace_match_in_doc(li, s, e, new_text)
+        # 替换后跳到下一个匹配：document 变 → search_results 重算 → effect 跳转
+        set_pending_jump_idx(idx)
+
+    def _on_replace_all():
+        if not search_query.strip() or pattern is None:
+            return
+        if _search_folder:
+            _do_replace_all_cross()
+            return
+        # 当前文档模式：构建 replacements 列表（含已展开 new_text）
+        if not search_results:
+            return
+        replacements: list[tuple[int, list[tuple[int, int, str]]]] = []
+        for li, matches in search_results:
+            if document is None or not (0 <= li < len(document.lines)):
+                continue
+            raw = document.lines[li].raw or ""
+            spans_with_text: list[tuple[int, int, str]] = []
+            for s, e in matches:
+                if _regex and pattern is not None:
+                    m = _find_match_at(pattern, raw, s, e)
+                    nt = _expand_replacement(m, replace_text, True) if m else replace_text
+                else:
+                    nt = replace_text
+                spans_with_text.append((s, e, nt))
+            if spans_with_text:
+                replacements.append((li, spans_with_text))
+        if replacements and on_replace_all_in_doc is not None:
+            on_replace_all_in_doc(replacements)
+            set_current_match_idx(0)
+
+    def _on_prev_match():
+        if not flat_matches:
+            return
+        idx = (current_match_idx - 1) % len(flat_matches)
+        set_current_match_idx(idx)
+        li, s, _e = flat_matches[idx]
+        on_jump_to_line(li, s)
+
+    def _on_next_match():
+        if not flat_matches:
+            return
+        idx = (current_match_idx + 1) % len(flat_matches)
+        set_current_match_idx(idx)
+        li, s, _e = flat_matches[idx]
+        on_jump_to_line(li, s)
+
+    # ---- 跨文件替换 ----
+    def _do_replace_current_cross():
+        """跨文件替换当前匹配：当前文件走内存，其他文件读→改→写→打开跳转。"""
+        flat_cross = _flatten_cross_matches(cross_results)
+        if not flat_cross:
+            return
+        idx = min(current_match_idx, len(flat_cross) - 1)
+        if idx < 0:
+            idx = 0
+        path, li, s, e = flat_cross[idx]
+        if path == file_path:
+            # 当前文档走内存替换
+            new_text = _expand_for_match(li, s, e)
+            if on_replace_match_in_doc is not None:
+                on_replace_match_in_doc(li, s, e, new_text)
+            set_pending_jump_idx(idx)
+        else:
+            # 其他文件：读→改→写→打开跳转
+            page = page_ref.current
+            if page is None:
+                return
+            replace_token_ref.current += 1
+            my_token = replace_token_ref.current
+
+            async def _do():
+                try:
+                    if os.path.getsize(path) > _MAX_FILE_SIZE:
+                        return
+                    with open(path, encoding="utf-8") as f:
+                        text = f.read()
+                except (OSError, UnicodeDecodeError):
+                    return
+                if replace_token_ref.current != my_token:
+                    return
+                lines = text.split("\n")
+                if li >= len(lines):
+                    return
+                raw = lines[li]
+                m = None
+                if pattern is not None:
+                    m = _find_match_at(pattern, raw, s, e)
+                if _regex and m is not None:
+                    new_text = _expand_replacement(m, replace_text, True)
+                else:
+                    new_text = replace_text
+                new_raw = raw[:s] + new_text + raw[e:]
+                lines[li] = new_raw
+                if replace_token_ref.current != my_token:
+                    return
+                try:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(lines))
+                except OSError:
+                    return
+                # 写盘后打开文件并跳转到替换位置之后
+                new_off = s + len(new_text)
+                if on_open_file_and_jump is not None:
+                    on_open_file_and_jump(path, li, new_off)
+                if on_bump_fs_version is not None:
+                    on_bump_fs_version()
+
+            page.run_task(_do)
+
+    def _do_replace_all_cross():
+        """跨文件全部替换：逐文件读→改→写，当前文件走内存。"""
+        if not cross_results:
+            return
+        page = page_ref.current
+        if page is None:
+            return
+        replace_token_ref.current += 1
+        my_token = replace_token_ref.current
+
+        # 当前文档的 replacements（走内存）
+        current_replacements: list[tuple[int, list[tuple[int, int, str]]]] = []
+        other_files: list[tuple[str, list[tuple[int, list[tuple[int, int]]]]]] = []
+
+        for path, _name, hits in cross_results:
+            if path == file_path:
+                for li, matches in hits:
+                    if document is None or not (0 <= li < len(document.lines)):
+                        continue
+                    raw = document.lines[li].raw or ""
+                    spans_with_text: list[tuple[int, int, str]] = []
+                    for s, e in matches:
+                        if _regex and pattern is not None:
+                            m = _find_match_at(pattern, raw, s, e)
+                            nt = _expand_replacement(m, replace_text, True) if m else replace_text
+                        else:
+                            nt = replace_text
+                        spans_with_text.append((s, e, nt))
+                    if spans_with_text:
+                        current_replacements.append((li, spans_with_text))
+            else:
+                other_files.append((path, hits))
+
+        async def _do():
+            # 当前文档走内存替换
+            if current_replacements and on_replace_all_in_doc is not None:
+                on_replace_all_in_doc(current_replacements)
+            # 其他文件逐个读→改→写
+            for fpath, hits in other_files:
+                if replace_token_ref.current != my_token:
+                    return
+                try:
+                    if os.path.getsize(fpath) > _MAX_FILE_SIZE:
+                        continue
+                    with open(fpath, encoding="utf-8") as f:
+                        text = f.read()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if replace_token_ref.current != my_token:
+                    return
+                new_text, count = _replace_in_file_text(text, pattern, replace_text, _regex)
+                if count == 0:
+                    continue
+                try:
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        f.write(new_text)
+                except OSError:
+                    continue
+            # 刷新文件系统版本（触发跨文件搜索重扫）
+            if on_bump_fs_version is not None:
+                on_bump_fs_version()
+            set_current_match_idx(0)
+
+        page.run_task(_do)
+
+    # ---- 注册替换回调到 replace_actions_ref（供 KeyDispatcher 桥接）----
+    if replace_actions_ref is not None:
+        replace_actions_ref.current = {
+            "replace_current": _on_replace_current,
+            "replace_all": _on_replace_all,
+        }
 
     # ---- 文件树：异步扫描 + scan_token 防竞态 ----
     # use_effect 依赖 [root_dir, fs_version]：根目录切换 / 文件增删改后重扫。
@@ -1355,6 +1888,17 @@ def Sidebar(
             _open_and_jump,
             root_dir,
             c,
+            # 替换相关参数
+            replace_text=replace_text,
+            set_replace_text=set_replace_text,
+            replace_expanded=_replace_expanded,
+            on_set_replace_expanded=_on_set_replace_expanded,
+            on_replace_current=_on_replace_current,
+            on_replace_all=_on_replace_all,
+            current_match_idx=current_match_idx,
+            total_matches=total_matches if not _search_folder else 0,
+            on_prev_match=_on_prev_match if not _search_folder else None,
+            on_next_match=_on_next_match if not _search_folder else None,
         )
 
     # 外层 Container 统一控制宽度 / 动画 / 裁剪（原 sidebar_container 逻辑内移）：

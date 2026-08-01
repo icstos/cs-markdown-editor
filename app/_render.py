@@ -60,6 +60,22 @@ def build_render(ctx) -> ft.Control:
     返回 ft.Stack，包含 main_col / settings_view / confirm_dialog / file_dialog_view。
     """
 
+    # ---- 替换回调路由：通过 get_active_nav 路由到焦点视口（diff/split/单编辑器统一）----
+    def _call_replace(li: int, s: int, e: int, nt: str):
+        nav = ctx.get_active_nav()
+        if nav is not None and nav.current is not None:
+            fn = getattr(nav.current, "replace_match_in_doc", None)
+            if fn is not None:
+                fn(li, s, e, nt)
+
+    def _call_replace_all(reps):
+        nav = ctx.get_active_nav()
+        if nav is not None and nav.current is not None:
+            fn = getattr(nav.current, "replace_all_in_doc", None)
+            if fn is not None:
+                return fn(reps)
+        return 0
+
     # ============ 设置弹层 ============
     settings_view = SettingsDialog(
         open_state=ctx.settings_open,
@@ -110,6 +126,11 @@ def build_render(ctx) -> ft.Control:
         compare_source=ctx.compare_source,
         fs_version=ctx.fs_version,
         sidebar_open=sidebar_open,
+        # 替换功能：当前文档内存替换 + 跨文件写盘 + 快捷键桥接 ref
+        on_replace_match_in_doc=_call_replace,
+        on_replace_all_in_doc=_call_replace_all,
+        on_bump_fs_version=ctx.bump_fs_version,
+        replace_actions_ref=ctx.sidebar_replace_ref,
     )
 
     # ============ 编辑器区 ============

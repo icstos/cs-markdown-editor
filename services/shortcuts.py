@@ -41,6 +41,10 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "format_math_block": "ctrl+shift+m",
         "format_table": "ctrl+alt+t",
         "toggle_task": "alt+c",
+        "focus_search": "ctrl+f",
+        "toggle_replace_bar": "ctrl+h",
+        "replace_current": "alt+enter",
+        "replace_all": "ctrl+alt+enter",
     },
     "edit": {
         "save": "ctrl+s",
@@ -66,6 +70,10 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "select_all": "ctrl+a",
         "toggle_task": "alt+c",
         "format_task": "ctrl+shift+t",
+        "focus_search": "ctrl+f",
+        "toggle_replace_bar": "ctrl+h",
+        "replace_current": "alt+enter",
+        "replace_all": "ctrl+alt+enter",
     },
 }
 
@@ -147,6 +155,17 @@ ACTION_REGISTRY: list[ActionDef] = [
               {"browse": "ctrl+v", "edit": "ctrl+v"}),
     ActionDef("select_all", "全选", "both", "编辑", "选中整个文档内容。",
               {"browse": "ctrl+a", "edit": "ctrl+a"}),
+    ActionDef("focus_search", "聚焦搜索", "both", "视图", "切到侧边栏搜索面板并聚焦搜索框。",
+              {"browse": "ctrl+f", "edit": "ctrl+f"}),
+    ActionDef("toggle_replace_bar", "切换替换条", "both", "视图",
+              "展开/收起替换条（VSCode 风格 Ctrl+H），自动切到搜索面板。",
+              {"browse": "ctrl+h", "edit": "ctrl+h"}),
+    ActionDef("replace_current", "替换当前匹配", "both", "编辑",
+              "替换当前匹配项并跳到下一个匹配。",
+              {"browse": "alt+enter", "edit": "alt+enter"}),
+    ActionDef("replace_all", "全部替换", "both", "编辑",
+              "替换当前文档/工作区内所有匹配项。",
+              {"browse": "ctrl+alt+enter", "edit": "ctrl+alt+enter"}),
 ]
 
 _LAYERS = ("browse", "edit")

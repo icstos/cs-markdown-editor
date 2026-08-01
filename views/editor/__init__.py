@@ -50,6 +50,7 @@ from views.editor._navigation import build_navigation
 from views.editor._outward import build_outward
 from views.editor._raw_mode import build_raw_mode
 from views.editor._render import build_line_controls
+from views.editor._replace import build_replace
 from views.editor._scroll import build_scroll
 from views.raw_editor import RawEditor
 from views.tool_area import ToolArea

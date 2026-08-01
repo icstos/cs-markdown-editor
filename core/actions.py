@@ -134,3 +134,9 @@ class EditorActions:
     #   duration=0 保证跟随滚轮即时响应，无动画延迟。
     get_scroll_state: Callable[[], ScrollState] | None = None
     scroll_to_offset: Callable[[float], None] | None = None
+
+    # ---- 替换（搜索面板触发，作用于当前文档；new_text 已在 Sidebar 完成反向引用展开）----
+    # 替换单个匹配 (li, start..end) → new_text
+    replace_match_in_doc: Callable[[int, int, int, str], None] | None = None
+    # 批量替换：replacements = [(li, [(s, e, new_text), ...]), ...]，行内右→左保偏移；返回替换条数
+    replace_all_in_doc: Callable[[list[tuple[int, list[tuple[int, int, str]]]]], int] | None = None

@@ -17,6 +17,7 @@
 - **向外选区**：`Shift+Click` 或 `Shift+方向键` 从编辑光标起始跨段 / 跨行选区，高亮覆盖范围；支持 `Ctrl+X` 剪切、`Backspace` / `Delete` 删除、`Escape` 取消、`Ctrl+C` 复制选区 raw 文本
 - **行内格式快捷键**：`Ctrl+B` 加粗、`Ctrl+I` 斜体、`Ctrl+U` 高亮、`Ctrl+Shift+S` 删除线、`` Ctrl+` `` 行内代码、`Ctrl+K` 链接；选中文本自动包裹对应语法并**保持选区**，再次按下同一快捷键取消语法标记（Toggle 行为），无选中插入空语法标记（光标落标记中间）；浏览态无需先进入编辑态即可生效，渲染态同段选区同样支持包裹
 - **URL 智能折叠**：链接 `[text](url)` 与图片 `![alt](url)` 的 URL 子段根据光标位置动态折叠——光标在文本/alt 段时 URL 折叠为零宽度（最小语法噪声），光标进入 URL 段时完整可见；链接编辑视为常规文本编辑，光标移出链接区间即自动折叠回渲染态
+- **图片交互（Typora 式）**：左键点击图片进入 `![alt](url)` 源码编辑（光标定位到图片段，激活行渲染源码）；右键弹出上下文菜单：拷贝图片 Markdown / 拷贝图片（二进制写入系统剪贴板）/ 将图像另存为（FilePicker 保存对话框）/ 删除图片（移除图片段并重解析，混合行保留其余文本）；支持本地路径、http(s) URL、data URI 三类图片源
 - **自适应宽度与软换行**：长行超出视口时按可用宽度自动断行（CJK 逐字、西文按词），`Alt+Z` 一键切换自动换行开关（VSCode 风格，设置持久化）；窗口尺寸变化时段落宽度实时自适应重排
 - **向右拆分编辑器**：`Ctrl+\` 将当前文档在右侧拆分出第二视口（VSCode 风格），两视口共享同一文档、独立光标与滚动，便于多处对照查看与编辑
 - **文件对比（标签化双编辑器 diff）**：VSCode 风格的文件对比以标签形式管理——在标签或侧边栏文件上右键「选择以进行比较」标记源文件，再在另一文件上右键「与已选项目进行比较」即创建对比标签（`type: "diff"`）。对比标签内左右并排两个原生可编辑 `MarkdownEditor`，行级 diff 背景着色标识差异（绿色=新增、红色=删除、灰色=修改），缺失侧行高间隙对齐保持视觉对应。对比头部显示「左文件名 → 右文件名」及差异统计（`+新增` / `-删除` / `~修改`）。两侧均可直接编辑，差异标记实时重算；`Ctrl+S` 分别保存两侧脏文档到各自路径。左右侧像素级同步滚动（VSCode 行为：一侧到底时另一侧可继续独立滚动）；右键「交换左右侧」可快速切换对比视角
@@ -40,6 +41,7 @@
 | 分隔线 | `---` / `***` / `___` |
 | 目录 | `[toc]` 卡片式目录：头部图标 + 标题 + 计数，彩色细竖线区分标题级别，同级别左对齐，H1/H2 加粗；点击条目跳转对应标题（带高亮脉冲反馈） |
 | 表格 | 基于 flet-datatable2，单击单元格编辑，行列增删、对齐设置、`Tab` / `Enter` 单元格导航、右键菜单；自管理独立岛屿 |
+| 图片 | `![alt](url)` 独占一行时渲染为 `ft.Image`（等比缩放，读取失败显示占位）；左键进入源码编辑，右键菜单（拷贝 Markdown / 拷贝图片 / 另存为 / 删除）；支持本地路径 / http(s) URL / data URI |
 
 ### 行内格式
 
@@ -199,6 +201,7 @@ cs-markdown-editor
 │      _outward.py    向外选区（步进/扩展/删除/剪切/复制）      │
 │      _clipboard.py  剪贴板/SelectionArea 选区                │
 │      _fence.py      围栏岛屿（CODE/MATH/TABLE）编辑           │
+│      _image.py      图片右键菜单（拷贝/另存为/删除）          │
 │      _render.py     行控件列表构造（LineView/TableView/diff） │
 │      _history/_indent/_blocks/_inline_format/                │
 │      _raw_mode/_focus/_key/_actions/_helpers  其他工厂       │
@@ -513,6 +516,7 @@ cs-markdown-editor/
     │   ├── _outward.py      # 向外选区（步进/扩展/选词/删除/剪切/复制/全选/切行）
     │   ├── _clipboard.py    # 剪贴板/SelectionArea 选区/行内格式包裹
     │   ├── _fence.py        # 围栏岛屿编辑（CODE/MATH/TABLE 聚焦/失焦/防抖历史）
+    │   ├── _image.py        # 图片右键菜单操作（拷贝Markdown/拷贝图片/另存为/删除）
     │   ├── _blocks.py       # 块级操作（标题/任务/表格/语言切换/新行）
     │   ├── _inline_format.py # 行内格式（加粗/斜体/代码/删除线/链接）
     │   ├── _indent.py       # 缩进/反缩进/新行后
@@ -523,7 +527,7 @@ cs-markdown-editor/
     │   ├── _actions.py      # EditorActions 装配（37 字段写入 nav_ref）
     │   └── _render.py       # 行控件列表构造（LineView/TableView/diff 间隙合并）
     ├── line_view.py         # 行视图：围栏岛屿分支 + RenderedLine + Stack + 跳转高亮 + diff 行级背景着色
-    ├── rendered_line.py     # 渲染层：raw_to_visible_spans + GestureDetector 命中测试
+    ├── rendered_line.py     # 渲染层：raw_to_visible_spans + GestureDetector 命中 + 图片行渲染（左键编辑/右键菜单）
     ├── cursor_layer.py      # 透明光标 TextField（IME 友好，StrutStyle 行高对齐）
     ├── pixel_layout.py      # LineLayoutCache：像素布局缓存 + cursor_px + hit_test
     ├── segment_view.py      # 段级 TextSpan 渲染（含向外选区字符级高亮）
@@ -544,7 +548,8 @@ cs-markdown-editor/
 tests/                      # 单元测试（python -m tests.test_<name>）
 ├── test_soft_wrap.py       # 软换行 2D 视觉行布局 / raw-flat 映射 / span 切片（37 项）
 ├── test_table_smoke.py     # 表格行解析与拼接冒烟测试
-└── test_task_smoke.py      # 任务列表解析冒烟测试
+├── test_task_smoke.py      # 任务列表解析冒烟测试
+└── test_image_ops.py       # 图片操作（二进制获取/扩展名/文件名/删除段，14 项）
 ```
 
 ### 样式系统（`styles.py`）
@@ -599,6 +604,8 @@ tests/                      # 单元测试（python -m tests.test_<name>）
 - **diff 实时重算**：对比标签每次渲染由 `serialize(left_doc)` / `serialize(right_doc)` 重算 `compute_diff_for_editors`，Document 为 `@ft.observable`，任一侧编辑自动触发 App 重渲染，diff 标记 / 间隙即时更新——无需手动刷新或 diff 阈值节流
 - **diff 同步滚动防循环**：`diff_syncing_ref` + `diff_sync_direction_ref` 双标记区分主动 / 被动侧；syncing 期间仅主动侧 on_scroll 累积 `pending` 追赶（连续滚轮滚动不丢帧），被动侧忽略（避免短文档侧 clamp 后反向拉回长文档侧）；`_after_diff_sync` 异步等待 60ms 清除标记后追赶 pending，保证 duration=0 的 scroll_to 完成一帧往返
 - **diff 焦点统一路由**：`_get_active_nav()` 按优先级 diff > split > 单编辑器返回当前焦点视口的 `nav_ref`，键盘事件 / TOC 跳转 / 状态栏光标位置均经此路由，避免散落分支判断；侧边栏大纲 / 搜索也跟随 `diff_active_pane` 选择对应侧文档
+- **图片交互复用激活行机制**：左键点击图片触发 `on_tap(line_idx, seg_raw_off)` 定位光标到图片段，该行变激活态后 `cursor_overlay` 非 None 自动跳过图片渲染分支，回退到普通文本渲染显示 `![alt](url)` 源码 + 光标——无需新增编辑路径；右键菜单通过 `ft.ContextMenu(secondary_items)` 挂载于每个 `ft.Image`，操作经 `on_image_action(action, li, seg_idx, url, alt)` 统一分发到 `build_image` 工厂，async 剪贴板 / 文件 IO 用 `page.run_task(coro_fn, *args)` 调度（run_task 期望协程函数 + 参数，非协程对象）；多图片行场景下菜单回调的 `url` / `alt` / `seg_idx` 全部通过默认参数绑定，避免闭包捕获循环变量末值
+- **图片源统一获取**：`_fetch_image_bytes` 统一处理本地路径 / http(s) URL / data URI 三类源，拷贝图片（`Clipboard.set_image`）与另存为（`FilePicker.save_file`）共用；删除图片段从行 raw 移除对应段 raw 后走 `reparse_line_atomic` 原子重解析，与 `cut_current_line` 一致走 `push_history` + `mark_dirty` + 光标复位路径
 
 ## 许可证
 

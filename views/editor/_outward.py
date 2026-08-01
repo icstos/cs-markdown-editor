@@ -265,6 +265,12 @@ def build_outward(ctx):
         ctx.set_outward_sel(None)
         if 0 <= start_li < len(ctx.document.lines):
             ctx.set_cursor(start_li, start_off)
+            # 强制重聚焦 cursor TextField：拖拽起始 outward 选区时未清 cursor_li
+            # （on_pan_start_outward 注释——避免 set_cursor_li(None) 重渲染中断 pan
+            # 手势），删除/剪切后 cursor_li 可能未变（同行选区），focus use_effect
+            # 依赖 [cursor_li, nav_seq, focus_seq, ...] 不触发→TextField 保持失焦
+            # 态→光标丢失。递增 focus_seq 强制重聚焦，与 _on_tap_line 同型修复。
+            ctx.set_focus_seq(ctx.focus_seq + 1)
 
     def handle_outward_delete() -> None:
         if ctx.outward_sel is None:

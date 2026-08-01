@@ -90,7 +90,7 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
     line.segments = rebuilt.segments
 
 
-def reparse_line_atomic(line: Line, new_raw: str) -> None:
+def reparse_line_atomic(line: Line, new_raw: str, *, notify: bool = True) -> None:
     """原子化重解析：所有字段批量更新，仅触发一次 observable 通知。
 
     用 object.__setattr__ 绕过 Observable.__setattr__ 的逐字段 _notify，
@@ -103,6 +103,9 @@ def reparse_line_atomic(line: Line, new_raw: str) -> None:
     - segments 设为纯 list（不经 _wrap_if_collection 包裹为 ObservableList）：
       项目代码从不 append/extend/remove line.segments（仅替换引用），安全
     - line.notify() 是 Observable 的公共方法，触发 _notify(None) 通用通知
+    - notify=False：跳过 line.notify()，供调用方在紧接的 document.notify() 中
+      统一触发唯一一次重渲染（如 on_submit 行分割：reparse 旧行 + insert 新行
+      原本触发 2 次通知，合并为 1 次）。静默更新后由 line_raw_version prop 检测变化
 
     与 reparse_line 的区别：后者保留用于低频路径（toggle_task / change_lang /
     撤销重做），通知次数不敏感。本函数专用于高频输入路径。
@@ -115,13 +118,15 @@ def reparse_line_atomic(line: Line, new_raw: str) -> None:
         lang, body = _split_code_block(raw)
         object.__setattr__(line, "lang", lang)
         object.__setattr__(line, "segments", [Segment(SegType.CODE, body, body)])
-        line.notify()
+        if notify:
+            line.notify()
         return
 
     if line.block_type == BlockType.HR:
         if _RE_HR.match(raw):
             object.__setattr__(line, "segments", [Segment(SegType.TEXT, raw, raw)])
-            line.notify()
+            if notify:
+                line.notify()
             return
         # 不再匹配 HR 语法：fall through 到普通块重建（变为段落）
 
@@ -129,12 +134,14 @@ def reparse_line_atomic(line: Line, new_raw: str) -> None:
         m = _RE_MATH_BLOCK.match(raw)
         content = m.group(1).strip() if m else raw
         object.__setattr__(line, "segments", [Segment(SegType.MATH, content, content)])
-        line.notify()
+        if notify:
+            line.notify()
         return
 
     if line.block_type == BlockType.TABLE:
         object.__setattr__(line, "segments", [Segment(SegType.TEXT, raw, raw)])
-        line.notify()
+        if notify:
+            line.notify()
         return
 
     # 普通块：完整重建（6 字段静默更新 + 1 次 notify）
@@ -145,7 +152,8 @@ def reparse_line_atomic(line: Line, new_raw: str) -> None:
     object.__setattr__(line, "task", rebuilt.task)
     object.__setattr__(line, "checked", rebuilt.checked)
     object.__setattr__(line, "segments", rebuilt.segments)
-    line.notify()
+    if notify:
+        line.notify()
 
 
 def segment_raw(segments: list[Segment]) -> str:

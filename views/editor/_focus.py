@@ -53,13 +53,15 @@ def build_focus(ctx):
             return
         # 仍未构建：undo/redo 等无外部滚动场景，主动滚动使其可见后重试
         if ctx.ensure_visible is not None:
-            ctx.ensure_visible(ctx.cursor_li)
+            with contextlib.suppress(Exception):
+                ctx.ensure_visible(ctx.cursor_li)
             await asyncio.sleep(0.15)
             await _try_focus()
             if _line_built():
                 return
             # 最后一次重试（长行两步滚动可能需更久）
-            ctx.ensure_visible(ctx.cursor_li)
+            with contextlib.suppress(Exception):
+                ctx.ensure_visible(ctx.cursor_li)
             await asyncio.sleep(0.15)
             await _try_focus()
 

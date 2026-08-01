@@ -279,7 +279,10 @@ def build_cursor(ctx):
         else:
             before = raw[:off]
             after = raw[off:]
-            _reparse_atomic(line, before + parts[0])
+            # reparse 用 notify=False 静默更新当前行，由紧接的切片赋值 +
+            # document.notify() 统一触发唯一一次重渲染（多行粘贴原触发
+            # line.notify() + ObservableList 通知 + document.notify() = 3 次冗余通知）
+            _reparse_atomic(line, before + parts[0], notify=False)
             middle = [parser.parse_markdown(p).lines[0] for p in parts[1:-1]]
             last_raw = parts[-1] + after
             last_line = parser.parse_markdown(last_raw).lines[0]
@@ -334,7 +337,10 @@ def build_cursor(ctx):
             cur_raw = _line_raw(line)
             junction = len(prev_raw)
             merged = prev_raw + cur_raw
-            _reparse_atomic(prev, merged)
+            # reparse 用 notify=False 静默更新前一行，由紧接的 del + document.notify()
+            # 统一触发唯一一次重渲染（合并行原触发 line.notify() + ObservableList 通知
+            # + document.notify() = 3 次冗余通知）
+            _reparse_atomic(prev, merged, notify=False)
             # 原地删除行 + notify()，避免 O(N) 列表重建
             del ctx.document.lines[li]
             ctx.document.notify()
@@ -383,7 +389,10 @@ def build_cursor(ctx):
             ctx.undo_push_pending.current = True
             junction = len(raw)
             merged = raw + _line_raw(nxt)
-            _reparse_atomic(line, merged)
+            # reparse 用 notify=False 静默更新当前行，由紧接的 del + document.notify()
+            # 统一触发唯一一次重渲染（合并行原触发 line.notify() + ObservableList 通知
+            # + document.notify() = 3 次冗余通知）
+            _reparse_atomic(line, merged, notify=False)
             # 原地删除行 + notify()，避免 O(N) 列表重建
             del ctx.document.lines[li + 1]
             ctx.document.notify()
@@ -475,9 +484,11 @@ def build_cursor(ctx):
                 ctx.mark_dirty()
                 _set_cursor(li, 0)
                 return
-            _reparse_atomic(line, before)
+            _reparse_atomic(line, before, notify=False)
             new_line = parser.parse_markdown(after).lines[0]
             # 原地插入行 + notify()，避免 O(N) 列表重建
+            # reparse 用 notify=False 静默更新旧行，由本次 document.notify() 统一触发
+            # 唯一一次重渲染（原 reparse 的 line.notify() + document.notify() = 2 次）
             ctx.document.lines.insert(li + 1, new_line)
             ctx.document.notify()
             ctx.mark_dirty()
@@ -508,7 +519,10 @@ def build_cursor(ctx):
 
         # 默认：分割当前行，续行加列表/引用前缀
         cont_prefix = _next_line_raw(line)
-        _reparse_atomic(line, before)
+        # reparse 用 notify=False 静默更新旧行，由紧接的 lines.insert() +
+        # document.notify() 统一触发唯一一次重渲染（原 reparse 的 line.notify()
+        # + ObservableList 通知 + document.notify() = 3 次冗余通知）
+        _reparse_atomic(line, before, notify=False)
         new_line = parser.parse_markdown(cont_prefix + after).lines[0]
         # 原地插入行 + notify()，避免 O(N) 列表重建
         ctx.document.lines.insert(li + 1, new_line)

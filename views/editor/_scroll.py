@@ -47,6 +47,26 @@ from views._editor_helpers import (
 from views._editor_helpers import _build_offset_prefix
 
 
+def _run_task_safe(page, coro_fn, *args, **kwargs) -> None:
+    """安全调度协程：page 为 None 或 session 销毁时静默跳过。
+
+    组件卸载后异步回调（_focus_cursor_field 重试 / diff 同步滚动）可能命中
+    page.session 已销毁。page.run_task 内部先创建协程对象再访问 self.session，
+    session 销毁时抛 RuntimeError 但协程已创建未调度 → "coroutine never
+    awaited" 警告 + Task exception。提前检查 session 存活避免协程泄漏。
+    """
+    if page is None:
+        return
+    try:
+        _ = page.session  # 销毁后抛 RuntimeError("destroyed session")
+    except RuntimeError:
+        return
+    try:
+        page.run_task(coro_fn, *args, **kwargs)
+    except RuntimeError:
+        pass
+
+
 def build_scroll(ctx):
     """构造滚动 / 导航 / 布局命中闭包组。
 
@@ -87,7 +107,7 @@ def build_scroll(ctx):
         """同步调度异步 scroll_to(offset, duration=0)。
 
         duration=0 即时跳转，跟随滚轮无动画延迟（diff 同步滚动专用）。
-        对外非阻塞：内部用 page.run_task 调度协程。
+        对外非阻塞：内部用 _run_task_safe 调度协程（session 销毁时静默跳过）。
         """
         page = ft.context.page
 
@@ -98,7 +118,7 @@ def build_scroll(ctx):
                 await ctx.list_view_ref.current.scroll_to(offset, duration=0)
 
         if page is not None:
-            page.run_task(_do)
+            _run_task_safe(page, _do)
 
     def _on_content_resize(e):
         """内容 Container 尺寸变化回调：跟踪视口宽度，实现段落自适应换行。
@@ -297,7 +317,7 @@ def build_scroll(ctx):
                     ctx.document.lines[li].block_type, ctx.document.lines[li].level
                 )
                 cursor_y_in_line = vline.vline_idx * base * ctx.line_height
-        page.run_task(_safe_scroll_to, li, cursor_y_in_line=cursor_y_in_line)
+        _run_task_safe(page, _safe_scroll_to, li, cursor_y_in_line=cursor_y_in_line)
 
     def _hit_test_line_x(li: int, x: float) -> int:
         """跨行拖拽用：返回目标行 raw 偏移。"""
@@ -354,17 +374,13 @@ def build_scroll(ctx):
         if ctx.cursor_li is not None:
             ctx.move_vline(-1, _page_vlines())
         else:
-            page = ft.context.page
-            if page is not None:
-                page.run_task(_scroll_by_page, -1)
+            _run_task_safe(ft.context.page, _scroll_by_page, -1)
 
     def page_down():
         if ctx.cursor_li is not None:
             ctx.move_vline(1, _page_vlines())
         else:
-            page = ft.context.page
-            if page is not None:
-                page.run_task(_scroll_by_page, 1)
+            _run_task_safe(ft.context.page, _scroll_by_page, 1)
 
     async def _scroll_by_page(direction: int):
         if ctx.list_view_ref.current is None:
@@ -396,14 +412,13 @@ def build_scroll(ctx):
         # 跳转目标行脉冲高亮：置 flash_li 触发重渲染，1.2s 后异步清回 -1 淡出
         ctx.set_flash_li(li)
         page = ft.context.page
-        if page is not None:
-            page.run_task(_safe_scroll_to, li, to_top=True)
+        _run_task_safe(page, _safe_scroll_to, li, to_top=True)
 
-            async def _clear_flash():
-                await asyncio.sleep(1.2)
-                ctx.set_flash_li(-1)
+        async def _clear_flash():
+            await asyncio.sleep(1.2)
+            ctx.set_flash_li(-1)
 
-            page.run_task(_clear_flash)
+        _run_task_safe(page, _clear_flash)
 
     def _get_cursor_row_col() -> tuple[int, int]:
         if ctx.cursor_li is not None and 0 <= ctx.cursor_li < len(ctx.document.lines):

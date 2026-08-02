@@ -197,6 +197,21 @@ def test_collect_md_paths_flattens_tree():
     assert paths == ["/abs/docs/a.md", "/abs/docs/sub/b.md", "/abs/c.md"]
 
 
+def test_collect_md_paths_filters_non_md():
+    """扫描改为全类型后，_collect_md_paths 必须按 .md/.markdown 过滤非 md 节点。"""
+    tree = [
+        ("dir", "docs", [
+            ("file", "a.md", "/abs/docs/a.md"),
+            ("file", "b.png", "/abs/docs/b.png"),
+            ("file", "c.py", "/abs/docs/c.py"),
+        ]),
+        ("file", "d.md", "/abs/d.md"),
+        ("file", "e.json", "/abs/e.json"),
+    ]
+    paths = _collect_md_paths(tree)
+    assert paths == ["/abs/docs/a.md", "/abs/d.md"]
+
+
 def test_collect_md_paths_empty_tree():
     """空树返回 []。"""
     assert _collect_md_paths([]) == []

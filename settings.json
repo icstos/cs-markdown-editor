@@ -17,12 +17,8 @@
   "sidebar_open": true,
   "sidebar_panel": "files",
   "sidebar_width": 256,
-  "recent_files": [
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\test.md",
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md",
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\Untitled.md"
-  ],
-  "workspace_folder": "C:\\Users\\aigcs\\Desktop\\测试文档",
+  "recent_files": [],
+  "workspace_folder": "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs",
   "search_folder": false,
   "search_case_sensitive": false,
   "search_whole_word": false,

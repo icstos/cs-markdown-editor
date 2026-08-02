@@ -26,7 +26,8 @@ from models import BlockType, Document, SegType
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors, only_border
 
 _MD_EXTS = (".md", ".markdown")
-_MAX_DEPTH = 3  # 文件树扫描最大深度
+_MAX_DEPTH = 8  # 文件树扫描最大深度（VSCode 风格全类型扫描，8 层覆盖典型项目结构）
+_MAX_FILES = 5000  # 单次扫描文件数上限保护（防止 node_modules 等巨型目录拖慢 UI）
 _MAX_RESULTS = 200  # 当前文档搜索结果上限，防止超长文档卡顿
 _PREVIEW_RADIUS = 30  # 搜索预览匹配位前后字符数
 # 跨文件搜索性能保护
@@ -35,6 +36,67 @@ _MAX_PER_FILE = 50          # 每文件结果上限
 _MAX_CROSS_TOTAL = 1000     # 跨文件总结果上限
 _MAX_FILE_SIZE = 1_000_000  # 跳过 >1MB 的文件（getsize 先判断，不读盘）
 _MAX_LINE_LEN = 2000        # 超长行只取首匹配（防 minified 文件卡 finditer）
+
+# 文件类型 → 图标映射（VSCode 风格 Seti/Material 混合：按扩展名给语义化图标，
+# 一眼区分 Markdown / 图片 / 代码 / 文档 / 压缩包 / 音视频）。颜色统一 c.muted，
+# 仅 .md 用 c.link 突出可编辑文件，避免色彩过载。
+_FILE_ICON_MAP: dict[str, str] = {
+    # Markdown 文档
+    ".md": ft.Icons.DESCRIPTION,
+    ".markdown": ft.Icons.DESCRIPTION,
+    # 图片
+    ".png": ft.Icons.IMAGE,
+    ".jpg": ft.Icons.IMAGE,
+    ".jpeg": ft.Icons.IMAGE,
+    ".gif": ft.Icons.IMAGE,
+    ".svg": ft.Icons.IMAGE,
+    ".webp": ft.Icons.IMAGE,
+    ".bmp": ft.Icons.IMAGE,
+    ".ico": ft.Icons.IMAGE,
+    # 代码 / 配置
+    ".py": ft.Icons.CODE,
+    ".json": ft.Icons.CODE,
+    ".yaml": ft.Icons.CODE,
+    ".yml": ft.Icons.CODE,
+    ".toml": ft.Icons.CODE,
+    ".ini": ft.Icons.CODE,
+    ".cfg": ft.Icons.CODE,
+    ".js": ft.Icons.JAVASCRIPT,
+    ".ts": ft.Icons.JAVASCRIPT,
+    ".html": ft.Icons.HTML,
+    ".css": ft.Icons.CSS,
+    ".txt": ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+    # 文档
+    ".pdf": ft.Icons.PICTURE_AS_PDF,
+    ".doc": ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+    ".docx": ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+    # 压缩包
+    ".zip": ft.Icons.FOLDER_ZIP,
+    ".tar": ft.Icons.FOLDER_ZIP,
+    ".gz": ft.Icons.FOLDER_ZIP,
+    ".7z": ft.Icons.FOLDER_ZIP,
+    ".rar": ft.Icons.FOLDER_ZIP,
+    # 音视频
+    ".mp3": ft.Icons.MUSIC_NOTE,
+    ".wav": ft.Icons.MUSIC_NOTE,
+    ".flac": ft.Icons.MUSIC_NOTE,
+    ".mp4": ft.Icons.MOVIE,
+    ".mov": ft.Icons.MOVIE,
+    ".avi": ft.Icons.MOVIE,
+}
+
+
+def _file_icon(name: str, c) -> tuple[str, str]:
+    """按文件扩展名返回 (图标名, 颜色)。
+
+    .md/.markdown 用 c.link 主题色突出可编辑文件；其余统一 c.muted 避免色彩过载。
+    未知扩展名兜底 INSERT_DRIVE_FILE_OUTLINED。扩展名匹配大小写不敏感。
+    """
+    lower = name.lower()
+    _, ext = os.path.splitext(lower)
+    icon = _FILE_ICON_MAP.get(ext, ft.Icons.INSERT_DRIVE_FILE_OUTLINED)
+    color = c.link if ext in (".md", ".markdown") else c.muted
+    return icon, color
 
 
 # ---- 数据派生 ----
@@ -56,19 +118,29 @@ def _compute_toc(document: Document) -> list[tuple[int, int, str]]:
     return result
 
 
-def _scan_markdown_files(root: str, max_depth: int = _MAX_DEPTH) -> list:
-    """递归扫描 root 下的 .md/.markdown 文件，返回嵌套结构。
+def _scan_files(
+    root: str,
+    max_depth: int = _MAX_DEPTH,
+    max_files: int = _MAX_FILES,
+) -> list:
+    """递归扫描 root 下的全类型文件，返回嵌套结构（VSCode 风格资源管理器）。
 
     元素格式：
       ("dir", name, children_list)
       ("file", name, abs_path)
     目录在前、字母序排序；跳过隐藏目录与常见忽略目录。失败时返回 []。
+
+    与旧 _scan_markdown_files 的差异：
+    - 收录所有类型文件（不再按 _MD_EXTS 过滤），让用户看到图片/代码等资源
+    - 保留空目录（VSCode 显示空目录，移除旧 `if children:` 过滤）
+    - max_files 上限保护：闭包计数器超限即停止追加，防止 node_modules 等巨型目录拖慢 UI
     """
     if not root or not os.path.isdir(root):
         return []
+    counter = [0]  # 闭包计数器，跨递归层累计
 
     def _walk(dir_path: str, depth: int) -> list:
-        if depth > max_depth:
+        if depth > max_depth or counter[0] >= max_files:
             return []
         try:
             entries = sorted(
@@ -79,6 +151,8 @@ def _scan_markdown_files(root: str, max_depth: int = _MAX_DEPTH) -> list:
             return []
         result: list = []
         for entry in entries:
+            if counter[0] >= max_files:
+                break
             if entry.name.startswith(".") or entry.name in (
                 "__pycache__",
                 "node_modules",
@@ -87,10 +161,11 @@ def _scan_markdown_files(root: str, max_depth: int = _MAX_DEPTH) -> list:
                 continue
             if entry.is_dir():
                 children = _walk(entry.path, depth + 1)
-                if children:
-                    result.append(("dir", entry.name, children))
-            elif entry.is_file() and entry.name.lower().endswith(_MD_EXTS):
+                # 空目录也保留（VSCode 显示空目录），不再过滤 children 为空的目录
+                result.append(("dir", entry.name, children))
+            elif entry.is_file():
                 result.append(("file", entry.name, entry.path))
+                counter[0] += 1
         return result
 
     return _walk(root, 0)
@@ -113,10 +188,22 @@ def _filter_tree(tree: list, query: str) -> list:
     return [c for c in (_filter(x) for x in tree) if c]
 
 
-def _flatten_tree(tree: list, depth: int = 0, root_dir: str = "") -> list[tuple[str, str, str | None, int]]:
+def _flatten_tree(
+    tree: list,
+    depth: int = 0,
+    root_dir: str = "",
+    expanded: frozenset[str] | None = None,
+    force_expand: bool = False,
+) -> list[tuple[str, str, str | None, int]]:
     """扁平化为 [(type, name, abspath_or_None, depth), ...]，便于一次性渲染。
 
-    目录的 abspath 由 root_dir + 目录名拼接（供右键菜单使用）。
+    目录的 abspath 由 root_dir + 目录名拼接（供右键菜单与展开/折叠状态匹配使用）。
+
+    展开/折叠控制（VSCode 风格动态扁平化）：
+    - expanded=None：全展开（向后兼容旧语义，供测试/无状态场景使用）
+    - force_expand=True：强制全展开（过滤模式下显示所有匹配项，忽略折叠状态）
+    - 否则：仅当 dir_path ∈ expanded 时递归展开子层，实现点击 toggle 展开/折叠
+    目录节点本身始终输出（让用户能看到折叠的目录并点击展开）。
     """
     out: list[tuple[str, str, str | None, int]] = []
     for node in tree:
@@ -125,7 +212,11 @@ def _flatten_tree(tree: list, depth: int = 0, root_dir: str = "") -> list[tuple[
         else:
             dir_path = os.path.join(root_dir, node[1]) if root_dir else node[1]
             out.append(("dir", node[1], dir_path, depth))
-            out.extend(_flatten_tree(node[2], depth + 1, dir_path))
+            should_recurse = force_expand or expanded is None or dir_path in expanded
+            if should_recurse:
+                out.extend(_flatten_tree(
+                    node[2], depth + 1, dir_path, expanded, force_expand,
+                ))
     return out
 
 
@@ -360,15 +451,19 @@ def _replace_in_file_text(
 
 
 def _collect_md_paths(tree: list) -> list[str]:
-    """从嵌套文件树扁平化提取所有 .md 文件绝对路径（深度优先，字母序）。
+    """从嵌套文件树扁平化提取所有 .md/.markdown 文件绝对路径（深度优先，字母序）。
 
-    复用 _scan_markdown_files 产出的树结构，仅供跨文件搜索使用。
+    复用 _scan_files 产出的全类型树结构，仅供跨文件搜索使用。
+    扫描改为全类型后此处必须按 _MD_EXTS 过滤，否则跨文件搜索会尝试读取
+    图片/二进制等非文本文件（_search_in_file 的 UnicodeDecodeError 兜底
+    会静默跳过，但浪费 IO 且语义不符）。
     """
     paths: list[str] = []
 
     def _walk(node):
         if node[0] == "file":
-            paths.append(node[2])
+            if node[1].lower().endswith(_MD_EXTS):
+                paths.append(node[2])
         else:
             for child in node[2]:
                 _walk(child)
@@ -444,20 +539,24 @@ def _wrap_context_menu(
 
     文件菜单：打开 / 选择以进行比较 / 与已选项目进行比较 /
             新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除
-    文件夹菜单：新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 删除
-    （文件夹无"打开"、"比较"和"创建副本"）
+    文件夹菜单：打开 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 删除
+    （文件夹无"比较"和"创建副本"）
+    「打开」语义：文件 → 编辑器（.md）/ 系统默认程序（非 .md）；文件夹 → 资源管理器打开。
     compare_source 非空时，文件项显示「与已选项目进行比较」。
     key 透传至 ft.ContextMenu，供 ListView 按路径复用项实例（虚拟化 reconciliation）。
     """
     items: list[ft.PopupMenuItem] = []
 
-    if not is_dir:
-        items.append(
-            ft.PopupMenuItem(
-                content="打开", icon=ft.Icons.OPEN_IN_NEW,
-                on_click=lambda e, p=path: on_action("open", p),
-            )
+    # 打开：文件用 OPEN_IN_NEW，文件夹用 FOLDER_OPEN（区分语义）
+    items.append(
+        ft.PopupMenuItem(
+            content="打开",
+            icon=ft.Icons.FOLDER_OPEN if is_dir else ft.Icons.OPEN_IN_NEW,
+            on_click=lambda e, p=path: on_action("open", p),
         )
+    )
+
+    if not is_dir:
         # 文件比较：选择以进行比较 / 与已选项目进行比较（VSCode 风格）
         items.append(
             ft.PopupMenuItem(
@@ -472,7 +571,7 @@ def _wrap_context_menu(
                     on_click=lambda e, p=path: on_action("compare_with_selected", p),
                 )
             )
-        items.append(ft.PopupMenuItem())  # 分隔
+    items.append(ft.PopupMenuItem())  # 分隔
 
     # 新建文件/文件夹
     items.append(
@@ -642,6 +741,9 @@ def _render_files_panel(
     on_close_folder: Callable[[], None] | None,
     c,
     compare_source: str | None = None,
+    expanded_dirs: frozenset[str] = frozenset(),
+    on_toggle_dir: Callable[[str], None] | None = None,
+    on_open_external: Callable[[str], None] | None = None,
 ) -> ft.Control:
     """文件面板：有根目录显示文件树+过滤；否则显示最近文件列表。
 
@@ -650,6 +752,12 @@ def _render_files_panel(
     无根目录模式渲染最近文件 ListView。每个文件/文件夹项包裹
     ft.ContextMenu 提供右键菜单；compare_source 非空时文件项显示「比较」。
     flat 为空且 root_dir 存在时显示「无匹配 / 无文件」或异步加载提示。
+
+    VSCode 风格文件树：
+    - 文件夹行：chevron（▸/▾）+ 动态 folder icon（折叠/展开）+ 整行点击 toggle
+    - 文件行：_file_icon 按扩展名映射 + chevron 占位（与文件夹对齐）
+    - 点击分流：.md → 编辑器打开；非 .md → 系统默认程序打开（on_open_external）
+    - active 高亮仅对 .md 文件生效（非 md 不在编辑器打开，无需高亮）
     """
     # 无根目录：最近文件列表
     if not root_dir:
@@ -717,29 +825,39 @@ def _render_files_panel(
         # flat 为空可能是真无文件，也可能是异步扫描进行中（首帧）。
         # 有过滤词时提示无匹配，否则提示无文件（异步加载完成后 fs_version 变化会刷新）。
         body: ft.Control = _empty_hint(
-            "无匹配文件" if file_filter.strip() else "该目录下无 Markdown 文件",
+            "无匹配文件" if file_filter.strip() else "该目录下无文件",
             c,
         )
     else:
         rows = []
         for kind, name, abspath, depth in flat:
             indent = depth * 14 + Spacing.XL
-            is_active = (
-                kind == "file"
-                and active_abs is not None
-                and abspath is not None
-                and os.path.abspath(abspath) == active_abs
-            )
             if kind == "file":
+                is_md = name.lower().endswith(_MD_EXTS)
+                is_active = (
+                    is_md
+                    and active_abs is not None
+                    and abspath is not None
+                    and os.path.abspath(abspath) == active_abs
+                )
+                icon_name, icon_color = _file_icon(name, c)
+                # 点击分流：.md → 编辑器打开；非 .md → 系统默认程序（on_open_external 缺省 no-op）
+                if is_md:
+                    _file_click: Callable | None = lambda e, p=abspath: on_open_file(p)
+                elif on_open_external is not None:
+                    _file_click = lambda e, p=abspath: on_open_external(p)
+                else:
+                    _file_click = None
                 rows.append(
                     _wrap_context_menu(
                         _list_item(
                             ft.Row(
                                 controls=[
+                                    ft.Container(width=14),  # chevron 占位，与文件夹行对齐
                                     ft.Icon(
-                                        ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+                                        icon_name,
                                         size=13,
-                                        color=c.link if is_active else c.muted,
+                                        color=c.link if is_active else icon_color,
                                     ),
                                     ft.Text(
                                         name,
@@ -755,7 +873,7 @@ def _render_files_panel(
                                 spacing=Spacing.MD,
                             ),
                             c,
-                            on_click=lambda e, p=abspath: on_open_file(p),
+                            on_click=_file_click,
                             indent=indent,
                             active=is_active,
                         ),
@@ -767,14 +885,21 @@ def _render_files_panel(
                     )
                 )
             else:
+                # 文件夹行：chevron（▸折叠/▾展开）+ 动态 folder icon + 整行点击 toggle
+                is_expanded = bool(abspath and abspath in expanded_dirs)
+                chevron_icon = ft.Icons.EXPAND_MORE if is_expanded else ft.Icons.CHEVRON_RIGHT
+                folder_icon = ft.Icons.FOLDER_OPEN_OUTLINED if is_expanded else ft.Icons.FOLDER_OUTLINED
+                if on_toggle_dir is not None:
+                    _dir_click: Callable | None = lambda e, p=abspath: on_toggle_dir(p)
+                else:
+                    _dir_click = None
                 rows.append(
                     _wrap_context_menu(
                         _list_item(
                             ft.Row(
                                 controls=[
-                                    ft.Icon(
-                                        ft.Icons.FOLDER_OUTLINED, size=13, color=c.muted
-                                    ),
+                                    ft.Icon(chevron_icon, size=14, color=c.muted),
+                                    ft.Icon(folder_icon, size=13, color=c.muted),
                                     ft.Text(
                                         name,
                                         size=12,
@@ -789,6 +914,7 @@ def _render_files_panel(
                                 spacing=Spacing.MD,
                             ),
                             c,
+                            on_click=_dir_click,
                             indent=indent,
                         ),
                         abspath or "",
@@ -1321,6 +1447,8 @@ def Sidebar(
     on_replace_all_in_doc: Callable[[list], int] | None = None,
     on_bump_fs_version: Callable[[], None] | None = None,
     replace_actions_ref: ft.Ref | None = None,
+    # VSCode 风格文件树：非 md 文件用系统默认程序打开（资源管理器双击直觉）
+    on_open_external: Callable[[str], None] | None = None,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
@@ -1460,7 +1588,7 @@ def Sidebar(
 
         async def _do():
             # 文件树扫描 + 单文件搜索都在线程池，UI 线程零阻塞
-            tree = await asyncio.to_thread(_scan_markdown_files, root_dir)
+            tree = await asyncio.to_thread(_scan_files, root_dir)
             if cross_token_ref.current != my_token:
                 return
             files = _collect_md_paths(tree)[:_MAX_CROSS_FILES]
@@ -1753,7 +1881,7 @@ def Sidebar(
         my_token = scan_token_ref.current
 
         async def _do_scan():
-            tree = await asyncio.to_thread(_scan_markdown_files, root_dir)
+            tree = await asyncio.to_thread(_scan_files, root_dir)
             # 过期任务（已切目录 / 又有新变更），丢弃避免覆盖最新树
             if scan_token_ref.current != my_token:
                 return
@@ -1763,14 +1891,69 @@ def Sidebar(
 
     ft.use_effect(_scan_fs, [root_dir, fs_version])
 
-    # ---- 文件树过滤 + 扁平化：use_memo 缓存（仅文件树 / 过滤词变化才重算）----
+    # ---- 文件夹展开/折叠状态（VSCode 风格动态扁平化）----
+    # frozenset 不可变，== 比较内容触发更新；存目录绝对路径（与 _flatten_tree 的
+    # dir_path 拼接方式一致）。默认空集合 = 根级直接子项可见、子目录折叠。
+    expanded_dirs, set_expanded_dirs = ft.use_state(frozenset())
+    # ref 持最新值供 toggle / reveal 闭包读取（避免 stale 闭包丢失用户已展开的目录）
+    expanded_dirs_ref = ft.use_ref(frozenset())
+    expanded_dirs_ref.current = expanded_dirs
+
+    def _toggle_dir(dir_path: str):
+        """切换目录展开/折叠（整行点击 chevron 或文件夹区域均触发）。"""
+        current = set(expanded_dirs_ref.current)
+        if dir_path in current:
+            current.discard(dir_path)
+        else:
+            current.add(dir_path)
+        set_expanded_dirs(frozenset(current))
+
+    # root_dir 切换时重置展开状态（切换工作区/文件夹后旧的展开路径无意义）
+    ft.use_effect(lambda: set_expanded_dirs(frozenset()), [root_dir])
+
+    # reveal：当前文件变化时自动展开其祖先目录链（VSCode "Reveal in Explorer" 行为）
+    # 让用户切标签打开深层文件时文件树自动定位到该文件所在目录。
+    def _reveal_current_file():
+        if not file_path or not root_dir:
+            return
+        try:
+            rel = os.path.relpath(file_path, root_dir)
+        except ValueError:
+            return  # Windows 跨盘符 relpath 抛 ValueError
+        if rel.startswith("..") or os.path.isabs(rel):
+            return  # 文件不在 root_dir 下（跨目录打开）
+        parts = rel.split(os.sep)
+        if len(parts) <= 1:
+            return  # 文件在根目录直接子项，无需展开祖先
+        # 构造祖先目录路径，与 _flatten_tree 的 dir_path = os.path.join(root, name) 对齐
+        ancestors: set[str] = set()
+        cur = root_dir
+        for part in parts[:-1]:  # 不含文件名本身
+            cur = os.path.join(cur, part)
+            ancestors.add(cur)
+        if not ancestors:
+            return
+        current = set(expanded_dirs_ref.current)
+        if ancestors <= current:
+            return  # 祖先已全部展开，无需更新
+        set_expanded_dirs(frozenset(current | ancestors))
+
+    ft.use_effect(_reveal_current_file, [file_path, root_dir])
+
+    # ---- 文件树过滤 + 扁平化：use_memo 缓存（仅文件树 / 过滤词 / 展开状态变化才重算）----
     filtered = ft.use_memo(
         lambda: _filter_tree(list(file_tree), file_filter),
         [file_tree, file_filter],
     )
+    _has_filter = bool(file_filter.strip())
     flat = ft.use_memo(
-        lambda: (_flatten_tree(filtered, root_dir=root_dir) if root_dir else []),
-        [filtered, root_dir],
+        lambda: (
+            _flatten_tree(
+                filtered, root_dir=root_dir,
+                expanded=expanded_dirs, force_expand=_has_filter,
+            ) if root_dir else []
+        ),
+        [filtered, root_dir, expanded_dirs, _has_filter],
     )
 
     # ---- 拖拽调宽手柄：use_memo 提取（仅主题变化重建）----
@@ -1866,6 +2049,9 @@ def Sidebar(
             on_close_folder,
             c,
             compare_source=compare_source,
+            expanded_dirs=expanded_dirs,
+            on_toggle_dir=_toggle_dir,
+            on_open_external=on_open_external,
         )
     elif active_panel == "outline":
         panel = _render_outline_panel(toc_entries, on_jump_to_line, c)

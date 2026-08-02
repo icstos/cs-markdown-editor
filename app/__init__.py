@@ -49,6 +49,7 @@ from app._tab_management import build_tab_management
 from app.diff_scroll_sync import DiffScrollSync
 from config.sample import SAMPLE_MD
 from config.settings import load_settings
+from services import file_ops
 from services.shortcuts import ShortcutManager
 from styles import get_colors
 from views.diff_view import compute_diff_for_editors
@@ -333,6 +334,15 @@ def App():
     ctx.close_tabs_for_path = dialog_cbs["close_tabs_for_path"]
     ctx.on_tab_context_action = dialog_cbs["on_tab_context_action"]
     ctx.on_sidebar_context_action = dialog_cbs["on_sidebar_context_action"]
+
+    # 非 md 文件用系统默认程序打开（资源管理器双击直觉）：try/except 捕获后 SnackBar 提示
+    def _open_external(path: str):
+        try:
+            file_ops.open_external(path)
+        except Exception as e:
+            ctx.show_snack(f"打开失败：{e}")
+
+    ctx.open_external = _open_external
 
     diff_cbs = build_diff_controller(ctx)
     ctx.get_text_for_compare = diff_cbs["get_text_for_compare"]

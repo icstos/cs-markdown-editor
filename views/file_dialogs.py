@@ -113,7 +113,7 @@ def FileActionDialog(
                     dense=True,
                     border=ft.InputBorder.OUTLINE,
                     text_size=13,
-                    font_family=FONT_MAIN,
+                    text_style=ft.TextStyle(font_family=FONT_MAIN),
                     autofocus=True,
                     on_change=lambda e: set_text_value(e.control.value or ""),
                     on_submit=_on_submit,

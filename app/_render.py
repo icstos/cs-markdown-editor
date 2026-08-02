@@ -131,6 +131,8 @@ def build_render(ctx) -> ft.Control:
         on_replace_all_in_doc=_call_replace_all,
         on_bump_fs_version=ctx.bump_fs_version,
         replace_actions_ref=ctx.sidebar_replace_ref,
+        # VSCode 风格文件树：非 md 文件用系统默认程序打开
+        on_open_external=ctx.open_external,
     )
 
     # ============ 编辑器区 ============

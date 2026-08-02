@@ -274,8 +274,17 @@ def build_file_dialogs(ctx):
         is_dir = os.path.isdir(path)
 
         if action == "open":
-            if not is_dir:
+            if is_dir:
+                # 文件夹：在系统资源管理器中打开（资源管理器双击文件夹直觉）
+                try:
+                    file_ops.reveal_in_explorer(path)
+                except Exception as e:
+                    show_snack(f"打开失败：{e}")
+            elif path.lower().endswith((".md", ".markdown")):
                 ctx.open_file_by_path(path)
+            else:
+                # 非 md 文件：用系统默认程序打开（与侧边栏点击行为一致）
+                ctx.open_external(path)
         elif action == "select_for_compare":
             if not is_dir:
                 ctx.select_for_compare(path)

@@ -146,3 +146,21 @@ def reveal_in_explorer(path: str) -> None:
         # Linux: 打开包含目录（xdg-open 不支持选中文件）
         dir_path = path if os.path.isdir(path) else os.path.dirname(path)
         subprocess.Popen(["xdg-open", dir_path])
+
+
+def open_external(path: str) -> None:
+    """用系统默认程序打开文件（资源管理器双击直觉）。
+
+    供侧边栏文件树点击非 md 文件时调用：.png 用图片查看器、.pdf 用阅读器、
+    .py 用编辑器等，与在系统资源管理器中双击文件的行为一致。
+    文件不存在时抛 FileNotFoundError（调用方捕获后 SnackBar 提示）。
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"文件不存在：{path}")
+    system = platform.system()
+    if system == "Windows":
+        os.startfile(path)
+    elif system == "Darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])

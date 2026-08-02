@@ -98,12 +98,24 @@ def StatusBar(
     # 注册进 status_ref.current 供 App 调用：update_cursor / update_counts。
     # 更新器调 set_state（仅本组件重渲染），async 以满足 App 侧 await 契约。
     # render 期写入保证 status_ref 始终最新（同 tabs_ref.current = tabs 模式）。
+    #
+    # session 销毁防御：标签关闭 / 应用退出后，防抖中的 _do_count 协程（0.3s 后
+    # 醒来）仍可能调用 update_counts/update_cursor，此时 set_state →
+    # _schedule_update → page.session.schedule_update 抛 RuntimeError("destroyed
+    # session")。组件卸载后的状态更新本就无意义，静默丢弃即可（与 _run_task_safe
+    # 在调度前检查 session 的防御互补：这里覆盖协程执行中 session 销毁的窗口）。
     if status_ref is not None:
         async def _update_cursor(r: int, cc: int):
-            set_cursor_pos((r, cc))
+            try:
+                set_cursor_pos((r, cc))
+            except RuntimeError:
+                pass
 
         async def _update_counts(w: int, ch: int, pa: int, rm: int):
-            set_counts((w, ch, pa, rm))
+            try:
+                set_counts((w, ch, pa, rm))
+            except RuntimeError:
+                pass
 
         status_ref.current = _StatusBarUpdaters(_update_cursor, _update_counts)
 

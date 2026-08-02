@@ -15,10 +15,12 @@
   "code_theme_light": "GITHUB",
   "export_format": "html",
   "sidebar_open": true,
-  "sidebar_panel": "outline",
+  "sidebar_panel": "files",
   "sidebar_width": 256,
-  "recent_files": [],
-  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-113\\test_open_folder_atomic_merge_0\\workspace",
+  "recent_files": [
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\Untitled.md"
+  ],
+  "workspace_folder": "C:\\Users\\aigcs\\Desktop\\测试文档",
   "search_folder": false,
   "search_case_sensitive": false,
   "search_whole_word": false,

@@ -446,6 +446,7 @@ def MarkdownEditor(
     ctx.on_key_up = key_cbs["on_key_up"]
     # image 组
     ctx.on_image_action = image_cbs["on_image_action"]
+    ctx.paste_image_from_clipboard = image_cbs["paste_image_from_clipboard"]
 
     # ============ use_memo：向外选区高亮映射 ============
     _highlight_map = ft.use_memo(

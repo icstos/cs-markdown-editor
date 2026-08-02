@@ -18,13 +18,18 @@
 - core.history（EditHistory）
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 import flet as ft
 
 from models import Document
+
+
+async def _noop_awaitable() -> bool:
+    """paste_image_from_clipboard 装配槽默认值（未装配时返回 False）。"""
+    return False
 
 
 @dataclass
@@ -278,5 +283,9 @@ class EditorContext:
     replace_match_in_doc: Callable = field(default=lambda *a: None)
     replace_all_in_doc: Callable = field(default=lambda *a: 0)
 
-    # image 组（图片右键菜单操作分发，由 build_image 装配）
+    # image 组（图片右键菜单操作分发 + Ctrl+V 图片粘贴，由 build_image 装配）
     on_image_action: Callable[[str, int, int, str, str], None] = field(default=lambda *a: None)
+    # async：True 已处理图片粘贴（调用方跳过文本粘贴），False 剪贴板无图片
+    paste_image_from_clipboard: Callable[..., Awaitable[bool]] = field(
+        default=_noop_awaitable
+    )

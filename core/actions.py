@@ -141,3 +141,7 @@ class EditorActions:
     replace_match_in_doc: Callable[[int, int, int, str], None] | None = None
     # 批量替换：replacements = [(li, [(s, e, new_text), ...]), ...]，行内右→左保偏移；返回替换条数
     replace_all_in_doc: Callable[[list[tuple[int, list[tuple[int, int, str]]]]], int] | None = None
+
+    # ---- 图片粘贴（Ctrl+V：剪贴板含图片/图片文件 → 落盘 ./assets/ 插入 ![](...)）----
+    # async：True 已处理图片粘贴（调用方跳过文本粘贴），False 剪贴板无图片
+    paste_image_from_clipboard: Callable[[], Awaitable[bool]] | None = None

@@ -62,6 +62,7 @@ def build_actions(ctx) -> EditorActions | None:
         handle_delete_selection=ctx.handle_delete_selection,
         apply_inline_format_to_selection=ctx.apply_inline_format_to_selection,
         compute_markdown_from_text=ctx.compute_markdown_from_text,
+        paste_image_from_clipboard=ctx.paste_image_from_clipboard,
         # ---- 全局动作 ----
         undo=ctx.undo,
         redo=ctx.redo,

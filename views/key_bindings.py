@@ -544,7 +544,10 @@ class KeyDispatcher:
                 if actions is None or actions.cursor_li is None:
                     page.run_task(self._do_cut)
             elif matches(combo, shortcuts.get("paste", "ctrl+v")):
-                if actions is not None and actions.cursor_li is not None:
+                # 浏览态也触发：图片粘贴（paste_image_from_clipboard）在浏览/编辑
+                # 两态均生效（浏览态插入到 cursor_line 行尾）；文本粘贴仅编辑态
+                # （_do_paste_check 内部按 cursor_li 判断）
+                if actions is not None:
                     self._paste_old_draft.current = ""
                     page.run_task(self._do_paste_check)
             return
@@ -571,7 +574,9 @@ class KeyDispatcher:
             # 编辑态走 cut_current_line（剪切当前行），浏览态走 handle_cut（选区剪切）
             page.run_task(self._do_cut)
         elif matches(combo, shortcuts.get("paste", "ctrl+v")):
-            if actions is not None and actions.cursor_li is not None:
+            # 图片粘贴优先于文本粘贴（_do_paste_check 内部按 cursor_li 判断
+            # 走图片还是文本路径），编辑/浏览两态均触发
+            if actions is not None:
                 self._paste_old_draft.current = ""
                 page.run_task(self._do_paste_check)
 
@@ -626,8 +631,29 @@ class KeyDispatcher:
             return
 
     async def _do_paste_check(self) -> None:
-        """Ctrl+V 后异步检查剪贴板是否含多行内容，若是则拆分为多行插入。"""
+        """Ctrl+V 后异步检查剪贴板：优先图片粘贴，否则多行文本拆分插入。
+
+        优先级（Typora 式）：
+        1. paste_image_from_clipboard：剪贴板含图片/图片文件 → 落盘 ./assets/ 插入 ![](...)
+           浏览/编辑两态均生效（浏览态插入到 cursor_line 行尾）
+        2. 文本粘贴：仅编辑态（cursor_li is not None），且文本含换行才走 handle_paste
+           拆分多行；单行文本由原生 TextField 直接处理（不走此路径）
+        """
         await asyncio.sleep(0.05)
+        actions = self._actions_ref.current
+        if actions is None:
+            return
+        # 1. 图片粘贴优先（浏览/编辑两态）
+        if actions.paste_image_from_clipboard is not None:
+            try:
+                handled = await actions.paste_image_from_clipboard()
+            except Exception:
+                handled = False
+            if handled:
+                return
+        # 2. 文本粘贴仅编辑态
+        if actions.cursor_li is None:
+            return
         clipboard = self._clipboard_ref.current
         if clipboard is None:
             return
@@ -636,9 +662,6 @@ class KeyDispatcher:
         except Exception:
             return
         if not text or "\n" not in text:
-            return
-        actions = self._actions_ref.current
-        if actions is None:
             return
         try:
             actions.handle_paste(text, self._paste_old_draft.current)

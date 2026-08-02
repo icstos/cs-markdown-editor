@@ -20,6 +20,7 @@ from utils.text_layout import (  # noqa: E402
     image_fit_size,
     measure_text_offsets,
     measure_text_width,
+    resolve_image_src,
 )
 
 
@@ -139,6 +140,59 @@ def test_offsets_cached_returns_copy():
     o1.append(999.0)
     o2 = measure_text_offsets("cache", FONT_MAIN, 16)
     assert 999.0 not in o2
+
+
+# ---------------- resolve_image_src ----------------
+def test_resolve_image_src_url_passthrough():
+    """URL / data URI / file:// 原样返回，不基于文档目录解析。"""
+    assert resolve_image_src("https://a.com/b.png", "C:/docs/note.md") == "https://a.com/b.png"
+    assert resolve_image_src("http://a.com/b.png", "C:/docs/note.md") == "http://a.com/b.png"
+    assert resolve_image_src("data:image/png;base64,xxxx", "C:/docs/note.md") == "data:image/png;base64,xxxx"
+    assert resolve_image_src("file:///C:/docs/b.png", "C:/docs/note.md") == "file:///C:/docs/b.png"
+
+
+def test_resolve_image_src_absolute_path_passthrough(tmp_path):
+    """绝对路径原样返回。"""
+    abs_p = str(tmp_path / "img.png")
+    assert resolve_image_src(abs_p, "C:/docs/note.md") == abs_p
+
+
+def test_resolve_image_src_relative_resolves_against_doc_dir(tmp_path):
+    """相对路径基于文档所在目录解析为绝对路径。"""
+    doc = tmp_path / "note.md"
+    doc.write_text("x")
+    resolved = resolve_image_src("assets/image-1.png", str(doc))
+    expected = os.path.normpath(os.path.join(str(tmp_path), "assets", "image-1.png"))
+    assert resolved == expected
+
+
+def test_resolve_image_src_relative_subdir(tmp_path):
+    """相对路径含子目录时正确拼接。"""
+    doc = tmp_path / "note.md"
+    doc.write_text("x")
+    resolved = resolve_image_src("assets/sub/img.png", str(doc))
+    expected = os.path.normpath(os.path.join(str(tmp_path), "assets", "sub", "img.png"))
+    assert resolved == expected
+
+
+def test_resolve_image_src_no_file_path_passthrough():
+    """file_path 为 None（未保存文档）→ 相对路径原样返回（向后兼容）。"""
+    assert resolve_image_src("assets/image-1.png", None) == "assets/image-1.png"
+    assert resolve_image_src("assets/image-1.png", "") == "assets/image-1.png"
+
+
+def test_resolve_image_src_empty_url():
+    """空 url 原样返回。"""
+    assert resolve_image_src("", "C:/docs/note.md") == ""
+
+
+def test_resolve_image_src_normalizes_path(tmp_path):
+    """解析结果经过 normpath，消除 ./ ../ 等冗余。"""
+    doc = tmp_path / "note.md"
+    doc.write_text("x")
+    resolved = resolve_image_src("./assets/../assets/img.png", str(doc))
+    expected = os.path.normpath(os.path.join(str(tmp_path), "assets", "img.png"))
+    assert resolved == expected
 
 
 # ---------------- image_fit_size ----------------

@@ -51,7 +51,7 @@ from styles import (
     prefix_style,
 )
 from utils.segment_helpers import PREFIX_SEGTYPES, display_text, split_seg_for_display
-from utils.text_layout import image_fit_size, measure_text_width
+from utils.text_layout import image_fit_size, measure_text_width, resolve_image_src
 from views.pixel_layout import (
     VisualLine,
     _block_padding,
@@ -164,6 +164,9 @@ def RenderedLine(
     # 图片右键菜单操作：(action, line_idx, seg_idx, url, alt)
     # action ∈ {"copy_md","copy_image","save_as","delete"}，由 editor 分发
     on_image_action: Callable[[str, int, int, str, str], None] | None = None,
+    # 文档路径：用于解析相对路径图片（assets/xxx.png → 文档目录/assets/xxx.png）。
+    # None 时相对路径保持原样（向后兼容，但本地图片可能无法显示）
+    file_path: str | None = None,
 ) -> ft.Control:
     """渲染层行组件（Stack 底层）。
 
@@ -492,9 +495,12 @@ def RenderedLine(
         img_controls: list[ft.Control] = []
         for seg_idx in img_idxs:
             seg = line.segments[seg_idx]
-            w, h = image_fit_size(seg.url)
+            # 相对路径基于文档目录解析为绝对路径（修复 ![](assets/xxx.png) 无法
+            # 显示：PIL/ft.Image 默认按 cwd 解析相对路径，而 cwd 非文档目录）
+            abs_src = resolve_image_src(seg.url, file_path)
+            w, h = image_fit_size(abs_src)
             kw: dict = {
-                "src": seg.url,
+                "src": abs_src,
                 "fit": ft.BoxFit.CONTAIN,
                 "tooltip": seg.text,
                 "error_content": ft.Container(

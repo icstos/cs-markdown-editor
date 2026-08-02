@@ -42,6 +42,7 @@ import parser
 from services.ui_feedback import show_snack as _show_snack
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
+from utils.text_layout import resolve_image_src as _resolve_image_src
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -67,7 +68,8 @@ def _fetch_image_bytes(url: str) -> bytes | None:
             # data:image/png;base64,XXXX
             _, _, b64 = src.partition(",")
             return base64.b64decode(b64) if b64 else None
-        # 本地路径（相对路径基于 cwd 解析，与 image_fit_size 一致）
+        # 本地路径：调用方应先用 resolve_image_src 解析为绝对路径（基于文档目录），
+        # 此处直接 open（兼容历史调用方传绝对路径或 URL）
         with open(src, "rb") as f:
             return f.read()
     except Exception:
@@ -209,7 +211,9 @@ def build_image(ctx):
 
     # ============ 拷贝图片（二进制写入系统剪贴板）============
     async def _copy_image(url: str):
-        data = _fetch_image_bytes(url)
+        # 相对路径基于文档目录解析（与渲染层 image_fit_size 一致），否则 cwd
+        # 非文档目录时本地图片读取失败
+        data = _fetch_image_bytes(_resolve_image_src(url, ctx.file_path))
         if data is None:
             return
         clipboard = ctx.clipboard_ref.current if ctx.clipboard_ref is not None else None
@@ -223,7 +227,7 @@ def build_image(ctx):
         picker = ctx.picker_ref.current if ctx.picker_ref is not None else None
         if picker is None:
             return
-        data = _fetch_image_bytes(url)
+        data = _fetch_image_bytes(_resolve_image_src(url, ctx.file_path))
         if data is None:
             return
         ext = _image_extension(url)

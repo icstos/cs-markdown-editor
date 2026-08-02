@@ -396,6 +396,30 @@ _IMG_MAX = 500  # 图片最大边长（像素）
 _img_size_cache: dict[str, tuple[int, int] | None] = {}
 
 
+def resolve_image_src(url: str, file_path: str | None) -> str:
+    """将相对路径基于文档所在目录解析为绝对路径。
+
+    解决粘贴图片 ![](assets/xxx.png) 无法显示的问题：相对路径默认基于 cwd
+    解析，而程序 cwd 不是文档所在目录，PIL/ft.Image 都找不到文件。
+
+    解析规则：
+    - URL（http/https）/ data URI / file:// → 原样返回
+    - 绝对路径 → 原样返回
+    - 相对路径 → 基于 file_path 所在目录拼接为绝对路径
+    - file_path 为 None（未保存文档）→ 原样返回（无法解析，保持向后兼容）
+    """
+    if not url:
+        return url
+    if url.startswith(("http://", "https://", "data:", "file://")):
+        return url
+    if os.path.isabs(url):
+        return url
+    if not file_path:
+        return url
+    doc_dir = os.path.dirname(os.path.abspath(file_path))
+    return os.path.normpath(os.path.join(doc_dir, url))
+
+
 def _read_image_size(src: str) -> tuple[int, int] | None:
     """读取图片真实 (width, height)。本地路径直接打开；URL 下载后解析。"""
     try:

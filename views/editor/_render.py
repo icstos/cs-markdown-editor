@@ -166,6 +166,7 @@ def build_line_controls(
                     on_hit_test_xy=stable_cbs["on_hit_test_xy"],
                     on_double_tap=stable_cbs["on_double_tap"],
                     on_image_action=stable_cbs["on_image_action"],
+                    file_path=ctx.file_path,
                     diff_mark=_diff_mark,
                 )
             )

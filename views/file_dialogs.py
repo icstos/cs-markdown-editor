@@ -120,6 +120,7 @@ def FileActionDialog(
                 ),
             ],
             spacing=0,
+            tight=True,
         )
     else:
         content_body = ft.Column(
@@ -132,6 +133,7 @@ def FileActionDialog(
                 ),
             ],
             spacing=0,
+            tight=True,
         )
 
     return ft.Container(
@@ -175,6 +177,7 @@ def FileActionDialog(
                     ),
                 ],
                 spacing=0,
+                tight=True,
             ),
         ),
     )

@@ -416,6 +416,7 @@ def ConfirmCloseDialog(
                     ),
                 ],
                 spacing=0,
+                tight=True,
             ),
         ),
     )

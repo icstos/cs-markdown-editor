@@ -17,7 +17,11 @@
   "sidebar_open": true,
   "sidebar_panel": "files",
   "sidebar_width": 256,
-  "recent_files": [],
+  "recent_files": [
+    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\0-TODO-待办事项.md",
+    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-InBox.md",
+    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-Projects\\cs-markdown-editor.md"
+  ],
   "workspace_folder": "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs",
   "search_folder": false,
   "search_case_sensitive": false,

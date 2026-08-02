@@ -1605,8 +1605,12 @@ def Sidebar(
                     total += len(hits)
             if cross_token_ref.current != my_token:
                 return
-            set_cross_results(tuple(groups))
-            set_cross_loading(False)
+            # session 销毁防御：异步搜索完成时 session 可能已销毁（标签关闭/退出）
+            try:
+                set_cross_results(tuple(groups))
+                set_cross_loading(False)
+            except RuntimeError:
+                pass
 
         page.run_task(_do)
 
@@ -1852,8 +1856,15 @@ def Sidebar(
                     continue
             # 刷新文件系统版本（触发跨文件搜索重扫）
             if on_bump_fs_version is not None:
-                on_bump_fs_version()
-            set_current_match_idx(0)
+                try:
+                    on_bump_fs_version()
+                except RuntimeError:
+                    pass
+            # session 销毁防御：异步替换完成时 session 可能已销毁
+            try:
+                set_current_match_idx(0)
+            except RuntimeError:
+                pass
 
         page.run_task(_do)
 
@@ -1885,7 +1896,13 @@ def Sidebar(
             # 过期任务（已切目录 / 又有新变更），丢弃避免覆盖最新树
             if scan_token_ref.current != my_token:
                 return
-            set_file_tree(tuple(tree))
+            # session 销毁防御：标签关闭 / 应用退出后，异步扫描完成时 session 可能
+            # 已销毁，set_file_tree → schedule_update 抛 RuntimeError。静默丢弃
+            # 卸载后的状态更新（与 status_bar._update_counts 同模式）。
+            try:
+                set_file_tree(tuple(tree))
+            except RuntimeError:
+                pass
 
         page.run_task(_do_scan)
 

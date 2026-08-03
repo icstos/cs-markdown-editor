@@ -147,6 +147,13 @@ def build_indent(ctx):
                 _reparse_atomic(line, new_raw)
                 ctx.mark_dirty()
                 ctx.set_cursor(li, off + 4)
+            else:
+                # Shift+Tab 普通段落无操作，提前返回避免递增 focus_seq
+                return
+        # 递增 focus_seq 强制重聚焦：Tab/Shift+Tab 改变前缀但 cursor_li 不变时，
+        # focus_cursor_field effect 不触发（依赖 cursor_li/nav_seq/focus_seq），
+        # TextField 未重新聚焦 → 光标消失。与 set_block / _on_tap_line 一致。
+        ctx.set_focus_seq(ctx.focus_seq + 1)
 
     def new_line_after(li: int):
         if not (0 <= li < len(ctx.document.lines)):

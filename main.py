@@ -23,10 +23,12 @@ async def main(page: ft.Page):
     page.fonts = {"Alibaba": "assets/fonts/AlibabaPuHuiTi-3-55-Regular.otf"}
     # 亮/暗两套主题，由 App 的 theme_mode state 切换
     # 背景色由 App.apply_theme 通过 page.bgcolor 单独设置，不放在 ColorScheme
+    # ColorScheme.surface 与 styles._LIGHT/_DARK.bg 对齐，保证 Flet 原生控件
+    # （按钮 / 对话框 / 弹窗）与文档画布同色，无色块错位
     page.theme = ft.Theme(
         font_family="Alibaba",
         color_scheme=ft.ColorScheme(
-            surface="#FFFFFF",
+            surface="#FAFBFC",
             on_surface="#1F2329",
             primary="#1677FF",
         ),
@@ -34,9 +36,9 @@ async def main(page: ft.Page):
     page.dark_theme = ft.Theme(
         font_family="Alibaba",
         color_scheme=ft.ColorScheme(
-            surface="#161B22",
+            surface="#14161A",
             on_surface="#E6EDF3",
-            primary="#58A6FF",
+            primary="#6BA0F5",
         ),
     )
     page.theme_mode = ft.ThemeMode.LIGHT

@@ -49,12 +49,14 @@ def build_navigation(ctx):
         off = ctx.cursor_base(len(_line_raw(ctx.document.lines[li])))
         if off > 0:
             ctx.set_cursor(li, off - 1)
+            ctx.broadcast_move_left()
         elif li > 0:
             prev = ctx.document.lines[li - 1]
             if _is_fence(prev):
                 return
             ctx.set_cursor(li - 1, len(_line_raw(prev)))
             ctx.ensure_visible(li - 1)
+            ctx.broadcast_move_left()
 
     def move_right():
         """→ ：光标右移；行尾则跳下一行行首。"""
@@ -69,12 +71,14 @@ def build_navigation(ctx):
         off = ctx.cursor_base(len(raw))
         if off < len(raw):
             ctx.set_cursor(li, off + 1)
+            ctx.broadcast_move_right()
         elif li < len(ctx.document.lines) - 1:
             nxt = ctx.document.lines[li + 1]
             if _is_fence(nxt):
                 return
             ctx.set_cursor(li + 1, 0)
             ctx.ensure_visible(li + 1)
+            ctx.broadcast_move_right()
 
     def move_home():
         """Smart Home（VSCode 式）：先跳内容首（跳过前缀），再跳行首（raw 0）。
@@ -85,6 +89,9 @@ def build_navigation(ctx):
         """
         if ctx.cursor_li is None:
             return
+        # 多光标模式：Home 不支持多光标，清除副光标
+        if ctx.secondary_cursors_ref.current:
+            ctx.clear_secondary_cursors()
         if _is_fence(ctx.document.lines[ctx.cursor_li]):
             return
         line = ctx.document.lines[ctx.cursor_li]
@@ -112,6 +119,9 @@ def build_navigation(ctx):
             return
         if not (0 <= ctx.cursor_li < len(ctx.document.lines)):
             return
+        # 多光标模式：End 不支持多光标，清除副光标
+        if ctx.secondary_cursors_ref.current:
+            ctx.clear_secondary_cursors()
         if _is_fence(ctx.document.lines[ctx.cursor_li]):
             return
         ctx.set_cursor(ctx.cursor_li, len(_line_raw(ctx.document.lines[ctx.cursor_li])))
@@ -121,6 +131,9 @@ def build_navigation(ctx):
         """Ctrl+Home：跳到文档首行行首。"""
         if not ctx.document.lines:
             return
+        # 多光标模式：文档级导航不支持多光标，清除副光标
+        if ctx.secondary_cursors_ref.current:
+            ctx.clear_secondary_cursors()
         li = 0
         if _is_fence(ctx.document.lines[li]):
             ctx.set_cursor_line(li)
@@ -133,6 +146,9 @@ def build_navigation(ctx):
         """Ctrl+End：跳到文档末行行尾。"""
         if not ctx.document.lines:
             return
+        # 多光标模式：文档级导航不支持多光标，清除副光标
+        if ctx.secondary_cursors_ref.current:
+            ctx.clear_secondary_cursors()
         li = len(ctx.document.lines) - 1
         if _is_fence(ctx.document.lines[li]):
             ctx.set_cursor_line(li)
@@ -294,11 +310,17 @@ def build_navigation(ctx):
     def move_up():
         if ctx.cursor_li is None:
             return
+        # 多光标模式：垂直导航不支持多光标，清除副光标
+        if ctx.secondary_cursors_ref.current:
+            ctx.clear_secondary_cursors()
         _move_vline(-1, 1)
 
     def move_down():
         if ctx.cursor_li is None:
             return
+        # 多光标模式：垂直导航不支持多光标，清除副光标
+        if ctx.secondary_cursors_ref.current:
+            ctx.clear_secondary_cursors()
         _move_vline(1, 1)
 
     def link_tab_jump(delta: int) -> bool:

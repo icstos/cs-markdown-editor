@@ -519,6 +519,7 @@ def LineView(
     on_clear_outward: Callable[[], None] | None = None,
     shift_pressed_ref: ft.Ref | None = None,
     ctrl_pressed_ref: ft.Ref | None = None,
+    alt_pressed_ref: ft.Ref | None = None,
     on_hit_test_x: Callable[[int, float], int] | None = None,
     on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
     on_double_tap: Callable[[int, int], None] | None = None,
@@ -528,6 +529,8 @@ def LineView(
     file_path: str | None = None,
     # diff 对比：行级背景着色标记（"added"|"removed"|"modified"|None）
     diff_mark: str | None = None,
+    # 多光标：本行的副光标列表 [(li, base, extent)]，用于渲染副光标标记 + 选区高亮
+    secondary_cursors: list[tuple[int, int, int]] | None = None,
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
@@ -755,12 +758,118 @@ def LineView(
         on_clear_outward=on_clear_outward,
         shift_pressed_ref=shift_pressed_ref,
         ctrl_pressed_ref=ctrl_pressed_ref,
+        alt_pressed_ref=alt_pressed_ref,
         on_hit_test_x=on_hit_test_x,
         on_hit_test_xy=on_hit_test_xy,
         on_double_tap=on_double_tap,
         on_image_action=on_image_action,
         file_path=file_path,
     )
+
+    # ============ 多光标：副光标标记 + 选区高亮 ============
+    # 副光标为纯视觉标记（thin vertical bar），不承载 IME 输入（仅主光标有 TextField）。
+    # 有选区时（base != extent）渲染半透明背景高亮。
+    # 主光标在多光标模式下也用 cursor_ref.base/extent 跟踪选区（非 outward_sel），
+    # 此处一并渲染主光标选区高亮。
+    if secondary_cursors:
+        # 计算视觉行布局：复用激活行的 shared_vlayout，否则惰性计算
+        if shared_vlayout is not None:
+            sec_ww, sec_vlines = shared_vlayout
+        else:
+            _, _, left_pad = _block_padding(line)
+            cw = content_width if content_width is not None else float("inf")
+            sec_ww = _compute_wrap_width(cw, left_pad)
+            sec_vlines = _line_visual_layout(
+                line, base, sec_ww,
+                cursor_raw_offset=None,
+                line_height=line_height,
+            )
+        text_h = base * line_height
+        # 光标竖条垂直居中偏移：text 内文字在 line_height 行框内垂直居中，
+        # 竖条 height=base 需下移 (text_h - base) / 2 才对齐文字基线区域。
+        cursor_y_off = (text_h - base) / 2
+        sec_overlays: list[ft.Control] = []
+        # 主光标选区高亮（多光标模式 Shift+Arrow 扩展的选区）
+        if is_active and cursor_ref is not None and cursor_ref.current is not None:
+            pbase = cursor_ref.current.base
+            pext = cursor_ref.current.extent
+            if pbase != pext:
+                pv = _find_vline_for_raw(sec_vlines, pbase)
+                if pv is not None:
+                    ps = min(pbase, pext)
+                    pe = max(pbase, pext)
+                    ps_local = max(0, min(ps - pv.start_raw, len(pv.offsets_x) - 1))
+                    pe_local = max(0, min(pe - pv.start_raw, len(pv.offsets_x) - 1))
+                    psx = pv.offsets_x[ps_local]
+                    pex = pv.offsets_x[pe_local]
+                    if line.task and line.segments and pv.vline_idx == 0:
+                        prefix_raw = line.segments[0].raw
+                        prefix_len = len(prefix_raw) if prefix_raw else 0
+                        if 0 < prefix_len < len(pv.offsets_x):
+                            psx -= pv.offsets_x[prefix_len]
+                            pex -= pv.offsets_x[prefix_len]
+                    sec_overlays.append(ft.Container(
+                        width=max(pex - psx, 2),
+                        height=text_h,
+                        left=psx,
+                        top=pv.vline_idx * text_h,
+                        bgcolor=ft.Colors.with_opacity(0.25, c.link),
+                        border_radius=2,
+                    ))
+        for (_sli, sbase, sext) in secondary_cursors:
+            vline = _find_vline_for_raw(sec_vlines, sbase)
+            if vline is None:
+                continue
+            local_off = sbase - vline.start_raw
+            local_off = max(0, min(local_off, len(vline.offsets_x) - 1))
+            px_x = vline.offsets_x[local_off]
+            px_y = vline.vline_idx * text_h
+            # 任务行前缀宽度扣除（vline 0：前缀占宽度，需相对内容起点定位）
+            if line.task and line.segments and vline.vline_idx == 0:
+                prefix_raw = line.segments[0].raw
+                prefix_len = len(prefix_raw) if prefix_raw else 0
+                if 0 < prefix_len < len(vline.offsets_x):
+                    px_x -= vline.offsets_x[prefix_len]
+            # 选区高亮（base != extent）
+            if sbase != sext:
+                sel_start_raw = min(sbase, sext)
+                sel_end_raw = max(sbase, sext)
+                start_local = sel_start_raw - vline.start_raw
+                end_local = sel_end_raw - vline.start_raw
+                start_local = max(0, min(start_local, len(vline.offsets_x) - 1))
+                end_local = max(0, min(end_local, len(vline.offsets_x) - 1))
+                sel_x_start = vline.offsets_x[start_local]
+                sel_x_end = vline.offsets_x[end_local]
+                if line.task and line.segments and vline.vline_idx == 0:
+                    prefix_raw = line.segments[0].raw
+                    prefix_len = len(prefix_raw) if prefix_raw else 0
+                    if 0 < prefix_len < len(vline.offsets_x):
+                        sel_x_start -= vline.offsets_x[prefix_len]
+                        sel_x_end -= vline.offsets_x[prefix_len]
+                sel_width = max(sel_x_end - sel_x_start, 2)
+                sec_overlays.append(ft.Container(
+                    width=sel_width,
+                    height=text_h,
+                    left=sel_x_start,
+                    top=px_y,
+                    bgcolor=ft.Colors.with_opacity(0.25, c.link),
+                    border_radius=2,
+                ))
+            # 副光标竖条标记（垂直居中于行框）
+            sec_overlays.append(ft.Container(
+                width=2,
+                height=base,
+                left=px_x,
+                top=px_y + cursor_y_off,
+                bgcolor=c.text,
+                border_radius=1,
+            ))
+        if sec_overlays:
+            inner = ft.Stack(
+                controls=[inner] + sec_overlays,
+                width=float("inf"),
+            )
+
     return _wrap_block(
         inner, line, base, line_idx,
         is_current_line=is_current_line, on_size_change=on_line_size_change,

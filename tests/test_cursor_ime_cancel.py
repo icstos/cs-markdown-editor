@@ -75,6 +75,10 @@ def _make_ctx(document: Document, cursor_li: int, base: int,
         suppress_blur=FakeRef(False),
         set_clear_value_seq=lambda n: None,
         preferred_col_ref=FakeRef(None),
+        # 多光标槽占位（handle_char_input 路径检查 secondary_cursors_ref）
+        secondary_cursors_ref=FakeRef([]),
+        broadcast_char_input=lambda removed, inserted: None,
+        broadcast_submit=lambda v: None,
     )
     return ctx, calls
 

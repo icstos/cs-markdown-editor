@@ -95,6 +95,8 @@ class EditorContext:
     flash_li: int
     table_focus_li: int | None
     math_focus_li: int | None
+    # 多光标：每个副光标 (li, base, extent)，base==extent 无选区
+    secondary_cursors: list[tuple[int, int, int]]
 
     # ============ Setters（稳定区，跨渲染身份不变）============
     set_cursor_li: Callable[[int | None], None]
@@ -110,6 +112,7 @@ class EditorContext:
     set_flash_li: Callable[[int], None]
     set_table_focus_li: Callable[[int | None], None]
     set_math_focus_li: Callable[[int | None], None]
+    set_secondary_cursors: Callable[[list[tuple[int, int, int]]], None]
 
     # ============ Refs（稳定区，跨渲染身份不变）============
     cursor_field_ref: ft.Ref
@@ -141,6 +144,9 @@ class EditorContext:
     math_field_ref: ft.Ref  # ft.Control | None
     math_edit_snapshot: ft.Ref  # EditorSnapshot | None
     math_edit_changed: ft.Ref  # bool
+    # 多光标：ref 镜像（IME 期间同步读取），alt 键状态 ref
+    secondary_cursors_ref: ft.Ref = field(default=None)
+    alt_pressed_ref: ft.Ref = field(default=None)
 
     # ============ 装配槽（跨工厂调用，工厂装配后写入）============
     # 共享闭包
@@ -209,6 +215,8 @@ class EditorContext:
     step_right: Callable[..., Any] = field(default=lambda *a: None)
     step_up: Callable[..., Any] = field(default=lambda *a: None)
     step_down: Callable[..., Any] = field(default=lambda *a: None)
+    step_home: Callable[..., Any] = field(default=lambda *a: None)
+    step_end: Callable[..., Any] = field(default=lambda *a: None)
     start_outward_from_point: Callable[..., None] = field(default=lambda *a: None)
     extend_outward: Callable[..., None] = field(default=lambda *a: None)
     extend_outward_step: Callable[..., None] = field(default=lambda *a: None)
@@ -289,3 +297,28 @@ class EditorContext:
     paste_image_from_clipboard: Callable[..., Awaitable[bool]] = field(
         default=_noop_awaitable
     )
+
+    # ============ 多光标装配槽（build_multi_cursor 装配）============
+    # add_secondary_cursor(li, off)：Alt+Click 切换副光标
+    # add_column_cursors(target_li, target_off)：Alt+Shift+Click 列光标
+    # clear_secondary_cursors()：清空所有副光标（Escape）
+    # broadcast_char_input(removed_len, inserted)：主光标输入后同步到副光标
+    # broadcast_backspace() / broadcast_delete()：删除键同步
+    # broadcast_move_left() / broadcast_move_right()：左右移动同步
+    # broadcast_extend_left() / broadcast_extend_right()：Shift+Left/Right 选区同步
+    # broadcast_submit(value)：Enter 同步分行
+    # has_secondary_cursors()：是否有多光标（用于路由判断）
+    add_secondary_cursor: Callable[[int, int], None] = field(default=lambda *a: None)
+    add_column_cursors: Callable[[int, int], None] = field(default=lambda *a: None)
+    clear_secondary_cursors: Callable[[], None] = field(default=lambda: None)
+    broadcast_char_input: Callable[[int, str], None] = field(default=lambda *a: None)
+    broadcast_backspace: Callable[[], None] = field(default=lambda: None)
+    broadcast_delete: Callable[[], None] = field(default=lambda: None)
+    broadcast_move_left: Callable[[], None] = field(default=lambda: None)
+    broadcast_move_right: Callable[[], None] = field(default=lambda: None)
+    broadcast_extend_left: Callable[[], None] = field(default=lambda: None)
+    broadcast_extend_right: Callable[[], None] = field(default=lambda: None)
+    broadcast_submit: Callable[[str], None] = field(default=lambda *a: None)
+    has_secondary_cursors: Callable[[], bool] = field(default=lambda: False)
+    extend_selection_left: Callable[[], None] = field(default=lambda: None)
+    extend_selection_right: Callable[[], None] = field(default=lambda: None)

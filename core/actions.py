@@ -26,7 +26,7 @@ Stack 双层光标级架构（Typora 式 WYSIWYG）：
 """
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import flet as ft
@@ -112,10 +112,13 @@ class EditorActions:
     math_focus_ref: ft.Ref | None = None
     shift_pressed_ref: ft.Ref | None = None  # Shift 键状态（editor 内部跟踪）
     ctrl_pressed_ref: ft.Ref | None = None  # Ctrl 键状态（主同步源 KeyDispatcher.e.ctrl）
+    alt_pressed_ref: ft.Ref | None = None  # Alt 键状态（KeyDispatcher.e.alt 同步，供 Alt+Click 分发）
     extend_outward_left: Callable[[], None] | None = None
     extend_outward_right: Callable[[], None] | None = None
     extend_outward_up: Callable[[], None] | None = None
     extend_outward_down: Callable[[], None] | None = None
+    extend_outward_home: Callable[[], None] | None = None  # Shift+Home：选区扩展到行首
+    extend_outward_end: Callable[[], None] | None = None  # Shift+End：选区扩展到行尾
     handle_outward_cut: Callable[[], Awaitable[None]] | None = None  # async
     handle_outward_delete: Callable[[], None] | None = None
     handle_outward_copy: Callable[[], Awaitable[None]] | None = None  # Ctrl+C：复制 outward_sel 选区文本
@@ -127,6 +130,15 @@ class EditorActions:
     # 链接编辑回归常规文本编辑：光标在链接段内时渲染层显示完整语法，离开则折叠；
     # Tab 字段跳转由 link_tab_jump 处理（text↔url↔段尾），不依赖专用状态机。
     handle_outward_type_char: Callable[[str], None] | None = None
+
+    # ---- 多光标（VSCode 式 Alt+Click / Alt+Shift+Click）----
+    # has_secondary_cursors：是否有多光标（KeyDispatcher 路由判断用）
+    # clear_secondary_cursors：Escape 清空所有副光标
+    # extend_selection_left/right：Shift+Arrow 扩展所有光标选区（主+副）
+    has_secondary_cursors: Callable[[], bool] = field(default=lambda: False)
+    clear_secondary_cursors: Callable[[], None] = field(default=lambda: None)
+    extend_selection_left: Callable[[], None] = field(default=lambda: None)
+    extend_selection_right: Callable[[], None] = field(default=lambda: None)
 
     # ---- 滚动同步（diff 对比模式：左右编辑器像素偏移同步）----
     # get_scroll_state：返回 (offset, max_scroll_extent, viewport_height)，

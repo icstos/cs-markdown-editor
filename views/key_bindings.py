@@ -199,6 +199,25 @@ class KeyDispatcher:
         # _on_key_down 的 tab 分支判断 Ctrl+Tab（避免代码块/表格缩进与标签切换冲突）。
         if actions is not None and getattr(actions, "ctrl_pressed_ref", None) is not None:
             actions.ctrl_pressed_ref.current = bool(e.ctrl)
+        # 同步 Alt 状态到 editor 的 alt_pressed_ref（KeyboardEvent.alt 可靠）。
+        # editor 的 KeyboardListener KeyDownEvent.key 对 Alt 可能返回 "Alt Left" /
+        # "Alt Right"，导致 _on_key_down 的 key == "alt" 匹配失败；此处 e.alt 是
+        # Flet 从 Flutter 修饰键状态直接读取，始终可靠。供 RenderedLine._on_tap
+        # 分发 Alt+Click / Alt+Shift+Click 多光标操作。
+        if actions is not None and getattr(actions, "alt_pressed_ref", None) is not None:
+            actions.alt_pressed_ref.current = bool(e.alt)
+
+        # 多光标：Escape 清空所有副光标（优先于 toggle_sidebar / clear_outward_sel）
+        # KeyDispatcher 早于 editor 的 KeyboardListener 执行，此处拦截避免
+        # Escape 同时触发 clear_secondary_cursors + toggle_sidebar 的双重行为。
+        if (
+            norm == "escape"
+            and actions is not None
+            and getattr(actions, "has_secondary_cursors", None) is not None
+            and actions.has_secondary_cursors()
+        ):
+            actions.clear_secondary_cursors()
+            return
 
         # 代码块 CodeEditor / 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板
         # 组合交由原生控件处理（Tab 缩进、方向键移动、Backspace、Ctrl+C 复制等），
@@ -275,6 +294,12 @@ class KeyDispatcher:
                     return
                 if norm == "arrowdown" and actions.extend_outward_down is not None:
                     actions.extend_outward_down()
+                    return
+                if norm == "home" and actions.extend_outward_home is not None:
+                    actions.extend_outward_home()
+                    return
+                if norm == "end" and actions.extend_outward_end is not None:
+                    actions.extend_outward_end()
                     return
             # 非 Shift 方向键/Home/End：取消选区（v1 不做光标落点激活，用户可点击重新激活）
             if norm in ("arrowleft", "arrowright", "arrowup", "arrowdown", "home", "end"):
@@ -408,10 +433,30 @@ class KeyDispatcher:
         从编辑态起始 outward 选区（active is not None, outward_sel is None）。
         """
         if norm == "home":
-            actions.move_doc_start() if e.ctrl else actions.move_home()
+            if e.shift and not e.ctrl:
+                # Shift+Home：选区扩展到行首（多光标模式先清除副光标）
+                if (
+                    getattr(actions, "has_secondary_cursors", None) is not None
+                    and actions.has_secondary_cursors()
+                ):
+                    actions.clear_secondary_cursors()
+                if actions.extend_outward_home is not None:
+                    actions.extend_outward_home()
+            else:
+                actions.move_doc_start() if e.ctrl else actions.move_home()
             return True
         if norm == "end":
-            actions.move_doc_end() if e.ctrl else actions.move_end()
+            if e.shift and not e.ctrl:
+                # Shift+End：选区扩展到行尾（多光标模式先清除副光标）
+                if (
+                    getattr(actions, "has_secondary_cursors", None) is not None
+                    and actions.has_secondary_cursors()
+                ):
+                    actions.clear_secondary_cursors()
+                if actions.extend_outward_end is not None:
+                    actions.extend_outward_end()
+            else:
+                actions.move_doc_end() if e.ctrl else actions.move_end()
             return True
         if norm == "arrowup":
             if e.shift and actions.extend_outward_up is not None:
@@ -456,14 +501,30 @@ class KeyDispatcher:
                     actions.move_right()
             return True
         if norm == "arrowleft":
-            if e.shift and actions.extend_outward_left is not None:
-                actions.extend_outward_left()
+            if e.shift:
+                # 多光标模式：扩展所有光标选区（主+副），不走 outward_sel 路径
+                if (
+                    getattr(actions, "has_secondary_cursors", None) is not None
+                    and actions.has_secondary_cursors()
+                    and getattr(actions, "extend_selection_left", None) is not None
+                ):
+                    actions.extend_selection_left()
+                elif actions.extend_outward_left is not None:
+                    actions.extend_outward_left()
             else:
                 actions.move_left()
             return True
         if norm == "arrowright":
-            if e.shift and actions.extend_outward_right is not None:
-                actions.extend_outward_right()
+            if e.shift:
+                # 多光标模式：扩展所有光标选区（主+副），不走 outward_sel 路径
+                if (
+                    getattr(actions, "has_secondary_cursors", None) is not None
+                    and actions.has_secondary_cursors()
+                    and getattr(actions, "extend_selection_right", None) is not None
+                ):
+                    actions.extend_selection_right()
+                elif actions.extend_outward_right is not None:
+                    actions.extend_outward_right()
             else:
                 actions.move_right()
             return True

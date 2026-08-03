@@ -57,6 +57,8 @@ def build_line_controls(
     clipboard_ref = ctx.clipboard_ref
     shift_pressed_ref = ctx.shift_pressed_ref
     ctrl_pressed_ref = ctx.ctrl_pressed_ref
+    alt_pressed_ref = ctx.alt_pressed_ref
+    secondary_cursors = ctx.secondary_cursors
     theme_mode = ctx.theme_mode
     cursor_line = ctx.cursor_line
     table_focus_li = ctx.table_focus_li
@@ -162,9 +164,14 @@ def build_line_controls(
                     on_clear_outward=stable_cbs["on_clear_outward"],
                     shift_pressed_ref=shift_pressed_ref,
                     ctrl_pressed_ref=ctrl_pressed_ref,
+                    alt_pressed_ref=alt_pressed_ref,
                     on_hit_test_x=stable_cbs["on_hit_test_x"],
                     on_hit_test_xy=stable_cbs["on_hit_test_xy"],
                     on_double_tap=stable_cbs["on_double_tap"],
+                    # 多光标：本行的副光标列表（li==i 的子集），用于渲染副光标标记
+                    secondary_cursors=[
+                        sc for sc in secondary_cursors if sc[0] == i
+                    ] if secondary_cursors else [],
                     on_image_action=stable_cbs["on_image_action"],
                     file_path=ctx.file_path,
                     diff_mark=_diff_mark,

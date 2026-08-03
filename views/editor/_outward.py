@@ -66,6 +66,48 @@ def build_outward(ctx):
         """视觉行向下步进（向外选区 Shift+Down 用）。"""
         return _step_vline(li, off, 1)
 
+    def _step_home(li: int, off: int) -> tuple[int, int] | None:
+        """Smart Home 目标（Shift+Home 用）：先跳内容首，再跳行首。
+
+        与 move_home 三态逻辑一致：
+        - off > content_start → 跳到 content_start（跳过 # / - / > 前缀）
+        - off == content_start（且 > 0）→ 跳到行首 raw 0
+        - off == 0 → 返回 None（已在行首，不扩展）
+        """
+        from models import SegType
+        if not (0 <= li < len(ctx.document.lines)):
+            return None
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            return None
+        raw = _line_raw(line)
+        content_start = 0
+        if line.segments and line.segments[0].seg_type in (
+            SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX,
+        ):
+            content_start = len(line.segments[0].raw)
+        content_start = min(content_start, len(raw))
+        if off == 0:
+            return None
+        if off == content_start:
+            return (li, 0)
+        return (li, content_start)
+
+    def _step_end(li: int, off: int) -> tuple[int, int] | None:
+        """End 目标（Shift+End 用）：跳到行尾 raw_len。
+
+        已在行尾时返回 None（不扩展）。
+        """
+        if not (0 <= li < len(ctx.document.lines)):
+            return None
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            return None
+        raw = _line_raw(line)
+        if off >= len(raw):
+            return None
+        return (li, len(raw))
+
     def _step_vline(li: int, off: int, direction: int) -> tuple[int, int] | None:
         """视觉行步进：返回目标 (li, off)，不移动光标。
 
@@ -352,6 +394,8 @@ def build_outward(ctx):
         "step_right": _step_right,
         "step_up": _step_up,
         "step_down": _step_down,
+        "step_home": _step_home,
+        "step_end": _step_end,
         "start_outward_from_point": _start_outward_from_point,
         "extend_outward": _extend_outward,
         "extend_outward_step": _extend_outward_step,

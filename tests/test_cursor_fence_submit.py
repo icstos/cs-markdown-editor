@@ -63,6 +63,10 @@ def _make_ctx(document: Document, cursor_li: int, base: int) -> tuple[types.Simp
         set_cursor_off=lambda off: None,
         set_clear_value_seq=lambda n: None,
         preferred_col_ref=FakeRef(None),
+        # 多光标槽占位（on_submit 围栏路径调用 clear_secondary_cursors）
+        secondary_cursors_ref=FakeRef([]),
+        clear_secondary_cursors=lambda: None,
+        broadcast_submit=lambda v: None,
     )
     return ctx, calls
 

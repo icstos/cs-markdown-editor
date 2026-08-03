@@ -47,6 +47,7 @@ from views.editor._image import build_image
 from views.editor._indent import build_indent
 from views.editor._inline_format import build_inline_format
 from views.editor._key import build_key
+from views.editor._multi_cursor import build_multi_cursor
 from views.editor._navigation import build_navigation
 from views.editor._outward import build_outward
 from views.editor._raw_mode import build_raw_mode
@@ -175,6 +176,15 @@ def MarkdownEditor(
     math_edit_snapshot = ft.use_ref(None)
     math_edit_changed = ft.use_ref(False)
 
+    # ============ 多光标（VSCode 式 Alt+Click / Alt+Shift+Click）============
+    # secondary_cursors：list[(li, base, extent)]，base==extent 表示无选区
+    # ref 镜像用于 IME 期间同步读取（避免 set_state 滞后）
+    secondary_cursors, set_secondary_cursors = ft.use_state([])
+    secondary_cursors_ref = ft.use_ref([])
+    secondary_cursors_ref.current = secondary_cursors
+    # Alt 键状态（用于点击分发：Alt+Click 切换副光标）
+    alt_pressed_ref = ft.use_ref(False)
+
     # ============ state → ref 镜像（单一编排点）============
     outward_sel_ref.current = outward_sel
 
@@ -262,6 +272,7 @@ def MarkdownEditor(
         flash_li=flash_li,
         table_focus_li=table_focus_li,
         math_focus_li=math_focus_li,
+        secondary_cursors=secondary_cursors,
         # Setters
         set_cursor_li=set_cursor_li,
         set_cursor_off=set_cursor_off,
@@ -276,6 +287,7 @@ def MarkdownEditor(
         set_flash_li=set_flash_li,
         set_table_focus_li=set_table_focus_li,
         set_math_focus_li=set_math_focus_li,
+        set_secondary_cursors=set_secondary_cursors,
         # Refs
         cursor_field_ref=cursor_field_ref,
         input_session_ref=input_session_ref,
@@ -306,6 +318,8 @@ def MarkdownEditor(
         math_field_ref=math_field_ref,
         math_edit_snapshot=math_edit_snapshot,
         math_edit_changed=math_edit_changed,
+        secondary_cursors_ref=secondary_cursors_ref,
+        alt_pressed_ref=alt_pressed_ref,
     )
 
     # ============ 工厂调用（无 hook，可任意顺序；闭包在调用时读 ctx）============
@@ -323,6 +337,7 @@ def MarkdownEditor(
     focus_cbs = build_focus(ctx)
     key_cbs = build_key(ctx)
     image_cbs = build_image(ctx)
+    multi_cursor_cbs = build_multi_cursor(ctx)
 
     # ============ 装配槽填充（跨工厂调用通过 ctx 属性）============
     # 共享
@@ -384,6 +399,8 @@ def MarkdownEditor(
     ctx.step_right = outward_cbs["step_right"]
     ctx.step_up = outward_cbs["step_up"]
     ctx.step_down = outward_cbs["step_down"]
+    ctx.step_home = outward_cbs["step_home"]
+    ctx.step_end = outward_cbs["step_end"]
     ctx.start_outward_from_point = outward_cbs["start_outward_from_point"]
     ctx.extend_outward = outward_cbs["extend_outward"]
     ctx.extend_outward_step = outward_cbs["extend_outward_step"]
@@ -447,6 +464,21 @@ def MarkdownEditor(
     # image 组
     ctx.on_image_action = image_cbs["on_image_action"]
     ctx.paste_image_from_clipboard = image_cbs["paste_image_from_clipboard"]
+    # 多光标组
+    ctx.add_secondary_cursor = multi_cursor_cbs["add_secondary_cursor"]
+    ctx.add_column_cursors = multi_cursor_cbs["add_column_cursors"]
+    ctx.clear_secondary_cursors = multi_cursor_cbs["clear_secondary_cursors"]
+    ctx.broadcast_char_input = multi_cursor_cbs["broadcast_char_input"]
+    ctx.broadcast_backspace = multi_cursor_cbs["broadcast_backspace"]
+    ctx.broadcast_delete = multi_cursor_cbs["broadcast_delete"]
+    ctx.broadcast_move_left = multi_cursor_cbs["broadcast_move_left"]
+    ctx.broadcast_move_right = multi_cursor_cbs["broadcast_move_right"]
+    ctx.broadcast_extend_left = multi_cursor_cbs["broadcast_extend_left"]
+    ctx.broadcast_extend_right = multi_cursor_cbs["broadcast_extend_right"]
+    ctx.broadcast_submit = multi_cursor_cbs["broadcast_submit"]
+    ctx.has_secondary_cursors = multi_cursor_cbs["has_secondary_cursors"]
+    ctx.extend_selection_left = multi_cursor_cbs["extend_selection_left"]
+    ctx.extend_selection_right = multi_cursor_cbs["extend_selection_right"]
 
     # ============ use_memo：向外选区高亮映射 ============
     _highlight_map = ft.use_memo(

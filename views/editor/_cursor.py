@@ -137,10 +137,27 @@ def build_cursor(ctx):
         ctx.cursor_ref.current.reset(new_off, new_raw_len)
 
     def _on_tap_line(li: int, raw_off: int):
-        """渲染层点击：定位光标到 (li, raw_off)。"""
+        """渲染层点击：定位光标到 (li, raw_off)。
+
+        Alt+Click → 切换副光标（VSCode 式多光标）。
+        Alt+Shift+Click → 列光标（主光标行与点击行之间所有行插入对应位置光标）。
+        """
         if not (0 <= li < len(ctx.document.lines)):
             return
         line = ctx.document.lines[li]
+        # Alt+Click / Alt+Shift+Click：多光标操作（优先于其他路由）
+        # RenderedLine._on_tap 已确保 Alt 时调用此函数，此处检查 alt_pressed_ref
+        # 决定具体多光标动作。
+        if ctx.alt_pressed_ref.current:
+            if ctx.shift_pressed_ref.current:
+                ctx.add_column_cursors(li, raw_off)
+            else:
+                ctx.add_secondary_cursor(li, raw_off)
+            # 点击 GestureDetector 会使主光标 TextField 失焦，递增 focus_seq
+            # 强制重聚焦，否则多光标模式下无法继续键盘输入。
+            ctx.suppress_blur.current = True
+            ctx.set_focus_seq(ctx.focus_seq + 1)
+            return
         # 点击非公式行时退出公式编辑态
         if ctx.math_focus_li is not None and ctx.math_focus_li != li:
             ctx.set_math_focus_li(None)
@@ -153,6 +170,9 @@ def build_cursor(ctx):
         # 既有向外选区：先清除，然后继续定位光标到点击位置
         if ctx.outward_sel_ref.current is not None:
             ctx.set_outward_sel(None)
+        # 常规点击（无 Alt）：清除多光标（退出多光标模式）
+        if ctx.secondary_cursors_ref.current:
+            ctx.clear_secondary_cursors()
         _set_cursor(li, raw_off)
         # 点击同一位置时 cursor_li/cursor_off 不变，use_effect 不触发重新聚焦；
         # 但点击已使 cursor TextField 失焦——递增 focus_seq 强制重聚焦，避免光标丢失。
@@ -209,6 +229,32 @@ def build_cursor(ctx):
         if _is_fence(line):
             return
 
+        # 多光标模式：主光标有选区时（Shift+Arrow 扩展），输入替换选区
+        # 选区由 cursor_ref.base/extent 跟踪（非 outward_sel），需单独处理。
+        # 副光标的选区由 broadcast_char_input 内部按各自 base/extent 处理。
+        if ctx.secondary_cursors_ref.current and ctx.cursor_ref.current:
+            cs = ctx.cursor_ref.current
+            if cs.base != cs.extent and value:
+                raw = _line_raw(line)
+                sel_start = min(cs.base, cs.extent)
+                sel_end = max(cs.base, cs.extent)
+                new_raw = raw[:sel_start] + value + raw[sel_end:]
+                new_off = sel_start + len(value)
+                ctx.push_line_edit(li, raw)
+                _reparse_atomic(line, new_raw)
+                ctx.mark_dirty()
+                cs.reset(new_off, len(new_raw))
+                ctx.set_cursor_off(new_off)
+                ctx.set_cursor_field_value(value)
+                # 启动输入会话供后续 IME composing
+                _state = ctx.input_session_ref.current
+                _state["li"] = li
+                _state["start_off"] = sel_start
+                _state["last_value"] = value
+                # 同步副光标：broadcast_char_input 内部处理各自选区
+                ctx.broadcast_char_input(sel_end - sel_start, value)
+                return
+
         state = ctx.input_session_ref.current
 
         # 新会话启动
@@ -262,6 +308,8 @@ def build_cursor(ctx):
         old_task = line.task
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
+        # 多光标：同步 delta（removed_len, inserted）到所有副光标
+        ctx.broadcast_char_input(len(removed), inserted)
         # task 状态变化（如输入 "- [ ] " 触发 PARAGRAPH → task 行）：
         # reparse 把前缀 "- [ ] " 重新解析为 LIST_PREFIX 段，渲染层切换到 task
         # 分支（skip_prefix=True），cursor_overlay 坐标系从行起点变为内容起点。
@@ -328,9 +376,25 @@ def build_cursor(ctx):
         line = ctx.document.lines[li]
         if _is_fence(line):
             return
+        # 多光标模式：主光标有选区时，删除选区（非单字符）
+        if ctx.secondary_cursors_ref.current and ctx.cursor_ref.current:
+            cs = ctx.cursor_ref.current
+            if cs.base != cs.extent:
+                raw = _line_raw(line)
+                sel_start = min(cs.base, cs.extent)
+                sel_end = max(cs.base, cs.extent)
+                new_raw = raw[:sel_start] + raw[sel_end:]
+                ctx.push_line_edit(li, raw)
+                _reparse_atomic(line, new_raw)
+                ctx.mark_dirty()
+                cs.reset(sel_start, len(new_raw))
+                ctx.set_cursor_off(sel_start)
+                ctx.broadcast_backspace()
+                return
         off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
         # HR 行行首 Backspace：删除 HR 转为空段落（不合并 --- 到前一行，Typora 式）
         if line.block_type == BlockType.HR and off == 0:
+            ctx.clear_secondary_cursors()
             ctx.push_history()
             ctx.undo_push_pending.current = True
             new_line = parser.parse_markdown("").lines[0]
@@ -350,6 +414,7 @@ def build_cursor(ctx):
                 and line.segments
                 and off == len(line.segments[0].raw)
             ):
+                ctx.clear_secondary_cursors()
                 ctx.push_history()
                 ctx.undo_push_pending.current = True
                 prefix_raw = line.segments[0].raw
@@ -370,10 +435,13 @@ def build_cursor(ctx):
             ctx.mark_dirty()
             # 轻量光标更新：不递增 nav_seq，避免 TextField 重建（性能优化）
             _move_cursor_inline(li, off - 1, len(new_raw))
+            # 多光标：同步 Backspace 到所有副光标
+            ctx.broadcast_backspace()
         elif li > 0:
             prev = ctx.document.lines[li - 1]
             if _is_fence(prev):
                 return
+            ctx.clear_secondary_cursors()
             ctx.push_history()
             ctx.undo_push_pending.current = True
             prev_raw = _line_raw(prev)
@@ -405,9 +473,24 @@ def build_cursor(ctx):
         if _is_fence(line):
             return
         raw = _line_raw(line)
+        # 多光标模式：主光标有选区时，删除选区（非单字符）
+        if ctx.secondary_cursors_ref.current and ctx.cursor_ref.current:
+            cs = ctx.cursor_ref.current
+            if cs.base != cs.extent:
+                sel_start = min(cs.base, cs.extent)
+                sel_end = max(cs.base, cs.extent)
+                new_raw = raw[:sel_start] + raw[sel_end:]
+                ctx.push_line_edit(li, raw)
+                _reparse_atomic(line, new_raw)
+                ctx.mark_dirty()
+                cs.reset(sel_start, len(new_raw))
+                ctx.set_cursor_off(sel_start)
+                ctx.broadcast_delete()
+                return
         off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
         # HR 行行尾 Delete：删除 HR 转为空段落（不合并下一行，Typora 式）
         if line.block_type == BlockType.HR and off >= len(raw):
+            ctx.clear_secondary_cursors()
             ctx.push_history()
             ctx.undo_push_pending.current = True
             new_line = parser.parse_markdown("").lines[0]
@@ -424,10 +507,13 @@ def build_cursor(ctx):
             ctx.mark_dirty()
             # 光标位置不变，仅更新 cursor_ref 的 raw_len（不触发 _set_cursor 开销）
             ctx.cursor_ref.current.reset(off, len(new_raw))
+            # 多光标：同步 Delete 到所有副光标
+            ctx.broadcast_delete()
         elif li < len(ctx.document.lines) - 1:
             nxt = ctx.document.lines[li + 1]
             if _is_fence(nxt):
                 return
+            ctx.clear_secondary_cursors()
             ctx.push_history()
             ctx.undo_push_pending.current = True
             junction = len(raw)
@@ -483,11 +569,14 @@ def build_cursor(ctx):
                     ctx.cursor_ref.current.reset(_so + len(value), len(_new_raw))
                     ctx.set_cursor_field_value(value)
                     ctx.mark_dirty()
+                    # 多光标：同步 IME composing 清理 delta 到副光标
+                    ctx.broadcast_char_input(len(_removed), _inserted)
 
         ctx.push_history()
         ctx.undo_push_pending.current = True
         # HR 行 Enter：在下方插入新空行（不分割 ---，Typora 式）
         if line.block_type == BlockType.HR:
+            ctx.clear_secondary_cursors()
             new_line = parser.parse_markdown("").lines[0]
             ctx.document.lines.insert(li + 1, new_line)
             ctx.document.notify()
@@ -510,6 +599,7 @@ def build_cursor(ctx):
             and not after.strip()
             and (m := _RE_FENCE_TRIGGER.match(before)) is not None
         ):
+            ctx.clear_secondary_cursors()
             new_line = _make_code_line(m.group(1), "")
             # 原地替换行 + notify()，避免 O(N) 列表重建
             ctx.document.lines[li] = new_line
@@ -523,10 +613,12 @@ def build_cursor(ctx):
         # 标题：before 空 → 清空前缀；否则分割成两行
         if line.block_type == BlockType.HEADING:
             if not before.strip():
+                ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
                 _set_cursor(li, 0)
                 return
+            ctx.clear_secondary_cursors()
             _reparse_atomic(line, before, notify=False)
             new_line = parser.parse_markdown(after).lines[0]
             # 原地插入行 + notify()，避免 O(N) 列表重建
@@ -542,6 +634,7 @@ def build_cursor(ctx):
         # 列表 / 引用：before 仅前缀（空内容）→ 退出列表/引用
         if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
             if not before.strip():
+                ctx.clear_secondary_cursors()
                 stripped = after.lstrip()
                 if line.block_type == BlockType.QUOTE:
                     stripped = stripped.lstrip("> ")
@@ -556,16 +649,19 @@ def build_cursor(ctx):
                 line.task
                 and before.strip() in ("- [ ]", "- [x]", "- [X]")
             ):
+                ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
                 _set_cursor(li, 0)
                 return
             if line.block_type == BlockType.LIST_UO and before.rstrip() in ("-", "*", "+"):
+                ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
                 _set_cursor(li, 0)
                 return
             if line.block_type == BlockType.LIST_O and _RE_O_PREFIX.match(before.rstrip()):
+                ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
                 _set_cursor(li, 0)
@@ -584,6 +680,8 @@ def build_cursor(ctx):
         ctx.mark_dirty()
         ctx.suppress_blur.current = True
         _set_cursor(li + 1, len(cont_prefix))
+        # 多光标：同步 Enter 分行到所有副光标（从下往上处理避免行号偏移）
+        ctx.broadcast_submit(value)
 
     return {
         "cursor_base": _cursor_base,

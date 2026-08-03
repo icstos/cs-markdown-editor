@@ -93,6 +93,7 @@ def make_actions(
         move_down=rec("move_down"),
         page_up=rec("page_up"),
         page_down=rec("page_down"),
+        link_tab_jump=lambda i: False,
         backspace_core=rec("backspace_core"),
         delete_core=rec("delete_core"),
         indent_or_outdent=rec("indent_or_outdent"),

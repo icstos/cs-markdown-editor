@@ -158,6 +158,7 @@ def RenderedLine(
     on_clear_outward: Callable[[], None] | None = None,
     shift_pressed_ref: ft.Ref | None = None,
     ctrl_pressed_ref: ft.Ref | None = None,
+    alt_pressed_ref: ft.Ref | None = None,
     on_hit_test_x: Callable[[int, float], int] | None = None,
     on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
     on_double_tap: Callable[[int, int], None] | None = None,
@@ -375,6 +376,14 @@ def RenderedLine(
         raw_off = _tap_raw_off(pos)
         # Ctrl+Click 链接 → 打开（Typora 式）
         if _open_link_if_ctrl(e, line, raw_off, ctrl_pressed_ref):
+            return
+        # Alt+Click / Alt+Shift+Click → 多光标操作（优先于 Shift+Click 选区）
+        # on_tap_line 内部检查 alt_pressed_ref + shift_pressed_ref 决定路由：
+        # Alt → add_secondary_cursor，Alt+Shift → add_column_cursors
+        alt_held = alt_pressed_ref is not None and bool(alt_pressed_ref.current)
+        if alt_held:
+            if on_tap is not None:
+                on_tap(line_idx, raw_off)
             return
         shift_held = shift_pressed_ref is not None and bool(shift_pressed_ref.current)
         if shift_held and on_extend_outward is not None:

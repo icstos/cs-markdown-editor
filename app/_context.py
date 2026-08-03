@@ -131,12 +131,16 @@ class AppContext:
     open_doc: Callable = field(default=lambda: None)
     open_folder: Callable = field(default=lambda: None)
     save_doc: Callable = field(default=lambda *a: None)
+    save_as_doc: Callable = field(default=lambda *a: None)
     export_doc: Callable = field(default=lambda: None)
+    # 状态栏轻量消息推送：(msg, kind) -> None，kind ∈ info/success/warn/error
+    set_status_message: Callable = field(default=lambda *a: None)
 
     # file_dialogs 组
     show_snack: Callable = field(default=lambda *a: None)
     copy_path: Callable = field(default=lambda *a: None)
     on_file_dialog_confirm: Callable = field(default=lambda *a: None)
+    on_file_dialog_cancel: Callable = field(default=lambda: None)
     open_input_dialog: Callable = field(default=lambda *a: None)
     open_delete_dialog: Callable = field(default=lambda *a: None)
     update_tab_for_renamed_file: Callable = field(default=lambda *a: None)
@@ -168,6 +172,9 @@ class AppContext:
     change_sidebar_panel: Callable = field(default=lambda *a: None)
     change_sidebar_width: Callable = field(default=lambda *a: None)
     mount_picker: Callable = field(default=lambda: None)
+    # 恢复面板入口 + 自定义备份目录选择（设置面板按钮回调）
+    open_recovery_panel: Callable = field(default=lambda: None)
+    pick_backup_dir: Callable = field(default=lambda: None)
 
     # split_editor 组
     toggle_split_editor: Callable = field(default=lambda: None)
@@ -196,3 +203,32 @@ class AppContext:
     replace_all: Callable = field(default=lambda: None)
     focus_search: Callable = field(default=lambda: None)
     sidebar_replace_ref: Any = field(default=None)  # ft.Ref[dict]
+
+    # ============ backup_controller 组（自动备份 / 崩溃恢复 / 启动扫描）============
+    # 定时备份/自动保存循环：use_effect 启动，return cleanup 停止
+    start_backup_loop: Callable = field(default=lambda: None)
+    # 即时触发自动保存（窗口失焦/最小化时调用）
+    trigger_autosave_now: Callable = field(default=lambda: None)
+    # 即时触发全量备份（退出/关闭前/崩溃钩子调用）
+    trigger_backup_now: Callable = field(default=lambda: None)
+    # 退出前写入会话哨兵（记录本次会话备份路径，供下次启动恢复）
+    write_exit_sentinel: Callable = field(default=lambda: None)
+    # 启动扫描可恢复草稿（返回 BackupInfo 列表，无则空）
+    scan_recoverable: Callable = field(default=lambda: [])
+    # 手动恢复入口：扫描最近 N 天全量备份
+    scan_recent_backups: Callable = field(default=lambda: [])
+    # 在新标签页打开备份内容（用户主动恢复）
+    open_backup_in_new_tab: Callable = field(default=lambda *a: None)
+    # 删除指定备份文件
+    delete_backup: Callable = field(default=lambda *a: None)
+    # 清理过期备份（启动时与定时触发）
+    cleanup_expired_backups: Callable = field(default=lambda: 0)
+
+    # ============ 恢复面板 / 状态消息 UI 状态 ============
+    # 恢复面板可见性 + 列表数据：启动时若存在可恢复草稿则弹出
+    recovery_open: bool = field(default=False)
+    set_recovery_open: Callable = field(default=lambda *a: None)
+    recovery_list: Any = field(default=None)  # list[BackupInfo]
+    set_recovery_list: Callable = field(default=lambda *a: None)
+    # 状态栏轻量消息：(msg, kind, ts) -> None，由 set_status_message 写入 state
+    status_message: Any = field(default=None)  # (msg, kind) | None

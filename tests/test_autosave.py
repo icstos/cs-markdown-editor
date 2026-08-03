@@ -1,23 +1,22 @@
-"""app.autosave 单元测试。
+"""app.autosave 单元测试（间隔触发模型）。
 
 覆盖：
 - autosave_enabled_for：纯函数，检查 settings.auto_save + tab 可写路径
-- schedule_autosave：通过 AutosaveContext 注入依赖，debounce 2s 保存
+- schedule_autosave：兼容入口，间隔触发模型下为空操作
+- autosave_all_dirty：扫描 tabs_ref，对所有脏且可自动保存的标签异步触发 save_doc
 
-不依赖 UI 渲染，用 Mock 模拟 page_ref / tabs_ref / save_doc_fn。
-asyncio.sleep 被 patch 为即时返回，避免 2s 等待。
+不依赖 UI 渲染，用 Mock 模拟 page_ref / tabs_ref / save_doc_fn / set_status_fn。
 """
 
-import asyncio
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from app.autosave import AutosaveContext, autosave_enabled_for, schedule_autosave
+from app.autosave import AutosaveContext, autosave_all_dirty, autosave_enabled_for, schedule_autosave
 
 
 # ---------------- 辅助工厂 ----------------
@@ -39,21 +38,18 @@ def _diff_tab(left_path=None, right_path=None, left_dirty=True, right_dirty=True
 
 def _make_ctx(
     settings=None,
-    tab=None,
     tabs=None,
-    active_index=0,
     save_doc_fn=None,
+    set_status_fn=None,
     page_available=True,
 ) -> tuple[MagicMock, AutosaveContext]:
     """创建 AutosaveContext + page_ref mock。
 
-    返回 (page_ref, ctx)，page_ref.current.run_task 捕获协程函数供测试 await。
-    save_doc_fn 默认为 AsyncMock（await 时返回 None）。
+    返回 (page_ref, ctx)，page_ref.current.run_task 捕获协程函数供测试断言。
+    save_doc_fn 默认为 MagicMock（同步，不返回值）。
     """
     settings = settings if settings is not None else {"auto_save": True}
-    if tab is None:
-        tab = _editor_tab("/tmp/note.md", dirty=True)
-    tabs_list = tabs if tabs is not None else [tab]
+    tabs_list = tabs if tabs is not None else [_editor_tab("/tmp/note.md", dirty=True)]
 
     page_ref = MagicMock()
     if page_available:
@@ -65,28 +61,15 @@ def _make_ctx(
     tabs_ref = MagicMock()
     tabs_ref.current = tabs_list
 
-    active_index_ref = MagicMock()
-    active_index_ref.current = active_index
-
-    cur_tab_fn = MagicMock(return_value=tab)
-    save_doc_fn = save_doc_fn or AsyncMock()
-
+    save_doc_fn = save_doc_fn or MagicMock()
     ctx = AutosaveContext(
         settings=settings,
         page_ref=page_ref,
         tabs_ref=tabs_ref,
-        active_index_ref=active_index_ref,
-        cur_tab_fn=cur_tab_fn,
         save_doc_fn=save_doc_fn,
+        set_status_fn=set_status_fn,
     )
     return page_ref, ctx
-
-
-def _run_captured(ctx) -> None:
-    """提取 run_task 捕获的协程函数并同步执行（patch asyncio.sleep 为即时）。"""
-    fn = ctx.page_ref.current.run_task.call_args[0][0]
-    with patch("app.autosave.asyncio.sleep", new_callable=AsyncMock):
-        asyncio.run(fn())
 
 
 # ---------------- autosave_enabled_for ----------------
@@ -131,98 +114,130 @@ def test_enabled_diff_no_paths():
     ) is False
 
 
-# ---------------- schedule_autosave：前置守卫 ----------------
-def test_schedule_tab_not_dirty_skips():
-    """标签非脏 → 不调度。"""
-    page_ref, ctx = _make_ctx(tab=_editor_tab("/x.md", dirty=False))
-    schedule_autosave(ctx)
-    page_ref.current.run_task.assert_not_called()
-
-
-def test_schedule_autosave_disabled_skips():
-    """auto_save=False → 不调度。"""
-    page_ref, ctx = _make_ctx(settings={"auto_save": False})
-    schedule_autosave(ctx)
-    page_ref.current.run_task.assert_not_called()
-
-
-def test_schedule_tab_none_skips():
-    """cur_tab_fn 返回 None → 不调度。"""
-    _, ctx = _make_ctx()
-    ctx.cur_tab_fn = MagicMock(return_value=None)
-    schedule_autosave(ctx)
-    ctx.page_ref.current.run_task.assert_not_called()
-
-
-def test_schedule_page_none_skips():
-    """page 为 None → 不调度（不抛异常）。"""
-    _, ctx = _make_ctx(page_available=False)
-    schedule_autosave(ctx)
-
-
-def test_schedule_no_path_skips():
-    """标签无路径 → 不调度。"""
-    page_ref, ctx = _make_ctx(tab=_editor_tab(None, dirty=True))
-    schedule_autosave(ctx)
-    page_ref.current.run_task.assert_not_called()
-
-
-# ---------------- schedule_autosave：debounce 保存 ----------------
-def test_schedule_schedules_run_task():
-    """脏标签 + auto_save + 有路径 → 调度 run_task。"""
+# ---------------- schedule_autosave（空操作） ----------------
+def test_schedule_autosave_is_noop():
+    """间隔触发模型下 schedule_autosave 为空操作，不调度任何任务。"""
     page_ref, ctx = _make_ctx()
     schedule_autosave(ctx)
+    page_ref.current.run_task.assert_not_called()
+
+
+def test_schedule_autosave_returns_none():
+    """schedule_autosave 返回 None。"""
+    _, ctx = _make_ctx()
+    assert schedule_autosave(ctx) is None
+
+
+# ---------------- autosave_all_dirty：前置守卫 ----------------
+def test_autosave_all_dirty_auto_save_off():
+    """auto_save=False → 返回 0，不调度。"""
+    page_ref, ctx = _make_ctx(settings={"auto_save": False})
+    assert autosave_all_dirty(ctx) == 0
+    page_ref.current.run_task.assert_not_called()
+
+
+def test_autosave_all_dirty_page_none():
+    """page 为 None → 返回 0，不抛异常。"""
+    _, ctx = _make_ctx(page_available=False)
+    assert autosave_all_dirty(ctx) == 0
+
+
+def test_autosave_all_dirty_no_dirty_tabs():
+    """所有标签非脏 → 返回 0。"""
+    page_ref, ctx = _make_ctx(tabs=[_editor_tab("/x.md", dirty=False)])
+    assert autosave_all_dirty(ctx) == 0
+    page_ref.current.run_task.assert_not_called()
+
+
+def test_autosave_all_dirty_no_path_skips():
+    """脏标签无路径 → 跳过，返回 0。"""
+    page_ref, ctx = _make_ctx(tabs=[_editor_tab(None, dirty=True)])
+    assert autosave_all_dirty(ctx) == 0
+    page_ref.current.run_task.assert_not_called()
+
+
+# ---------------- autosave_all_dirty：调度行为 ----------------
+def test_autosave_all_dirty_schedules_one():
+    """单个脏标签 + 有路径 → 调度一次 run_task，返回 1。"""
+    page_ref, ctx = _make_ctx(tabs=[_editor_tab("/x.md", dirty=True)])
+    assert autosave_all_dirty(ctx) == 1
+    page_ref.current.run_task.assert_called_once()
+    # run_task 的第一个参数是 save_doc_fn，第二个是 tab_index
+    args = page_ref.current.run_task.call_args[0]
+    assert args[0] is ctx.save_doc_fn
+    assert args[1] == 0
+
+
+def test_autosave_all_dirty_schedules_multiple():
+    """多个脏标签 → 逐一调度，返回计数。"""
+    tabs = [
+        _editor_tab("/a.md", dirty=True),
+        _editor_tab("/b.md", dirty=True),
+        _editor_tab("/c.md", dirty=False),  # 非脏，跳过
+        _editor_tab(None, dirty=True),       # 无路径，跳过
+    ]
+    page_ref, ctx = _make_ctx(tabs=tabs)
+    assert autosave_all_dirty(ctx) == 2
+    assert page_ref.current.run_task.call_count == 2
+    # 验证调度的 index 分别为 0 和 1
+    call_args = [c.args[1] for c in page_ref.current.run_task.call_args_list]
+    assert call_args == [0, 1]
+
+
+def test_autosave_all_dirty_diff_tab():
+    """对比标签脏且有路径 → 调度保存。"""
+    tab = _diff_tab(left_path="/a.md", right_path="/b.md")
+    page_ref, ctx = _make_ctx(tabs=[tab])
+    assert autosave_all_dirty(ctx) == 1
     page_ref.current.run_task.assert_called_once()
 
 
-def test_schedule_debounce_saves_after_delay():
-    """debounce 协程等待 2s 后调用 save_doc_fn。"""
-    _, ctx = _make_ctx()
-    schedule_autosave(ctx)
-    _run_captured(ctx)
-    ctx.save_doc_fn.assert_called_once_with(0)
+def test_autosave_all_dirty_diff_no_path_skips():
+    """对比标签脏但两侧均无路径 → 跳过。"""
+    tab = _diff_tab(left_path=None, right_path=None)
+    page_ref, ctx = _make_ctx(tabs=[tab])
+    assert autosave_all_dirty(ctx) == 0
+    page_ref.current.run_task.assert_not_called()
 
 
-def test_schedule_index_out_of_range_skips_save():
-    """调度后 active_index 越界 → 不保存。"""
-    _, ctx = _make_ctx(active_index=5, tabs=[_editor_tab("/x.md")])
-    schedule_autosave(ctx)
-    _run_captured(ctx)
-    ctx.save_doc_fn.assert_not_called()
+def test_autosave_all_dirty_empty_tabs():
+    """空标签列表 → 返回 0。"""
+    page_ref, ctx = _make_ctx(tabs=[])
+    assert autosave_all_dirty(ctx) == 0
+    page_ref.current.run_task.assert_not_called()
 
 
-def test_schedule_tab_becomes_clean_skips_save():
-    """调度后标签变干净 → 不保存。"""
-    tab = _editor_tab("/x.md", dirty=True)
-    _, ctx = _make_ctx(tab=tab, tabs=[tab])
-    schedule_autosave(ctx)
-
-    # 模拟保存前标签变干净
-    tab["dirty"] = False
-    ctx.tabs_ref.current = [tab]
-
-    _run_captured(ctx)
-    ctx.save_doc_fn.assert_not_called()
+def test_autosave_all_dirty_triggers_status_message():
+    """有触发保存时 → 调用 set_status_fn 推送「已自动保存」。"""
+    set_status_fn = MagicMock()
+    _, ctx = _make_ctx(
+        tabs=[_editor_tab("/x.md", dirty=True)],
+        set_status_fn=set_status_fn,
+    )
+    autosave_all_dirty(ctx)
+    set_status_fn.assert_called_once_with("已自动保存", "success")
 
 
-def test_schedule_captures_sched_index():
-    """调度时捕获 active_index，即便后续切换标签也保存原标签。"""
-    tab0 = _editor_tab("/a.md", dirty=True)
-    tab1 = _editor_tab("/b.md", dirty=True)
-    _, ctx = _make_ctx(tab=tab0, active_index=0, tabs=[tab0, tab1])
-    schedule_autosave(ctx)
-    _run_captured(ctx)
-    # 应保存 index=0（调度时的索引），而非切换后的索引
-    ctx.save_doc_fn.assert_called_once_with(0)
+def test_autosave_all_dirty_no_status_when_nothing_saved():
+    """无触发保存时 → 不调用 set_status_fn。"""
+    set_status_fn = MagicMock()
+    _, ctx = _make_ctx(
+        tabs=[_editor_tab("/x.md", dirty=False)],
+        set_status_fn=set_status_fn,
+    )
+    autosave_all_dirty(ctx)
+    set_status_fn.assert_not_called()
 
 
-def test_schedule_diff_tab_saves():
-    """对比标签也能触发自动保存。"""
-    tab = _diff_tab(left_path="/a.md", right_path="/b.md")
-    _, ctx = _make_ctx(tab=tab, tabs=[tab])
-    schedule_autosave(ctx)
-    _run_captured(ctx)
-    ctx.save_doc_fn.assert_called_once_with(0)
+def test_autosave_all_dirty_no_status_fn_ok():
+    """set_status_fn=None 时不报错。"""
+    _, ctx = _make_ctx(
+        tabs=[_editor_tab("/x.md", dirty=True)],
+        set_status_fn=None,
+    )
+    # 不应抛异常
+    result = autosave_all_dirty(ctx)
+    assert result == 1
 
 
 if __name__ == "__main__":

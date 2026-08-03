@@ -4,13 +4,15 @@
 close_settings / select_settings_tab / update_setting / on_capture /
 on_cancel_capture / schedule_autosave / reset_settings / reset_shortcuts /
 export_shortcuts / import_shortcuts / toggle_sidebar / toggle_word_wrap /
-change_sidebar_panel / change_sidebar_width
+change_sidebar_panel / change_sidebar_width / open_recovery_panel /
+pick_backup_dir
 
 跨组依赖（通过 ctx 装配槽，调用时读取）：
 - focus_router 组：apply_content_layout（update_setting 后刷新布局）
 - file_dialogs 组：show_snack（导入/导出提示）
 - file_io_ops 组：save_doc（schedule_autosave 注入）
 - tab_management 组：cur_tab_fn（schedule_autosave 注入）
+- backup_controller 组：scan_recent_backups（恢复面板入口）
 
 设计要点：
 - apply_theme / mount_picker 是 use_effect 回调，定义在此处但 use_effect
@@ -21,6 +23,8 @@ change_sidebar_panel / change_sidebar_width
   与 update_setting 前向引用），本控制器通过 ctx.shortcut_mgr 访问。
 - update_setting 持久化后调用 apply_content_layout 刷新布局；快捷键变更时
   定位首个冲突项并聚焦。
+- schedule_autosave 已改为间隔触发模型（_backup_controller 启动定时器），
+  此处保留入口供 _focus_router.on_dirty_change 调用，实现为空操作。
 
 依赖项：
 - json / flet
@@ -112,19 +116,45 @@ def build_settings_controller(ctx):
         ctx.set_capturing((None, None))
 
     def schedule_autosave_cb():
-        """延时 2s 自动保存当前激活标签（委托 app.autosave.schedule_autosave）。
+        """间隔触发模型的兼容入口（空操作）。
 
-        通过 AutosaveContext 注入 page_ref / tabs_ref / active_index_ref / save_doc，
-        避免闭包捕获渲染期快照导致保存到错误标签。
+        历史上 on_dirty_change 触发 2s debounce 保存；现由 _backup_controller
+        启动定时器扫描脏标签，变脏事件无需立即调度。保留入口避免改动
+        _focus_router 调用链。实际调度由 start_backup_loop 启动的定时器负责。
         """
         schedule_autosave(AutosaveContext(
             settings=ctx.settings,
             page_ref=ctx.page_ref,
             tabs_ref=ctx.tabs_ref,
-            active_index_ref=ctx.active_index_ref,
-            cur_tab_fn=ctx.cur_tab_fn,
             save_doc_fn=ctx.save_doc,
+            set_status_fn=ctx.set_status_message,
         ))
+
+    def open_recovery_panel():
+        """打开恢复面板：扫描最近 N 天全量备份并展示。
+
+        跳过启动 sentinel 机制（那是上次会话草稿），此处展示全量历史备份，
+        供用户主动找回。扫描由 backup_controller.scan_recent_backups 完成。
+        """
+        infos = ctx.scan_recent_backups()
+        ctx.set_recovery_list(infos)
+        ctx.set_recovery_open(True)
+
+    async def pick_backup_dir():
+        """选择自定义备份目录（FilePicker.get_directory_path）。
+
+        选择 None 表示恢复平台默认路径（用户清空自定义路径）。
+        选择后立即持久化到 settings.backup_dir。
+        """
+        picker = ctx.picker_holder.current
+        if picker is None:
+            return
+        folder = await picker.get_directory_path(dialog_title="选择备份目录")
+        if folder is None:
+            # 用户取消：保持原值不变（不视为清空）
+            return
+        update_setting("backup_dir", folder)
+        ctx.show_snack(f"备份目录已设置为：{folder}")
 
     def reset_settings():
         next_settings = dict(DEFAULT_SETTINGS)
@@ -216,6 +246,8 @@ def build_settings_controller(ctx):
         "on_capture": on_capture,
         "on_cancel_capture": on_cancel_capture,
         "schedule_autosave": schedule_autosave_cb,
+        "open_recovery_panel": open_recovery_panel,
+        "pick_backup_dir": pick_backup_dir,
         "reset_settings": reset_settings,
         "reset_shortcuts": reset_shortcuts,
         "export_shortcuts": export_shortcuts,

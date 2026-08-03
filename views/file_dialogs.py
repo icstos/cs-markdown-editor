@@ -35,6 +35,7 @@ def FileActionDialog(
     confirm_label: str,
     on_confirm: Callable,
     on_cancel: Callable[[], None],
+    cancel_label: str = "取消",
     # input 模式专用
     input_label: str = "",
     input_value: str = "",
@@ -169,7 +170,7 @@ def FileActionDialog(
                     ft.Row(
                         controls=[
                             ft.Container(expand=True),
-                            _text_btn("取消", on_cancel, c.muted),
+                            _text_btn(cancel_label, on_cancel, c.muted),
                             confirm_btn,
                         ],
                         spacing=Spacing.LG,

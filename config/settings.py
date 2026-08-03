@@ -37,7 +37,7 @@ DEFAULT_SETTINGS: Settings = {
     "body_font_size": 16,
     "line_height": 1.6,
     "font_family": "Alibaba",
-    "auto_save": False,
+    "auto_save": True,
     "remember_focus_mode": False,
     "show_toolbar": True,
     "word_wrap": True,
@@ -57,6 +57,18 @@ DEFAULT_SETTINGS: Settings = {
     "search_whole_word": False,    # 查找整个单词（\b 边界）
     "search_regex": False,         # 正则表达式
     "search_replace_expanded": False,  # 替换栏展开状态（VSCode 风格可折叠，Ctrl+H 切换）
+    # ============ 自动保存（Typora 风格间隔触发）============
+    # auto_save=False 时全部失效；interval=5 表示每 5 分钟对有路径的脏文档自动写盘
+    "auto_save_interval": 5,        # 自动保存间隔（分钟），范围 1-30
+    "auto_save_on_blur": True,      # 窗口失焦/最小化时立即触发一次自动保存
+    # ============ 自动备份与崩溃恢复（独立于自动保存，始终后台运行）============
+    "backup_enabled": True,         # 总开关：关闭后不再生成备份，已存在备份仍可恢复
+    "backup_interval": 10,          # 定时备份间隔（分钟），范围 5-60
+    "backup_retention_days": 30,    # 已命名文档备份保留天数（超期自动清理）
+    "recover_untitled_days": 7,     # 未命名草稿保留天数（短于已命名文档）
+    "backup_dir": None,             # 自定义备份根目录；None 时使用平台默认路径
+    # 外部修改检测：编辑期间监听原文件 mtime 变化，发现外部修改时弹出重载确认
+    "detect_external_changes": True,
     "shortcuts": {k: dict(v) for k, v in DEFAULT_SHORTCUTS.items()},
 }
 

@@ -36,6 +36,7 @@ import asyncio
 import flet as ft
 
 import parser
+from app._backup_controller import build_backup_controller
 from app._context import AppContext
 from app._diff_controller import build_diff_controller
 from app._file_dialogs import build_file_dialogs
@@ -155,6 +156,17 @@ def App():
     # settings_ref：供 use_memo([]) 稳定闭包读取最新设置（避免闭包捕获渲染期快照）
     settings_ref = ft.use_ref(settings)
     settings_ref.current = settings
+
+    # ============ 自动备份 / 崩溃恢复 / 状态栏消息 状态 ============
+    # status_message: (msg, kind) | None —— 状态栏轻量消息（"已自动保存" 等），
+    # 3 秒后由 StatusBar 内部计时器调 on_status_clear 清空。
+    status_message, set_status_message_state = ft.use_state(None)
+    # recovery_open / recovery_list: 恢复面板可见性与可恢复草稿列表。
+    # 启动时若 scan_recoverable 返回非空则自动弹出。
+    recovery_open, set_recovery_open = ft.use_state(False)
+    recovery_list, set_recovery_list = ft.use_state(None)
+    # backup_started_ref: 防止 use_effect 严格模式下重复启动备份循环
+    backup_started_ref = ft.use_ref(False)
 
     # ============ 派生值 ============
     # 当前激活标签的派生值（供下游闭包与渲染使用）
@@ -284,6 +296,12 @@ def App():
         paste_old_draft=paste_old_draft,
         status_ref=status_ref,
         sidebar_replace_ref=sidebar_replace_ref,
+        # 自动备份 / 崩溃恢复 / 状态消息 UI 状态
+        recovery_open=recovery_open,
+        set_recovery_open=set_recovery_open,
+        recovery_list=recovery_list,
+        set_recovery_list=set_recovery_list,
+        status_message=status_message,
     )
 
     # ============ 控制器装配（拓扑序）============
@@ -322,12 +340,14 @@ def App():
     ctx.open_doc = file_cbs["open_doc"]
     ctx.open_folder = file_cbs["open_folder"]
     ctx.save_doc = file_cbs["save_doc"]
+    ctx.save_as_doc = file_cbs["save_as_doc"]
     ctx.export_doc = file_cbs["export_doc"]
 
     dialog_cbs = build_file_dialogs(ctx)
     ctx.show_snack = dialog_cbs["show_snack"]
     ctx.copy_path = dialog_cbs["copy_path"]
     ctx.on_file_dialog_confirm = dialog_cbs["on_file_dialog_confirm"]
+    ctx.on_file_dialog_cancel = dialog_cbs["on_file_dialog_cancel"]
     ctx.open_input_dialog = dialog_cbs["open_input_dialog"]
     ctx.open_delete_dialog = dialog_cbs["open_delete_dialog"]
     ctx.update_tab_for_renamed_file = dialog_cbs["update_tab_for_renamed_file"]
@@ -350,6 +370,33 @@ def App():
     ctx.compare_with_selected = diff_cbs["compare_with_selected"]
     ctx.on_diff_dirty_change = diff_cbs["on_diff_dirty_change"]
 
+    # ============ 状态栏消息推送桥接 ============
+    # set_status_message(msg, kind) → 写入 status_message state（tuple），
+    # StatusBar 监听 status_message prop 变化展示，3s 后自动清空。
+    # msg=None 时清空状态（供 on_status_clear 回调使用）。
+    # 必须在 backup_controller / file_io_ops 装配前设置（二者闭包内调用此槽位）。
+    def _set_status_message(msg: str | None, kind: str = "info"):
+        if msg is None:
+            set_status_message_state(None)
+        else:
+            set_status_message_state((msg, kind))
+
+    ctx.set_status_message = _set_status_message
+
+    # ============ 备份控制器（自动备份 / 崩溃恢复 / 启动扫描）============
+    # 在 settings_controller 之前装配：settings_controller 的 open_recovery_panel
+    # 闭包在调用时读取 ctx.scan_recent_backups，需此槽位已填充。
+    backup_cbs = build_backup_controller(ctx)
+    ctx.start_backup_loop = backup_cbs["start_backup_loop"]
+    ctx.trigger_autosave_now = backup_cbs["trigger_autosave_now"]
+    ctx.trigger_backup_now = backup_cbs["trigger_backup_now"]
+    ctx.write_exit_sentinel = backup_cbs["write_exit_sentinel"]
+    ctx.scan_recoverable = backup_cbs["scan_recoverable"]
+    ctx.scan_recent_backups = backup_cbs["scan_recent_backups"]
+    ctx.open_backup_in_new_tab = backup_cbs["open_backup_in_new_tab"]
+    ctx.delete_backup = backup_cbs["delete_backup"]
+    ctx.cleanup_expired_backups = backup_cbs["cleanup_expired_backups"]
+
     settings_cbs = build_settings_controller(ctx)
     ctx.apply_theme = settings_cbs["apply_theme"]
     ctx.mount_picker = settings_cbs["mount_picker"]
@@ -369,6 +416,8 @@ def App():
     ctx.toggle_word_wrap = settings_cbs["toggle_word_wrap"]
     ctx.change_sidebar_panel = settings_cbs["change_sidebar_panel"]
     ctx.change_sidebar_width = settings_cbs["change_sidebar_width"]
+    ctx.open_recovery_panel = settings_cbs["open_recovery_panel"]
+    ctx.pick_backup_dir = settings_cbs["pick_backup_dir"]
 
     split_cbs = build_split_editor(ctx)
     ctx.toggle_split_editor = split_cbs["toggle_split_editor"]
@@ -545,6 +594,77 @@ def App():
         ctx.jump_to_line(li, off)
 
     ft.use_effect(_fire_pending_jump, [session, pending_jump_sig])
+
+    # ============ 自动备份循环 + 窗口事件钩子 + 启动扫描 ============
+    # start_backup_loop：启动自动保存 + 备份两个后台 asyncio 循环（独立于自动保存
+    # 开关，备份始终运行）。返回 cleanup 取消任务，组件卸载 / 应用退出时调用。
+    ft.use_effect(ctx.start_backup_loop, [])
+
+    # 窗口事件钩子：失焦 / 最小化 → 即时触发自动保存；关闭 / 断连 → 写退出哨兵。
+    # on_window_event 在桌面端捕获窗口状态变化；on_disconnect 捕获 websocket 断连
+    # （含异常崩溃场景）。两者共同确保崩溃前最后一次状态被备份。
+    def _bind_window_hooks():
+        page = page_ref.current
+        if page is None:
+            return lambda: None
+
+        def _on_window_event(e):
+            # e.data 为事件类型字符串："blur" / "close" / "minimize" / "focus" 等
+            data = str(getattr(e, "data", "")).lower()
+            if data in ("blur", "minimize", "hide"):
+                ctx.trigger_autosave_now()
+            elif data == "close":
+                ctx.write_exit_sentinel()
+
+        def _on_disconnect(_e):
+            # websocket 断连（含崩溃）→ 尽力写入退出哨兵
+            ctx.write_exit_sentinel()
+
+        try:
+            page.on_window_event = _on_window_event
+            page.on_disconnect = _on_disconnect
+        except Exception:
+            pass
+
+        def _cleanup():
+            try:
+                if page.on_window_event is _on_window_event:
+                    page.on_window_event = None
+                if page.on_disconnect is _on_disconnect:
+                    page.on_disconnect = None
+            except Exception:
+                pass
+
+        return _cleanup
+
+    ft.use_effect(_bind_window_hooks, [])
+
+    # 启动扫描可恢复草稿：仅在首次挂载时执行一次（backup_started_ref 防严格模式重复）。
+    # 扫描上次会话哨兵，若存在未保存文档则弹出恢复面板（非阻塞）。
+    # 同时清理过期备份（低频，启动时一次）。
+    def _startup_scan_recoverable():
+        if backup_started_ref.current:
+            return
+        backup_started_ref.current = True
+
+        def _do_scan():
+            try:
+                ctx.cleanup_expired_backups()
+            except Exception:
+                pass
+            infos = ctx.scan_recoverable()
+            if infos:
+                set_recovery_list(infos)
+                set_recovery_open(True)
+
+        page = page_ref.current
+        if page is not None:
+            try:
+                page.run_task(_do_scan)
+            except Exception:
+                pass
+
+    ft.use_effect(_startup_scan_recoverable, [])
 
     # ============ 渲染树 ============
     return build_render(ctx)

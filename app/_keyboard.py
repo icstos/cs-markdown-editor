@@ -57,6 +57,7 @@ def build_keyboard(ctx):
         paste_old_draft=ctx.paste_old_draft,
         app_callbacks={
             "save": ctx.save_doc,
+            "save_as": ctx.save_as_doc,
             "new": ctx.new_doc,
             "open": ctx.open_doc,
             "toggle_sidebar": ctx.toggle_sidebar,

@@ -20,8 +20,10 @@ open_delete_dialog / on_tab_context_action / on_sidebar_context_action
 
 依赖项：
 - os / flet（Icons / FilePicker 无）
+- parser（外部修改重载时解析磁盘内容）
 - services.file_ops（reveal_in_explorer / create_file / create_folder /
   rename_path / delete_path / duplicate_file）
+- services.file_io.read_text（外部修改重载时读取磁盘最新内容）
 - services.ui_feedback.show_snack
 - app._tab_helpers.tab_paths
 """
@@ -30,8 +32,10 @@ import os
 
 import flet as ft
 
+import parser
 from app._tab_helpers import tab_paths
 from services import file_ops
+from services.file_io import read_text
 from services.ui_feedback import show_snack as _show_snack_impl
 
 
@@ -97,13 +101,13 @@ def build_file_dialogs(ctx):
         """文件操作对话框确认回调。
 
         input 模式：value 为用户输入的文本（文件名/文件夹名/新名称）。
-        confirm 模式：value 为空字符串（删除确认）。
+        confirm 模式：value 为空字符串（删除确认 / 重载确认）。
         """
         state = ctx.file_dialog
         if state is None:
             return
         action = state["action"]
-        target = state["target"]
+        target = state.get("target")
         ctx.set_file_dialog(None)  # 先关闭对话框
 
         if action == "new_file":
@@ -138,6 +142,55 @@ def build_file_dialogs(ctx):
                 show_snack(f"已删除：{fname}")
             except Exception as e:
                 show_snack(f"删除失败：{e}")
+        elif action == "reload_external":
+            # 外部修改检测：用户选择「重新加载」→ 用磁盘最新内容覆盖当前标签
+            tab_index = state.get("target_tab_index")
+            if tab_index is None:
+                return
+            try:
+                text = read_text(target)
+                doc = parser.parse_markdown(text)
+                doc.file_path = target
+                try:
+                    last_mtime = os.path.getmtime(target)
+                except OSError:
+                    last_mtime = None
+                ts = list(ctx.tabs_ref.current)
+                if 0 <= tab_index < len(ts):
+                    ts[tab_index] = {
+                        **ts[tab_index],
+                        "document": doc,
+                        "file_path": target,
+                        "dirty": False,
+                        "_last_known_mtime": last_mtime,
+                    }
+                    ctx.set_tabs(ts)
+                    ctx.tabs_ref.current = ts
+                    ctx.set_session(ctx.session + 1)
+                    show_snack("已重新加载最新内容")
+            except Exception as e:
+                show_snack(f"重载失败：{e}")
+            # 「保留本地版本」走 on_file_dialog_cancel（见下方）
+
+    def on_file_dialog_cancel():
+        """文件操作对话框取消回调：根据 action 分发。
+
+        - "reload_external"：用户选择「保留本地版本」→ 用本地内容继续保存
+          （force=True 跳过外部修改检测，直接覆盖磁盘文件）
+        - 其他 action：仅关闭对话框（等价于原 lambda 行为）
+        """
+        state = ctx.file_dialog
+        if state is None:
+            return
+        action = state.get("action")
+        ctx.set_file_dialog(None)  # 先关闭对话框
+
+        if action == "reload_external":
+            # 用户选择保留本地版本 → 强制保存覆盖外部修改
+            tab_index = state.get("target_tab_index")
+            page = ctx.page_ref.current
+            if page is not None:
+                page.run_task(ctx.save_doc, tab_index, True)  # force=True
 
     def open_input_dialog(action: str, title: str, icon: str, label: str,
                           hint: str, default_value: str, location: str,
@@ -339,6 +392,7 @@ def build_file_dialogs(ctx):
         "update_tab_for_renamed_file": update_tab_for_renamed_file,
         "close_tabs_for_path": close_tabs_for_path,
         "on_file_dialog_confirm": on_file_dialog_confirm,
+        "on_file_dialog_cancel": on_file_dialog_cancel,
         "open_input_dialog": open_input_dialog,
         "open_delete_dialog": open_delete_dialog,
         "on_tab_context_action": on_tab_context_action,

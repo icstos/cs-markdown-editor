@@ -513,6 +513,8 @@ class KeyDispatcher:
         if layer == "browse":
             if matches(combo, shortcuts.get("save", "ctrl+s")):
                 page.run_task(cb["save"])
+            elif matches(combo, shortcuts.get("save_as", "ctrl+shift+s")):
+                page.run_task(cb["save_as"])
             elif matches(combo, shortcuts.get("new", "ctrl+n")):
                 cb["new"]()
             elif matches(combo, shortcuts.get("open", "ctrl+o")):
@@ -554,6 +556,8 @@ class KeyDispatcher:
         # edit 层
         if matches(combo, shortcuts.get("save", "ctrl+s")):
             page.run_task(cb["save"])
+        elif matches(combo, shortcuts.get("save_as", "ctrl+shift+s")):
+            page.run_task(cb["save_as"])
         elif matches(combo, shortcuts.get("undo", "ctrl+z")):
             if actions is not None:
                 actions.undo()

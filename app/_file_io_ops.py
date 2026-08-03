@@ -1,7 +1,8 @@
 """文件 IO 控制器（从 main.py 闭包抽取）。
 
 闭包组：push_recent_file / open_file_by_path / new_doc / open_doc /
-open_folder / save_doc / export_doc
+open_folder / save_doc / save_as_doc / export_doc / set_status_message /
+backup_tab_before_overwrite / check_external_change
 
 跨组依赖（通过 ctx 装配槽，调用时读取）：
 - settings_controller 组：update_setting（push_recent_file 持久化最近文件；
@@ -12,15 +13,18 @@ open_folder / save_doc / export_doc
 设计要点：
 - 所有标签写操作基于 tabs_ref.current 最新值计算，保证批量保存时不互相覆盖。
 - 对比标签分别保存两侧脏文档到各自路径；普通标签走单文档保存。
+- save_doc / save_as_doc 采用 write_text_atomic 原子写入，覆盖原文件前
+  生成一份历史副本到备份目录（防止误覆盖后无法找回）。
 - save_doc 返回 bool：用户取消另存对话框或失败时返回 False，供
   save_and_close_pending 中止批量关闭。
 - 文件路径打开时去重：已在某普通编辑标签打开则直接切换，避免重复开。
-- open_folder 锚定工作区根目录（settings.workspace_folder），打开子目录文件时
-  侧边栏文件树仍以工作区根排布，不随当前文件目录漂移。
+- 写入失败兜底：将当前内容写入备份目录，确保数据不丢失；状态栏醒目提示失败原因。
+- 外部修改检测：保存前检查文件 mtime，若被外部程序修改弹出重载确认对话框。
 
 依赖项：
 - os / parser（解析/序列化/转 HTML）
-- services.file_io（read_text / write_text）
+- services.file_io（read_text / write_text_atomic）
+- services.backup（write_backup：覆盖前历史副本 + 写入失败兜底）
 - app._tab_helpers（is_blank_untitled）
 - utils.file_helpers（file_name）
 - flet（FilePickerFileType）
@@ -33,7 +37,8 @@ import flet as ft
 import parser
 from app._tab_helpers import is_blank_untitled
 from config.settings import save_settings
-from services.file_io import read_text, write_text
+from services.backup import is_large_content, write_backup
+from services.file_io import read_text, write_text, write_text_atomic
 from utils.file_helpers import file_name
 
 
@@ -41,7 +46,9 @@ def build_file_io_ops(ctx):
     """构造文件 IO 控制器闭包组。
 
     返回 dict[str, Callable]：
-    push_recent_file / open_file_by_path / new_doc / open_doc / save_doc / export_doc
+    push_recent_file / open_file_by_path / new_doc / open_doc / open_folder /
+    save_doc / save_as_doc / export_doc / set_status_message /
+    backup_tab_before_overwrite / check_external_change
     """
 
     def push_recent_file(path: str):
@@ -90,12 +97,23 @@ def build_file_io_ops(ctx):
             return
         doc = parser.parse_markdown(text)
         doc.file_path = path
+        # 记录文件 mtime，用于后续外部修改检测（缺失则后续首次保存时补记）
+        try:
+            last_mtime = os.path.getmtime(path)
+        except OSError:
+            last_mtime = None
         if is_blank_untitled(ctx.cur_tab):
             # 复用当前空标签
-            ctx.update_active(document=doc, file_path=path, dirty=False)
+            ctx.update_active(
+                document=doc, file_path=path, dirty=False,
+                _last_known_mtime=last_mtime,
+            )
         else:
             new_tabs = list(ctx.tabs)
-            new_tabs.append({"document": doc, "file_path": path, "dirty": False})
+            new_tabs.append({
+                "document": doc, "file_path": path, "dirty": False,
+                "_last_known_mtime": last_mtime,
+            })
             ctx.set_tabs(new_tabs)
             ctx.tabs_ref.current = new_tabs
             new_idx = len(new_tabs) - 1
@@ -161,11 +179,46 @@ def build_file_io_ops(ctx):
         ctx.apply_content_layout()
         ctx.show_snack(f"已打开文件夹：{os.path.basename(folder) or folder}")
 
-    async def save_doc(tab_index: int | None = None) -> bool:
+    def set_status_message(msg: str, kind: str = "info"):
+        """推送轻量状态栏消息（如「已自动保存」「保存失败」）。
+
+        - kind: "info" / "success" / "warn" / "error"，影响颜色与持续时间
+        - 消息在状态栏轻量展示，3 秒后自动清空（由 StatusBar 内部计时器清理）
+        """
+        try:
+            ctx.set_status_message(msg, kind)
+        except Exception:
+            pass
+
+    def _backup_before_overwrite(path: str, content: str, tab_data: dict) -> None:
+        """覆盖前备份：原文件存在时生成一份历史副本到备份目录。
+
+        防止误覆盖后无法找回。失败静默忽略（不阻塞保存流程）。
+        """
+        if not path or not os.path.isfile(path):
+            return
+        try:
+            # 读原文件内容作为历史副本
+            original = read_text(path)
+            if not original:
+                return
+            # 用原文件内容 + 当前 tab 元信息生成历史备份
+            write_backup(ctx.settings, tab_data, original)
+        except Exception:
+            pass
+
+    async def save_doc(tab_index: int | None = None, force: bool = False) -> bool:
         """保存指定标签（默认激活标签）。返回是否真正保存成功（用户取消另存则 False）。
 
         基于 tabs_ref.current 读取/更新，保证批量保存（确认弹层）时不互相覆盖。
         对比标签分别保存两侧脏文档到各自路径；普通标签走单文档保存。
+
+        写入规范：
+        - 采用 write_text_atomic 原子写入（临时文件 → 校验 → 替换原文件）。
+        - 覆盖原文件前先生成一份历史副本到备份目录（_backup_before_overwrite）。
+        - 写入失败时兜底备份当前内容到备份目录，状态栏醒目提示失败原因。
+        - 保存前检测外部修改：若原文件被外部程序修改，弹确认对话框。
+          force=True 时跳过检测（用户在对话框中选择「保留本地版本」后强制覆盖）。
         """
         if tab_index is None:
             tab_index = ctx.active_index_ref.current
@@ -186,19 +239,15 @@ def build_file_io_ops(ctx):
                 return True  # 两侧均无修改，无需保存
             # 保存左侧
             if left_dirty and left_path and left_doc is not None:
-                try:
-                    write_text(left_path, parser.serialize(left_doc))
-                    left_doc.dirty = False
-                except Exception as e:
-                    ctx.show_snack(f"左侧保存失败：{e}")
+                if not await _save_one_side_atomic(
+                    left_path, left_doc, tab, "left"
+                ):
                     return False
             # 保存右侧
             if right_dirty and right_path and right_doc is not None:
-                try:
-                    write_text(right_path, parser.serialize(right_doc))
-                    right_doc.dirty = False
-                except Exception as e:
-                    ctx.show_snack(f"右侧保存失败：{e}")
+                if not await _save_one_side_atomic(
+                    right_path, right_doc, tab, "right"
+                ):
                     return False
             latest = list(ctx.tabs_ref.current)
             latest[tab_index] = {
@@ -208,7 +257,7 @@ def build_file_io_ops(ctx):
             }
             ctx.set_tabs(latest)
             ctx.tabs_ref.current = latest
-            ctx.show_snack("对比文档保存成功")
+            set_status_message("已保存", "success")
             return True
 
         # ---- 普通编辑标签：单文档保存 ----
@@ -231,22 +280,170 @@ def build_file_io_ops(ctx):
                 return False
             if not path.lower().endswith(".md"):
                 path += ".md"
+        # 外部修改检测：保存前若文件被外部修改，弹出重载确认
+        # force=True 时跳过（用户在对话框中选择「保留本地版本」后强制覆盖）
+        if not _is_new_file and not force and ctx.settings.get("detect_external_changes", True):
+            ext_check = _check_external_modification(tab, path)
+            if ext_check == "modified":
+                # 触发外部修改确认对话框（设置 file_dialog state）
+                ctx.set_file_dialog({
+                    "mode": "confirm",
+                    "title": "文件已被外部修改",
+                    "message": f"{os.path.basename(path)} 已在外部被修改。\n是否重新加载最新内容？\n（选择「保留本地版本」将用本地内容覆盖外部修改）",
+                    "confirm_label": "重新加载",
+                    "cancel_label": "保留本地版本",
+                    "action": "reload_external",
+                    "target": path,
+                    "target_tab_index": tab_index,
+                })
+                return False
         text = parser.serialize(doc)
+        # 覆盖前备份：原文件存在时生成历史副本
+        if not _is_new_file:
+            _backup_before_overwrite(path, text, tab)
         try:
-            write_text(path, text)
+            write_text_atomic(path, text)
         except Exception as e:
-            ctx.show_snack(f"保存失败：{e}")
+            # 写入失败兜底：将当前内容写入备份目录，确保数据不丢失
+            write_backup(ctx.settings, tab, text)
+            set_status_message(f"保存失败：{e}", "error")
+            ctx.show_snack(f"保存失败：{e}（已自动备份到恢复目录）")
             return False
         doc.file_path = path
         doc.dirty = False
+        # 记录保存后的 mtime，用于后续外部修改检测
+        try:
+            tab["_last_known_mtime"] = os.path.getmtime(path)
+        except OSError:
+            pass
         # 不可变更新该 tab，基于最新 tabs_ref 避免批量保存时覆盖前序结果
         latest = list(ctx.tabs_ref.current)
-        latest[tab_index] = {**latest[tab_index], "file_path": path, "dirty": False}
+        latest[tab_index] = {
+            **latest[tab_index],
+            "file_path": path,
+            "dirty": False,
+            "_last_known_mtime": tab.get("_last_known_mtime"),
+        }
         ctx.set_tabs(latest)
         ctx.tabs_ref.current = latest
         push_recent_file(path)
         if _is_new_file:
             ctx.bump_fs_version()  # 新文件入树，刷新侧边栏
+        set_status_message("已保存", "success")
+        return True
+
+    async def _save_one_side_atomic(
+        path: str, doc, tab_data: dict, side: str
+    ) -> bool:
+        """对比标签单侧保存（原子写入 + 覆盖前备份）。返回是否成功。
+
+        side="left" / "right"，用于错误提示。
+        """
+        # 覆盖前备份
+        _backup_before_overwrite(path, parser.serialize(doc), tab_data)
+        try:
+            write_text_atomic(path, parser.serialize(doc))
+            doc.dirty = False
+            return True
+        except Exception as e:
+            # 写入失败兜底
+            write_backup(ctx.settings, tab_data, parser.serialize(doc))
+            side_label = "左侧" if side == "left" else "右侧"
+            set_status_message(f"{side_label}保存失败：{e}", "error")
+            ctx.show_snack(f"{side_label}保存失败：{e}（已自动备份）")
+            return False
+
+    def _check_external_modification(tab: dict, path: str) -> str:
+        """检测原文件是否被外部程序修改。
+
+        返回值：
+        - "modified"：文件被外部修改（mtime 大于上次记录）
+        - "unchanged"：未变化
+        - "missing"：文件已被删除
+
+        通过 _last_known_mtime 字段记录上次保存 / 加载时的 mtime。
+        """
+        if not os.path.isfile(path):
+            return "missing"
+        try:
+            current_mtime = os.path.getmtime(path)
+        except OSError:
+            return "unchanged"
+        last_mtime = tab.get("_last_known_mtime")
+        if last_mtime is None:
+            # 首次检查：记录当前 mtime，不视为修改
+            tab["_last_known_mtime"] = current_mtime
+            return "unchanged"
+        if current_mtime > last_mtime:
+            return "modified"
+        return "unchanged"
+
+    async def save_as_doc(tab_index: int | None = None) -> bool:
+        """另存为新文件（Ctrl+Shift+S）。
+
+        始终弹出保存对话框，让用户指定新路径；保存后当前编辑上下文切换到新文件路径。
+        对比标签不支持另存为（两侧均可独立保存，请切到对应编辑标签）。
+        """
+        if tab_index is None:
+            tab_index = ctx.active_index_ref.current
+        ts = ctx.tabs_ref.current
+        if not (0 <= tab_index < len(ts)):
+            return False
+        tab = ts[tab_index]
+        if tab.get("type") == "diff":
+            ctx.show_snack("对比标签不支持另存为，请切换到普通编辑标签")
+            return False
+        doc = tab.get("document")
+        if doc is None:
+            return False
+        picker = ctx.picker_holder.current
+        if picker is None:
+            return False
+        # 默认文件名：原文件名 / 未命名.md
+        cur_path = tab.get("file_path")
+        default_name = os.path.basename(cur_path) if cur_path else "未命名.md"
+        new_path = await picker.save_file(
+            dialog_title="另存为 Markdown",
+            file_name=default_name,
+            allowed_extensions=["md"],
+            file_type=ft.FilePickerFileType.CUSTOM,
+        )
+        if not new_path:
+            return False
+        if not new_path.lower().endswith(".md"):
+            new_path += ".md"
+        # 如果与原路径不同且新路径已存在，先做覆盖前备份
+        if new_path != cur_path and os.path.isfile(new_path):
+            _backup_before_overwrite(new_path, parser.serialize(doc), tab)
+        text = parser.serialize(doc)
+        try:
+            write_text_atomic(new_path, text)
+        except Exception as e:
+            # 写入失败兜底备份
+            write_backup(ctx.settings, tab, text)
+            set_status_message(f"另存失败：{e}", "error")
+            ctx.show_snack(f"另存失败：{e}")
+            return False
+        doc.file_path = new_path
+        doc.dirty = False
+        # 记录新路径的 mtime
+        try:
+            tab["_last_known_mtime"] = os.path.getmtime(new_path)
+        except OSError:
+            pass
+        # 切换当前编辑上下文到新路径
+        latest = list(ctx.tabs_ref.current)
+        latest[tab_index] = {
+            **latest[tab_index],
+            "file_path": new_path,
+            "dirty": False,
+            "_last_known_mtime": tab.get("_last_known_mtime"),
+        }
+        ctx.set_tabs(latest)
+        ctx.tabs_ref.current = latest
+        push_recent_file(new_path)
+        ctx.bump_fs_version()  # 新文件入树
+        set_status_message("已另存", "success")
         return True
 
     async def export_doc():
@@ -283,5 +480,7 @@ def build_file_io_ops(ctx):
         "open_doc": open_doc,
         "open_folder": open_folder,
         "save_doc": save_doc,
+        "save_as_doc": save_as_doc,
         "export_doc": export_doc,
+        "set_status_message": set_status_message,
     }

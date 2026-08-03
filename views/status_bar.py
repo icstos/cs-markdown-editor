@@ -1,7 +1,7 @@
 """底部状态栏：贯穿侧边栏 + 编辑区全宽。
 
 从 main.py 的 _build_footer 抽出，封装为独立组件。显示侧边栏切换、脏标记、
-文件名、光标行列、字数与字符数。
+文件名、光标行列、字数与字符数，以及自动保存 / 备份的轻量状态消息。
 
 性能设计（组件内 state 隔离，仅本组件重渲染）：
 - 光标位置 / 字数统计为 StatusBar 内部 use_state，由 App 经 status_ref 注入
@@ -9,12 +9,15 @@
   本组件重渲染（~10 控件重建，微秒级），不波及 App / 编辑器，光标移动 / 打字
   不会重建编辑器控件树。
 - 切标签 / 打开文件时 use_effect 按 document 身份重置 state，从新文档重算初值。
+- 状态消息（"已自动保存" / "保存失败" 等）由父组件经 status_message prop
+  传入，3 秒后自动清空（use_effect 计时器）。
 - 其余低频控件（侧边栏切换、脏标记图标、文件名、换行/拆分开关）随 props 声明式更新。
 
 注：Flet 0.86 声明式模型渲染后控件被冻结（Frozen controls cannot be updated），
 故不能再用 ref.value=…; ref.update() 命令式改属性，须走 set_state 触发重渲染。
 """
 
+import asyncio
 import os
 import re
 from collections.abc import Awaitable, Callable
@@ -27,6 +30,17 @@ from styles import FONT_MAIN, Spacing, get_colors, only_border
 
 # 中英文词数统计正则：英文连续字母数字下划线算一词，中文每字算一词
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
+
+# 状态消息类型 → 颜色映射
+_STATUS_COLOR = {
+    "info": None,    # 使用 c.muted
+    "success": "#35C759",  # 绿色
+    "warn": "#FF9F0A",     # 橙色
+    "error": "#E5484D",    # 红色
+}
+
+# 状态消息显示时长（秒），超时后自动清空
+_STATUS_TTL_SEC = 3.0
 
 
 def _file_name(path: str | None) -> str:
@@ -62,6 +76,8 @@ def StatusBar(
     split_editor: bool = False,
     on_toggle_split_editor: Callable[[], None] | None = None,
     status_ref: ft.Ref | None = None,
+    status_message: tuple[str, str] | None = None,
+    on_status_clear: Callable[[], None] | None = None,
 ):
     """底部状态栏。
 
@@ -69,6 +85,10 @@ def StatusBar(
     update_cursor / update_counts 调用 set_state，仅触发本组件重渲染，不波及
     App / 编辑器（避免光标移动触发编辑器控件树重建）。切标签时 use_effect 按
     document 身份重置，从新文档重算初值。
+
+    status_message: (msg, kind) 元组，由 App 通过 set_status_message 写入 state。
+    kind ∈ info/success/warn/error，影响颜色。显示 _STATUS_TTL_SEC 秒后由
+    on_status_clear 回调清空（App 重置 state）。None 时隐藏状态消息。
     """
     c = get_colors(theme_mode)
 
@@ -84,6 +104,30 @@ def StatusBar(
         set_counts(None)
 
     ft.use_effect(_reset_on_doc_change, [id(document)])
+
+    # 状态消息自动清空计时器：status_message 变化时启动 _STATUS_TTL_SEC 秒倒计时，
+    # 超时后调 on_status_clear 让 App 清空 state。无消息或无回调时不启动。
+    def _auto_clear_status():
+        if status_message is None or on_status_clear is None:
+            return
+        page = ft.context.page
+        if page is None:
+            return
+
+        async def _delayed_clear():
+            try:
+                await asyncio.sleep(_STATUS_TTL_SEC)
+                on_status_clear()
+            except Exception:
+                pass
+
+        try:
+            page.run_task(_delayed_clear)
+        except Exception:
+            pass
+
+    # 依赖 status_message 元组身份（App 每次推送新元组），消息不变时不重启计时器
+    ft.use_effect(_auto_clear_status, [status_message])
 
     # 字数统计初值：counts=None 从 document 算；否则用命令式更新值
     if counts is None:
@@ -119,6 +163,33 @@ def StatusBar(
 
         status_ref.current = _StatusBarUpdaters(_update_cursor, _update_counts)
 
+    # 状态消息控件：仅 status_message 非空时显示
+    status_msg_text = ""
+    status_msg_color = c.muted
+    if status_message is not None:
+        status_msg_text = status_message[0]
+        kind = status_message[1] if len(status_message) > 1 else "info"
+        status_msg_color = _STATUS_COLOR.get(kind, None) or c.muted
+
+    status_widget = (
+        ft.Container(
+            content=ft.Text(
+                value=status_msg_text,
+                size=12,
+                color=status_msg_color,
+                font_family=FONT_MAIN,
+                max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS,
+            ),
+            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+            border_radius=ft.BorderRadius.all(4),
+            bgcolor=ft.Colors.with_opacity(0.06, status_msg_color),
+            visible=bool(status_msg_text),
+        )
+        if status_msg_text
+        else ft.Container(width=0, height=0)
+    )
+
     return ft.Container(
         bgcolor=ft.Colors.with_opacity(0.03, c.text),
         border=only_border(top=ft.BorderSide(1, c.border)),
@@ -148,6 +219,8 @@ def StatusBar(
                     max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS,
                 ),
+                ft.Container(width=Spacing.LG),
+                status_widget,
                 ft.Container(expand=True),
                 ft.Text(
                     value=f"行 {row}  列 {col}",

@@ -48,6 +48,7 @@ from views.diff_markers import DiffHeader
 from views.diff_view import compute_diff_for_editors
 from views.editor import MarkdownEditor
 from views.file_dialogs import FileActionDialog
+from views.recovery_dialog import RecoveryDialog
 from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
 from views.status_bar import StatusBar
@@ -94,6 +95,8 @@ def build_render(ctx) -> ft.Control:
         capturing=ctx.capturing,
         on_capture_click=lambda layer, action_id: ctx.set_capturing((layer, action_id)),
         on_cancel_capture_click=lambda: ctx.set_capturing((None, None)),
+        on_open_recovery=ctx.open_recovery_panel,
+        on_pick_backup_dir=lambda: ctx.page_ref.current.run_task(ctx.pick_backup_dir),
     )
 
     # ============ 侧边栏 ============
@@ -219,6 +222,8 @@ def build_render(ctx) -> ft.Control:
             split_editor=_footer_split,
             on_toggle_split_editor=_footer_split_cb,
             status_ref=ctx.status_ref,
+            status_message=ctx.status_message,
+            on_status_clear=lambda: ctx.set_status_message(None),
         )
         if ctx.settings.get("show_footer", True)
         else ft.Container(height=0)
@@ -279,7 +284,8 @@ def build_render(ctx) -> ft.Control:
             theme_mode=ctx.theme_mode,
             confirm_label=_fd["confirm_label"],
             on_confirm=ctx.on_file_dialog_confirm,
-            on_cancel=lambda: ctx.set_file_dialog(None),
+            on_cancel=ctx.on_file_dialog_cancel,
+            cancel_label=_fd.get("cancel_label", "取消"),
             input_label=_fd.get("input_label", ""),
             input_value=_fd.get("input_value", ""),
             input_hint=_fd.get("input_hint", ""),
@@ -302,12 +308,23 @@ def build_render(ctx) -> ft.Control:
     # 文件对比已重构为双 MarkdownEditor 原生编辑模式（见 _build_diff_area），
     # 以 type=="diff" 标签形式管理，旧的 DiffView 全屏 overlay 已移除。
 
+    # ============ 恢复面板（启动时若存在可恢复草稿则弹出，手动入口在设置面板）============
+    recovery_dialog = RecoveryDialog(
+        open_state=ctx.recovery_open,
+        backups=ctx.recovery_list or [],
+        theme_mode=ctx.theme_mode,
+        on_open=ctx.open_backup_in_new_tab,
+        on_delete=ctx.delete_backup,
+        on_close=lambda: ctx.set_recovery_open(False),
+    )
+
     return ft.Stack(
         controls=[
             main_col,
             settings_view,
             confirm_dialog,
             file_dialog_view,
+            recovery_dialog,
         ],
         expand=True,
     )

@@ -52,6 +52,8 @@ def SettingsDialog(
     capturing: tuple = (None, None),
     on_capture_click: Callable[[str, str], None] | None = None,
     on_cancel_capture_click: Callable[[], None] | None = None,
+    on_open_recovery: Callable[[], None] | None = None,
+    on_pick_backup_dir: Callable[[], None] | None = None,
 ):
     """设置面板弹层。
 
@@ -61,6 +63,7 @@ def SettingsDialog(
     快捷键更新直接通过 shortcut_mgr.update(layer, action, combo) 调用，内部回调 on_update。
     capturing: (layer, action_id) | (None, None)，快捷键捕获模式状态；
     on_capture_click / on_cancel_capture_click: 设置页"修改"/"取消"按钮回调。
+    on_open_recovery: 打开恢复面板（扫描历史备份）；on_pick_backup_dir: 选择自定义备份目录。
     """
     c = get_colors(theme_mode)
     is_dark = theme_mode == ft.ThemeMode.DARK
@@ -93,7 +96,8 @@ def SettingsDialog(
                                 _panel(tab, settings, theme_mode, shortcut_focus,
                                        shortcut_mgr, on_update, on_reset_shortcuts,
                                        on_import, on_export,
-                                       capturing, on_capture_click, on_cancel_capture_click),
+                                       capturing, on_capture_click, on_cancel_capture_click,
+                                       on_open_recovery, on_pick_backup_dir),
                             ],
                             scroll=ft.ScrollMode.AUTO,
                         ),
@@ -163,13 +167,16 @@ def _panel(
     tab: str, settings: dict, theme_mode: ft.ThemeMode, shortcut_focus: tuple,
     shortcut_mgr: ShortcutManager, on_update, on_reset_shortcuts, on_import, on_export,
     capturing: tuple, on_capture_click, on_cancel_capture_click,
+    on_open_recovery=None, on_pick_backup_dir=None,
 ) -> ft.Control:
     if tab == "edit":
         return _edit_panel(settings, theme_mode, on_update)
     if tab == "appearance":
         return _appearance_panel(settings, theme_mode, on_update)
     if tab == "behavior":
-        return _behavior_panel(settings, theme_mode, on_update)
+        return _behavior_panel(
+            settings, theme_mode, on_update, on_open_recovery, on_pick_backup_dir
+        )
     if tab == "shortcuts":
         return _shortcuts_panel(
             theme_mode, shortcut_focus, shortcut_mgr, capturing,
@@ -233,26 +240,108 @@ def _appearance_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft
 
 # ---- 行为 tab ----
 
-def _behavior_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft.Control:
+def _behavior_panel(
+    settings: dict,
+    theme_mode: ft.ThemeMode,
+    on_update,
+    on_open_recovery=None,
+    on_pick_backup_dir=None,
+) -> ft.Control:
+    c = get_colors(theme_mode)
     return ft.Container(
         content=ft.Column(
             controls=[
-                ft.Text("行为", size=14, weight=ft.FontWeight.W_600),
-                ft.Switch(label="自动保存", value=settings["auto_save"],
-                          on_change=lambda e: on_update("auto_save", e.control.value)),
+                # ---- 编辑行为 ----
+                ft.Text("编辑行为", size=14, weight=ft.FontWeight.W_600),
                 ft.Switch(label="记住聚焦模式", value=settings["remember_focus_mode"],
                           on_change=lambda e: on_update("remember_focus_mode", e.control.value)),
                 ft.Switch(label="显示工具栏", value=settings["show_toolbar"],
                           on_change=lambda e: on_update("show_toolbar", e.control.value)),
                 ft.Switch(label="显示行号", value=settings["show_line_numbers"],
                           on_change=lambda e: on_update("show_line_numbers", e.control.value)),
-                _slider_row("自动保存间隔(秒)", 140, 10, lambda v: None,
-                             minv=3, maxv=60, divisions=19, theme_mode=theme_mode),
                 _dropdown_row("导出默认格式", 140, settings["export_format"],
                               ["html", "pdf", "md"],
                               lambda v: on_update("export_format", v)),
+
+                ft.Container(height=Spacing.XL),
+                ft.Divider(color=c.border),
+
+                # ---- 自动保存 ----
+                ft.Text("自动保存", size=14, weight=ft.FontWeight.W_600),
+                ft.Switch(label="启用自动保存", value=settings["auto_save"],
+                          on_change=lambda e: on_update("auto_save", e.control.value)),
+                _slider_row(
+                    "保存间隔(分钟)", 140,
+                    settings.get("auto_save_interval", 5),
+                    lambda v: on_update("auto_save_interval", int(v)),
+                    minv=1, maxv=30, divisions=29, theme_mode=theme_mode,
+                ),
+                ft.Switch(label="窗口失焦时立即保存", value=settings.get("auto_save_on_blur", True),
+                          on_change=lambda e: on_update("auto_save_on_blur", e.control.value)),
+
+                ft.Container(height=Spacing.XL),
+                ft.Divider(color=c.border),
+
+                # ---- 备份与恢复 ----
+                ft.Text("备份与恢复", size=14, weight=ft.FontWeight.W_600),
+                ft.Switch(label="启用自动备份", value=settings.get("backup_enabled", True),
+                          on_change=lambda e: on_update("backup_enabled", e.control.value)),
+                _slider_row(
+                    "备份间隔(分钟)", 140,
+                    settings.get("backup_interval", 10),
+                    lambda v: on_update("backup_interval", int(v)),
+                    minv=5, maxv=60, divisions=55, theme_mode=theme_mode,
+                ),
+                _slider_row(
+                    "备份保留天数", 140,
+                    settings.get("backup_retention_days", 30),
+                    lambda v: on_update("backup_retention_days", int(v)),
+                    minv=7, maxv=90, divisions=83, theme_mode=theme_mode,
+                ),
+                _slider_row(
+                    "草稿保留天数", 140,
+                    settings.get("recover_untitled_days", 7),
+                    lambda v: on_update("recover_untitled_days", int(v)),
+                    minv=1, maxv=30, divisions=29, theme_mode=theme_mode,
+                ),
+                ft.Switch(label="检测外部修改", value=settings.get("detect_external_changes", True),
+                          on_change=lambda e: on_update("detect_external_changes", e.control.value)),
+                # 备份目录显示 + 选择按钮
+                ft.Row(
+                    controls=[
+                        ft.Text("备份目录", width=140),
+                        ft.Container(
+                            expand=True,
+                            padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+                            border_radius=Radius.MD,
+                            border=_all_border(1, c.border),
+                            content=ft.Text(
+                                value=settings.get("backup_dir") or "（平台默认路径）",
+                                size=12, color=c.muted, max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                        ),
+                        ft.TextButton(
+                            "选择目录",
+                            on_click=lambda e: on_pick_backup_dir() if on_pick_backup_dir else None,
+                        ),
+                    ],
+                    spacing=Spacing.SM,
+                ),
+                # 恢复草稿入口
+                ft.Row(
+                    controls=[
+                        ft.Text("历史备份", width=140),
+                        ft.TextButton(
+                            "恢复未保存的草稿",
+                            icon=ft.Icons.RESTORE_PAGE,
+                            on_click=lambda e: on_open_recovery() if on_open_recovery else None,
+                        ),
+                    ],
+                    spacing=Spacing.SM,
+                ),
             ],
-            spacing=Spacing.XL,
+            spacing=Spacing.LG,
         ),
     )
 

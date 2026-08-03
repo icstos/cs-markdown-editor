@@ -60,6 +60,7 @@ def build_keyboard(ctx):
             "save_as": ctx.save_as_doc,
             "new": ctx.new_doc,
             "open": ctx.open_doc,
+            "open_folder": ctx.open_folder,
             "toggle_sidebar": ctx.toggle_sidebar,
             "toggle_theme": ctx.toggle_theme,
             "toggle_word_wrap": ctx.toggle_word_wrap,

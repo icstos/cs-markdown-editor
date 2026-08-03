@@ -301,6 +301,19 @@ class KeyDispatcher:
             cb["prev_tab"]()
             return
 
+        # Ctrl+O / Ctrl+Shift+O：打开文件 / 打开文件夹（两层均生效）。
+        # 属于全局文件操作，与编辑状态无关，置于 layer 判定之前确保编辑态也能触发。
+        if matches(combo, browse_sc.get("open", "ctrl+o")):
+            page = self._page_ref.current
+            if page is not None:
+                page.run_task(cb["open"])
+            return
+        if matches(combo, browse_sc.get("open_folder", "ctrl+shift+o")):
+            page = self._page_ref.current
+            if page is not None:
+                page.run_task(cb["open_folder"])
+            return
+
         # Alt+Z 切换自动换行：两层均生效（VSCode 风格），置于 layer 判定之前。
         if matches(combo, browse_sc.get("toggle_word_wrap", "alt+z")):
             cb["toggle_word_wrap"]()
@@ -517,8 +530,6 @@ class KeyDispatcher:
                 page.run_task(cb["save_as"])
             elif matches(combo, shortcuts.get("new", "ctrl+n")):
                 cb["new"]()
-            elif matches(combo, shortcuts.get("open", "ctrl+o")):
-                page.run_task(cb["open"])
             elif matches(combo, shortcuts.get("toggle_sidebar", "ctrl+b")):
                 cb["toggle_sidebar"]()
             elif matches(combo, shortcuts.get("toggle_theme", "ctrl+shift+l")):

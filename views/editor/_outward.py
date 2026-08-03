@@ -184,10 +184,14 @@ def build_outward(ctx):
         字符类别：
         - word：\w + CJK（连续 CJK 视为一个词，VSCode 行为）
         - space：\s
-        - punct：其他（标点、Markdown 语法字符等）
+        - punct：其他（标点 / Markdown 语法字符等）
 
         从 raw_off 向左右扩展到同类边界，构造 outward_sel。
         退出光标编辑态（set_cursor_li(None)），与拖拽选区路径一致。
+
+        行尾边界（_select_word_bounds 返回 None）：双击未命中可选词时
+        不清除光标，递增 focus_seq 强制重聚焦 TextField，避免双击导致
+        TextField 失焦而光标丢失。
 
         纯计算（_char_kind + _select_word_bounds）已抽取到 _editor_helpers，
         此处仅保留闭包执行（设 outward_sel + 退出光标态）。
@@ -200,7 +204,12 @@ def build_outward(ctx):
         raw = _line_raw(ctx.document.lines[li])
         bounds = _select_word_bounds(raw, raw_off)
         if bounds is None:
-            return  # 空行 / 整行全空白
+            # 空行 / 整行全空白 / 行尾左侧为 word/cjk/space：无可选词。
+            # 双击可能已使 cursor TextField 失焦，递增 focus_seq 强制重聚焦，
+            # 保留光标编辑态（不丢失光标）。
+            if ctx.cursor_li == li:
+                ctx.set_focus_seq(ctx.focus_seq + 1)
+            return
         start, end = bounds
         # 退出光标编辑态，设为 outward_sel
         if ctx.cursor_li is not None:

@@ -318,11 +318,23 @@ def test_select_word_bounds_empty():
 
 
 def test_select_word_bounds_off_past_end():
-    """off == len(raw) 时按 punct 处理（与原闭包一致）。"""
-    bounds = _select_word_bounds("abc", 3)
-    assert bounds is not None
-    start, end = bounds
-    assert start <= 3 and end >= 3
+    """行尾双击：根据左侧字符类别决定行为。
+
+    - 末尾是 word/cjk：无词可选，返回 None（保留光标，不丢失编辑态）
+    - 末尾是 punct：选中末尾连续标点段（VSCode 行为）
+    - 末尾是 space：无词可选，返回 None
+    """
+    # 末尾是 word：返回 None，保留光标
+    assert _select_word_bounds("abc", 3) is None
+    # 末尾是 cjk：返回 None，保留光标
+    assert _select_word_bounds("你好", 2) is None
+    # 末尾是 punct：选中末尾连续标点段
+    assert _select_word_bounds("text.", 5) == (4, 5)
+    assert _select_word_bounds("**bold**", 8) == (6, 8)
+    # 末尾是 space：返回 None
+    assert _select_word_bounds("abc ", 4) is None
+    # 空行：返回 None
+    assert _select_word_bounds("", 0) is None
 
 
 # ---------------- _build_highlight_map ----------------

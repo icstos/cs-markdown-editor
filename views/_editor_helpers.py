@@ -193,13 +193,29 @@ def _select_word_bounds(raw: str, off: int) -> tuple[int, int] | None:
 
     VSCode 风格：同类别连续区间。CJK 与 word 互相合并（中英混排词）。
     空白字符不选（改为选最近非空字符）；整行全空白返回 None。
-    off 会被钳制到 [0, len(raw)]，off == len(raw) 时按 punct 处理（与原闭包一致）。
+    off 会被钳制到 [0, len(raw)]。
+
+    行尾边界（off == len(raw)）：左侧字符若为 punct 则选中末尾标点段（VSCode 行为）；
+    左侧字符若为 word/cjk 则无词可选，返回 None（保留光标，不丢失编辑态）。
     """
     n = len(raw)
     if n == 0:
         return None
     off = max(0, min(off, n))
-    kind = _char_kind(raw[off]) if off < n else "punct"
+    # 行尾边界：根据左侧字符决定是否可选词
+    if off == n:
+        kind = _char_kind(raw[n - 1])
+        if kind == "space":
+            return None  # 末尾是空白，无词可选
+        if kind in ("cjk", "word"):
+            return None  # 末尾是字母/CJK，行尾双击无词可选（保留光标）
+        # kind == "punct"：选中末尾连续标点段
+        end = n
+        start = n - 1
+        while start > 0 and _char_kind(raw[start - 1]) == "punct":
+            start -= 1
+        return (start, end)
+    kind = _char_kind(raw[off])
     if kind == "space":
         # 向左找首个非空
         left = off

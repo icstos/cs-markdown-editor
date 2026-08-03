@@ -18,11 +18,9 @@
   "sidebar_panel": "files",
   "sidebar_width": 256,
   "recent_files": [
-    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-Projects\\炒股.md",
     "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\0-TODO-待办事项.md",
-    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-Projects\\cs-markdown-editor.md",
-    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-InBox.md",
-    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-Projects\\我经.md"
+    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-Projects\\炒股.md",
+    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-Projects\\cs-markdown-editor.md"
   ],
   "workspace_folder": "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs",
   "search_folder": false,
@@ -30,7 +28,7 @@
   "search_whole_word": false,
   "search_regex": false,
   "search_replace_expanded": false,
-  "auto_save_interval": 10,
+  "auto_save_interval": 5,
   "auto_save_on_blur": true,
   "backup_enabled": true,
   "backup_interval": 10,
@@ -82,7 +80,7 @@
       "format_bold": "ctrl+b",
       "format_italic": "ctrl+i",
       "format_highlight": "ctrl+u",
-      "format_strike": "ctrl+shift+s",
+      "format_strike": "alt+shift+5",
       "format_code": "ctrl+`",
       "format_link": "ctrl+k",
       "format_inline_math": "ctrl+m",

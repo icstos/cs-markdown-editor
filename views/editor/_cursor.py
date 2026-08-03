@@ -30,7 +30,14 @@ from models import BlockType
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import _fix_ime_doubling
-from views.editor._helpers import _RE_FENCE_TRIGGER, _RE_O_PREFIX, _make_code_line, _next_line_raw
+from views.editor._helpers import (
+    _RE_FENCE_TRIGGER,
+    _RE_O_PREFIX,
+    _RE_UO_MARKER,
+    _inline_content,
+    _make_code_line,
+    _next_line_raw,
+)
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -252,8 +259,22 @@ def build_cursor(ctx):
         # 确保 line.notify() 引发的重渲染使用最新的 cursor_field_value，
         # 避免双重渲染（render #1 用旧 value → IME 重复 on_change）。
         ctx.set_cursor_field_value(new_value)
+        old_task = line.task
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
+        # task 状态变化（如输入 "- [ ] " 触发 PARAGRAPH → task 行）：
+        # reparse 把前缀 "- [ ] " 重新解析为 LIST_PREFIX 段，渲染层切换到 task
+        # 分支（skip_prefix=True），cursor_overlay 坐标系从行起点变为内容起点。
+        # 但 input_session.last_value 仍含旧前缀（如 "- [ ] "），导致 cursor_overlay
+        # 的 _eff_value 含前缀 → start_local=0 → cursor_px_x=0，再经 task 前缀扣除
+        # vline.offsets_x[prefix_len] 后变负，光标跑到 Stack 左边外消失。
+        # 同时 last_value 含前缀时，后续 Backspace 的 _move_cursor_inline 会缩短
+        # last_value（含前缀），而 backspace_core 删除 raw[off-1]（前缀字符 "]")，
+        # 导致"异常编辑任务列表标识"。
+        # 结束会话清空 cursor_field_value，下次输入启动新会话时 start_off 已在
+        # 前缀之后，last_value 只含内容部分，cursor_overlay 位置正确。
+        if line.task != old_task:
+            _end_input_session(rebuild=False)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
         """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。"""
@@ -321,6 +342,28 @@ def build_cursor(ctx):
             return
         if off > 0:
             raw = _line_raw(line)
+            # 任务行内容首 Backspace：转为普通列表项（Typora 式，不破坏前缀）
+            # 光标在内容起点（off == prefix_len）时，- [ ] → -（无论内容是否为空）。
+            # 空内容也降级：否则走默认删除会删掉前缀字符 "]"，破坏 task 标识。
+            if (
+                line.task
+                and line.segments
+                and off == len(line.segments[0].raw)
+            ):
+                ctx.push_history()
+                ctx.undo_push_pending.current = True
+                prefix_raw = line.segments[0].raw
+                body = prefix_raw.lstrip()
+                marker = m.group(1) if (m := _RE_UO_MARKER.match(body)) else "-"
+                indent_sp = " " * (line.level or 0)
+                new_prefix = f"{indent_sp}{marker} "
+                content = _inline_content(line)
+                new_raw = new_prefix + content
+                _reparse_atomic(line, new_raw)
+                ctx.mark_dirty()
+                ctx.suppress_blur.current = True
+                _set_cursor(li, len(new_prefix))
+                return
             ctx.push_line_edit(li, raw)
             new_raw = raw[:off - 1] + raw[off:]
             _reparse_atomic(line, new_raw)
@@ -503,6 +546,17 @@ def build_cursor(ctx):
                 if line.block_type == BlockType.QUOTE:
                     stripped = stripped.lstrip("> ")
                 _reparse_atomic(line, stripped)
+                ctx.mark_dirty()
+                _set_cursor(li, 0)
+                return
+            # 任务项空内容（before 仅前缀，无内容）→ Enter 退出任务列表转为普通段落
+            # 必须检查 before 仅含前缀（- [ ] / - [x]），不能仅用 _RE_TASK_MARKER.match
+            # 否则 `- [ ] task` 光标在末尾时 before="- [ ] task" 也会匹配，误清空内容
+            if (
+                line.task
+                and before.strip() in ("- [ ]", "- [x]", "- [X]")
+            ):
+                _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
                 _set_cursor(li, 0)
                 return

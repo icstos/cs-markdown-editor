@@ -140,6 +140,10 @@ def build_blocks(ctx):
             new_raw_len = len(_line_raw(new_line))
             new_off = min(new_prefix_len + content_off, new_raw_len)
             ctx.set_cursor(li, new_off)
+            # 递增 focus_seq 强制重聚焦：行类型变化但 cursor_li 不变时，
+            # focus_cursor_field effect 不触发（依赖 cursor_li/nav_seq/focus_seq），
+            # 工具栏/快捷键点击已使 TextField 失焦 → 光标消失。与 _on_tap_line 一致。
+            ctx.set_focus_seq(ctx.focus_seq + 1)
 
     # ============ 任务列表 ============
     def toggle_task(li: int):

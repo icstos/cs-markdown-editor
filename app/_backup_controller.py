@@ -327,6 +327,12 @@ def build_backup_controller(ctx):
         - 通过 mtime 比较过滤自己保存产生的事件（save_doc 已更新 mtime）
         - 已有对话框打开时跳过（避免重复弹出）
         - 一次只弹一个对话框（找到第一个匹配即返回）
+
+        自我写入过滤（os.replace 兼容）：
+        write_text_atomic 使用 os.replace 原子替换原文件，在 Windows 上触发
+        deleted + added 事件序列（原文件被"删除"再"重新添加"）。对 deleted 事件
+        需检查文件是否真的被删除——若文件仍存在且 mtime 未变，说明是 os.replace
+        的副作用，应忽略。
         """
         if not ctx.settings.get("detect_external_changes", True):
             return
@@ -347,13 +353,27 @@ def build_backup_controller(ctx):
 
             # 自我写入过滤：通过 mtime 比较判断是否为外部修改
             last_mtime = tab.get("_last_known_mtime")
-            if last_mtime is not None and change_type == Change.modified:
-                try:
-                    current_mtime = os.path.getmtime(abs_path)
-                    if current_mtime <= last_mtime:
-                        continue  # 是我们自己保存的，忽略
-                except OSError:
-                    pass  # 文件可能已被删除，继续弹出对话框
+            if last_mtime is not None:
+                if change_type == Change.deleted:
+                    # os.replace 在 Windows 上触发 deleted + added 事件序列：
+                    # 文件实际仍存在，只是被原子替换。若文件存在且 mtime 未变，
+                    # 说明是自己的保存触发的事件，应忽略。只有文件真的不存在时
+                    # 才视为外部删除。
+                    if os.path.isfile(abs_path):
+                        try:
+                            current_mtime = os.path.getmtime(abs_path)
+                            if current_mtime <= last_mtime:
+                                continue  # os.replace 副作用，忽略
+                        except OSError:
+                            pass  # 读取 mtime 失败，继续弹出对话框
+                    # 文件真的不存在 → 外部删除，弹出对话框
+                elif change_type == Change.modified:
+                    try:
+                        current_mtime = os.path.getmtime(abs_path)
+                        if current_mtime <= last_mtime:
+                            continue  # 是我们自己保存的，忽略
+                    except OSError:
+                        pass  # 文件可能已被删除，继续弹出对话框
 
             _show_external_change_dialog(abs_path, tab_index)
             return  # 一次只弹一个对话框

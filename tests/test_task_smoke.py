@@ -162,6 +162,103 @@ def test_toggle_preserves_marker_and_indent():
     print("PASS test_toggle_preserves_marker_and_indent")
 
 
+def test_enter_on_empty_task_exits_list():
+    """空任务行（- [ ] 无内容）Enter 应退出任务列表转为普通段落/空行。
+
+    模拟 on_submit 的 Enter 逻辑：before="- [ ] " after="" → 转为空行。
+    """
+    # 空任务行：前缀后无内容
+    line = _first_task_line("- [ ] \n")
+    prefix_raw = line.segments[0].raw if line.segments else ""
+    before = prefix_raw  # 光标在内容首（off == len(prefix_raw)）
+    after = ""
+    # 模拟 Enter 逻辑：任务项空内容（before 仅前缀）→ 退出
+    assert line.task is True
+    assert before.strip() in ("- [ ]", "- [x]", "- [X]")
+    # 退出后的新 raw 应为 after.lstrip() = ""
+    new_raw = after.lstrip()
+    rebuilt = parse_markdown(new_raw + "\n")
+    assert rebuilt.lines[0].task is not True
+    # 空行解析为 BLANK 或 PARAGRAPH，关键是不再是任务项
+    assert rebuilt.lines[0].block_type.name in ("PARAGRAPH", "BLANK")
+    print("PASS test_enter_on_empty_task_exits_list")
+
+
+def test_enter_on_task_with_content_splits():
+    """有内容的任务行 Enter 应分割并续行任务前缀，不应清空内容。
+
+    关键验证：- [ ] task 光标在末尾时 before="- [ ] task"，
+    before.strip() = "- [ ] task" 不在 ("- [ ]", "- [x]", "- [X]") 中，
+    不会触发退出分支，走默认分割逻辑。
+    """
+    from views.editor._helpers import _next_line_raw
+    line = _first_task_line("- [ ] 有内容\n")
+    # 模拟光标在内容末尾
+    prefix_raw = line.segments[0].raw
+    content = "有内容"
+    before = prefix_raw + content
+    after = ""
+    # 关键：before.strip() 不在退出条件中（有内容）
+    assert before.strip() not in ("- [ ]", "- [x]", "- [X]")
+    # 续行前缀
+    cont_prefix = _next_line_raw(line)
+    assert cont_prefix == "- [ ] ", f"续行前缀应为 '- [ ] '，实际：{cont_prefix!r}"
+    print("PASS test_enter_on_task_with_content_splits")
+
+
+def test_backspace_at_task_content_start_degrades_to_list():
+    """任务行内容首 Backspace 应转为普通列表项（- [ ] foo → - foo）。
+
+    模拟 backspace_core 的智能降级逻辑。
+    """
+    from views.editor._helpers import _RE_UO_MARKER, _inline_content
+    line = _first_task_line("- [ ] 有内容\n")
+    assert line.task is True
+    prefix_raw = line.segments[0].raw
+    off = len(prefix_raw)  # 光标在内容首
+    raw = line.raw.rstrip("\n")
+    # 模拟降级逻辑
+    assert off == len(prefix_raw)
+    assert raw[off:].strip()  # 内容非空
+    body = prefix_raw.lstrip()
+    marker = _RE_UO_MARKER.match(body).group(1)
+    content = _inline_content(line)
+    new_prefix = f"{' ' * (line.level or 0)}{marker} "
+    new_raw = new_prefix + content
+    rebuilt = parse_markdown(new_raw + "\n")
+    rl = rebuilt.lines[0]
+    assert rl.task is not True, "降级后不应再是任务项"
+    assert rl.block_type.name == "LIST_UO"
+    assert rl.raw.rstrip() == "- 有内容"
+    print("PASS test_backspace_at_task_content_start_degrades_to_list")
+
+
+def test_backspace_on_empty_task_degrades_to_list():
+    """空任务行（- [ ] 无内容）内容首 Backspace 也降级为普通列表项（Typora 式）。
+
+    空内容时降级为 "- "（空普通列表项），而非走默认删除破坏前缀字符 "]"。
+    """
+    from views.editor._helpers import _RE_UO_MARKER, _inline_content
+    line = _first_task_line("- [ ] \n")
+    assert line.task is True
+    prefix_raw = line.segments[0].raw if line.segments else ""
+    off = len(prefix_raw)
+    raw = line.raw.rstrip("\n")
+    # 内容为空 → 仍应降级（不破坏前缀）
+    assert not raw[off:].strip()
+    body = prefix_raw.lstrip()
+    marker = _RE_UO_MARKER.match(body).group(1)
+    content = _inline_content(line)
+    new_prefix = f"{' ' * (line.level or 0)}{marker} "
+    new_raw = new_prefix + content
+    rebuilt = parse_markdown(new_raw + "\n")
+    rl = rebuilt.lines[0]
+    assert rl.task is not True, "降级后不应再是任务项"
+    assert rl.block_type.name == "LIST_UO"
+    assert rl.raw.rstrip() == "-"
+    print("PASS test_backspace_on_empty_task_degrades_to_list")
+
+
 if __name__ == "__main__":
     test_parse_unchecked_task()
     test_parse_checked_task()
@@ -174,4 +271,8 @@ if __name__ == "__main__":
     test_plus_marker_task()
     test_non_task_list_not_marked()
     test_toggle_preserves_marker_and_indent()
+    test_enter_on_empty_task_exits_list()
+    test_enter_on_task_with_content_splits()
+    test_backspace_at_task_content_start_degrades_to_list()
+    test_backspace_on_empty_task_degrades_to_list()
     print("\n所有任务列表冒烟测试通过 ✅")

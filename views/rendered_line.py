@@ -230,25 +230,18 @@ def RenderedLine(
     _shift_tap_handled = [False]
 
     def _prefix_width_px() -> float:
-        """任务行前缀像素宽度（LIST_PREFIX 段 0 的 raw 宽度）。
+        """任务行前缀像素宽度（Checkbox 占位宽度）。
 
         任务行的 Checkbox 替代了前缀，text_ctrl 只渲染内容（skip_seg0=True），
         所以 GestureDetector.local_x 是相对内容起点，需加回前缀宽度才能用
         整行 offsets_x 做命中测试。
 
-        强制 cursor_raw_offset=0 使前缀段按 raw 逐字符测量（而非折叠的
-        display_text 宽度），因为 Checkbox 宽度需用 raw 前缀宽度近似。
+        Checkbox 用 VisualDensity.COMPACT + margin=0，视觉宽度约为 Material
+        基准 24px。加 Spacing.SM（Row 水平间距）得到前缀总占位宽度。
         """
         if not line.task or not line.segments:
             return 0.0
-        prefix_raw = line.segments[0].raw
-        if not prefix_raw:
-            return 0.0
-        offsets = _line_raw_offsets_x(line, base, cursor_raw_offset=0)
-        prefix_len = len(prefix_raw)
-        if 0 < prefix_len < len(offsets):
-            return offsets[prefix_len]
-        return 0.0
+        return 24.0 + Spacing.SM
 
     def _hit_raw_off(x: float) -> int:
         """x 相对文字左起点 → raw 偏移（中点吸附 + 折叠标记扫描）。
@@ -452,29 +445,47 @@ def RenderedLine(
                                        base, line_height, ww, style)
         # 主题感知 Checkbox：颜色随亮/暗主题、圆角 4px、focus overlay 透明
         # （消除 Material 默认焦点矩形——即用户记忆中的"左侧横线"）
-        # 布局：Checkbox 自然宽度 + GestureDetector(expand) 占据剩余空间。
+        #
+        # 尺寸优化：Checkbox 默认含 Material padding（约 40px 高），远大于文本行高
+        # （base * line_height ≈ 25px），导致任务行明显高于普通行。通过 visual_density
+        # 收紧 padding + margin 清零控制外框尺寸，Checkbox 保持 Material 基准 24px
+        # 视觉尺寸（清晰可点，与 Typora 16-18px 视觉等效），由 Container 锁定高度
+        # 占满行高实现垂直居中对齐。
+        text_h = base * line_height
+        checkbox = ft.Checkbox(
+            value=line.checked,
+            on_change=lambda e: on_toggle_task(line_idx) if on_toggle_task else None,
+            active_color=c.link,
+            check_color=ft.Colors.WHITE,
+            fill_color={
+                ft.ControlState.SELECTED: c.link,
+                ft.ControlState.DEFAULT: c.surface,
+            },
+            overlay_color={
+                ft.ControlState.HOVERED: ft.Colors.with_opacity(0.06, c.text),
+                ft.ControlState.FOCUSED: ft.Colors.TRANSPARENT,
+            },
+            border_side=ft.BorderSide(1.5, c.muted if not line.checked else c.link),
+            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+            tristate=False,
+            splash_radius=0,
+            # 紧凑布局：收紧 padding + 清零 margin，不缩放（保持 Material 基准视觉尺寸）
+            visual_density=ft.VisualDensity.COMPACT,  # 最小化 Material padding
+            margin=ft.Margin(0, 0, 0, 0),
+        )
+        # 布局：Checkbox 容器 + GestureDetector(expand) 占据剩余空间。
+        # 容器高度锁定到 text_h 占满行高，Checkbox 居中对齐，避免行高跳变。
         # wrap=False 强制同一行（text_area 的 width=inf 由 expand 约束，
         # 文本软换行由 _maybe_stack_multi 内部多视觉行处理），
         # 避免 text_area 因 width=inf 被换到下一行导致框与文本分离。
         return ft.Row(
             controls=[
-                ft.Checkbox(
-                    value=line.checked,
-                    on_change=lambda e: on_toggle_task(line_idx) if on_toggle_task else None,
-                    active_color=c.link,
-                    check_color=ft.Colors.WHITE,
-                    fill_color={
-                        ft.ControlState.SELECTED: c.link,
-                        ft.ControlState.DEFAULT: c.surface,
-                    },
-                    overlay_color={
-                        ft.ControlState.HOVERED: ft.Colors.with_opacity(0.06, c.text),
-                        ft.ControlState.FOCUSED: ft.Colors.TRANSPARENT,
-                    },
-                    border_side=ft.BorderSide(1.5, c.muted),
-                    shape=ft.RoundedRectangleBorder(radius=Radius.SM),
-                    tristate=False,
-                    splash_radius=0,
+                ft.Container(
+                    content=checkbox,
+                    height=text_h,  # 容器占满行高，Checkbox 居中对齐
+                    alignment=ft.Alignment.CENTER,
+                    margin=ft.Margin(0, 0, 0, 0),
+                    padding=0,
                 ),
                 ft.GestureDetector(
                     content=text_area, on_tap=_on_tap,
@@ -726,25 +737,31 @@ def _spans_with_highlight(
 
 
 def _apply_checked_style(spans: list[ft.TextSpan]) -> list[ft.TextSpan]:
-    """已勾选任务文字样式：追加删除线 + muted 文字色，保留 bgcolor。
+    """已勾选任务文字样式：追加删除线 + 半透明文字色，保留 bgcolor。
 
-    与原 decoration 取并集（保留已有 underline 等）；bgcolor 保留原值
-    （选区高亮底色不丢）。color 覆盖为 muted（标识"已完成"语义）。
+    Typora 风格：已勾选文字不直接覆盖为 muted，而是用半透明（0.55）保留原色，
+    视觉上更柔和（避免粗体/链接等格式化文字完全失去色彩对比）。
+    删除线颜色也用半透明 muted，比文字本身更淡，符合"已完成"的退后语义。
     """
     c = _current_colors()
+    strike_color = ft.Colors.with_opacity(0.5, c.muted)
     result: list[ft.TextSpan] = []
     for sp in spans:
         s = sp.style
         # decoration 并集：原值 | LINE_THROUGH
         orig_decoration = s.decoration if s is not None and s.decoration else ft.TextDecoration.NONE
         new_decoration = orig_decoration | ft.TextDecoration.LINE_THROUGH
+        # 半透明文字色：保留原色但降低饱和度（Typora 风格）
+        orig_color = s.color if s is not None else None
+        new_color = ft.Colors.with_opacity(0.55, orig_color) if orig_color else c.muted
         new_style = ft.TextStyle(
             size=s.size if s is not None else None,
             weight=s.weight if s is not None else None,
-            color=c.muted,  # 覆盖为 muted（已完成语义）
+            color=new_color,
             italic=s.italic if s is not None else None,
             font_family=s.font_family if s is not None else None,
             decoration=new_decoration,
+            decoration_color=strike_color,
             bgcolor=s.bgcolor if s is not None else None,  # 保留选区高亮底色
         )
         result.append(ft.TextSpan(text=sp.text, style=new_style))

@@ -688,6 +688,12 @@ def build_cursor(ctx):
                     stripped = stripped.lstrip("> ")
                 _reparse_atomic(line, stripped)
                 ctx.mark_dirty()
+                # 递增 nav_seq + suppress_blur：block_type 变化使 TextField 重建，
+                # cursor_li 不变（同一行）需显式递增 nav_seq 触发 use_effect 聚焦
+                # 新控件，否则光标丢失（input_session 不活跃时 _set_cursor 内部
+                # 不调用 _end_input_session → nav_seq 不递增）
+                ctx.suppress_blur.current = True
+                ctx.set_nav_seq(ctx.nav_seq + 1)
                 _set_cursor(li, 0)
                 return
             # 任务项空内容（before 仅前缀，无内容）→ Enter 退出任务列表转为普通段落
@@ -700,18 +706,24 @@ def build_cursor(ctx):
                 ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
+                ctx.suppress_blur.current = True
+                ctx.set_nav_seq(ctx.nav_seq + 1)
                 _set_cursor(li, 0)
                 return
             if line.block_type == BlockType.LIST_UO and before.rstrip() in ("-", "*", "+"):
                 ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
+                ctx.suppress_blur.current = True
+                ctx.set_nav_seq(ctx.nav_seq + 1)
                 _set_cursor(li, 0)
                 return
             if line.block_type == BlockType.LIST_O and _RE_O_PREFIX.match(before.rstrip()):
                 ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()
+                ctx.suppress_blur.current = True
+                ctx.set_nav_seq(ctx.nav_seq + 1)
                 _set_cursor(li, 0)
                 return
 

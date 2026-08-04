@@ -79,6 +79,8 @@ def _make_ctx(document: Document, cursor_li: int, base: int,
         secondary_cursors_ref=FakeRef([]),
         broadcast_char_input=lambda removed, inserted: None,
         broadcast_submit=lambda v: None,
+        # 粘贴进行中标志（handle_char_input 入口检测）
+        paste_in_progress_ref=FakeRef(False),
     )
     return ctx, calls
 

@@ -631,6 +631,11 @@ def build_multi_cursor(ctx):
 
         VSCode 智能粘贴：若剪贴板行数 == 光标数，逐行分配（第 i 行→第 i 个光标，
         按行号排序）；否则全文插入到主光标并清除副光标（回退单光标粘贴）。
+
+        paste_in_progress 路径（Ctrl+V / Ctrl+Shift+V）：
+        - 非智能路径回退 handle_paste，由 handle_paste 内部处理重置 + 重建
+        - 智能路径直接编辑文档，需自行重置标志 + 重建 TextField（cursor_li
+          不变，TextField 不自动重建，需手动递增 nav_seq 清空 Flutter 端 value）
         """
         cursors = ctx.secondary_cursors_ref.current
         if not cursors or ctx.cursor_li is None:
@@ -645,9 +650,18 @@ def build_multi_cursor(ctx):
 
         if not smart:
             # 非智能：全文粘贴到主光标，清除副光标（回退单光标行为）
+            # handle_paste 内部会处理 paste_in_progress 重置 + TextField 重建
             clear_secondary_cursors()
             ctx.handle_paste(text, "")
             return
+
+        # 智能分配路径：直接编辑文档，需自行处理 paste_in_progress
+        paste_active = bool(ctx.paste_in_progress_ref.current)
+        if paste_active:
+            ctx.paste_in_progress_ref.current = False
+            # 清空 input_session + cursor_field_value（同 handle_paste 路径）
+            ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
+            ctx.set_cursor_field_value("")
 
         ctx.push_history()
         ctx.undo_push_pending.current = True
@@ -687,6 +701,21 @@ def build_multi_cursor(ctx):
         ctx.document.notify()
         ctx.mark_dirty()
         _sync(new_secondary)
+        if paste_active:
+            # 智能分配：cursor_li 不变（主光标仍在原行），需手动重建 TextField
+            # 清空 Flutter 端 value（原生 TextField 已写入粘贴内容）
+            ctx.set_nav_seq(ctx.nav_seq + 1)
+
+    def paste_to_multi_cursors_plain(text: str):
+        """多光标 Ctrl+Shift+V：纯文本粘贴，先剥离 Markdown 语法再插入。
+
+        Typora 式：先 strip_markdown 去除所有语法标记，再走 paste_to_multi_cursors
+        智能分配到各光标。智能粘贴的行数匹配基于剥离后的文本行数。
+        """
+        if not text:
+            return
+        plain_text = parser.strip_markdown(text)
+        paste_to_multi_cursors(plain_text)
 
     return {
         "add_secondary_cursor": add_secondary_cursor,
@@ -710,4 +739,5 @@ def build_multi_cursor(ctx):
         "copy_multi_cursor_selection": copy_multi_cursor_selection,
         "cut_multi_cursor_selection": cut_multi_cursor_selection,
         "paste_to_multi_cursors": paste_to_multi_cursors,
+        "paste_to_multi_cursors_plain": paste_to_multi_cursors_plain,
     }

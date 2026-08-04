@@ -62,6 +62,7 @@ def make_actions(
     sel_text_ref = FakeRef("")
     shift_ref = FakeRef(False)
     ctrl_ref = FakeRef(False)
+    paste_in_progress_ref = FakeRef(False)
 
     # 空代码块 Backspace 删除桩：code_backspace_ret 非 None 时模拟聚焦代码块（code_ref
     # 持有行号 0）并返回给定布尔值；否则返回 False 不拦截（保持现有测试行为）
@@ -98,6 +99,7 @@ def make_actions(
         delete_core=rec("delete_core"),
         indent_or_outdent=rec("indent_or_outdent"),
         handle_paste=rec("handle_paste"),
+        handle_paste_plain=rec("handle_paste_plain"),
         handle_cut=rec("handle_cut"),
         handle_delete_selection=rec("handle_delete_selection"),
         apply_inline_format_to_selection=rec("apply_inline_format_to_selection"),
@@ -131,6 +133,7 @@ def make_actions(
         select_all=rec("select_all"),
         cut_current_line=rec("cut_current_line"),
         handle_outward_type_char=rec("handle_outward_type_char"),
+        paste_in_progress_ref=paste_in_progress_ref,
     )
     return actions
 

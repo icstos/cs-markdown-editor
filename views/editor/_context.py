@@ -150,6 +150,10 @@ class EditorContext:
     # 多光标：ref 镜像（IME 期间同步读取），alt 键状态 ref
     secondary_cursors_ref: ft.Ref = field(default=None)
     alt_pressed_ref: ft.Ref = field(default=None)
+    # 粘贴进行中标志（拦截原生 TextField 单行粘贴的 on_change 干扰）
+    # KeyDispatcher Ctrl+V 时置 True；_do_paste_check 完成后置 False。
+    # handle_char_input 入口检测：True 时跳过（由 handle_paste 统一处理）。
+    paste_in_progress_ref: ft.Ref = field(default=None)
 
     # ============ 装配槽（跨工厂调用，工厂装配后写入）============
     # 共享闭包
@@ -163,6 +167,7 @@ class EditorContext:
     on_tap_line: Callable[[int, int], None] = field(default=lambda *a: None)
     handle_char_input: Callable[[str], None] = field(default=lambda *a: None)
     handle_paste: Callable[..., None] = field(default=lambda *a: None)
+    handle_paste_plain: Callable[..., None] = field(default=lambda *a: None)
     backspace_core: Callable[[], None] = field(default=lambda: None)
     delete_core: Callable[[], None] = field(default=lambda: None)
     on_submit: Callable[[str], None] = field(default=lambda *a: None)
@@ -333,3 +338,4 @@ class EditorContext:
     copy_multi_cursor_selection: Callable[[], Awaitable[None]] = field(default=lambda: None)
     cut_multi_cursor_selection: Callable[[], Awaitable[None]] = field(default=lambda: None)
     paste_to_multi_cursors: Callable[[str], None] = field(default=lambda *a: None)
+    paste_to_multi_cursors_plain: Callable[[str], None] = field(default=lambda *a: None)

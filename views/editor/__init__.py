@@ -187,6 +187,10 @@ def MarkdownEditor(
     secondary_cursors_version, set_secondary_cursors_version = ft.use_state(0)
     # Alt 键状态（用于点击分发：Alt+Click 切换副光标）
     alt_pressed_ref = ft.use_ref(False)
+    # 粘贴进行中标志：Ctrl+V 时 KeyDispatcher 置 True，handle_char_input 检测到
+    # True 时跳过原生 TextField 单行粘贴的 on_change（由 _do_paste_check 走
+    # handle_paste 统一处理多行/单行粘贴，避免拼接成一行 + 重复插入）。
+    paste_in_progress_ref = ft.use_ref(False)
 
     # ============ state → ref 镜像（单一编排点）============
     outward_sel_ref.current = outward_sel
@@ -325,6 +329,7 @@ def MarkdownEditor(
         math_edit_changed=math_edit_changed,
         secondary_cursors_ref=secondary_cursors_ref,
         alt_pressed_ref=alt_pressed_ref,
+        paste_in_progress_ref=paste_in_progress_ref,
     )
 
     # ============ 工厂调用（无 hook，可任意顺序；闭包在调用时读 ctx）============
@@ -355,6 +360,7 @@ def MarkdownEditor(
     ctx.on_tap_line = cursor_cbs["on_tap_line"]
     ctx.handle_char_input = cursor_cbs["handle_char_input"]
     ctx.handle_paste = cursor_cbs["handle_paste"]
+    ctx.handle_paste_plain = cursor_cbs["handle_paste_plain"]
     ctx.backspace_core = cursor_cbs["backspace_core"]
     ctx.delete_core = cursor_cbs["delete_core"]
     ctx.on_submit = cursor_cbs["on_submit"]
@@ -491,6 +497,7 @@ def MarkdownEditor(
     ctx.copy_multi_cursor_selection = multi_cursor_cbs["copy_multi_cursor_selection"]
     ctx.cut_multi_cursor_selection = multi_cursor_cbs["cut_multi_cursor_selection"]
     ctx.paste_to_multi_cursors = multi_cursor_cbs["paste_to_multi_cursors"]
+    ctx.paste_to_multi_cursors_plain = multi_cursor_cbs["paste_to_multi_cursors_plain"]
 
     # ============ use_memo：向外选区高亮映射 ============
     _highlight_map = ft.use_memo(

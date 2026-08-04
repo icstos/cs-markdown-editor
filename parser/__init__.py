@@ -42,7 +42,7 @@ from parser.selection import (
     extract_outward_text,
     match_text_to_selections,
 )
-from parser.serialize import serialize, to_html
+from parser.serialize import serialize, strip_markdown, to_html
 
 __all__ = [
     "apply_inline_format_to_selections",
@@ -59,5 +59,6 @@ __all__ = [
     "segment_raw",
     "serialize",
     "staging_reparse",
+    "strip_markdown",
     "to_html",
 ]

@@ -160,6 +160,40 @@ class KeyDispatcher:
             return True
         return False
 
+    @staticmethod
+    def _begin_paste(actions: EditorActions | None) -> None:
+        """Ctrl+V / Ctrl+Shift+V 粘贴前设置进行中标志，拦截原生 TextField 单行粘贴 on_change 干扰。
+
+        单行 TextField（multiline=False）会把多行文本的 \\n 移除拼接成一行触发
+        on_change → handle_char_input，与 _do_paste_check 的 handle_paste 形成
+        重复插入 + 行拼接 Bug。此处置 paste_in_progress=True，handle_char_input
+        入口检测到 True 则跳过，由 _do_paste_check 统一走 handle_paste 处理。
+
+        Ctrl+Shift+V 在 Windows/Linux 上可能被 Flutter TextField 拦截为"粘贴并
+        匹配样式"（粘贴纯文本），同样会触发 on_change 干扰，故一并设置。
+        浏览态（cursor_li is None）原生 TextField 未聚焦也不会触发 on_change，
+        但为防御性仍设置（开销可忽略）。
+        """
+        if actions is None:
+            return
+        ref = getattr(actions, "paste_in_progress_ref", None)
+        if ref is not None:
+            ref.current = True
+
+    @staticmethod
+    def _end_paste(actions: EditorActions | None) -> None:
+        """粘贴结束（无论是否成功）重置 paste_in_progress 标志。
+
+        handle_paste 内部插入完成后会自行重置（含重建 TextField 清空 Flutter 端
+        value），此处 try/finally 兜底确保异常或提前 return 路径也能重置，
+        避免 handle_char_input 永久被拦截。
+        """
+        if actions is None:
+            return
+        ref = getattr(actions, "paste_in_progress_ref", None)
+        if ref is not None:
+            ref.current = False
+
     # ---- 主入口 ----
     def handle(self, e) -> None:
         combo = _combo(e)
@@ -254,9 +288,19 @@ class KeyDispatcher:
             if matches(combo, browse_sc.get("paste", "ctrl+v")):
                 if actions.paste_to_multi_cursors is not None:
                     self._paste_old_draft.current = ""
+                    self._begin_paste(actions)
                     page = self._page_ref.current
                     if page is not None:
                         page.run_task(self._do_multi_cursor_paste)
+                    return
+            # Ctrl+Shift+V：纯文本粘贴到所有光标（剥离 Markdown 语法）
+            if matches(combo, browse_sc.get("paste_plain", "ctrl+shift+v")):
+                if actions.paste_to_multi_cursors_plain is not None:
+                    self._paste_old_draft.current = ""
+                    self._begin_paste(actions)
+                    page = self._page_ref.current
+                    if page is not None:
+                        page.run_task(self._do_multi_cursor_paste_plain)
                     return
 
         # 代码块 CodeEditor / 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板
@@ -304,9 +348,19 @@ class KeyDispatcher:
             if matches(combo, browse_sc.get("paste", "ctrl+v")):
                 actions.handle_outward_delete()
                 self._paste_old_draft.current = ""
+                self._begin_paste(actions)
                 page = self._page_ref.current
                 if page is not None:
                     page.run_task(self._do_paste_check)
+                return
+            # Ctrl+Shift+V：先删除选区，再在删除点粘贴纯文本（剥离 Markdown）
+            if matches(combo, browse_sc.get("paste_plain", "ctrl+shift+v")):
+                actions.handle_outward_delete()
+                self._paste_old_draft.current = ""
+                self._begin_paste(actions)
+                page = self._page_ref.current
+                if page is not None:
+                    page.run_task(self._do_paste_plain_check)
                 return
             if norm in ("backspace", "delete"):
                 if actions.handle_outward_delete is not None:
@@ -665,7 +719,14 @@ class KeyDispatcher:
                 # （_do_paste_check 内部按 cursor_li 判断）
                 if actions is not None:
                     self._paste_old_draft.current = ""
+                    self._begin_paste(actions)
                     page.run_task(self._do_paste_check)
+            elif matches(combo, shortcuts.get("paste_plain", "ctrl+shift+v")):
+                # 纯文本粘贴：仅编辑态（cursor_li is not None），不触发图片粘贴
+                if actions is not None:
+                    self._paste_old_draft.current = ""
+                    self._begin_paste(actions)
+                    page.run_task(self._do_paste_plain_check)
             return
         # edit 层
         if matches(combo, shortcuts.get("save", "ctrl+s")):
@@ -696,7 +757,15 @@ class KeyDispatcher:
             # 走图片还是文本路径），编辑/浏览两态均触发
             if actions is not None:
                 self._paste_old_draft.current = ""
+                self._begin_paste(actions)
                 page.run_task(self._do_paste_check)
+        elif matches(combo, shortcuts.get("paste_plain", "ctrl+shift+v")):
+            # Ctrl+Shift+V：纯文本粘贴（剥离 Markdown 语法）
+            # 非原生粘贴快捷键，Flutter TextField 不拦截 → 无双重插入风险
+            if actions is not None:
+                self._paste_old_draft.current = ""
+                self._begin_paste(actions)
+                page.run_task(self._do_paste_plain_check)
 
     # ---- 剪贴板异步操作 ----
     async def _do_copy(self) -> None:
@@ -749,42 +818,47 @@ class KeyDispatcher:
             return
 
     async def _do_paste_check(self) -> None:
-        """Ctrl+V 后异步检查剪贴板：优先图片粘贴，否则多行文本拆分插入。
+        """Ctrl+V 后异步检查剪贴板：优先图片粘贴，否则文本粘贴。
 
         优先级（Typora 式）：
         1. paste_image_from_clipboard：剪贴板含图片/图片文件 → 落盘 ./assets/ 插入 ![](...)
            浏览/编辑两态均生效（浏览态插入到 cursor_line 行尾）
-        2. 文本粘贴：仅编辑态（cursor_li is not None），且文本含换行才走 handle_paste
-           拆分多行；单行文本由原生 TextField 直接处理（不走此路径）
+        2. 文本粘贴：仅编辑态（cursor_li is not None），统一走 handle_paste
+           拆分多行（单行/多行均由 handle_paste 处理，原生 TextField 的
+           on_change 已被 paste_in_progress 标志拦截，无重复插入风险）
         """
         await asyncio.sleep(0.05)
         actions = self._actions_ref.current
         if actions is None:
             return
-        # 1. 图片粘贴优先（浏览/编辑两态）
-        if actions.paste_image_from_clipboard is not None:
-            try:
-                handled = await actions.paste_image_from_clipboard()
-            except Exception:
-                handled = False
-            if handled:
+        try:
+            # 1. 图片粘贴优先（浏览/编辑两态）
+            if actions.paste_image_from_clipboard is not None:
+                try:
+                    handled = await actions.paste_image_from_clipboard()
+                except Exception:
+                    handled = False
+                if handled:
+                    return
+            # 2. 文本粘贴仅编辑态
+            if actions.cursor_li is None:
                 return
-        # 2. 文本粘贴仅编辑态
-        if actions.cursor_li is None:
-            return
-        clipboard = self._clipboard_ref.current
-        if clipboard is None:
-            return
-        try:
-            text = await clipboard.get()
-        except Exception:
-            return
-        if not text or "\n" not in text:
-            return
-        try:
-            actions.handle_paste(text, self._paste_old_draft.current)
-        except Exception:
-            return
+            clipboard = self._clipboard_ref.current
+            if clipboard is None:
+                return
+            try:
+                text = await clipboard.get()
+            except Exception:
+                return
+            if not text:
+                return
+            try:
+                actions.handle_paste(text, self._paste_old_draft.current)
+            except Exception:
+                return
+        finally:
+            # 兜底重置 paste_in_progress（handle_paste 内部已重置，此处防御性）
+            self._end_paste(actions)
 
     async def _do_multi_cursor_paste(self) -> None:
         """多光标 Ctrl+V：读取剪贴板文本，智能粘贴到所有光标。
@@ -797,24 +871,90 @@ class KeyDispatcher:
         actions = self._actions_ref.current
         if actions is None:
             return
-        # 图片粘贴优先
-        if actions.paste_image_from_clipboard is not None:
-            try:
-                handled = await actions.paste_image_from_clipboard()
-            except Exception:
-                handled = False
-            if handled:
+        try:
+            # 图片粘贴优先
+            if actions.paste_image_from_clipboard is not None:
+                try:
+                    handled = await actions.paste_image_from_clipboard()
+                except Exception:
+                    handled = False
+                if handled:
+                    return
+            clipboard = self._clipboard_ref.current
+            if clipboard is None:
                 return
-        clipboard = self._clipboard_ref.current
-        if clipboard is None:
+            try:
+                text = await clipboard.get()
+            except Exception:
+                return
+            if not text:
+                return
+            try:
+                actions.paste_to_multi_cursors(text)
+            except Exception:
+                return
+        finally:
+            self._end_paste(actions)
+
+    async def _do_paste_plain_check(self) -> None:
+        """Ctrl+Shift+V：纯文本粘贴（剥离 Markdown 语法后插入）。
+
+        Typora 式 Ctrl+Shift+V：读取剪贴板 → strip_markdown 去除所有语法标记
+        → handle_paste_plain 插入纯文本。
+
+        与 _do_paste_check 的区别：
+        - 不触发图片粘贴（纯文本模式，仅文本）
+        - 不跳过单行文本（Ctrl+Shift+V 非原生粘贴快捷键，Flutter TextField
+          不拦截 → 无双重插入风险，单行 Markdown 也能被剥离）
+        - 仅编辑态生效（cursor_li is not None）
+        """
+        await asyncio.sleep(0.05)
+        actions = self._actions_ref.current
+        if actions is None:
             return
         try:
-            text = await clipboard.get()
-        except Exception:
-            return
-        if not text:
+            # 纯文本粘贴仅编辑态（浏览态无光标位置）
+            if actions.cursor_li is None:
+                return
+            clipboard = self._clipboard_ref.current
+            if clipboard is None:
+                return
+            try:
+                text = await clipboard.get()
+            except Exception:
+                return
+            if not text:
+                return
+            try:
+                actions.handle_paste_plain(text, self._paste_old_draft.current)
+            except Exception:
+                return
+        finally:
+            self._end_paste(actions)
+
+    async def _do_multi_cursor_paste_plain(self) -> None:
+        """多光标 Ctrl+Shift+V：纯文本粘贴到所有光标。
+
+        先 strip_markdown 剥离语法，再走 paste_to_multi_cursors_plain 智能分配。
+        不触发图片粘贴（纯文本模式）。
+        """
+        await asyncio.sleep(0.05)
+        actions = self._actions_ref.current
+        if actions is None:
             return
         try:
-            actions.paste_to_multi_cursors(text)
-        except Exception:
-            return
+            clipboard = self._clipboard_ref.current
+            if clipboard is None:
+                return
+            try:
+                text = await clipboard.get()
+            except Exception:
+                return
+            if not text:
+                return
+            try:
+                actions.paste_to_multi_cursors_plain(text)
+            except Exception:
+                return
+        finally:
+            self._end_paste(actions)

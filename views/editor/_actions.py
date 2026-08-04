@@ -58,6 +58,7 @@ def build_actions(ctx) -> EditorActions | None:
         indent_or_outdent=ctx.indent_or_outdent,
         # ---- 剪贴板 / 选区 ----
         handle_paste=ctx.handle_paste,
+        handle_paste_plain=ctx.handle_paste_plain,
         handle_cut=ctx.handle_cut,
         handle_delete_selection=ctx.handle_delete_selection,
         apply_inline_format_to_selection=ctx.apply_inline_format_to_selection,
@@ -111,6 +112,9 @@ def build_actions(ctx) -> EditorActions | None:
         copy_multi_cursor_selection=ctx.copy_multi_cursor_selection,
         cut_multi_cursor_selection=ctx.cut_multi_cursor_selection,
         paste_to_multi_cursors=ctx.paste_to_multi_cursors,
+        paste_to_multi_cursors_plain=ctx.paste_to_multi_cursors_plain,
+        # ---- 粘贴进行中标志（拦截原生 TextField 单行粘贴 on_change 干扰）----
+        paste_in_progress_ref=ctx.paste_in_progress_ref,
         # ---- 滚动同步 ----
         get_scroll_state=ctx.get_scroll_state,
         scroll_to_offset=ctx.scroll_to_offset,

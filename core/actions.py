@@ -76,6 +76,7 @@ class EditorActions:
 
     # ---- 剪贴板 / 选区 ----
     handle_paste: Callable[[str, str], None]
+    handle_paste_plain: Callable[[str, str], None]  # Ctrl+Shift+V：纯文本粘贴（剥离 Markdown 语法）
     handle_cut: Callable[[str], Any]  # async
     handle_delete_selection: Callable[[str], None]
     apply_inline_format_to_selection: Callable[[str, str], None]
@@ -148,6 +149,7 @@ class EditorActions:
     copy_multi_cursor_selection: Callable[[], Awaitable[None]] | None = None  # async
     cut_multi_cursor_selection: Callable[[], Awaitable[None]] | None = None  # async
     paste_to_multi_cursors: Callable[[str], None] | None = None
+    paste_to_multi_cursors_plain: Callable[[str], None] | None = None  # Ctrl+Shift+V：多光标纯文本粘贴
 
     # ---- 滚动同步（diff 对比模式：左右编辑器像素偏移同步）----
     # get_scroll_state：返回 (offset, max_scroll_extent, viewport_height)，
@@ -166,3 +168,9 @@ class EditorActions:
     # ---- 图片粘贴（Ctrl+V：剪贴板含图片/图片文件 → 落盘 ./assets/ 插入 ![](...)）----
     # async：True 已处理图片粘贴（调用方跳过文本粘贴），False 剪贴板无图片
     paste_image_from_clipboard: Callable[[], Awaitable[bool]] | None = None
+
+    # ---- 粘贴进行中标志（拦截原生 TextField 单行粘贴 on_change 干扰）----
+    # Ctrl+V 时 KeyDispatcher 置 True；handle_char_input 入口检测到 True 则跳过，
+    # 由 _do_paste_check 走 handle_paste 统一处理（避免单行 TextField 把多行文本
+    # 拼接成一行触发 on_change 与 handle_paste 重复插入）。
+    paste_in_progress_ref: ft.Ref | None = None

@@ -211,6 +211,13 @@ def build_cursor(ctx):
         # 意外聚焦时 IME 输入写到旧光标位置。
         if ctx.outward_sel_ref.current is not None:
             return
+        # 粘贴进行中：跳过原生 TextField 单行粘贴的 on_change 干扰。
+        # Ctrl+V 时单行 TextField（multiline=False）会把多行文本的 \n 移除拼接
+        # 成一行触发 on_change，与 _do_paste_check 的 handle_paste 形成重复插入。
+        # KeyDispatcher 在 Ctrl+V 时置 paste_in_progress=True，此处统一拦截，
+        # 由 _do_paste_check 走 handle_paste 处理（单行/多行均统一路径）。
+        if ctx.paste_in_progress_ref.current:
+            return
 
         # IME 翻倍修正（保留：Flet 同步 value 打断 IME 导致翻倍根因仍在）
         _last_val = (ctx.input_session_ref.current or {}).get("last_value", "")
@@ -325,15 +332,39 @@ def build_cursor(ctx):
             _end_input_session(rebuild=False)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
-        """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。"""
+        """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。
+
+        paste_in_progress 路径（Ctrl+V / Ctrl+Shift+V）：
+        - 插入完成后重置 paste_in_progress_ref（恢复 on_change 处理）
+        - 清空 input_session（防止下次 on_change 用旧 session 计算错误 delta）
+        - 单行粘贴时 cursor_li 不变，TextField 不自动重建，需手动递增 nav_seq
+          重建控件清空 Flutter 端 value（原生 TextField 已写入拼接内容）
+        - 多行粘贴时 cursor_li 变化使 TextField key 变化自动重建，无需手动重建
+        """
         if ctx.cursor_li is None or not clip_text:
+            # 防御性：重置 paste_in_progress（避免 handle_char_input 永久被拦截）
+            if ctx.paste_in_progress_ref.current:
+                ctx.paste_in_progress_ref.current = False
             return
         li = ctx.cursor_li
         if not (0 <= li < len(ctx.document.lines)):
+            if ctx.paste_in_progress_ref.current:
+                ctx.paste_in_progress_ref.current = False
             return
         line = ctx.document.lines[li]
         if _is_fence(line):
+            if ctx.paste_in_progress_ref.current:
+                ctx.paste_in_progress_ref.current = False
             return
+        # 检测 paste_in_progress 路径：重置标志 + 清空 input_session
+        paste_active = bool(ctx.paste_in_progress_ref.current)
+        if paste_active:
+            ctx.paste_in_progress_ref.current = False
+            # 清空 input_session：防止下次 on_change 用旧 session 计算错误 delta
+            # （原生 TextField 粘贴可能已触发 on_change 但被 handle_char_input 跳过，
+            # input_session 仍保留旧值，需重置以启动新会话）
+            ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
+            ctx.set_cursor_field_value("")
         ctx.push_history()
         ctx.undo_push_pending.current = True
         raw = _line_raw(line)
@@ -345,6 +376,11 @@ def build_cursor(ctx):
             ctx.mark_dirty()
             ctx.suppress_blur.current = True
             _set_cursor(li, off + len(parts[0]))
+            if paste_active:
+                # 单行粘贴：cursor_li 不变，TextField 不自动重建，需手动递增
+                # nav_seq 重建控件清空 Flutter 端 value（原生 TextField 已写入
+                # 粘贴内容，不重建会导致下次 on_change 计算错误 delta）
+                ctx.set_nav_seq(ctx.nav_seq + 1)
         else:
             before = raw[:off]
             after = raw[off:]
@@ -362,6 +398,18 @@ def build_cursor(ctx):
             last_li = li + 1 + len(middle)
             ctx.suppress_blur.current = True
             _set_cursor(last_li, len(parts[-1]))
+            # 多行粘贴：cursor_li 变化使 TextField key 变化自动重建，无需手动重建
+
+    def handle_paste_plain(clip_text: str, old_draft: str = ""):
+        """纯文本粘贴（Ctrl+Shift+V）：剥离 Markdown 语法后插入。
+
+        Typora 式：先 strip_markdown 去除所有语法标记（# / ** / ` / []() 等），
+        再走 handle_paste 插入纯文本。多行文本中每行独立剥离，保持行结构。
+        """
+        if not clip_text:
+            return
+        plain_text = parser.strip_markdown(clip_text)
+        handle_paste(plain_text, old_draft)
 
     def backspace_core():
         """光标级 Backspace：删光标前字符；行首则与前一行合并。"""
@@ -690,6 +738,7 @@ def build_cursor(ctx):
         "on_tap_line": _on_tap_line,
         "handle_char_input": handle_char_input,
         "handle_paste": handle_paste,
+        "handle_paste_plain": handle_paste_plain,
         "backspace_core": backspace_core,
         "delete_core": delete_core,
         "on_submit": on_submit,

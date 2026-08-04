@@ -499,6 +499,14 @@ def MarkdownEditor(
     ctx.paste_to_multi_cursors = multi_cursor_cbs["paste_to_multi_cursors"]
     ctx.paste_to_multi_cursors_plain = multi_cursor_cbs["paste_to_multi_cursors_plain"]
 
+    # ============ 替换闭包组（搜索面板触发）============
+    # 必须装配到 ctx 替换默认 lambda，build_actions 才能将真实闭包写入
+    # EditorActions.replace_match_in_doc / replace_all_in_doc，供 sidebar
+    # 通过 nav.current.replace_match_in_doc 调用（否则按钮调用默认空操作失效）。
+    replace_cbs = build_replace(ctx)
+    ctx.replace_match_in_doc = replace_cbs["replace_match_in_doc"]
+    ctx.replace_all_in_doc = replace_cbs["replace_all_in_doc"]
+
     # ============ use_memo：向外选区高亮映射 ============
     _highlight_map = ft.use_memo(
         scroll_cbs["build_highlight_map"], [outward_sel, len(document.lines)]

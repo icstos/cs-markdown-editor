@@ -172,6 +172,8 @@ def build_line_controls(
                     secondary_cursors=[
                         sc for sc in secondary_cursors if sc[0] == i
                     ] if secondary_cursors else [],
+                    # 版本号：强制 ft.memo 在副光标内容变化时刷新所有行
+                    secondary_cursors_version=ctx.secondary_cursors_version,
                     on_image_action=stable_cbs["on_image_action"],
                     file_path=ctx.file_path,
                     diff_mark=_diff_mark,

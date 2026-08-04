@@ -531,6 +531,10 @@ def LineView(
     diff_mark: str | None = None,
     # 多光标：本行的副光标列表 [(li, base, extent)]，用于渲染副光标标记 + 选区高亮
     secondary_cursors: list[tuple[int, int, int]] | None = None,
+    # 多光标版本号：secondary_cursors 内容变化时递增，强制 ft.memo 失效重渲染
+    # （ft.memo 对 list 走身份比较，list comprehension 每次生成新对象虽能触发
+    # 重渲染，但状态批处理可能导致部分行未及时刷新，版本号兜底确保所有行同步）
+    secondary_cursors_version: int = 0,
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
@@ -771,7 +775,16 @@ def LineView(
     # 有选区时（base != extent）渲染半透明背景高亮。
     # 主光标在多光标模式下也用 cursor_ref.base/extent 跟踪选区（非 outward_sel），
     # 此处一并渲染主光标选区高亮。
-    if secondary_cursors:
+    # 关键：主光标所在行通常没有副光标（副光标在其他行），条件必须同时覆盖
+    # "本行有副光标" 和 "本行是激活行且主光标有选区" 两种情况，否则主光标
+    # 选区高亮不渲染。
+    _has_primary_sel = (
+        is_active
+        and cursor_ref is not None
+        and cursor_ref.current is not None
+        and cursor_ref.current.base != cursor_ref.current.extent
+    )
+    if secondary_cursors or _has_primary_sel:
         # 计算视觉行布局：复用激活行的 shared_vlayout，否则惰性计算
         if shared_vlayout is not None:
             sec_ww, sec_vlines = shared_vlayout
@@ -790,32 +803,31 @@ def LineView(
         cursor_y_off = (text_h - base) / 2
         sec_overlays: list[ft.Control] = []
         # 主光标选区高亮（多光标模式 Shift+Arrow 扩展的选区）
-        if is_active and cursor_ref is not None and cursor_ref.current is not None:
+        if _has_primary_sel:
             pbase = cursor_ref.current.base
             pext = cursor_ref.current.extent
-            if pbase != pext:
-                pv = _find_vline_for_raw(sec_vlines, pbase)
-                if pv is not None:
-                    ps = min(pbase, pext)
-                    pe = max(pbase, pext)
-                    ps_local = max(0, min(ps - pv.start_raw, len(pv.offsets_x) - 1))
-                    pe_local = max(0, min(pe - pv.start_raw, len(pv.offsets_x) - 1))
-                    psx = pv.offsets_x[ps_local]
-                    pex = pv.offsets_x[pe_local]
-                    if line.task and line.segments and pv.vline_idx == 0:
-                        prefix_raw = line.segments[0].raw
-                        prefix_len = len(prefix_raw) if prefix_raw else 0
-                        if 0 < prefix_len < len(pv.offsets_x):
-                            psx -= pv.offsets_x[prefix_len]
-                            pex -= pv.offsets_x[prefix_len]
-                    sec_overlays.append(ft.Container(
-                        width=max(pex - psx, 2),
-                        height=text_h,
-                        left=psx,
-                        top=pv.vline_idx * text_h,
-                        bgcolor=ft.Colors.with_opacity(0.25, c.link),
-                        border_radius=2,
-                    ))
+            pv = _find_vline_for_raw(sec_vlines, pbase)
+            if pv is not None:
+                ps = min(pbase, pext)
+                pe = max(pbase, pext)
+                ps_local = max(0, min(ps - pv.start_raw, len(pv.offsets_x) - 1))
+                pe_local = max(0, min(pe - pv.start_raw, len(pv.offsets_x) - 1))
+                psx = pv.offsets_x[ps_local]
+                pex = pv.offsets_x[pe_local]
+                if line.task and line.segments and pv.vline_idx == 0:
+                    prefix_raw = line.segments[0].raw
+                    prefix_len = len(prefix_raw) if prefix_raw else 0
+                    if 0 < prefix_len < len(pv.offsets_x):
+                        psx -= pv.offsets_x[prefix_len]
+                        pex -= pv.offsets_x[prefix_len]
+                sec_overlays.append(ft.Container(
+                    width=max(pex - psx, 2),
+                    height=text_h,
+                    left=psx,
+                    top=pv.vline_idx * text_h,
+                    bgcolor=ft.Colors.with_opacity(0.25, c.link),
+                    border_radius=2,
+                ))
         for (_sli, sbase, sext) in secondary_cursors:
             vline = _find_vline_for_raw(sec_vlines, sbase)
             if vline is None:

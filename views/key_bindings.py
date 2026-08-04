@@ -219,6 +219,46 @@ class KeyDispatcher:
             actions.clear_secondary_cursors()
             return
 
+        # 多光标剪贴板：Ctrl+C/X/V 在多光标模式 + 有选区时同步操作所有光标选区
+        # （优先于原生 TextField 和 outward_sel 路由，副光标无 TextField 无法走原生）
+        if (
+            actions is not None
+            and not (e.alt or e.meta)
+            and getattr(actions, "has_secondary_cursors", None) is not None
+            and actions.has_secondary_cursors()
+        ):
+            browse_sc = self._shortcut_mgr.get("browse")
+            # Ctrl+C：有选区时复制所有选区文本
+            if matches(combo, browse_sc.get("copy", "ctrl+c")):
+                if (
+                    getattr(actions, "has_multi_cursor_selection", None) is not None
+                    and actions.has_multi_cursor_selection()
+                    and actions.copy_multi_cursor_selection is not None
+                ):
+                    page = self._page_ref.current
+                    if page is not None:
+                        page.run_task(actions.copy_multi_cursor_selection)
+                    return
+            # Ctrl+X：有选区时剪切所有选区，无选区时剪切各光标所在行（回退原生）
+            if matches(combo, browse_sc.get("cut", "ctrl+x")):
+                if (
+                    getattr(actions, "has_multi_cursor_selection", None) is not None
+                    and actions.has_multi_cursor_selection()
+                    and actions.cut_multi_cursor_selection is not None
+                ):
+                    page = self._page_ref.current
+                    if page is not None:
+                        page.run_task(actions.cut_multi_cursor_selection)
+                    return
+            # Ctrl+V：读取剪贴板后智能粘贴到所有光标
+            if matches(combo, browse_sc.get("paste", "ctrl+v")):
+                if actions.paste_to_multi_cursors is not None:
+                    self._paste_old_draft.current = ""
+                    page = self._page_ref.current
+                    if page is not None:
+                        page.run_task(self._do_multi_cursor_paste)
+                    return
+
         # 代码块 CodeEditor / 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板
         # 组合交由原生控件处理（Tab 缩进、方向键移动、Backspace、Ctrl+C 复制等），
         # 跳过全局导航/选区/剪贴板逻辑避免冲突。全局快捷键（Ctrl+S/Z、Ctrl+Tab 切换
@@ -434,26 +474,28 @@ class KeyDispatcher:
         """
         if norm == "home":
             if e.shift and not e.ctrl:
-                # Shift+Home：选区扩展到行首（多光标模式先清除副光标）
+                # 多光标模式：所有光标选区扩展到行首（主+副），不走 outward_sel 路径
                 if (
                     getattr(actions, "has_secondary_cursors", None) is not None
                     and actions.has_secondary_cursors()
+                    and getattr(actions, "extend_selection_home", None) is not None
                 ):
-                    actions.clear_secondary_cursors()
-                if actions.extend_outward_home is not None:
+                    actions.extend_selection_home()
+                elif actions.extend_outward_home is not None:
                     actions.extend_outward_home()
             else:
                 actions.move_doc_start() if e.ctrl else actions.move_home()
             return True
         if norm == "end":
             if e.shift and not e.ctrl:
-                # Shift+End：选区扩展到行尾（多光标模式先清除副光标）
+                # 多光标模式：所有光标选区扩展到行尾（主+副），不走 outward_sel 路径
                 if (
                     getattr(actions, "has_secondary_cursors", None) is not None
                     and actions.has_secondary_cursors()
+                    and getattr(actions, "extend_selection_end", None) is not None
                 ):
-                    actions.clear_secondary_cursors()
-                if actions.extend_outward_end is not None:
+                    actions.extend_selection_end()
+                elif actions.extend_outward_end is not None:
                     actions.extend_outward_end()
             else:
                 actions.move_doc_end() if e.ctrl else actions.move_end()
@@ -741,5 +783,38 @@ class KeyDispatcher:
             return
         try:
             actions.handle_paste(text, self._paste_old_draft.current)
+        except Exception:
+            return
+
+    async def _do_multi_cursor_paste(self) -> None:
+        """多光标 Ctrl+V：读取剪贴板文本，智能粘贴到所有光标。
+
+        VSCode 智能粘贴：剪贴板行数 == 光标数时逐行分配（第 i 行→第 i 个光标），
+        否则全文插入到主光标并清除副光标（回退单光标粘贴）。
+        图片粘贴优先于多光标文本粘贴。
+        """
+        await asyncio.sleep(0.05)
+        actions = self._actions_ref.current
+        if actions is None:
+            return
+        # 图片粘贴优先
+        if actions.paste_image_from_clipboard is not None:
+            try:
+                handled = await actions.paste_image_from_clipboard()
+            except Exception:
+                handled = False
+            if handled:
+                return
+        clipboard = self._clipboard_ref.current
+        if clipboard is None:
+            return
+        try:
+            text = await clipboard.get()
+        except Exception:
+            return
+        if not text:
+            return
+        try:
+            actions.paste_to_multi_cursors(text)
         except Exception:
             return

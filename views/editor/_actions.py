@@ -105,6 +105,12 @@ def build_actions(ctx) -> EditorActions | None:
         clear_secondary_cursors=ctx.clear_secondary_cursors,
         extend_selection_left=ctx.extend_selection_left,
         extend_selection_right=ctx.extend_selection_right,
+        extend_selection_home=ctx.extend_selection_home,
+        extend_selection_end=ctx.extend_selection_end,
+        has_multi_cursor_selection=ctx.has_multi_cursor_selection,
+        copy_multi_cursor_selection=ctx.copy_multi_cursor_selection,
+        cut_multi_cursor_selection=ctx.cut_multi_cursor_selection,
+        paste_to_multi_cursors=ctx.paste_to_multi_cursors,
         # ---- 滚动同步 ----
         get_scroll_state=ctx.get_scroll_state,
         scroll_to_offset=ctx.scroll_to_offset,

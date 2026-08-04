@@ -97,6 +97,8 @@ class EditorContext:
     math_focus_li: int | None
     # 多光标：每个副光标 (li, base, extent)，base==extent 无选区
     secondary_cursors: list[tuple[int, int, int]]
+    # 多光标版本号：每次 _sync 递增，传给 LineView 强制 ft.memo 失效
+    secondary_cursors_version: int
 
     # ============ Setters（稳定区，跨渲染身份不变）============
     set_cursor_li: Callable[[int | None], None]
@@ -113,6 +115,7 @@ class EditorContext:
     set_table_focus_li: Callable[[int | None], None]
     set_math_focus_li: Callable[[int | None], None]
     set_secondary_cursors: Callable[[list[tuple[int, int, int]]], None]
+    set_secondary_cursors_version: Callable[[int], None]
 
     # ============ Refs（稳定区，跨渲染身份不变）============
     cursor_field_ref: ft.Ref
@@ -322,3 +325,11 @@ class EditorContext:
     has_secondary_cursors: Callable[[], bool] = field(default=lambda: False)
     extend_selection_left: Callable[[], None] = field(default=lambda: None)
     extend_selection_right: Callable[[], None] = field(default=lambda: None)
+    extend_selection_home: Callable[[], None] = field(default=lambda: None)
+    extend_selection_end: Callable[[], None] = field(default=lambda: None)
+    # 多光标剪贴板（Ctrl+C/X/V 同步选区操作）
+    has_multi_cursor_selection: Callable[[], bool] = field(default=lambda: False)
+    collect_multi_cursor_text: Callable[[], list[str] | None] = field(default=lambda: None)
+    copy_multi_cursor_selection: Callable[[], Awaitable[None]] = field(default=lambda: None)
+    cut_multi_cursor_selection: Callable[[], Awaitable[None]] = field(default=lambda: None)
+    paste_to_multi_cursors: Callable[[str], None] = field(default=lambda *a: None)

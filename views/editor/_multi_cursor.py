@@ -24,6 +24,8 @@ broadcast_extend_right / broadcast_submit / has_secondary_cursors
 - views.editor._helpers（_next_line_raw）
 """
 
+import contextlib
+
 import parser
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
@@ -44,9 +46,10 @@ def build_multi_cursor(ctx):
     """
 
     def _sync(new_list):
-        """同步更新 ref 和 state。"""
+        """同步更新 ref 和 state，递增版本号强制 ft.memo 失效。"""
         ctx.secondary_cursors_ref.current = new_list
         ctx.set_secondary_cursors(new_list)
+        ctx.set_secondary_cursors_version(ctx.secondary_cursors_version + 1)
 
     def has_secondary_cursors() -> bool:
         return bool(ctx.secondary_cursors_ref.current)
@@ -415,6 +418,276 @@ def build_multi_cursor(ctx):
         # 同步副光标
         broadcast_extend_right()
 
+    def broadcast_extend_home():
+        """Shift+Home 同步：副光标选区扩展到行首（base 跳到行首，extent 不变）。
+
+        Smart Home 三态：content_start → 0 → 不动。每个副光标独立判定。
+        """
+        cursors = ctx.secondary_cursors_ref.current
+        if not cursors:
+            return
+        new_list = []
+        for (li, base, extent) in cursors:
+            target = ctx.step_home(li, base)
+            if target is not None:
+                new_list.append((li, target[1], extent))
+            else:
+                new_list.append((li, base, extent))
+        _sync(new_list)
+
+    def broadcast_extend_end():
+        """Shift+End 同步：副光标选区扩展到行尾（base 跳到行尾，extent 不变）。
+
+        已在行尾的副光标不扩展。
+        """
+        cursors = ctx.secondary_cursors_ref.current
+        if not cursors:
+            return
+        new_list = []
+        for (li, base, extent) in cursors:
+            target = ctx.step_end(li, base)
+            if target is not None:
+                new_list.append((li, target[1], extent))
+            else:
+                new_list.append((li, base, extent))
+        _sync(new_list)
+
+    def extend_selection_home():
+        """Shift+Home 多光标模式：主光标 base 跳到行首 + 副光标广播扩展。
+
+        Smart Home 三态：content_start → 0 → 不动。
+        主光标 base 跳到 target，extent 保持不变（选区锚点）。
+        """
+        if ctx.cursor_li is None:
+            return
+        li = ctx.cursor_li
+        if not (0 <= li < len(ctx.document.lines)):
+            return
+        if _is_fence(ctx.document.lines[li]):
+            return
+        base = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
+        target = ctx.step_home(li, base)
+        if target is not None:
+            new_base = target[1]
+            if ctx.cursor_ref.current:
+                ctx.cursor_ref.current.base = new_base
+            ctx.set_cursor_off(new_base)
+            ctx.preferred_col_ref.current = None
+        # 同步副光标
+        broadcast_extend_home()
+
+    def extend_selection_end():
+        """Shift+End 多光标模式：主光标 base 跳到行尾 + 副光标广播扩展。
+
+        主光标 base 跳到行尾 raw_len，extent 保持不变（选区锚点）。
+        已在行尾的主光标不扩展。
+        """
+        if ctx.cursor_li is None:
+            return
+        li = ctx.cursor_li
+        if not (0 <= li < len(ctx.document.lines)):
+            return
+        if _is_fence(ctx.document.lines[li]):
+            return
+        base = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
+        target = ctx.step_end(li, base)
+        if target is not None:
+            new_base = target[1]
+            if ctx.cursor_ref.current:
+                ctx.cursor_ref.current.base = new_base
+            ctx.set_cursor_off(new_base)
+            ctx.preferred_col_ref.current = None
+        # 同步副光标
+        broadcast_extend_end()
+
+    # ============ 多光标剪贴板（Ctrl+C/X/V）============
+
+    def _collect_all_cursors() -> list[tuple[int, int, int]]:
+        """收集所有光标（主+副），按行号升序排序。
+
+        返回 [(li, base, extent), ...]，主光标标记为第一个元素（is_primary 字段
+        通过位置 0 判断，调用方需自行区分）。
+        """
+        all_cursors: list[tuple[int, int, int]] = []
+        if ctx.cursor_li is not None and ctx.cursor_ref.current:
+            cs = ctx.cursor_ref.current
+            all_cursors.append((ctx.cursor_li, cs.base, cs.extent))
+        for c in ctx.secondary_cursors_ref.current:
+            all_cursors.append(c)
+        all_cursors.sort(key=lambda c: c[0])
+        return all_cursors
+
+    def has_multi_cursor_selection() -> bool:
+        """是否有任何光标（主+副）有选区（base != extent）。"""
+        if ctx.cursor_ref.current and ctx.cursor_ref.current.base != ctx.cursor_ref.current.extent:
+            return True
+        for (_, base, extent) in ctx.secondary_cursors_ref.current:
+            if base != extent:
+                return True
+        return False
+
+    def collect_multi_cursor_text() -> list[str] | None:
+        """收集所有有选区光标的选区文本，按行号升序返回文本列表。
+
+        无任何选区时返回 None。
+        """
+        texts: list[str] = []
+        # 主光标
+        if (
+            ctx.cursor_li is not None
+            and ctx.cursor_ref.current
+            and ctx.cursor_ref.current.base != ctx.cursor_ref.current.extent
+        ):
+            line = ctx.document.lines[ctx.cursor_li]
+            raw = _line_raw(line)
+            cs = ctx.cursor_ref.current
+            sel_start = min(cs.base, cs.extent)
+            sel_end = max(cs.base, cs.extent)
+            texts.append(raw[sel_start:sel_end])
+        # 副光标（按行号排序，保证复制顺序与视觉一致）
+        for (li, base, extent) in sorted(ctx.secondary_cursors_ref.current, key=lambda c: c[0]):
+            if base == extent:
+                continue
+            if not (0 <= li < len(ctx.document.lines)):
+                continue
+            line = ctx.document.lines[li]
+            if _is_fence(line):
+                continue
+            raw = _line_raw(line)
+            sel_start = min(base, extent)
+            sel_end = max(base, extent)
+            texts.append(raw[sel_start:sel_end])
+        return texts if texts else None
+
+    async def copy_multi_cursor_selection():
+        """多光标 Ctrl+C：收集所有选区文本，用 \\n 连接写入剪贴板。"""
+        texts = collect_multi_cursor_text()
+        if not texts:
+            return
+        clipboard = ctx.clipboard_ref.current if ctx.clipboard_ref is not None else None
+        if clipboard is None:
+            return
+        md = "\n".join(texts)
+        with contextlib.suppress(Exception):
+            await clipboard.set(md)
+
+    def _delete_all_selections():
+        """删除所有光标（主+副）的选区。主光标选区单独处理，副光标走广播。"""
+        # 主光标选区
+        if (
+            ctx.cursor_li is not None
+            and ctx.cursor_ref.current
+            and ctx.cursor_ref.current.base != ctx.cursor_ref.current.extent
+        ):
+            li = ctx.cursor_li
+            line = ctx.document.lines[li]
+            raw = _line_raw(line)
+            cs = ctx.cursor_ref.current
+            sel_start = min(cs.base, cs.extent)
+            sel_end = max(cs.base, cs.extent)
+            new_raw = raw[:sel_start] + raw[sel_end:]
+            ctx.push_line_edit(li, raw)
+            _reparse_atomic(line, new_raw, notify=False)
+            cs.reset(sel_start, len(new_raw))
+            ctx.set_cursor_off(sel_start)
+        # 副光标选区
+        cursors = ctx.secondary_cursors_ref.current
+        if cursors:
+            new_list = []
+            for (li, base, extent) in cursors:
+                if base == extent:
+                    new_list.append((li, base, extent))
+                    continue
+                if not (0 <= li < len(ctx.document.lines)):
+                    new_list.append((li, base, extent))
+                    continue
+                line = ctx.document.lines[li]
+                if _is_fence(line):
+                    new_list.append((li, base, extent))
+                    continue
+                raw = _line_raw(line)
+                sel_start = min(base, extent)
+                sel_end = max(base, extent)
+                new_raw = raw[:sel_start] + raw[sel_end:]
+                _reparse_atomic(line, new_raw, notify=False)
+                new_list.append((li, sel_start, sel_start))
+            _sync(new_list)
+
+    async def cut_multi_cursor_selection():
+        """多光标 Ctrl+X：复制所有选区文本 + 删除所有选区 + 清除副光标。"""
+        await copy_multi_cursor_selection()
+        ctx.push_history()
+        ctx.undo_push_pending.current = True
+        _delete_all_selections()
+        ctx.document.notify()
+        ctx.mark_dirty()
+        # 剪切后清除副光标（选区已删除，多光标模式结束）
+        clear_secondary_cursors()
+        # 递增 nav_seq 重建 TextField（cursor_off 已变，需刷新）
+        ctx.set_nav_seq(ctx.nav_seq + 1)
+
+    def paste_to_multi_cursors(text: str):
+        """多光标 Ctrl+V：在每个光标处插入文本（替换选区如有）。
+
+        VSCode 智能粘贴：若剪贴板行数 == 光标数，逐行分配（第 i 行→第 i 个光标，
+        按行号排序）；否则全文插入到主光标并清除副光标（回退单光标粘贴）。
+        """
+        cursors = ctx.secondary_cursors_ref.current
+        if not cursors or ctx.cursor_li is None:
+            return
+        # 结束主光标 IME 会话（粘贴不走 IME 路径）
+        ctx.end_input_session()
+
+        all_cursors = _collect_all_cursors()
+        lines = text.split("\n")
+        # 智能粘贴：行数 == 光标数 → 逐行分配（单行，不涉及行分割）
+        smart = len(lines) == len(all_cursors) and len(all_cursors) > 1
+
+        if not smart:
+            # 非智能：全文粘贴到主光标，清除副光标（回退单光标行为）
+            clear_secondary_cursors()
+            ctx.handle_paste(text, "")
+            return
+
+        ctx.push_history()
+        ctx.undo_push_pending.current = True
+
+        # 按行号升序分配（lines[i] → all_cursors[i]），编辑从下往上避免行号偏移
+        # 单行粘贴不改变行号，但为一致性仍按降序处理
+        new_secondary: list[tuple[int, int, int]] = []
+        # 主光标在 all_cursors 中的索引（排序后位置 0 是最小行号）
+        primary_idx = 0
+        primary_li = ctx.cursor_li
+        for i, (li, _, _) in enumerate(all_cursors):
+            if li == primary_li:
+                primary_idx = i
+                break
+
+        for i in range(len(all_cursors) - 1, -1, -1):
+            li, base, extent = all_cursors[i]
+            if not (0 <= li < len(ctx.document.lines)):
+                continue
+            line = ctx.document.lines[li]
+            if _is_fence(line):
+                continue
+            raw = _line_raw(line)
+            sel_start = min(base, extent)
+            sel_end = max(base, extent)
+            insert_text = lines[i]
+            new_raw = raw[:sel_start] + insert_text + raw[sel_end:]
+            _reparse_atomic(line, new_raw, notify=False)
+            new_off = sel_start + len(insert_text)
+            if i == primary_idx:
+                # 主光标：更新 cursor_ref + cursor_off
+                ctx.cursor_ref.current.reset(new_off, len(new_raw))
+                ctx.set_cursor_off(new_off)
+            else:
+                new_secondary.append((li, new_off, new_off))
+
+        ctx.document.notify()
+        ctx.mark_dirty()
+        _sync(new_secondary)
+
     return {
         "add_secondary_cursor": add_secondary_cursor,
         "add_column_cursors": add_column_cursors,
@@ -430,4 +703,11 @@ def build_multi_cursor(ctx):
         "has_secondary_cursors": has_secondary_cursors,
         "extend_selection_left": extend_selection_left,
         "extend_selection_right": extend_selection_right,
+        "extend_selection_home": extend_selection_home,
+        "extend_selection_end": extend_selection_end,
+        "has_multi_cursor_selection": has_multi_cursor_selection,
+        "collect_multi_cursor_text": collect_multi_cursor_text,
+        "copy_multi_cursor_selection": copy_multi_cursor_selection,
+        "cut_multi_cursor_selection": cut_multi_cursor_selection,
+        "paste_to_multi_cursors": paste_to_multi_cursors,
     }

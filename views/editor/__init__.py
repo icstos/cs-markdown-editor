@@ -182,6 +182,9 @@ def MarkdownEditor(
     secondary_cursors, set_secondary_cursors = ft.use_state([])
     secondary_cursors_ref = ft.use_ref([])
     secondary_cursors_ref.current = secondary_cursors
+    # 版本号：每次 _sync 递增，传给 LineView 强制 ft.memo 失效
+    # （ft.memo 对 list 走身份比较，版本号 int 走 == 比较，确保选区变化时所有行刷新）
+    secondary_cursors_version, set_secondary_cursors_version = ft.use_state(0)
     # Alt 键状态（用于点击分发：Alt+Click 切换副光标）
     alt_pressed_ref = ft.use_ref(False)
 
@@ -273,6 +276,7 @@ def MarkdownEditor(
         table_focus_li=table_focus_li,
         math_focus_li=math_focus_li,
         secondary_cursors=secondary_cursors,
+        secondary_cursors_version=secondary_cursors_version,
         # Setters
         set_cursor_li=set_cursor_li,
         set_cursor_off=set_cursor_off,
@@ -288,6 +292,7 @@ def MarkdownEditor(
         set_table_focus_li=set_table_focus_li,
         set_math_focus_li=set_math_focus_li,
         set_secondary_cursors=set_secondary_cursors,
+        set_secondary_cursors_version=set_secondary_cursors_version,
         # Refs
         cursor_field_ref=cursor_field_ref,
         input_session_ref=input_session_ref,
@@ -479,6 +484,13 @@ def MarkdownEditor(
     ctx.has_secondary_cursors = multi_cursor_cbs["has_secondary_cursors"]
     ctx.extend_selection_left = multi_cursor_cbs["extend_selection_left"]
     ctx.extend_selection_right = multi_cursor_cbs["extend_selection_right"]
+    ctx.extend_selection_home = multi_cursor_cbs["extend_selection_home"]
+    ctx.extend_selection_end = multi_cursor_cbs["extend_selection_end"]
+    ctx.has_multi_cursor_selection = multi_cursor_cbs["has_multi_cursor_selection"]
+    ctx.collect_multi_cursor_text = multi_cursor_cbs["collect_multi_cursor_text"]
+    ctx.copy_multi_cursor_selection = multi_cursor_cbs["copy_multi_cursor_selection"]
+    ctx.cut_multi_cursor_selection = multi_cursor_cbs["cut_multi_cursor_selection"]
+    ctx.paste_to_multi_cursors = multi_cursor_cbs["paste_to_multi_cursors"]
 
     # ============ use_memo：向外选区高亮映射 ============
     _highlight_map = ft.use_memo(

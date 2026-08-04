@@ -135,10 +135,19 @@ class EditorActions:
     # has_secondary_cursors：是否有多光标（KeyDispatcher 路由判断用）
     # clear_secondary_cursors：Escape 清空所有副光标
     # extend_selection_left/right：Shift+Arrow 扩展所有光标选区（主+副）
+    # has_multi_cursor_selection：是否有任何光标有选区（Ctrl+C/X 路由判断）
+    # copy/cut_multi_cursor_selection：多光标复制/剪切（收集所有选区文本）
+    # paste_to_multi_cursors：多光标粘贴（智能逐行分配或全文插入）
     has_secondary_cursors: Callable[[], bool] = field(default=lambda: False)
     clear_secondary_cursors: Callable[[], None] = field(default=lambda: None)
     extend_selection_left: Callable[[], None] = field(default=lambda: None)
     extend_selection_right: Callable[[], None] = field(default=lambda: None)
+    extend_selection_home: Callable[[], None] = field(default=lambda: None)
+    extend_selection_end: Callable[[], None] = field(default=lambda: None)
+    has_multi_cursor_selection: Callable[[], bool] = field(default=lambda: False)
+    copy_multi_cursor_selection: Callable[[], Awaitable[None]] | None = None  # async
+    cut_multi_cursor_selection: Callable[[], Awaitable[None]] | None = None  # async
+    paste_to_multi_cursors: Callable[[str], None] | None = None
 
     # ---- 滚动同步（diff 对比模式：左右编辑器像素偏移同步）----
     # get_scroll_state：返回 (offset, max_scroll_extent, viewport_height)，

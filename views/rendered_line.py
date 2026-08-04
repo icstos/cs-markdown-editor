@@ -831,7 +831,8 @@ def _spans_with_selection(
 
         if inter_start >= inter_end:
             # 不在高亮范围
-            if cursor_off is not None and seg_start <= cursor_off < seg_end:
+            # 段末尾也属于本段（与其他渲染路径一致用 <=，修复包裹段末尾标记折叠 Bug）
+            if cursor_off is not None and seg_start <= cursor_off <= seg_end:
                 # 光标在段内：标记变灰
                 spans.extend(_gray_marker_spans(seg, base, heading_level))
             else:
@@ -906,7 +907,9 @@ def _build_raw_to_flat_map(
         elif is_last:
             cursor_in_seg = seg_start <= cursor_off <= seg_end
         else:
-            cursor_in_seg = seg_start <= cursor_off < seg_end
+            # 非末段：段末尾也属于本段（与 pixel_layout / segment_view 一致用 <=）
+            # 修复 Bug：光标在包裹段末尾时标记被折叠，flat 映射与可见标记不对齐
+            cursor_in_seg = seg_start <= cursor_off <= seg_end
 
         is_prefix = seg.seg_type in PREFIX_SEGTYPES
 

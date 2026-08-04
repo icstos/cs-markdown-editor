@@ -135,11 +135,11 @@ def test_inline_format_combos_default():
     combos = mgr.inline_format_combos()
     assert combos["ctrl+b"] == "bold"
     assert combos["ctrl+i"] == "italic"
-    assert combos["ctrl+u"] == "highlight"
+    assert combos["ctrl+shift+h"] == "highlight"
     assert combos["ctrl+`"] == "code"
     assert combos["ctrl+k"] == "link"
     assert combos["ctrl+m"] == "inline_math"
-    assert combos["ctrl+shift+s"] == "strike"
+    assert combos["alt+shift+5"] == "strike"
 
 
 def test_inline_format_combos_respects_user_custom():

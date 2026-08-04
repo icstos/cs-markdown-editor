@@ -283,13 +283,14 @@ def raw_to_visible_spans(
             continue
         is_last = seg_idx == seg_count - 1
 
-        # 光标是否在本段范围内（末段含右端点，其余段左闭右开）
+        # 光标是否在本段范围内（末段含右端点，非末段也含右端点，与 pixel_layout 一致）
+        # 修复 Bug：光标在包裹段末尾（==高亮==|后文）时标记被折叠，光标位置与标记不对齐
         if cursor_raw_offset is None:
             cursor_in_seg = False
         elif is_last:
             cursor_in_seg = seg_start <= cursor_raw_offset <= seg_end
         else:
-            cursor_in_seg = seg_start <= cursor_raw_offset < seg_end
+            cursor_in_seg = seg_start <= cursor_raw_offset <= seg_end
 
         is_prefix = seg.seg_type in PREFIX_SEGTYPES
 

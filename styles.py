@@ -53,7 +53,7 @@ class Colors:
     active_bg: str  # 正在编辑的段淡黄底
     toolbar_bg: str
     border: str
-    highlight_bg: str = "#FFF3BF"  # ==高亮== 背景
+    highlight_bg: str = "#FBF2A8"  # ==高亮== 背景（Typora 式柔和荧光笔黄）
     supsub_fg: str = "#8A919E"  # 上下标文字色
     # 搜索匹配段高亮（区别于 ==高亮== 语法，独立 token 便于单独调色）
     search_match_bg: str = "#FFE082"  # 搜索匹配段背景（亮黄）
@@ -127,7 +127,7 @@ _DARK = Colors(
     active_bg="#3A2F1A",     # 暗琥珀激活态
     toolbar_bg="#1A1D22",    # 工具栏底
     border="#2F353D",        # 偏暖边框
-    highlight_bg="#4D3E00",  # 暗琥珀高亮
+    highlight_bg="#5D4E1A",  # 暗琥珀高亮（Typora 式，与 search_match_bg 一致更鲜明）
     search_match_bg="#5D4E1A",  # 暗琥珀搜索匹配
     search_match_fg="#E6EDF3",
     supsub_fg="#B0B8C1",

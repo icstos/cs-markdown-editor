@@ -282,7 +282,12 @@ def _line_raw_offsets_x(
         elif is_last:
             cursor_in_seg = seg_start <= cursor_raw_offset <= seg_end
         else:
-            cursor_in_seg = seg_start <= cursor_raw_offset < seg_end
+            # 非末段：段末尾（seg_end）也属于本段（与末段一致用 <=）。
+            # 修复 Bug：光标在包裹段末尾（如 ==高亮==|后文）时标记被折叠，
+            # 导致光标 X 坐标与可见标记不对齐。改为 <= 后段末尾标记可见，
+            # 相邻下一段 seg_start == 本段 seg_end，光标同时属于两段：
+            # 本段标记展开（占宽），下一段若无标记则无影响（TEXT 段无标记）。
+            cursor_in_seg = seg_start <= cursor_raw_offset <= seg_end
 
         font, size = _seg_font_metrics(seg, base)
         seg_raw_len = len(seg.raw)

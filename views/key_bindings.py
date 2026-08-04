@@ -454,7 +454,7 @@ class KeyDispatcher:
             return
 
         # 行内格式快捷键优先级必须高于浏览态全局快捷键：
-        # 这样鼠标选中文本后按 Ctrl+B/I/U/Shift+S/`/K 不会被
+        # 这样鼠标选中文本后按 Ctrl+B/I/Shift+H/`/K 不会被
         # 侧边栏切换、聚焦模式等浏览态快捷键抢先消费。
         # combo→fmt_name 映射从 ShortcutManager 动态读取（用户自定义键位生效）。
         inline_map = self._shortcut_mgr.inline_format_combos()

@@ -14,18 +14,97 @@
 
 依赖项：
 - parser（reparse_line_atomic）
-- models（SegType）
+- models（Line / SegType）
 - utils.segment_helpers（WRAP_SYNTAX / is_fence / line_raw）
 """
 
 import parser
-from models import SegType
+from models import Line, SegType
 from utils.segment_helpers import WRAP_SYNTAX
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
+
+
+def _find_seg_for_range(
+    line: Line, a_off: int, b_off: int
+) -> tuple[int, int, int] | tuple[None, None, None]:
+    """找到完全包含 [a_off, b_off] 的段索引（选区落在单段内）。
+
+    返回 (seg_idx, seg_start, seg_end)；选区跨段或越界返回 (None, None, None)。
+    用于 _apply_outward_wrap 基于 Segment.marks 判断 toggle：选区在单段内时
+    段 marks 可信，跨段时回退到 wrap（添加标记）。
+    """
+    acc = 0
+    for i, s in enumerate(line.segments):
+        seg_end = acc + len(s.raw)
+        if acc <= a_off and b_off <= seg_end:
+            return i, acc, seg_end
+        acc = seg_end
+    return None, None, None
+
+
+def _compute_wrap_toggle(
+    line: Line, a_off: int, b_off: int, seg_type: SegType,
+    wrap_open: str, wrap_close: str,
+) -> tuple[str, tuple[int, int, int, int]]:
+    """计算 toggle 包裹/取消后的新 raw 与选区（纯函数，无副作用）。
+
+    基于 Segment.marks 判断（避免 `*` 与 `**`、`~` 与 `~~` 子串误匹配）：
+    - 选区所在段 marks 含目标 seg_type → unwrap（移除该层标记）
+    - 否则 → wrap（添加标记）
+    - 选区跨段或段 raw 结构与 marks 不匹配 → 回退 wrap
+
+    返回 (new_raw, (a_li, a_off, b_li, b_off))，调用方负责 reparse 与 set_outward_sel。
+    """
+    raw = _line_raw(line)
+    selected = raw[a_off:b_off]
+    ol, cl = len(wrap_open), len(wrap_close)
+    a_li = 0  # 调用方在闭包内重写为真实 a_li；此处仅占位保持元组形状
+
+    seg_idx, seg_start, seg_end = _find_seg_for_range(line, a_off, b_off)
+    cur_seg = line.segments[seg_idx] if seg_idx is not None else None
+    cur_marks = (cur_seg.marks if cur_seg else None) or ()
+
+    if cur_seg is not None and seg_type in cur_marks:
+        # Unwrap：段 raw 结构 = prefix(所有 marks open 拼接) + content +
+        # suffix(所有 marks close 拼接, reversed 顺序)。移除第 mark_idx 层。
+        marks_list = list(cur_marks)
+        mark_idx = marks_list.index(seg_type)
+        prefix_str = "".join(WRAP_SYNTAX[m][0] for m in marks_list)
+        suffix_str = "".join(WRAP_SYNTAX[m][1] for m in reversed(marks_list))
+        seg_raw = cur_seg.raw
+        # 安全检查：段 raw 与 marks 一致才 unwrap，否则回退 wrap
+        if (seg_raw.startswith(prefix_str) and seg_raw.endswith(suffix_str)
+                and len(seg_raw) >= len(prefix_str) + len(suffix_str)):
+            prefix_lens = [len(WRAP_SYNTAX[m][0]) for m in marks_list]
+            prefix_total = sum(prefix_lens)
+            prefix_before = sum(prefix_lens[:mark_idx])
+            prefix_mark_len = prefix_lens[mark_idx]
+            rev_idx = len(marks_list) - 1 - mark_idx
+            suffix_lens = [len(WRAP_SYNTAX[m][1]) for m in reversed(marks_list)]
+            suffix_total = sum(suffix_lens)
+            suffix_before = sum(suffix_lens[:rev_idx])
+            suffix_mark_len = suffix_lens[rev_idx]
+
+            content = seg_raw[prefix_total:len(seg_raw) - suffix_total]
+            # 新 prefix：跳过第 mark_idx 层
+            new_prefix = (seg_raw[:prefix_before]
+                          + seg_raw[prefix_before + prefix_mark_len:prefix_total])
+            # 新 suffix：跳过第 rev_idx 层（reversed 序列中位置）
+            suffix_start = len(seg_raw) - suffix_total
+            new_suffix = (seg_raw[suffix_start:suffix_start + suffix_before]
+                          + seg_raw[suffix_start + suffix_before + suffix_mark_len:])
+            new_seg_raw = new_prefix + content + new_suffix
+            new_raw = raw[:seg_start] + new_seg_raw + raw[seg_end:]
+            new_content_start = seg_start + len(new_prefix)
+            return new_raw, (a_li, new_content_start, a_li, new_content_start + len(content))
+
+    # Wrap（含回退）：在选区外侧添加标记，选区保持在内容上
+    new_raw = raw[:a_off] + wrap_open + selected + wrap_close + raw[b_off:]
+    return new_raw, (a_li, a_off + ol, a_li, a_off + ol + len(selected))
 
 
 def build_inline_format(ctx):
@@ -157,36 +236,14 @@ def build_inline_format(ctx):
         if seg_type is None:
             return
         wrap_open, wrap_close = WRAP_SYNTAX.get(seg_type, ("", ""))
-        ol, cl = len(wrap_open), len(wrap_close)
 
-        # ---- toggle 检测：选区是否已被同类型标记包裹 ----
-        # Case A: 标记紧贴选区外侧（选区 = 纯内容，如 **|selected|**）
-        case_a = (
-            a_off >= ol
-            and raw[a_off - ol:a_off] == wrap_open
-            and b_off + cl <= len(raw)
-            and raw[b_off:b_off + cl] == wrap_close
+        # toggle 检测基于段 marks 判断（避免 * 与 **、~ 与 ~~ 子串误匹配），
+        # 详见 _compute_wrap_toggle 注释。
+        new_raw, new_sel = _compute_wrap_toggle(
+            line, a_off, b_off, seg_type, wrap_open, wrap_close,
         )
-        # Case B: 标记在选区两端内侧（选区 = 标记+内容+标记，如 |**selected**|）
-        case_b = (
-            selected.startswith(wrap_open)
-            and selected.endswith(wrap_close)
-            and len(selected) >= ol + cl
-        )
-
-        if case_a:
-            # Unwrap：移除外侧标记，选区平移到去标记后的内容
-            new_raw = raw[:a_off - ol] + selected + raw[b_off + cl:]
-            new_sel = (a_li, a_off - ol, a_li, b_off - ol)
-        elif case_b:
-            # Unwrap：移除内侧标记，选区收缩到纯内容
-            inner = selected[ol:len(selected) - cl] if cl else selected[ol:]
-            new_raw = raw[:a_off] + inner + raw[b_off:]
-            new_sel = (a_li, a_off, a_li, a_off + len(inner))
-        else:
-            # Wrap：添加标记，选区保持在内容上（不含标记）
-            new_raw = raw[:a_off] + wrap_open + selected + wrap_close + raw[b_off:]
-            new_sel = (a_li, a_off + ol, a_li, a_off + ol + len(selected))
+        # 纯函数返回占位 a_li=0，替换为真实行索引
+        new_sel = (a_li, new_sel[1], a_li, new_sel[3])
 
         _reparse_atomic(line, new_raw)
         new_lines = list(ctx.document.lines)

@@ -4,21 +4,35 @@
 对外接口：SAMPLE_MD: str。
 """
 
-SAMPLE_MD: str = r"""# Markdown 编辑器
+SAMPLE_MD: str = r"""Markdown 编辑器
 
 基于 Flet 0.86.2 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。
-基于 Flet 0.86.2 声明式组件与 mistune 实时渲染，参考 Typora 的段级编辑体验。长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试
+长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试长段落测试
 
 ## 特性
 - 所见即所得
 
 # 测试
 ### 行内元素
+
+斜体：一级强调：*斜体*
+粗体：二级强调：**粗体**
+~~删除文本~~
+H~2~O
+x^2^
+==高亮==
+
+常规文本，**加粗**，*斜体*，**加粗*内部*斜体**，***加粗且斜体***,~~删除文本~~，==高亮==
+测试，**加粗**，*斜体*，***加粗且斜体***
+
 支持 `行内代码`、**加粗**、*斜体*、~~删除线~~、[链接](https://flet.dev) 与行内公式 $E=mc^2$。
 - **加粗**、*斜体*、`行内代码`、~~删除线~~、[链接](https://flet.dev)、$a=b+c$
 测试，**加粗**，*斜==体==*，***加粗且斜体***,~~删除文本~~ ==高亮==
 测试，**加粗**，*斜体*，***加粗且斜体***
 行内代码: `import os`
+
+- 英文效果
+This is a **bold** text and this is *italic*. Here's some `inline code`.
 
 - ==高亮==
 - 上标：$x^2$
@@ -45,6 +59,7 @@ $$
 
 
 #### 列表
+- 列表、分割线等`- + *`通用的地方建议统一使用`-`，因为它只需按一个键
 
 - 无序**列表1**
 - 无序*列表2*
@@ -56,10 +71,13 @@ $$
 2. 有序列表2
     1. 有序列表2-1
     2. 有序列表2-2
-- [ ] 复选框1
-- [ ] 复选框2
-- [x] 复选框3
-    - [x] 复选框*3-1*
+
+使用 `- [ ]` 和 `- [x]` 语法可以创建复选框，实现 todo-list 等功能。例如：
+
+- [ ] 任务列表/复选框1
+- [ ] 任务列表/复选框2
+- [x] 任务列表/复选框3
+    - [x] 任务列表*3-1*
 
 1. 第一步
 2. 第二步
@@ -79,23 +97,16 @@ $$
 > > 双层引用，**加粗**，**加粗**，*斜体*，***加粗且斜体***
 
 
-
-### 复选框
-- [x] 已完成事项
-- [ ] 待办事项 1
-- [ ] 待办事项 2
-- [ ] 复选框1
-- [ ] 复选框2
-    - [x] 复选框*2-1*
-
-#### 图片
+## 图片
 
 - 本地图
 ![大图](assets/images/big.png)
 
 ![百度](https://www.baidu.com/img/PCtm_d9c8750bed0b3c7d089fa7d55720d6cf.png)
 
-### 代码块
+## 代码块
+
+- python
 
 ```python
 import os
@@ -103,223 +114,23 @@ import os
 def greet(name: str) -> str:
     return f"hello, {name}"
 ```
+- xml
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<o>
+     <HelloWorld class="object">
+          <中文意思 type="string">你好世界</中文意思>
+          <出处 type="string">《The C Programming Language》的第一个演示程序</出处>
+          <字符长度 type="number">10</字符长度>
+          <相关语言 class="array">
+               <e type="string">Python</e>
+               <e type="string">C</e>
+               <e type="string">C++</e>
+               <e type="string">etc</e>
+          </相关语言>
+     </HelloWorld>
+</o>
 
-### 无语言标记的代码块
-```
-这是没有语言标记的代码块
-可以包含任意内容
-```
-
-#### 表格
-
-| 标题             |       标题       |             标题 |
-| :--------------- | :--------------: | ---------------: |
-| 居左测试文本     |   居中测试文本   |     居右测试文本 |
-| 居左测试文本 1   |  居中测试文本 2  |   居右测试文本 3 |
-| 居左测试文本 11  | 居中测试文本 22  |  居右测试文本 33 |
-| 居左测试文本 111 | 居中测试文本 222 |  居右测试文本 333 |
-
-
-
-| 快捷键    | 功能   |
-| ------ | ---- |
-| Ctrl+B | 粗体   |
-| Ctrl+I | 斜体   |
-| Ctrl+K | 链接   |
-| Ctrl+S | 手动保存 |
-| Ctrl+/ | 注释   |
-
-
-### 目录
-[toc]
-
-### 水平分割线
-
----
-
-点击任意位置开始编辑。
-
-## 英文
-This is a **bold** text and this is *italic*. Here's some `inline code`.
-
-
-
-
-# Markdown语法测试
-
-### 标题
-
-```markdown
-# 一级标题
-## 二级标题
-### 三级标题
-```
-
-### 字体
-
-*斜体* 
-
-**粗体** 
-
-~~删除文本~~
-
-H~2~O
-
-x^2^
-
-==高亮==
-
-```markdown
-斜体：一级强调：*斜体*
-粗体：二级强调：**粗体**
-~~删除文本~~
-H~2~O
-x^2^
-==高亮==
-```
-
-### 块结构
-
-#### 引用
-
-> 引用，块注释
->
-> > 双层引用
-
-```markdown
-> 引用，块注释
->> 双层引用
-```
-
-#### 代码
-
-`行内代码`
-
-```markdown
-`行内代码`
-
-
-代码块：指定语法高亮
-​```python
-print("Hello World!")
-​```
-
-或前置四个空格，
-```
-
-### 列表
-
-- 无序列表1
-- 无序列表2
-
-
-
-1. 有序列表
-2. 有序列表
-
-```markdown
--+*均可，但-最方便
-- 无序列表1
-- 无序列表2
-
-1. 有序列表
-2. 有序列表
-```
-
-### 复选框
-
-使用 `- [ ]` 和 `- [x]` 语法可以创建复选框，实现 todo-list 等功能。例如：
-
-- [x] 已完成事项
-- [ ] 待办事项1
-- [ ] 待办事项2
-
-```markdown
-- [x] 已完成事项
-- [ ] 待办事项1
-- [ ] 待办事项2
-```
-
-### 表格
-
-| 标题            |      标题       |            标题 |
-| :-------------- | :-------------: | --------------: |
-| 居左测试文本    |  居中测试文本   |    居右测试文本 |
-| 居左测试文本1 长文本段落，居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落 ，居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落 |  居中测试文本2  |   居右测试文本3 |
-| 居左测试文本11  | 居中测试文本22  |  居右测试文本33 |
-| 居左测试文本111 | 居中测试文本222 | 居右测试文本333 |
-
-
-
-### 链接
-
-[百度](http://www.baidu.com  "百度的链接" )
-
-```markdown
-[百度](http://www.baidu.com “相关说明，可为None”) 
-```
-
-### 图片
-
-![网络图像](https://www.baidu.com/img/PCtm_d9c8750bed0b3c7d089fa7d55720d6cf.png)
-
-![百度首页图](Markdown格式渲染效果测试.assets/PCtm_d9c8750bed0b3c7d089fa7d55720d6cf.png)
-
-```markdown
-![图片名](http://图片地址)
-![Alt text](/path/to/img.jpg "Optional title")
-```
-
-### 分割线
-
----
-
-```markdown
-以下三者均可，推荐 ---
-***
----
-+++ 
-```
-
-### 目录
-
-[toc]
-
-```markdown
-[toc]
-```
-
-### 脚注（footnote）
-
-hello[^1]
-
-[^1]: hi
-
-```markdown
-hello[^1]
-[^1]: hi
-```
-
-## 建议
-
-- 列表、分割线等`- + *`通用的地方建议统一使用`-`，因为它只需按一个键
-
-# 代码格式
-
--   ini
-
-```ini
-name: chen
-age: 18
-print: HelloWorld
-```
-
-- yaml
-
-```yaml
-name: chen
-age: 18
-print: HelloWorld
 ```
 
 - json
@@ -339,35 +150,90 @@ print: HelloWorld
     }
 }
 ```
+- yaml
 
-- xml
+```yaml
+name: chen
+age: 18
+print: HelloWorld
+```
+- ini
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<o>
-     <HelloWorld class="object">
-          <中文意思 type="string">你好世界</中文意思>
-          <出处 type="string">《The C Programming Language》的第一个演示程序</出处>
-          <字符长度 type="number">10</字符长度>
-          <相关语言 class="array">
-               <e type="string">Python</e>
-               <e type="string">C</e>
-               <e type="string">C++</e>
-               <e type="string">etc</e>
-          </相关语言>
-     </HelloWorld>
-</o>
-
+```ini
+name: chen
+age: 18
+print: HelloWorld
+```
+- 无语言标记的代码块
+```
+这是没有语言标记的代码块
+可以包含任意内容
 ```
 
--   python
+## 表格
 
-```python
-for i in range(100):
-    print('Hello World!')
+| 标题             |       标题       |             标题 |
+| :--------------- | :--------------: | ---------------: |
+| 居左测试文本     |   居中测试文本   |     居右测试文本 |
+| 居左测试文本 1   |  居中测试文本 2  |   居右测试文本 3 |
+| 居左测试文本 11  | 居中测试文本 22  |  居右测试文本 33 |
+| 居左测试文本 111 | 居中测试文本 222 |  居右测试文本 333 |
+
+
+| 标题            |      标题       |            标题 |
+| :-------------- | :-------------: | --------------: |
+| 居左测试文本    |  居中测试文本   |    居右测试文本 |
+| 居左测试文本1 长文本段落，居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落 ，居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落居左测试文本1 长文本段落 |  居中测试文本2  |   居右测试文本3 |
+| 居左测试文本11  | 居中测试文本22  |  居右测试文本33 |
+| 居左测试文本111 | 居中测试文本222 | 居右测试文本333 |
+
+
+
+
+| 快捷键    | 功能   |
+| ------ | ---- |
+| Ctrl+B | 粗体   |
+| Ctrl+I | 斜体   |
+| Ctrl+K | 链接   |
+| Ctrl+S | 手动保存 |
+| Ctrl+/ | 原文模式   |
+
+
+## 目录
+[toc]
+
+## 图片
+
+![网络图像](https://www.baidu.com/img/PCtm_d9c8750bed0b3c7d089fa7d55720d6cf.png)
+
+![百度首页图](Markdown格式渲染效果测试.assets/PCtm_d9c8750bed0b3c7d089fa7d55720d6cf.png)
+
+```markdown
+![图片名](http://图片地址)
+![Alt text](/path/to/img.jpg "Optional title")
+```
+
+## 分割线
+---
+
+```markdown
+以下三者均可，推荐 ---
+***
+---
++++ 
 ```
 
 
+## 脚注（footnote）
+
+hello[^1]
+
+[^1]: hi
+
+```markdown
+hello[^1]
+[^1]: hi
+```
 
 # LaTeX 公式
 > LaTeX：For数学公式，
@@ -389,7 +255,7 @@ $$
 $$
 
 
-### 运算
+## 运算
 - 加减：`\pm` $\pm$
 - 乘：`\times` $\times$
 - 除：`\div` $\div$
@@ -405,7 +271,7 @@ $$
 - 中空格：`a \; b` $a\;b$
 - 小空格：`\,` $a\,b$
 
-### 上下标
+## 上下标
 - 下标：`x_2` $x_2$
 - 上标：`x^2` $x^2$
 - 向量 Vectors： `\vec{a}` $\vec {a}$
@@ -418,7 +284,7 @@ $$
 - 根式：`\sqrt{x}`：$\sqrt{x}$
   - `\sqrt [3]{2}` $\sqrt[3] {2}$
 
-### 高等数学
+## 高等数学
 - 行列式： `\begin{vmatrix} 1&2&3\\4&5&6\end{vmatrix}` $\begin{vmatrix} 1&2&3\\4&5&6\end{vmatrix}$
 - 矩阵：`\begin{bmatrix} 1&2&3\\4&5&6 \end{bmatrix}` $\begin{bmatrix} 1&2&3\\4&5&6 \end{bmatrix}$
   - `\begin{matrix} 1&2&3\\4&5&6 \end{matrix}` $\begin{matrix} 1&2&3\\4&5&6 \end{matrix}$
@@ -452,7 +318,6 @@ $$
 ## 括号
 
 
-
 ## 集合
 
 `higher order roots:\sqrt[3]{2}` $\sqrt[3]{2}$
@@ -465,44 +330,32 @@ $1+\cfrac{2}{3+\cfrac{4}{5+\cfrac{6}{7+\dotsb}}}=\frac{1}{\sqrt{e}-1}$
 `prime:y''+y'=y` $y''+y'=y$
 
 
-
 ## 希腊字母
-
 - `\alpha` $\alpha$
-
 - `\beta` $\beta$
-
 - `\gamma` $\gamma$
   - `\Gamma` $\Gamma$
-
 - `\delta` $\delta$
   - `\Delta` $\Delta$
 - `\epsilon` $\epsilon$
   - `\varepsilon`  $\varepsilon$ ??
 - `\zeta` $\zeta$
-
 - `\eta` $\eta$
 - `\theta` $\theta$
   - `\Theta` $\Theta$
 - `\iota`$\iota$ 
 - `\kappa` $\kappa$
-
 - `\lambda`  $\lambda$
   - `\Lambda`  $\Lambda$
-
 - `\nu` $\nu$
-
 - `\mu` $\mu$
-
 - `\xi` ：$\xi$
 - `\pi`：$\pi$
   - `\Pi`：$\Pi$
 - `\rho` $\rho$
-
 - `\sigma` $\sigma$
   - `\Sigma`：$\Sigma$
 - `tau`：$\tau$
-
 - `\upsilon` ：$\upsilon$
   - `\Upsilon`：$\Upsilon$
 - `\phi` $\phi$
@@ -512,9 +365,5 @@ $1+\cfrac{2}{3+\cfrac{4}{5+\cfrac{6}{7+\dotsb}}}=\frac{1}{\sqrt{e}-1}$
   - `\Psi` $\Psi$
 - `\omega` $\omega$
   - `\Omega`$\Omega$ 
-
 `\varphi` $\varphi$
-
-
-
 """

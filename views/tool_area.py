@@ -38,7 +38,9 @@ def ToolArea(
     set_block: Callable[..., None],
     apply_inline_format: Callable[[str], None],
     on_toggle_raw: Callable[[], None],
-    on_export: Callable[[], None],
+    on_export_html: Callable[[], None],
+    on_export_docx: Callable[[], None],
+    on_export_pdf: Callable[[], None],
     on_toggle_focus_mode: Callable[[], None],
     on_toggle_theme: Callable[[], None],
 ):
@@ -46,6 +48,9 @@ def ToolArea(
 
     所有回调应为稳定引用（由 editor 用 _make_stable_cb 包装），
     以保证 @ft.memo 浅比较生效，避免输入时整条工具栏重渲染。
+
+    导出采用 PopupMenuButton 分格式入口（HTML / Word / PDF），
+    桌面端软件直觉：类似 Typora/Office 的「文件 → 导出 →」级联菜单。
     """
     c = get_colors(theme_mode)
 
@@ -59,6 +64,43 @@ def ToolArea(
         ft.PopupMenuItem(content="保存", on_click=lambda e: on_save()),
         ft.PopupMenuItem(),
         ft.PopupMenuItem(content="设置", on_click=lambda e: on_open_settings()),
+    ]
+
+    # 导出菜单：HTML / Word / PDF 三格式分入口
+    export_items = [
+        ft.PopupMenuItem(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.CODE, size=18, color=c.muted),
+                    ft.Text("HTML", size=14),
+                ],
+                spacing=Spacing.SM,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            on_click=lambda e: on_export_html(),
+        ),
+        ft.PopupMenuItem(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.DESCRIPTION, size=18, color=c.muted),
+                    ft.Text("Word", size=14),
+                ],
+                spacing=Spacing.SM,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            on_click=lambda e: on_export_docx(),
+        ),
+        ft.PopupMenuItem(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.PICTURE_AS_PDF, size=18, color=c.muted),
+                    ft.Text("PDF", size=14),
+                ],
+                spacing=Spacing.SM,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            on_click=lambda e: on_export_pdf(),
+        ),
     ]
 
     return ft.Container(
@@ -101,7 +143,11 @@ def ToolArea(
                     on_toggle_raw,
                     toggle_on=raw_mode,
                 ),
-                _btn(ft.Icons.FILE_DOWNLOAD, "导出 HTML", on_export),
+                ft.PopupMenuButton(
+                    icon=ft.Icons.FILE_DOWNLOAD,
+                    tooltip="导出",
+                    items=export_items,
+                ),
                 _btn(ft.Icons.CENTER_FOCUS_STRONG, "聚焦模式", on_toggle_focus_mode),
                 _btn(
                     ft.Icons.DARK_MODE if theme_mode == ft.ThemeMode.LIGHT else ft.Icons.LIGHT_MODE,

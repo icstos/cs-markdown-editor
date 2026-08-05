@@ -22,9 +22,10 @@ backup_tab_before_overwrite / check_external_change
 - 外部修改检测：保存前检查文件 mtime，若被外部程序修改弹出重载确认对话框。
 
 依赖项：
-- os / parser（解析/序列化/转 HTML）
+- os / parser（解析/序列化）
 - services.file_io（read_text / write_text_atomic）
 - services.backup（write_backup：覆盖前历史副本 + 写入失败兜底）
+- services.export（export_to_html / export_to_docx / export_to_pdf：pandoc 多格式导出）
 - app._tab_helpers（is_blank_untitled）
 - utils.file_helpers（file_name）
 - flet（FilePickerFileType）
@@ -38,6 +39,7 @@ import parser
 from app._tab_helpers import is_blank_untitled
 from config.settings import save_settings
 from services.backup import is_large_content, write_backup
+from services.export import export_to_docx, export_to_html, export_to_pdf
 from services.file_io import read_text, write_text, write_text_atomic
 from utils.file_helpers import file_name
 
@@ -446,32 +448,62 @@ def build_file_io_ops(ctx):
         set_status_message("已另存", "success")
         return True
 
-    async def export_doc():
-        """导出为 HTML 文件。对比标签不支持导出（两侧均可独立导出，请切到对应编辑标签）。"""
+    async def export_doc(fmt: str = "html"):
+        """导出为指定格式（html/docx/pdf）。
+
+        fmt: html / docx / pdf（默认 html，向后兼容）
+        对比标签不支持导出（两侧均可独立导出，请切到对应编辑标签）。
+        pandoc 不可用时，HTML 回退 mistune 渲染，docx/pdf 给出安装提示。
+        """
         if ctx.is_diff_tab_ref.current:
             ctx.show_snack("对比标签不支持导出，请切换到普通编辑标签")
             return
+        if fmt not in ("html", "docx", "pdf"):
+            fmt = "html"
+
         md_text = parser.serialize(ctx.document)
-        html = parser.to_html(md_text)
+        # 文档标题：取文件名（去 .md）或「文档」
+        base_name = file_name(ctx.file_path) if ctx.file_path else "文档.md"
+        title = base_name[:-3] if base_name.lower().endswith(".md") else base_name
+
+        ext_map = {"html": "html", "docx": "docx", "pdf": "pdf"}
+        ext = ext_map[fmt]
+        # 默认文件名：原文件名替换扩展名
+        default_name = base_name[:-3] + f".{ext}" if base_name.lower().endswith(".md") else f"{base_name}.{ext}"
+
         picker = ctx.picker_holder.current
         if picker is None:
             return
+        dialog_title_map = {"html": "导出 HTML", "docx": "导出 Word", "pdf": "导出 PDF"}
         path = await picker.save_file(
-            dialog_title="导出 HTML",
-            file_name=file_name(ctx.file_path).replace(".md", ".html"),
-            allowed_extensions=["html"],
+            dialog_title=dialog_title_map[fmt],
+            file_name=default_name,
+            allowed_extensions=[ext],
             file_type=ft.FilePickerFileType.CUSTOM,
         )
         if not path:
             return
-        if not path.lower().endswith(".html"):
-            path += ".html"
+        if not path.lower().endswith(f".{ext}"):
+            path += f".{ext}"
+
         try:
-            write_text(path, html)
+            if fmt == "html":
+                export_to_html(md_text, path, title=title)
+            elif fmt == "docx":
+                export_to_docx(md_text, path)
+            elif fmt == "pdf":
+                export_to_pdf(md_text, path, title=title)
+        except RuntimeError as e:
+            # pandoc 不可用 / 转换失败：错误消息含安装指引
+            ctx.show_snack(str(e))
+            return
         except Exception as e:
             ctx.show_snack(f"导出失败：{e}")
             return
-        ctx.show_snack("导出成功")
+
+        # 成功提示含格式与路径
+        size_kb = os.path.getsize(path) // 1024
+        ctx.show_snack(f"已导出 {ext.upper()}（{size_kb} KB）")
 
     return {
         "push_recent_file": push_recent_file,

@@ -18,9 +18,10 @@
   "sidebar_panel": "files",
   "sidebar_width": 256,
   "recent_files": [
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md"
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md",
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md"
   ],
-  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-193\\test_open_folder_atomic_merge_0\\workspace",
+  "workspace_folder": "C:\\Users\\aigcs\\Desktop\\测试文档",
   "search_folder": false,
   "search_case_sensitive": false,
   "search_whole_word": false,
@@ -65,7 +66,9 @@
       "focus_search": "ctrl+f",
       "toggle_replace_bar": "ctrl+h",
       "replace_current": "alt+enter",
-      "replace_all": "ctrl+alt+enter"
+      "replace_all": "ctrl+alt+enter",
+      "insert_date": "ctrl+;",
+      "insert_datetime": "ctrl+shift+;"
     },
     "edit": {
       "save": "ctrl+s",
@@ -96,7 +99,9 @@
       "focus_search": "ctrl+f",
       "toggle_replace_bar": "ctrl+h",
       "replace_current": "alt+enter",
-      "replace_all": "ctrl+alt+enter"
+      "replace_all": "ctrl+alt+enter",
+      "insert_date": "ctrl+;",
+      "insert_datetime": "ctrl+shift+;"
     }
   }
 }

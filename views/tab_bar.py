@@ -1,19 +1,11 @@
 """顶部多文档标签栏 + 关闭确认弹层。
 
-- TabBar：横向标签列表，每标签显示文件名，未保存修改前置 `*`（警告色）；
-  激活态有底部 primary 强调条；非激活悬停时高亮。尾部固定「+」新建按钮。
-  每个标签包裹 ft.ContextMenu，右键提供完整文件操作菜单：
-  打开 / 选择以进行比较 / 与已选项目进行比较 / 新建文件 / 新建文件夹 /
-  复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除 /
-  关闭 / 关闭其他 / 关闭全部（有 file_path 的标签才显示文件操作项）。
-- ConfirmCloseDialog：关闭脏标签时的半透明遮罩确认弹层（保存并关闭 / 不保存 / 取消），
-  样式与 views/settings_dialog.py 的 overlay 风格保持一致。
-
-设计要点：
-- TabBar 内部用单一 hover_index state 管理悬停高亮，避免每个标签独立 state 带来的
-  列表协调复杂度；state 变化只重渲染 TabBar 自身，不波及 App。
-- 关闭按钮 on_click 调 e.stop_propagation() 阻止冒泡到标签 Container 的 on_click，
-  防止「点关闭误触发选中」。
+浏览器式标签栏设计（Chrome / Edge 风格）：
+- 标签顶部圆角，激活态背景与编辑区一致（c.bg），视觉上「连接」到下方内容区
+- 关闭按钮仅激活/悬停时显示（opacity 动画过渡，空间恒定无布局抖动）
+- 紧凑高度，文件名省略号截断
+- 每个标签包裹 ft.ContextMenu，右键提供完整文件操作菜单
+- ConfirmCloseDialog：关闭脏标签时的确认弹层
 """
 
 import os
@@ -24,9 +16,10 @@ import flet as ft
 from styles import FONT_MAIN, Elevation, Radius, Spacing, card_shadow, get_colors, only_border
 
 _DIRTY_COLOR = "#FF9F0A"  # 未保存修改星号色（亮暗通用警示橙）
-_TAB_WIDTH = 200          # 标签固定宽度（超出文件名用省略号截断）
-_TAB_WIDTH_DIFF = 280     # 对比标签宽度（需容纳「左 ⟷ 右」双文件名）
+_TAB_WIDTH = 180          # 标签固定宽度（紧凑，超出文件名用省略号截断）
+_TAB_WIDTH_DIFF = 260     # 对比标签宽度（需容纳「左 ⟷ 右」双文件名）
 _TAB_ICON = 12            # 标签内图标/字号（紧凑）
+_TAB_RADIUS = Radius.SM   # 标签顶部圆角半径
 
 
 def _file_name(path: str | None) -> str:
@@ -93,18 +86,19 @@ def TabBar(
         is_active = i == active_index
         is_hover = i == hover_index
 
-        # 背景：激活 > 悬停 > 透明
+        # 浏览器式背景：激活态用 c.bg（与编辑区一致，视觉「连接」到内容区）
+        # 悬停态用 c.hover（圆角高亮），其余透明
         if is_active:
-            bgcolor = c.surface
+            bgcolor = c.bg
         elif is_hover:
             bgcolor = c.hover
         else:
             bgcolor = ft.Colors.with_opacity(0.0, c.text)
-        # 底部强调条：激活=primary 2px，非激活=透明 2px（保持高度一致，避免布局抖动）
-        bottom_border = ft.BorderSide(2, c.link if is_active else ft.Colors.TRANSPARENT)
 
         # 关闭按钮颜色：激活或悬停时提亮
         close_color = c.text if (is_active or is_hover) else c.muted
+        # 关闭按钮可见性：仅激活/悬停时显示（opacity 过渡，空间恒定无布局抖动）
+        close_opacity = 1.0 if (is_active or is_hover) else 0.0
 
         def _on_tab_click(e, idx=i):
             on_select(idx)
@@ -272,17 +266,25 @@ def TabBar(
             )
         )
         row_controls.append(
-            _btn_icon(
-                ft.Icons.CLOSE,
-                "关闭",
-                _on_close_click,
-                close_color,
+            ft.Container(
+                content=_btn_icon(
+                    ft.Icons.CLOSE,
+                    "关闭",
+                    _on_close_click,
+                    close_color,
+                ),
+                opacity=close_opacity,
+                animate_opacity=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
             )
         )
 
+        # 浏览器式标签：顶部圆角，无底部强调条（用背景色「连接」到编辑区）
         tab_content = ft.Container(
             bgcolor=bgcolor,
-            border=only_border(bottom=bottom_border),
+            border_radius=ft.BorderRadius(
+                top_left=_TAB_RADIUS, top_right=_TAB_RADIUS,
+                bottom_left=0, bottom_right=0,
+            ),
             on_click=_on_tab_click,
             on_hover=_on_tab_hover,
             width=tab_width,
@@ -305,10 +307,9 @@ def TabBar(
             )
         )
 
-    # 尾部「+」新建按钮：固定在滚动区外
+    # 尾部「+」新建按钮：固定在滚动区外，与标签栏底色一致
     new_btn = ft.Container(
         bgcolor=c.toolbar_bg,
-        border=only_border(bottom=ft.BorderSide(2, ft.Colors.TRANSPARENT)),
         padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
         content=_btn_icon(
             ft.Icons.ADD,

@@ -453,12 +453,11 @@ def build_backup_controller(ctx):
         """即时触发自动保存（窗口失焦 / 最小化时调用）。
 
         仅在 auto_save_on_blur=True 时实际执行。扫描所有脏标签写回原文件。
+        独立于 auto_save 开关：即使关闭定时自动保存，窗口失焦时仍可保存。
         """
         if not ctx.settings.get("auto_save_on_blur", True):
             return
-        if not ctx.settings.get("auto_save", False):
-            return
-        autosave_all_dirty(_make_autosave_ctx())
+        autosave_all_dirty(_make_autosave_ctx(), force=True)
 
     def trigger_backup_now():
         """即时触发全量备份（退出 / 关闭前 / 崩溃钩子调用）。

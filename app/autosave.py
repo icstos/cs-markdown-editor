@@ -30,12 +30,18 @@ import flet as ft
 from app._tab_helpers import Tab, tab_is_dirty, tab_paths
 
 
-def autosave_enabled_for(settings: dict[str, Any], tab: Tab | None) -> bool:
+def autosave_enabled_for(
+    settings: dict[str, Any], tab: Tab | None, *, force: bool = False
+) -> bool:
     """自动保存是否对该标签生效：需开启 auto_save 且标签有可写路径。
 
     对比标签任一侧有路径即生效；普通标签需有 file_path。
+    force=True 时跳过 auto_save 开关检查（用于窗口失焦即时保存，
+    该功能独立于定时自动保存开关）。
     """
-    if not settings.get("auto_save", False) or not tab:
+    if not force and not settings.get("auto_save", False):
+        return False
+    if not tab:
         return False
     return bool(tab_paths(tab))
 
@@ -58,23 +64,28 @@ class AutosaveContext:
     set_status_fn: Callable[[str, str], None] | None = None
 
 
-def autosave_all_dirty(ctx: AutosaveContext) -> int:
+def autosave_all_dirty(ctx: AutosaveContext, *, force: bool = False) -> int:
     """扫描 tabs_ref，对所有脏且可自动保存的标签异步触发 save_doc。
 
     返回本次触发的标签数量（仅调度，不等待完成）。调度通过 page.run_task
     异步执行，避免阻塞调用方。save_doc 内部已实现原子写入 + 覆盖前备份 +
     写入失败兜底，此处仅负责筛选与调度。
+
+    force=True 时跳过 auto_save 开关检查，并向 save_doc 透传 force=True
+    跳过外部修改检测（用于窗口失焦即时保存：该场景需静默保存，不应弹
+    确认对话框阻塞流程；外部修改检测留待用户主动保存时触发）。
     """
     page = ctx.page_ref.current
     if page is None:
         return 0
-    if not ctx.settings.get("auto_save", False):
+    if not force and not ctx.settings.get("auto_save", False):
         return 0
     ts = ctx.tabs_ref.current or []
     triggered = 0
     for i, tab in enumerate(ts):
-        if tab_is_dirty(tab) and autosave_enabled_for(ctx.settings, tab):
-            page.run_task(ctx.save_doc_fn, i)
+        if tab_is_dirty(tab) and autosave_enabled_for(ctx.settings, tab, force=force):
+            # force=True 时透传给 save_doc，跳过外部修改检测的对话框
+            page.run_task(ctx.save_doc_fn, i, force)
             triggered += 1
     if triggered and ctx.set_status_fn is not None:
         ctx.set_status_fn("已自动保存", "success")

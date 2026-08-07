@@ -601,35 +601,42 @@ def App():
     ft.use_effect(ctx.start_backup_loop, [])
 
     # 窗口事件钩子：失焦 / 最小化 → 即时触发自动保存；关闭 / 断连 → 写退出哨兵。
-    # on_window_event 在桌面端捕获窗口状态变化；on_disconnect 捕获 websocket 断连
-    # （含异常崩溃场景）。两者共同确保崩溃前最后一次状态被备份。
+    # page.window.on_event 在桌面端捕获窗口状态变化（Flet 0.86+ API）；
+    # on_disconnect 捕获 websocket 断连（含异常崩溃场景）。
+    # 两者共同确保崩溃前最后一次状态被备份。
     def _bind_window_hooks():
         page = page_ref.current
         if page is None:
             return lambda: None
 
         def _on_window_event(e):
-            # e.data 为事件类型字符串："blur" / "close" / "minimize" / "focus" 等
-            data = str(getattr(e, "data", "")).lower()
-            if data in ("blur", "minimize", "hide"):
+            # Flet 0.86+：e.type 为 WindowEventType 枚举（.value 小写字符串）
+            # BLUR/FOCUS/MINIMIZE/HIDE/CLOSE 等，统一取 .value 小写比较
+            etype = getattr(e, "type", None)
+            etype_val = etype.value if etype is not None else ""
+            etype_str = str(etype_val).lower() if etype_val else str(etype).lower()
+            if etype_str in ("blur", "minimize", "hide"):
                 ctx.trigger_autosave_now()
-            elif data == "close":
+            elif etype_str == "close":
                 ctx.write_exit_sentinel()
 
         def _on_disconnect(_e):
             # websocket 断连（含崩溃）→ 尽力写入退出哨兵
             ctx.write_exit_sentinel()
 
+        # Flet 0.86+：page.window.on_event 替代旧的 page.on_window_event
+        window = getattr(page, "window", None)
         try:
-            page.on_window_event = _on_window_event
+            if window is not None:
+                window.on_event = _on_window_event
             page.on_disconnect = _on_disconnect
         except Exception:
             pass
 
         def _cleanup():
             try:
-                if page.on_window_event is _on_window_event:
-                    page.on_window_event = None
+                if window is not None and window.on_event is _on_window_event:
+                    window.on_event = None
                 if page.on_disconnect is _on_disconnect:
                     page.on_disconnect = None
             except Exception:

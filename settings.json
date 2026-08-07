@@ -18,10 +18,9 @@
   "sidebar_panel": "files",
   "sidebar_width": 256,
   "recent_files": [
-    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\0-TODO-待办事项.md",
-    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-InBox.md"
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md"
   ],
-  "workspace_folder": "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs",
+  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-193\\test_open_folder_atomic_merge_0\\workspace",
   "search_folder": false,
   "search_case_sensitive": false,
   "search_whole_word": false,

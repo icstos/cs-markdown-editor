@@ -20,7 +20,7 @@ from app import App
 
 async def main(page: ft.Page):
     page.title = "Markdown 编辑器"
-    page.fonts = {"Alibaba": "assets/fonts/AlibabaPuHuiTi-3-55-Regular.otf"}
+    page.fonts = {"Alibaba": "fonts/AlibabaPuHuiTi-3-55-Regular.otf"}
     # 亮/暗两套主题，由 App 的 theme_mode state 切换
     # 背景色由 App.apply_theme 通过 page.bgcolor 单独设置，不放在 ColorScheme
     # ColorScheme.surface 与 styles._LIGHT/_DARK.bg 对齐，保证 Flet 原生控件

@@ -48,6 +48,8 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "toggle_replace_bar": "ctrl+h",
         "replace_current": "alt+enter",
         "replace_all": "ctrl+alt+enter",
+        "insert_date": "ctrl+;",
+        "insert_datetime": "ctrl+shift+;",
     },
     "edit": {
         "save": "ctrl+s",
@@ -79,6 +81,8 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "toggle_replace_bar": "ctrl+h",
         "replace_current": "alt+enter",
         "replace_all": "ctrl+alt+enter",
+        "insert_date": "ctrl+;",
+        "insert_datetime": "ctrl+shift+;",
     },
 }
 
@@ -175,6 +179,12 @@ ACTION_REGISTRY: list[ActionDef] = [
     ActionDef("replace_all", "全部替换", "both", "编辑",
               "替换当前文档/工作区内所有匹配项。",
               {"browse": "ctrl+alt+enter", "edit": "ctrl+alt+enter"}),
+    ActionDef("insert_date", "插入日期", "both", "插入",
+              "在光标处插入当前日期（YYYY-MM-DD），浏览态在当前行末尾插入。",
+              {"browse": "ctrl+;", "edit": "ctrl+;"}),
+    ActionDef("insert_datetime", "插入日期时间", "both", "插入",
+              "在光标处插入当前日期时间（YYYY-MM-DD HH:mm:ss），浏览态在当前行末尾插入。",
+              {"browse": "ctrl+shift+;", "edit": "ctrl+shift+;"}),
 ]
 
 _LAYERS = ("browse", "edit")
@@ -198,7 +208,9 @@ _INLINE_FORMAT_ACTIONS: tuple[str, ...] = (
 #   而 DEFAULT_SHORTCUTS 中 toggle_sidebar(edit) 用 "escape"，需归一化才能匹配。
 # - comma ↔ ,：open_settings 默认 "ctrl+comma"，_combo 把 "," 保持为 ","，
 #   归一化后 "ctrl+comma" 与 "ctrl+," 等价。
-_KEY_ALIASES: dict[str, str] = {"escape": "esc", "comma": ","}
+# - : ↔ ;：Shift+; 在 US 键盘产生 ":"，Ctrl+Shift+; 的 _combo 输出为 "ctrl+shift+:"，
+#   归一化后与 "ctrl+shift+;" 等价，保证 insert_datetime 快捷键匹配。
+_KEY_ALIASES: dict[str, str] = {"escape": "esc", "comma": ",", ":": ";"}
 
 
 def normalize(combo: str) -> str:

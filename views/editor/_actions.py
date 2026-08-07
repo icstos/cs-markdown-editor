@@ -75,6 +75,7 @@ def build_actions(ctx) -> EditorActions | None:
         toggle_task_at_cursor=ctx.toggle_task_at_cursor,
         format_task=ctx.format_task,
         format_table=ctx.format_table,
+        insert_text=ctx.insert_text,
         # ---- 代码块 ----
         code_focus_ref=ctx.code_focus_ref,
         handle_code_backspace=ctx.handle_code_backspace,

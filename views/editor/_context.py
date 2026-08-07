@@ -249,6 +249,7 @@ class EditorContext:
     format_task: Callable[[], None] = field(default=lambda: None)
     format_table: Callable[[], None] = field(default=lambda: None)
     change_lang: Callable[[int, str], None] = field(default=lambda *a: None)
+    insert_text: Callable[[str], None] = field(default=lambda *a: None)
 
     # inline_format 组
     apply_inline_format: Callable[[str], None] = field(default=lambda *a: None)

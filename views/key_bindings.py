@@ -18,6 +18,7 @@
 
 import asyncio
 from collections.abc import Callable
+from datetime import datetime
 
 import flet as ft
 
@@ -51,6 +52,7 @@ def _combo(e) -> str:
         "comma": ",",
         "escape": "esc",
         "enter": "enter",
+        ":": ";",  # Shift+; 产生 ":"（US 键盘），归一化为 ";" 保证 Ctrl+Shift+; 匹配
     }
     key = mapping.get(key, key)
     return "+".join(parts + [key])
@@ -671,6 +673,17 @@ class KeyDispatcher:
         if matches(combo, shortcuts.get("toggle_task", "alt+c")):
             if actions is not None and not self._native_field_focused(actions):
                 actions.toggle_task_at_cursor()
+            return
+        # Ctrl+;：插入当前日期（YYYY-MM-DD），浏览/编辑两态均生效。
+        # 代码块/表格聚焦时跳过（交由原生 TextField）。
+        if matches(combo, shortcuts.get("insert_date", "ctrl+;")):
+            if actions is not None and not self._native_field_focused(actions):
+                actions.insert_text(datetime.now().strftime("%Y-%m-%d"))
+            return
+        # Ctrl+Shift+;：插入当前日期时间（YYYY-MM-DD HH:mm:ss），浏览/编辑两态均生效。
+        if matches(combo, shortcuts.get("insert_datetime", "ctrl+shift+;")):
+            if actions is not None and not self._native_field_focused(actions):
+                actions.insert_text(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             return
         # 行内格式快捷键：编辑态包裹选区或插入空语法。
         # 代码块/表格聚焦时跳过（交由原生 TextField）。浏览态无 active 时静默返回。

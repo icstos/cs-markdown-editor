@@ -136,6 +136,73 @@ def build_clipboard(ctx):
         except Exception:
             ctx.selection_text_ref.current = ""
 
+    def insert_text(text: str):
+        """在光标处插入模板文本（如日期、时间）。
+
+        编辑态：在光标位置插入文本。
+        浏览态：在当前行末尾插入并进入编辑态。
+        outward 选区激活时：替换选区内容后进入编辑态。
+        围栏块（代码/表格/公式/HR）不处理。
+        """
+        if not text:
+            return
+        # outward 选区：替换选区内容
+        sel = ctx.outward_sel_ref.current
+        if sel is not None and not ctx.raw_mode:
+            a_li, a_off, b_li, b_off = sel
+            if (a_li, a_off) > (b_li, b_off):
+                a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+            if a_li != b_li:
+                return
+            if not (0 <= a_li < len(ctx.document.lines)):
+                return
+            line = ctx.document.lines[a_li]
+            if _is_fence(line):
+                return
+            raw = _line_raw(line)
+            a_off = max(0, min(a_off, len(raw)))
+            b_off = max(a_off, min(b_off, len(raw)))
+            ctx.push_history()
+            ctx.undo_push_pending.current = True
+            new_raw = raw[:a_off] + text + raw[b_off:]
+            _reparse_atomic(line, new_raw)
+            ctx.mark_dirty()
+            ctx.set_outward_sel(None)
+            ctx.set_cursor(a_li, a_off + len(text))
+            return
+        # 编辑态：在光标处插入
+        li = ctx.cursor_li
+        if li is not None:
+            if not (0 <= li < len(ctx.document.lines)):
+                return
+            line = ctx.document.lines[li]
+            if _is_fence(line):
+                return
+            raw = _line_raw(line)
+            off = ctx.cursor_base(len(raw))
+            ctx.push_history()
+            ctx.undo_push_pending.current = True
+            new_raw = raw[:off] + text + raw[off:]
+            _reparse_atomic(line, new_raw)
+            ctx.mark_dirty()
+            ctx.set_cursor(li, off + len(text))
+            return
+        # 浏览态：在当前行末尾插入并进入编辑态
+        li = ctx.cursor_line
+        if li is None or not (0 <= li < len(ctx.document.lines)):
+            return
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            return
+        raw = _line_raw(line)
+        off = len(raw)
+        ctx.push_history()
+        ctx.undo_push_pending.current = True
+        new_raw = raw[:off] + text + raw[off:]
+        _reparse_atomic(line, new_raw)
+        ctx.mark_dirty()
+        ctx.set_cursor(li, off + len(text))
+
     return {
         "compute_markdown_from_text": compute_markdown_from_text,
         "handle_delete_selection": handle_delete_selection,
@@ -143,4 +210,5 @@ def build_clipboard(ctx):
         "cut_current_line": cut_current_line,
         "apply_inline_format_to_selection": apply_inline_format_to_selection,
         "on_selection_area_change": on_selection_area_change,
+        "insert_text": insert_text,
     }

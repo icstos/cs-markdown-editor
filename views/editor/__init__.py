@@ -437,6 +437,7 @@ def MarkdownEditor(
     ctx.format_task = blocks_cbs["format_task"]
     ctx.format_table = blocks_cbs["format_table"]
     ctx.change_lang = blocks_cbs["change_lang"]
+    ctx.insert_text = clipboard_cbs["insert_text"]
     # inline_format 组
     ctx.apply_inline_format = inline_fmt_cbs["apply_inline_format"]
     ctx.insert_inline_at = inline_fmt_cbs["insert_inline_at"]

@@ -93,6 +93,7 @@ class EditorActions:
     toggle_task_at_cursor: Callable[[], None]  # Alt+C：切换当前任务列表项勾选状态
     format_task: Callable[[], None]  # Ctrl+Shift+T：当前行转为任务列表项（- [ ]）
     format_table: Callable[[], None]  # Ctrl+Alt+T：当前行转为 2×2 表格
+    insert_text: Callable[[str], None]  # Ctrl+; / Ctrl+Shift+;：在光标处插入模板文本
 
     # ---- 代码块（始终可编辑 CodeEditor 独立岛屿）----
     code_focus_ref: ft.Ref

@@ -31,7 +31,7 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
 ignore = [
-    "E501",   # 行长由格式化工具管
+    "E501", # 行长由格式化工具管
     # 中文项目：RUF001/002/003 对全角标点（，。：（）等）大量误报，关闭
     "RUF001",
     "RUF002",
@@ -41,6 +41,42 @@ ignore = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-filterwarnings = [
-    "error::DeprecationWarning:flet.*",
+filterwarnings = ["error::DeprecationWarning:flet.*"]
+
+
+[tool.flet]
+product = "CS-Markdown-Editor"
+company = "ShawnChen"
+org = "com.mycompany"
+copyright = "Copyright © 2026 ShawnChen. All rights reserved."
+build_number = 1
+
+
+[tool.flet.app]
+exclude = [
+    "venv",
+    ".git",
+    ".flet",
+    ".pytest_cache",
+    ".trae",
+    ".venv",
+    "dist",
+    "__pycache__",
+    "*.pyc",
+    "tests",
+    "docs",
+    "*.md",
+    "*.log",
+]
+
+[tool.flet.compile]
+app = true
+packages = true
+cleanup = true
+
+[tool.flet.flutter]
+build_args = [
+    "--obfuscate",
+    "--split-debug-info=./debug-symbols",
+    "--tree-shake-icons",
 ]

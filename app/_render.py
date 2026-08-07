@@ -48,6 +48,7 @@ from views.diff_markers import DiffHeader
 from views.diff_view import compute_diff_for_editors
 from views.editor import MarkdownEditor
 from views.file_dialogs import FileActionDialog
+from views.global_menu import build_global_menu
 from views.recovery_dialog import RecoveryDialog
 from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
@@ -152,9 +153,11 @@ def build_render(ctx) -> ft.Control:
         return ctx.schedule_status_count_update if is_active else None
 
     # 编辑器公共 props：左右两视口共享（仅 nav_ref / key / show_toolbar / on_editor_focus 不同）
+    # MarkText 风格重构：show_toolbar=False 隐藏原有顶部工具栏，功能已收纳进全局菜单栏
     _editor_common = {
         "document": ctx.document,
         "file_path": ctx.file_path,
+        "show_toolbar": False,
         "on_new": ctx.new_doc,
         "on_open": lambda: ctx.page_ref.current.run_task(ctx.open_doc),
         "on_open_folder": lambda: ctx.page_ref.current.run_task(ctx.open_folder),
@@ -232,8 +235,9 @@ def build_render(ctx) -> ft.Control:
     )
 
     # ============ 顶部多文档标签栏 ============
-    # 直接传完整 tabs，TabBar 用 .get() 读取所需展示字段
-    # （普通标签读 file_path/dirty，对比标签读 type/left_path/right_path/left_dirty/right_dirty）
+    # MarkText 风格：标签栏最左侧嵌入全局菜单栏（文件/编辑/段落/格式/视图/帮助），
+    # 替代原有顶部工具栏区域。所有功能通过 ctx 装配槽 + get_active_nav 路由。
+    global_menu = build_global_menu(ctx, ctx.theme_mode)
     tab_bar = TabBar(
         tabs=ctx.tabs,
         active_index=ctx.active_index,
@@ -243,6 +247,7 @@ def build_render(ctx) -> ft.Control:
         on_new=ctx.new_doc,
         on_context_action=ctx.on_tab_context_action,
         compare_source=ctx.compare_source,
+        leading=global_menu,
     )
 
     main_col = ft.Column(
@@ -363,6 +368,7 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
 
     _diff_common = {
         "on_new": ctx.new_doc,
+        "show_toolbar": False,
         "on_open": lambda: ctx.page_ref.current.run_task(ctx.open_doc),
         "on_open_folder": lambda: ctx.page_ref.current.run_task(ctx.open_folder),
         "on_export_html": lambda: ctx.page_ref.current.run_task(ctx.export_doc, "html"),

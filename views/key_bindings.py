@@ -655,18 +655,32 @@ class KeyDispatcher:
             if actions is not None and not self._native_field_focused(actions):
                 actions.set_block(BlockType.MATH)
             return
-        # Ctrl+Shift+T：当前行转为任务列表项（- [ ] content），浏览/编辑两态均生效，
+        # Ctrl+Shift+L：当前行转为任务列表项（- [ ] content），浏览/编辑两态均生效，
         # 与 Ctrl+0~6 切换标题行为一致（浏览态用 cursor_line 兜底目标行）。
         # 代码块/表格聚焦时跳过（避免在原生控件内误触发行级转换）。
-        if matches(combo, shortcuts.get("format_task", "ctrl+shift+t")):
+        if matches(combo, shortcuts.get("format_task", "ctrl+shift+l")):
             if actions is not None and not self._native_field_focused(actions):
                 actions.format_task()
             return
-        # Ctrl+Alt+T：当前行转为 2×2 表格（浏览/编辑两态均生效），与 format_math_block
+        # Ctrl+T：当前行转为 2×2 表格（浏览/编辑两态均生效），与 format_math_block
         # 行为一致。代码块/表格聚焦时跳过（避免在原生控件内误触发行级转换）。
-        if matches(combo, shortcuts.get("format_table", "ctrl+alt+t")):
+        if matches(combo, shortcuts.get("format_table", "ctrl+t")):
             if actions is not None and not self._native_field_focused(actions):
                 actions.format_table()
+            return
+        # Ctrl+L：当前行转为无序列表（浏览/编辑两态均生效）。
+        if matches(combo, shortcuts.get("format_list", "ctrl+l")):
+            if actions is not None and not self._native_field_focused(actions):
+                actions.set_block(BlockType.LIST_UO)
+            return
+        # Ctrl+Shift+U：当前行转为水平分割线（浏览/编辑两态均生效）。
+        if matches(combo, shortcuts.get("format_hr", "ctrl+shift+u")):
+            if actions is not None and not self._native_field_focused(actions):
+                actions.set_block(BlockType.HR)
+            return
+        # Ctrl+Shift+F：全局查找（切到侧边栏搜索面板）。
+        if matches(combo, shortcuts.get("global_find", "ctrl+shift+f")):
+            cb["focus_search"]()
             return
         # Alt+C：切换当前任务列表项勾选状态，浏览/编辑两态均生效。
         # 非任务行静默忽略（toggle_task_at_cursor 内部守卫），无副作用。
@@ -702,7 +716,7 @@ class KeyDispatcher:
                 cb["new"]()
             elif matches(combo, shortcuts.get("toggle_sidebar", "ctrl+b")):
                 cb["toggle_sidebar"]()
-            elif matches(combo, shortcuts.get("toggle_theme", "ctrl+shift+l")):
+            elif matches(combo, shortcuts.get("toggle_theme", "ctrl+shift+t")):
                 cb["toggle_theme"]()
             elif matches(combo, shortcuts.get("toggle_raw", "ctrl+/")):
                 if actions is not None:

@@ -139,7 +139,7 @@ def test_inline_format_combos_default():
     assert combos["ctrl+`"] == "code"
     assert combos["ctrl+k"] == "link"
     assert combos["ctrl+m"] == "inline_math"
-    assert combos["alt+shift+5"] == "strike"
+    assert combos["ctrl+d"] == "strike"
 
 
 def test_inline_format_combos_respects_user_custom():

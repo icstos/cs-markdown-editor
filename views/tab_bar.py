@@ -37,6 +37,7 @@ def TabBar(
     on_new: Callable[[], None],
     on_context_action: Callable[[str, int], None],
     compare_source: str | None = None,
+    leading: ft.Control | None = None,
 ):
     """顶部标签栏。
 
@@ -319,21 +320,27 @@ def TabBar(
         ),
     )
 
+    # 标签栏内容：leading 菜单 + 标签列表 + 新建按钮
+    row_controls = []
+    if leading is not None:
+        row_controls.append(leading)
+    row_controls.append(
+        ft.Row(
+            controls=tab_controls,
+            spacing=0,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            vertical_alignment=ft.CrossAxisAlignment.END,
+        )
+    )
+    row_controls.append(new_btn)
+
     return ft.Container(
         bgcolor=c.toolbar_bg,
         border=only_border(bottom=ft.BorderSide(1, c.border)),
         padding=ft.Padding.only(left=Spacing.SM, right=Spacing.SM, top=0, bottom=0),
         content=ft.Row(
-            controls=[
-                ft.Row(
-                    controls=tab_controls,
-                    spacing=0,
-                    scroll=ft.ScrollMode.AUTO,
-                    expand=True,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-                new_btn,
-            ],
+            controls=row_controls,
             spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),

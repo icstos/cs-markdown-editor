@@ -22,6 +22,7 @@ from utils.table_helpers import is_table_separator
 
 from parser._engine import (
     _RE_CODE_FENCE,
+    _RE_FRONTMATTER_FENCE,
     _RE_HEADING,
     _RE_HR,
     _RE_MATH_BLOCK,
@@ -192,6 +193,26 @@ def parse_markdown(text: str) -> Document:
     i, n = 0, len(lines_src)
     while i < n:
         raw = lines_src[i]
+        # ---- YAML 前置元数据（仅文档首行，---...--- 围栏）----
+        # Obsidian/Pandoc/Jekyll 风格：文档以 --- 开头，配对 --- 闭合。
+        # 整块合并为一个 FRONTMATTER 编辑单元（与代码块同等处理），
+        # 渲染为 Obsidian 风格的属性卡片。无配对关闭围栏时降级为普通行（HR/段落）。
+        if i == 0 and _RE_FRONTMATTER_FENCE.match(raw):
+            inner_lines: list[str] = []
+            j = i + 1
+            while j < n and not _RE_FRONTMATTER_FENCE.match(lines_src[j]):
+                inner_lines.append(lines_src[j])
+                j += 1
+            if j < n:
+                # 找到配对关闭围栏，合并为 frontmatter 块
+                content = "\n".join(inner_lines)
+                full = f"---\n" + (content + "\n" if inner_lines else "") + "---"
+                line = Line(block_type=BlockType.FRONTMATTER, raw=full)
+                line.segments = [Segment(SegType.CODE, content, content)]
+                doc.lines.append(line)
+                i = j + 1
+                continue
+            # 无配对关闭围栏：降级为普通行（不作为 frontmatter 处理）
         m = _RE_CODE_FENCE.match(raw)
         if m:
             _, fence, lang = m.group(1), m.group(2), m.group(3)

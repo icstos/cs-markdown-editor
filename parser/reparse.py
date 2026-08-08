@@ -24,7 +24,7 @@ import copy
 
 from models import BlockType, Line, SegType, Segment
 
-from parser._engine import _RE_CODE_FENCE, _RE_HR, _RE_MATH_BLOCK
+from parser._engine import _RE_CODE_FENCE, _RE_FRONTMATTER_FENCE, _RE_HR, _RE_MATH_BLOCK
 from parser.block import _build_line
 
 
@@ -49,6 +49,22 @@ def _split_code_block(raw: str) -> tuple[str, str]:
     return lang, body
 
 
+def _split_frontmatter(raw: str) -> str:
+    """从 frontmatter raw 中提取 body（---\\n...\\n--- → ...）。
+
+    raw 形如 ---\\nkey: value\\n---。提取首尾围栏之间的内容。
+    无配对围栏时返回原始内容（降级处理）。
+    """
+    lines = raw.split("\n")
+    if len(lines) >= 2 and _RE_FRONTMATTER_FENCE.match(lines[0]):
+        # 去掉首行 --- 和末行 ---
+        inner = lines[1:]
+        if inner and _RE_FRONTMATTER_FENCE.match(inner[-1]):
+            inner = inner[:-1]
+        return "\n".join(inner)
+    return raw
+
+
 def reparse_line(line: Line, new_raw: str | None = None) -> None:
     """用新的整行源码重新解析该行（就地更新 block_type/level/segments）。
 
@@ -61,6 +77,11 @@ def reparse_line(line: Line, new_raw: str | None = None) -> None:
     if line.block_type == BlockType.CODE:
         lang, body = _split_code_block(raw)
         line.lang = lang
+        line.segments = [Segment(SegType.CODE, body, body)]
+        return
+
+    if line.block_type == BlockType.FRONTMATTER:
+        body = _split_frontmatter(raw)
         line.segments = [Segment(SegType.CODE, body, body)]
         return
 
@@ -117,6 +138,13 @@ def reparse_line_atomic(line: Line, new_raw: str, *, notify: bool = True) -> Non
     if line.block_type == BlockType.CODE:
         lang, body = _split_code_block(raw)
         object.__setattr__(line, "lang", lang)
+        object.__setattr__(line, "segments", [Segment(SegType.CODE, body, body)])
+        if notify:
+            line.notify()
+        return
+
+    if line.block_type == BlockType.FRONTMATTER:
+        body = _split_frontmatter(raw)
         object.__setattr__(line, "segments", [Segment(SegType.CODE, body, body)])
         if notify:
             line.notify()

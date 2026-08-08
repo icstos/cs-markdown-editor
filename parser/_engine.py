@@ -66,6 +66,10 @@ _RE_MATH_BLOCK = re.compile(r"^\$\$(.+?)\$\$\s*$", re.DOTALL)
 _RE_MATH_FENCE = re.compile(r"^\$\$\s*$")  # 块级公式围栏：$$ 独占一行开/闭
 _RE_INLINE_MATH = re.compile(r"\$([^$\n]+?)\$")
 _RE_TOC = re.compile(r"^\[toc\]\s*$", re.IGNORECASE)
+# YAML 前置元数据开闭围栏：--- 独占一行（Obsidian/Pandoc/Jekyll 风格）
+# 仅文档首行匹配开启；与 HR（--- ** ___）区分：HR 可在任意位置，frontmatter
+# 仅在 i==0 时检测，且必须有配对的关闭围栏。
+_RE_FRONTMATTER_FENCE = re.compile(r"^---\s*$")
 
 
 # 行内 AST 节点类型 -> (SegType, 包裹器) 映射；codespan/link/image 单独处理

@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import re
 from collections.abc import Callable
 
 import flet as ft
@@ -574,6 +575,15 @@ def LineView(
             diff_mark=diff_mark,
         )
 
+    # ============ YAML 前置元数据（Obsidian 风格属性卡片）============
+    if line.block_type == BlockType.FRONTMATTER:
+        return _render_frontmatter(
+            line, line_idx, base, content_width, clipboard_ref,
+            on_change_code, on_code_focus, on_code_blur,
+            code_field_ref, is_current_line, is_flash, on_line_size_change,
+            diff_mark=diff_mark,
+        )
+
     # ============ 块级公式 MATH（浏览态 ft.Markdown / 编辑态 TextField）============
     if line.block_type == BlockType.MATH:
         return _render_math_block(
@@ -885,6 +895,420 @@ def LineView(
     return _wrap_block(
         inner, line, base, line_idx,
         is_current_line=is_current_line, on_size_change=on_line_size_change,
+        diff_mark=diff_mark,
+    )
+
+
+def _parse_yaml_pairs(content: str) -> list[tuple[str, str]]:
+    """简易 YAML 键值对解析（仅支持扁平 key: value 格式）。
+
+    不引入 PyYAML 依赖，仅做行级拆分：每行以 "key: value" 形式存在。
+    复杂结构（嵌套/列表/多行字符串）的行原样保留为键值对（key=原行，value=""）。
+    """
+    pairs: list[tuple[str, str]] = []
+    for raw_line in content.split("\n"):
+        if not raw_line.strip() or raw_line.strip().startswith("#"):
+            continue
+        idx = raw_line.find(":")
+        if idx <= 0:
+            continue
+        key = raw_line[:idx].strip()
+        val = raw_line[idx + 1:].strip()
+        pairs.append((key, val))
+    return pairs
+
+
+def _render_frontmatter(
+    line: Line,
+    line_idx: int,
+    base: int,
+    content_width: float | None,
+    clipboard_ref: ft.Ref | None,
+    on_change_code: Callable[[int, str], None] | None,
+    on_code_focus: Callable[[int], None] | None,
+    on_code_blur: Callable[[int], None] | None,
+    code_field_ref: ft.Ref | None,
+    is_current_line: bool,
+    is_flash: bool = False,
+    on_line_size_change: Callable[[int, float], None] | None = None,
+    diff_mark: str | None = None,
+) -> ft.Control:
+    """YAML 前置元数据渲染（Obsidian 风格可编辑属性表格）。
+
+    渲染态：键值对表格化展示，键/值均为 TextField 可直接编辑。
+    整体卡片式带浅色背景和左侧彩色边框，可折叠/展开。
+    增删改：底部"+"新增行，每行右侧"×"删除行，键/值 TextField 实时编辑。
+
+    交互：
+    - 键/值 TextField 直接编辑 → 实时序列化为 YAML 写回文档
+    - 底部"添加属性"按钮 → 新增空属性行
+    - 每行"×"按钮 → 删除该行
+    - 折叠按钮 → 切换折叠/展开（折叠时仅显示首行摘要）
+    - 复制按钮 → 复制原始 YAML 文本
+    """
+    c = _current_colors()
+    content = line.segments[0].text if line.segments else ""
+    page = ft.context.page
+    is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
+
+    # ---- 状态 ----
+    copied, set_copied = ft.use_state(False)
+    is_collapsed, set_collapsed = ft.use_state(False)
+
+    # ---- 解析键值对 ----
+    pairs = _parse_yaml_pairs(content) if content else []
+
+    # ---- 复制按钮 ----
+    copy_btn = ft.IconButton(
+        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+        icon_size=13,
+        tooltip="已复制" if copied else "复制 YAML",
+        padding=ft.Padding.all(Spacing.SM),
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+            color=ft.Colors.GREEN if copied else c.muted,
+        ),
+        on_click=lambda e, txt=content: (
+            page.run_task(_copy_code_to_clipboard, clipboard_ref, txt, set_copied)
+            if page is not None and not copied else None
+        ),
+    )
+
+    # ---- 折叠按钮 ----
+    collapse_btn = ft.IconButton(
+        icon=ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
+        icon_size=13,
+        tooltip="展开" if is_collapsed else "折叠",
+        padding=ft.Padding.all(Spacing.SM),
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+            color=c.muted,
+        ),
+        on_click=lambda e: set_collapsed(not is_collapsed),
+    )
+
+    # ---- 头部工具栏 ----
+    header = ft.Row(
+        controls=[
+            ft.Icon(ft.Icons.CODE, size=13, color=c.muted),
+            ft.Text(
+                value="YAML 前置元数据",
+                size=11,
+                color=c.muted,
+                font_family=FONT_MAIN,
+                weight=ft.FontWeight.W_600,
+            ),
+            ft.Container(expand=True),
+            ft.Text(
+                value=f"{len(pairs)} 项" if pairs else "空",
+                size=10,
+                color=c.muted,
+                font_family=FONT_MONO,
+            ),
+            copy_btn,
+            collapse_btn,
+        ],
+        spacing=Spacing.SM,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+    # ---- 可编辑属性表格 ----
+    _KEY_COL_WIDTH = 140  # 键列固定宽度
+    _DEL_BTN_WIDTH = 32   # 删除按钮列宽度
+
+    # 编辑态键值对列表：本地 state 管理实时编辑，变化时序列化写回文档
+    editing_pairs, set_editing_pairs = ft.use_state(
+        [list(p) for p in pairs] if pairs else []
+    )
+
+    def _value_style(val: str) -> tuple[str, str]:
+        """根据值内容推断 (color, font_family)。
+
+        布尔值 → 蓝色；数字 → 绿色；日期 → 橙色；
+        列表/字典（[ / { 开头）→ 紫色等宽；其余 → 主文本色。
+        """
+        if not val:
+            return c.muted, FONT_MAIN
+        vl = val.lower()
+        if vl in ("true", "false", "yes", "no", "null", "~", "none"):
+            return c.link, FONT_MONO
+        stripped = val.replace(".", "").replace("-", "")
+        if stripped.isdigit():
+            return c.heading_colors.get(3, c.text), FONT_MONO
+        if re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", val):
+            return c.heading_colors.get(2, c.text), FONT_MAIN
+        if val.startswith("[") or val.startswith("{"):
+            return c.heading_colors.get(4, c.text), FONT_MONO
+        return c.text, FONT_MAIN
+
+    def _commit_pairs(new_pairs: list[list[str]]) -> None:
+        """把编辑后的键值对序列化为 YAML 写回文档。
+
+        跳过键为空的行（避免 YAML 语法错误）；过滤后全空则写空串。
+        """
+        # 过滤：键非空的行才保留
+        filtered = [(k.strip(), v.strip()) for k, v in new_pairs if k.strip()]
+        if filtered:
+            yaml_text = "\n".join(f"{k}: {v}" for k, v in filtered)
+        else:
+            yaml_text = ""
+        if on_change_code is not None:
+            on_change_code(line_idx, yaml_text)
+
+    def _on_key_change(idx: int, new_key: str) -> None:
+        """键 TextField 输入变化：更新本地 state 并写回文档。"""
+        new_pairs = [list(p) for p in editing_pairs]
+        if idx < len(new_pairs):
+            new_pairs[idx][0] = new_key
+        else:
+            new_pairs.append([new_key, ""])
+        set_editing_pairs(new_pairs)
+        _commit_pairs(new_pairs)
+
+    def _on_value_change(idx: int, new_val: str) -> None:
+        """值 TextField 输入变化：更新本地 state 并写回文档。"""
+        new_pairs = [list(p) for p in editing_pairs]
+        if idx < len(new_pairs):
+            new_pairs[idx][1] = new_val
+        else:
+            new_pairs.append(["", new_val])
+        set_editing_pairs(new_pairs)
+        _commit_pairs(new_pairs)
+
+    def _add_row() -> None:
+        """新增空属性行。"""
+        new_pairs = [list(p) for p in editing_pairs]
+        new_pairs.append(["", ""])
+        set_editing_pairs(new_pairs)
+        # 不立即 commit：键为空的行不写入 YAML，等用户输入键后再写
+
+    def _delete_row(idx: int) -> None:
+        """删除指定属性行。"""
+        new_pairs = [list(p) for p in editing_pairs]
+        if 0 <= idx < len(new_pairs):
+            new_pairs.pop(idx)
+        set_editing_pairs(new_pairs)
+        _commit_pairs(new_pairs)
+
+    def _build_property_table() -> ft.Control:
+        """构造 Obsidian 风格的可编辑属性表格。
+
+        表头行（属性 | 值 | 操作）+ 数据行（TextField 键/值 + 删除按钮），
+        底部新增行按钮。键列固定宽度，值列自适应。整体圆角裁剪。
+        """
+        # ---- 表头行 ----
+        header_bg = ft.Colors.with_opacity(0.06 if is_dark else 0.04, c.text)
+        header_row = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Container(
+                        content=ft.Text(
+                            value="属性",
+                            size=base - 7,
+                            color=c.muted,
+                            font_family=FONT_MAIN,
+                            weight=ft.FontWeight.W_600,
+                        ),
+                        width=_KEY_COL_WIDTH,
+                        padding=ft.Padding.only(left=Spacing.SM, right=Spacing.SM),
+                    ),
+                    ft.Text(
+                        value="值",
+                        size=base - 7,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
+                        weight=ft.FontWeight.W_600,
+                        expand=True,
+                    ),
+                    ft.Container(width=_DEL_BTN_WIDTH),
+                ],
+                spacing=0,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=header_bg,
+            padding=ft.Padding.symmetric(vertical=5),
+        )
+
+        # ---- 数据行 ----
+        zebra_bg = ft.Colors.with_opacity(0.025 if is_dark else 0.018, c.text)
+        data_rows: list[ft.Control] = [header_row]
+
+        rows_data = editing_pairs if editing_pairs else []
+        for idx, pair in enumerate(rows_data):
+            key_val = pair[0] if len(pair) > 0 else ""
+            val_val = pair[1] if len(pair) > 1 else ""
+            val_color, val_font = _value_style(val_val)
+            row_bg = zebra_bg if idx % 2 == 1 else None
+
+            # 键 TextField：等宽灰色，无边框
+            key_field = ft.TextField(
+                value=key_val,
+                text_size=base - 6,
+                color=c.muted,
+                text_style=ft.TextStyle(font_family=FONT_MONO),
+                border=ft.InputBorder.NONE,
+                fill_color=ft.Colors.TRANSPARENT,
+                dense=True,
+                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                hint_text="键名",
+                hint_style=ft.TextStyle(size=base - 6, color=ft.Colors.with_opacity(0.4, c.muted)),
+                on_change=lambda e, i=idx: _on_key_change(i, e.control.value or ""),
+                on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
+                on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
+            )
+            # 值 TextField：按类型着色，无边框
+            val_field = ft.TextField(
+                value=val_val,
+                text_size=base - 5,
+                color=val_color,
+                text_style=ft.TextStyle(font_family=val_font),
+                border=ft.InputBorder.NONE,
+                fill_color=ft.Colors.TRANSPARENT,
+                dense=True,
+                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                hint_text="值",
+                hint_style=ft.TextStyle(size=base - 5, color=ft.Colors.with_opacity(0.4, c.muted)),
+                on_change=lambda e, i=idx: _on_value_change(i, e.control.value or ""),
+                on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
+                on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
+            )
+            # 删除按钮
+            del_btn = ft.IconButton(
+                icon=ft.Icons.CLOSE,
+                icon_size=12,
+                tooltip="删除此行",
+                padding=ft.Padding.all(4),
+                style=ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+                    color=ft.Colors.with_opacity(0.5, c.muted),
+                    bgcolor={
+                        ft.ControlState.HOVERED: ft.Colors.with_opacity(0.1, c.text),
+                        ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT,
+                    },
+                ),
+                on_click=lambda e, i=idx: _delete_row(i),
+            )
+
+            row = ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Container(
+                            content=key_field,
+                            width=_KEY_COL_WIDTH,
+                        ),
+                        val_field,
+                        ft.Container(
+                            content=del_btn,
+                            width=_DEL_BTN_WIDTH,
+                            alignment=ft.Alignment.CENTER,
+                        ),
+                    ],
+                    spacing=0,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                bgcolor=row_bg,
+                padding=ft.Padding.symmetric(vertical=1),
+            )
+            data_rows.append(row)
+
+        # ---- 新增行按钮 ----
+        add_row_btn = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.ADD, size=13, color=c.muted),
+                    ft.Text(
+                        value="添加属性",
+                        size=base - 6,
+                        color=c.muted,
+                        font_family=FONT_MAIN,
+                    ),
+                ],
+                spacing=Spacing.XS,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+            ink=True,
+            border_radius=Radius.SM,
+            on_click=lambda e: _add_row(),
+        )
+        data_rows.append(add_row_btn)
+
+        # ---- 表格容器：圆角裁剪 ----
+        table_border = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
+        return ft.Container(
+            content=ft.Column(
+                controls=data_rows,
+                spacing=0,
+            ),
+            border_radius=Radius.SM,
+            border=only_border(
+                top=ft.BorderSide(1, table_border),
+                bottom=ft.BorderSide(1, table_border),
+                left=ft.BorderSide(1, table_border),
+                right=ft.BorderSide(1, table_border),
+            ),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        )
+
+    # ---- 折叠态摘要 ----
+    collapsed_preview = ft.Container(
+        content=ft.Row(
+            controls=[
+                ft.Text(
+                    value=(pairs[0][0] + ": " + pairs[0][1]) if pairs else "(空)",
+                    size=base - 6,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    expand=True,
+                ),
+                ft.Text(
+                    value=f"{len(pairs)} 项",
+                    size=10,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                ),
+            ],
+            spacing=Spacing.MD,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.XS),
+    )
+
+    # ---- 主内容：折叠时显示摘要，否则显示可编辑表格 ----
+    body = collapsed_preview if is_collapsed else _build_property_table()
+
+    main_content = ft.Column(
+        controls=[header, body],
+        spacing=Spacing.XS,
+    )
+
+    # ---- 卡片容器（Obsidian 风格：左侧彩色边框 + 浅色背景）----
+    border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
+    # 左侧边框色：复用 heading H1 色（红色系），与文档标题色阶呼应
+    accent = c.heading_colors.get(1, c.quote_bar)
+    content_ctrl = ft.Container(
+        content=main_content,
+        bgcolor=ft.Colors.with_opacity(0.4, c.code_block_bg),
+        border_radius=Radius.MD,
+        padding=ft.Padding.only(
+            left=Spacing.MD, right=Spacing.MD,
+            top=Spacing.XS, bottom=Spacing.SM
+        ),
+        border=only_border(
+            top=ft.BorderSide(1, border_color),
+            bottom=ft.BorderSide(1, border_color),
+            left=ft.BorderSide(3, accent),
+            right=ft.BorderSide(1, border_color),
+        ),
+    )
+
+    return _wrap_block(
+        content_ctrl, line, line_idx,
+        is_current_line=is_current_line,
+        is_flash=is_flash,
+        on_size_change=on_line_size_change,
         diff_mark=diff_mark,
     )
 

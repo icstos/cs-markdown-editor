@@ -43,19 +43,28 @@ def build_fence(ctx):
     on_change_cell / on_table_op / on_table_focus / on_table_blur
     """
 
-    # ============ 代码块 ============
+    # ============ 代码块 / YAML 前置元数据 ============
     def on_change_code(li: int, value: str) -> None:
         if not (0 <= li < len(ctx.document.lines)):
             return
         line = ctx.document.lines[li]
-        if line.block_type != BlockType.CODE:
+        # frontmatter 复用 CodeEditor 编辑，与代码块同等处理
+        if line.block_type == BlockType.CODE:
+            old_text = line.segments[0].text if line.segments else ""
+            if old_text == value:
+                return
+            line.segments[0].text = value
+            line.segments[0].raw = value
+            line.raw = f"```{line.lang}\n{value}\n```"
+        elif line.block_type == BlockType.FRONTMATTER:
+            old_text = line.segments[0].text if line.segments else ""
+            if old_text == value:
+                return
+            line.segments[0].text = value
+            line.segments[0].raw = value
+            line.raw = f"---\n{value}\n---" if value else "---\n---"
+        else:
             return
-        old_text = line.segments[0].text if line.segments else ""
-        if old_text == value:
-            return
-        line.segments[0].text = value
-        line.segments[0].raw = value
-        line.raw = f"```{line.lang}\n{value}\n```"
         # 代码块编辑防抖：第一次修改时将快照推入历史，整个编辑会话只占一个撤销条目
         # 这样即使在代码块聚焦时按 Ctrl+Z 也能正常撤销
         if (
@@ -70,7 +79,7 @@ def build_fence(ctx):
 
     def on_code_focus(li: int) -> None:
         ctx.code_focus_ref.current = li
-        # 代码块聚焦时退出光标编辑态
+        # 代码块/frontmatter 聚焦时退出光标编辑态
         if ctx.cursor_li is not None:
             ctx.suppress_blur.current = True
             ctx.set_cursor_li(None)
@@ -81,27 +90,27 @@ def build_fence(ctx):
     def on_code_blur(li: int) -> None:
         if ctx.code_focus_ref.current == li:
             ctx.code_focus_ref.current = None
-        # 代码块失焦时：清理状态
+        # 代码块/frontmatter 失焦时：清理状态
         # 注意：快照已在第一次修改时推入历史，此处不再重复推入
         ctx.code_edit_snapshot.current = None
         ctx.code_edit_changed.current = False
 
     def handle_code_backspace(li: int) -> bool:
-        """空代码块 Backspace 删除：替换为空白段落行（Typora 式）。
+        """空代码块/空 frontmatter Backspace 删除：替换为空白段落行（Typora 式）。
 
         返回 True 表示已处理（消费 Backspace，阻止传给原生 CodeEditor）；
-        False 表示未处理（非空代码块 / 非代码块 / 越界，继续走原生删除）。
+        False 表示未处理（非空块 / 非代码块/frontmatter / 越界，继续走原生删除）。
 
         触发场景：CodeEditor 聚焦时全局 KeyDispatcher 检测到 BackSpace，
-        先尝试本函数；若代码块内容为空（含仅空白字符）则整体删除。
+        先尝试本函数；若块内容为空（含仅空白字符）则整体删除。
         删除后进入段落编辑态（光标定位到行首），与 set_block 的早返回模式一致。
         """
         if not (0 <= li < len(ctx.document.lines)):
             return False
         line = ctx.document.lines[li]
-        if line.block_type != BlockType.CODE:
+        if line.block_type not in (BlockType.CODE, BlockType.FRONTMATTER):
             return False
-        # 代码块内容为空（含仅空白字符）才触发整体删除
+        # 块内容为空（含仅空白字符）才触发整体删除
         code = line.segments[0].text if line.segments else ""
         if code.strip():
             return False

@@ -57,7 +57,7 @@ def strip_markdown(text: str) -> str:
     plain_lines: list[str] = []
     for line in doc.lines:
         bt = line.block_type
-        if bt in (BlockType.CODE, BlockType.MATH):
+        if bt in (BlockType.CODE, BlockType.MATH, BlockType.FRONTMATTER):
             # 围栏块：seg.text 已是无围栏标记的纯内容
             plain_lines.append(line.segments[0].text if line.segments else "")
             continue

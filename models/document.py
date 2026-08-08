@@ -68,6 +68,7 @@ class BlockType(StrEnum):
     HR = "hr"
     MATH = "math"  # $$...$$ 行间公式
     TOC = "toc"  # [toc] 目录
+    FRONTMATTER = "frontmatter"  # YAML 前置元数据 ---...---
     BLANK = "blank"
 
 

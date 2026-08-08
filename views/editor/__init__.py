@@ -30,6 +30,7 @@ from collections.abc import Awaitable, Callable
 
 import flet as ft
 
+import parser
 from core.cursor import CursorState
 from core.history import EditHistory
 from models import BlockType, Document, SegType
@@ -56,6 +57,11 @@ from views.editor._replace import build_replace
 from views.editor._scroll import build_scroll
 from views.raw_editor import RawEditor
 from views.tool_area import ToolArea
+
+# 大文件阈值：超过此行数自动切换到源码模式（RawEditor），避免 build_line_controls
+# 为每行构造 LineView 控件对象（含光标层/格式段/围栏岛屿等十几个子控件）导致
+# 渲染阶段卡死。RawEditor 使用单个原生 TextField，处理大文本高效。
+_LARGE_DOC_LINES = 3000
 
 
 @ft.component
@@ -511,6 +517,27 @@ def MarkdownEditor(
     ctx.replace_match_in_doc = replace_cbs["replace_match_in_doc"]
     ctx.replace_all_in_doc = replace_cbs["replace_all_in_doc"]
 
+    # ============ 大文件保护：自动切换源码模式 ============
+    # 超过 _LARGE_DOC_LINES 行时跳过 build_line_controls（为每行构造 LineView
+    # 控件树，数万行会导致渲染阶段卡死），改用 RawEditor（单个原生 TextField）。
+    # _large_doc_draft 缓存 serialize 结果：首次加载时计算，后续编辑通过
+    # set_raw_draft 更新（_on_raw_change），行数不变则不重算。
+    _doc_line_count = len(document.lines)
+    is_large_doc = _doc_line_count > _LARGE_DOC_LINES
+
+    def _build_large_doc_draft() -> str:
+        """大文件 serialize 缓存：仅大文件时执行，小文件返回空串。"""
+        if _doc_line_count > _LARGE_DOC_LINES:
+            return parser.serialize(document)
+        return ""
+
+    _large_doc_draft = ft.use_memo(_build_large_doc_draft, [is_large_doc, _doc_line_count])
+
+    # 有效渲染模式：用户源码模式 或 大文件强制源码模式
+    effective_raw_mode = raw_mode or is_large_doc
+    # 有效草稿：源码模式优先用 raw_draft（编辑中实时值），大文件首次加载用缓存
+    effective_raw_draft = raw_draft if raw_mode else (_large_doc_draft if is_large_doc else "")
+
     # ============ use_memo：向外选区高亮映射 ============
     _highlight_map = ft.use_memo(
         scroll_cbs["build_highlight_map"], [outward_sel, len(document.lines)]
@@ -692,9 +719,16 @@ def MarkdownEditor(
     )
 
     # ============ 行视图列表 ============
-    line_controls = build_line_controls(
-        ctx, _stable_cbs, _table_stable, toc_entries, _highlight_map
-    )
+    # 大文件（is_large_doc）跳过 build_line_controls：避免为每行构造 LineView
+    # 控件树（数万行 → 数十万控件对象）导致渲染阶段卡死。改用 RawEditor
+    # （单个原生 TextField）渲染。effective_raw_mode 为 True 时 line_controls
+    # 不被使用（渲染走 RawEditor 分支），此处置空跳过构造开销。
+    if not effective_raw_mode:
+        line_controls = build_line_controls(
+            ctx, _stable_cbs, _table_stable, toc_entries, _highlight_map
+        )
+    else:
+        line_controls = []
 
     # ============ 渲染树 ============
     return ft.KeyboardListener(
@@ -708,7 +742,7 @@ def MarkdownEditor(
                     theme_mode=theme_mode,
                     show_toolbar=show_toolbar,
                     shortcut_mgr=shortcut_mgr,
-                    raw_mode=raw_mode,
+                    raw_mode=effective_raw_mode,
                     on_new=_tool_stable["on_new"],
                     on_open=_tool_stable["on_open"],
                     on_open_folder=_tool_stable["on_open_folder"],
@@ -725,13 +759,13 @@ def MarkdownEditor(
                 ),
                 RawEditor(
                     theme_mode=theme_mode,
-                    raw_draft=raw_draft,
+                    raw_draft=effective_raw_draft,
                     on_change=_tool_stable["on_raw_change"],
                     content_padding=content_padding,
                     content_padding_top=content_padding_top,
                     body_font_size=body_font_size,
                 )
-                if raw_mode
+                if effective_raw_mode
                 else ft.SelectionArea(
                     expand=True,
                     on_change=clipboard_cbs["on_selection_area_change"],

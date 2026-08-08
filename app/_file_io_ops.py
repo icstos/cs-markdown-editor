@@ -31,6 +31,7 @@ backup_tab_before_overwrite / check_external_change
 - flet（FilePickerFileType）
 """
 
+import asyncio
 import os
 
 import flet as ft
@@ -43,6 +44,10 @@ from services.export import export_to_docx, export_to_html, export_to_pdf
 from services.file_io import read_text, write_text, write_text_atomic
 from utils.file_helpers import file_name
 
+# 内存绝对保护上限：异步加载已避免 UI 卡死，但仍需防止极端大文件
+# （如误选 GB 级二进制文件）导致内存爆炸。超过此值拒绝打开。
+_MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
+
 
 def build_file_io_ops(ctx):
     """构造文件 IO 控制器闭包组。
@@ -52,6 +57,9 @@ def build_file_io_ops(ctx):
     save_doc / save_as_doc / export_doc / set_status_message /
     backup_tab_before_overwrite / check_external_change
     """
+    # 正在异步加载的文件路径集合：防止用户在加载期间重复点击同一文件
+    # 触发多次加载（加载完成时从集合移除）。
+    _loading_paths: set[str] = set()
 
     def push_recent_file(path: str):
         """把 path 加入最近文件列表头部（去重、截断 10 条）并持久化。"""
@@ -70,9 +78,13 @@ def build_file_io_ops(ctx):
     ):
         """从绝对路径打开文件（供侧边栏文件树点击与 open_doc 复用）。
 
-        - 该路径已打开过 → 切换到对应标签，不重复开
-        - 当前标签为空白未命名 → 复用该标签加载
-        - 否则 → 追加新标签并激活
+        异步加载：read_text + parse_markdown 在后台线程执行，不阻塞 UI 事件循环，
+        加载期间用户可继续编辑当前文档。加载完成后基于最新 tabs 状态决定复用
+        空白标签还是追加新标签。
+
+        - 该路径已打开过 → 同步切换到对应标签，不重复开
+        - 正在加载中 → 忽略重复请求
+        - 否则 → 启动异步加载，状态栏提示「正在打开...」
 
         jump_to=(li, off) 非空时，打开后跳转到指定行 offset（侧边栏跨文件搜索结果点击）。
         时序：open 触发 session 变化重建 MarkdownEditor，EditorActions 写入 nav_ref 后，
@@ -92,6 +104,92 @@ def build_file_io_ops(ctx):
                     ctx.set_session(ctx.session + 1)
                 # 同 tab 也需触发 jump —— pending_jump_sig 已递增，effect 会跑
                 return
+        # 正在加载中：忽略重复请求（防止用户快速双击文件树触发多次加载）
+        if path in _loading_paths:
+            return
+        # 内存绝对保护：防止误选超大文件导致内存爆炸
+        try:
+            file_size = os.path.getsize(path)
+        except OSError as e:
+            ctx.show_snack(f"打开失败：{e}")
+            return
+        if file_size > _MAX_FILE_BYTES:
+            size_mb = file_size / (1024 * 1024)
+            ctx.show_snack(
+                f"文件过大（{size_mb:.1f} MB），超出内存保护上限"
+                f"（{_MAX_FILE_BYTES // (1024 * 1024)} MB）"
+            )
+            return
+        # 启动异步加载：不阻塞 UI 事件循环，用户可继续编辑当前文档
+        _loading_paths.add(path)
+        page = ctx.page_ref.current
+        if page is not None:
+            page.run_task(_async_open_file, path)
+        else:
+            # page 未就绪兜底：同步降级加载（启动初期极少触发）
+            _loading_paths.discard(path)
+            _do_sync_load(path)
+
+    async def _async_open_file(path: str):
+        """异步加载文件：read_text + parse_markdown 在后台线程执行。
+
+        加载期间 UI 事件循环保持响应，用户可继续编辑其他标签。加载完成后
+        基于 tabs_ref.current（最新 tabs）决定复用空白标签还是追加新标签，
+        避免加载期间用户操作导致的竞态。
+        """
+        fname = os.path.basename(path)
+        set_status_message(f"正在打开 {fname}...", "info")
+        try:
+            # 后台线程执行 IO + 解析（asyncio.to_thread 在 Python 3.9+ 可用），
+            # 不阻塞 Flet 事件循环。read_text 与 parse_markdown 均为纯函数，
+            # 线程安全（无共享可变状态）。
+            text = await asyncio.to_thread(read_text, path)
+            doc = await asyncio.to_thread(parser.parse_markdown, text)
+        except Exception as e:
+            _loading_paths.discard(path)
+            ctx.show_snack(f"打开失败：{e}")
+            set_status_message(None)
+            return
+        # 加载完成：基于最新 tabs_ref.current 更新 state（避免加载期间用户
+        # 切换标签/打开其他文件导致的竞态）
+        doc.file_path = path
+        try:
+            last_mtime = os.path.getmtime(path)
+        except OSError:
+            last_mtime = None
+        # 再次检查是否已被其他路径加载（极端竞态兜底）
+        for t in ctx.tabs_ref.current:
+            if t.get("file_path") == path:
+                _loading_paths.discard(path)
+                set_status_message(None)
+                return
+        # 基于最新 tabs 判断：当前激活标签为空白未命名时复用，否则追加新标签
+        ts = ctx.tabs_ref.current
+        ai = ctx.active_index_ref.current
+        cur = ts[ai] if 0 <= ai < len(ts) else None
+        if cur is not None and is_blank_untitled(cur):
+            ctx.update_active(
+                document=doc, file_path=path, dirty=False,
+                _last_known_mtime=last_mtime,
+            )
+        else:
+            new_tabs = list(ts)
+            new_tabs.append({
+                "document": doc, "file_path": path, "dirty": False,
+                "_last_known_mtime": last_mtime,
+            })
+            ctx.set_tabs(new_tabs)
+            ctx.tabs_ref.current = new_tabs
+            new_idx = len(new_tabs) - 1
+            ctx.set_active_index(new_idx)
+            ctx.active_index_ref.current = new_idx
+        ctx.set_session(ctx.session + 1)
+        push_recent_file(path)
+        _loading_paths.discard(path)
+        set_status_message(f"已打开 {fname}", "success")
+
+    def _do_sync_load(path: str):
+        """同步降级加载（page 未就绪时使用，启动初期极少触发）。"""
         try:
             text = read_text(path)
         except Exception as e:
@@ -99,13 +197,11 @@ def build_file_io_ops(ctx):
             return
         doc = parser.parse_markdown(text)
         doc.file_path = path
-        # 记录文件 mtime，用于后续外部修改检测（缺失则后续首次保存时补记）
         try:
             last_mtime = os.path.getmtime(path)
         except OSError:
             last_mtime = None
         if is_blank_untitled(ctx.cur_tab):
-            # 复用当前空标签
             ctx.update_active(
                 document=doc, file_path=path, dirty=False,
                 _last_known_mtime=last_mtime,

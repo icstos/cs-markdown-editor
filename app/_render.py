@@ -436,7 +436,6 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
                             nav_ref=ctx.diff_nav_right,
                             diff_marks=marks_right,
                             diff_gaps=gaps_right,
-                            show_toolbar=False,
                             on_editor_focus=lambda: ctx.set_diff_active_pane(1),
                             on_dirty_change=lambda d: ctx.on_diff_dirty_change(1, d),
                             on_save=lambda: ctx.page_ref.current.run_task(ctx.save_doc),
@@ -460,9 +459,10 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
 
 
 def _build_split_area(ctx, editor_common: dict, pane_cursor_cb, pane_content_cb) -> ft.Control:
-    """构造拆分编辑区：左 + 分隔线 + 右，各占一半；右侧隐藏工具栏保持简洁。
+    """构造拆分编辑区：左 + 分隔线 + 右，各占一半。
 
     两视口共享同一 document（@ft.observable），各自独立光标/滚动。
+    editor_common 已含 show_toolbar=False（MarkText 风格，工具栏收纳进全局菜单）。
     pane_cursor_cb / pane_content_cb 按焦点视口路由状态栏命令式上报
     （active_pane 决定哪侧上报）。
     """
@@ -485,7 +485,6 @@ def _build_split_area(ctx, editor_common: dict, pane_cursor_cb, pane_content_cb)
                 content=MarkdownEditor(
                     key=f"{ctx.session}-1",
                     nav_ref=ctx.nav_ref_split,
-                    show_toolbar=False,
                     on_editor_focus=lambda: ctx.set_active_pane(1),
                     keyboard_autofocus=False,
                     on_cursor_move=pane_cursor_cb(ctx.active_pane == 1),

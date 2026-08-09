@@ -951,6 +951,29 @@ def _render_frontmatter(
     page = ft.context.page
     is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
 
+    # 语义化数据类型颜色（科学区分 YAML 值类型，亮/暗主题各自适配）
+    # 取色原则：每种类型一个固定色相，亮暗模式仅调整明度/饱和度
+    if is_dark:
+        _type_colors = {
+            "bool":   "#6BA0F5",  # 柔蓝（真/假：逻辑值）
+            "number": "#65C292",  # 柔薄荷绿（数值）
+            "date":   "#DD9658",  # 柔琥珀橙（日期时间）
+            "array":  "#B08FD8",  # 柔丁香紫（列表/字典）
+            "null":   "#8B939E",  # 中性灰（空值）
+            "string": "#E6EDF3",  # 主文本色（字符串）
+        }
+        _key_color = "#75A4F0"   # 柔雾蓝（键名 + 标题，突出属性标识）
+    else:
+        _type_colors = {
+            "bool":   "#1677FF",  # Ant Design 蓝（逻辑值）
+            "number": "#0E7C66",  # 深青绿（数值）
+            "date":   "#B54708",  # 焦糖橙（日期时间）
+            "array":  "#6B5B95",  # 雅致紫（列表/字典）
+            "null":   "#8A919E",  # 中性灰（空值）
+            "string": "#1F2329",  # 主文本色（字符串）
+        }
+        _key_color = "#1A4480"   # 深海军蓝（键名 + 标题，权威标识）
+
     # ---- 状态 ----
     copied, set_copied = ft.use_state(False)
     is_collapsed, set_collapsed = ft.use_state(False)
@@ -990,20 +1013,25 @@ def _render_frontmatter(
     # ---- 头部工具栏 ----
     header = ft.Row(
         controls=[
-            ft.Icon(ft.Icons.CODE, size=13, color=c.muted),
+            ft.Icon(ft.Icons.DATA_OBJECT, size=14, color=_key_color),
             ft.Text(
                 value="YAML 前置元数据",
                 size=11,
-                color=c.muted,
+                color=_key_color,
                 font_family=FONT_MAIN,
                 weight=ft.FontWeight.W_600,
             ),
             ft.Container(expand=True),
-            ft.Text(
-                value=f"{len(pairs)} 项" if pairs else "空",
-                size=10,
-                color=c.muted,
-                font_family=FONT_MONO,
+            ft.Container(
+                content=ft.Text(
+                    value=f"{len(pairs)} 项" if pairs else "空",
+                    size=10,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                ),
+                bgcolor=ft.Colors.with_opacity(0.06, c.text),
+                padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                border_radius=Radius.SM,
             ),
             copy_btn,
             collapse_btn,
@@ -1024,22 +1052,23 @@ def _render_frontmatter(
     def _value_style(val: str) -> tuple[str, str]:
         """根据值内容推断 (color, font_family)。
 
-        布尔值 → 蓝色；数字 → 绿色；日期 → 橙色；
-        列表/字典（[ / { 开头）→ 紫色等宽；其余 → 主文本色。
+        语义化数据类型着色：
+        布尔值 → 蓝；数字 → 绿；日期 → 橙；列表/字典 → 紫；空 → 灰；字符串 → 主文本色。
+        等宽字体用于布尔/数字/列表（结构化数据），正常字体用于日期/字符串（自然语言）。
         """
         if not val:
-            return c.muted, FONT_MAIN
+            return _type_colors["null"], FONT_MAIN
         vl = val.lower()
         if vl in ("true", "false", "yes", "no", "null", "~", "none"):
-            return c.link, FONT_MONO
+            return _type_colors["bool"], FONT_MONO
         stripped = val.replace(".", "").replace("-", "")
         if stripped.isdigit():
-            return c.heading_colors.get(3, c.text), FONT_MONO
+            return _type_colors["number"], FONT_MONO
         if re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", val):
-            return c.heading_colors.get(2, c.text), FONT_MAIN
+            return _type_colors["date"], FONT_MAIN
         if val.startswith("[") or val.startswith("{"):
-            return c.heading_colors.get(4, c.text), FONT_MONO
-        return c.text, FONT_MAIN
+            return _type_colors["array"], FONT_MONO
+        return _type_colors["string"], FONT_MAIN
 
     def _commit_pairs(new_pairs: list[list[str]]) -> None:
         """把编辑后的键值对序列化为 YAML 写回文档。
@@ -1096,8 +1125,8 @@ def _render_frontmatter(
         表头行（属性 | 值 | 操作）+ 数据行（TextField 键/值 + 删除按钮），
         底部新增行按钮。键列固定宽度，值列自适应。整体圆角裁剪。
         """
-        # ---- 表头行 ----
-        header_bg = ft.Colors.with_opacity(0.06 if is_dark else 0.04, c.text)
+        # ---- 表头行：略深背景，与数据行明显分层 ----
+        header_bg = ft.Colors.with_opacity(0.09 if is_dark else 0.06, c.text)
         header_row = ft.Container(
             content=ft.Row(
                 controls=[
@@ -1126,11 +1155,11 @@ def _render_frontmatter(
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=header_bg,
-            padding=ft.Padding.symmetric(vertical=5),
+            padding=ft.Padding.symmetric(vertical=6),
         )
 
-        # ---- 数据行 ----
-        zebra_bg = ft.Colors.with_opacity(0.025 if is_dark else 0.018, c.text)
+        # ---- 数据行：斑马纹增强可读性 ----
+        zebra_bg = ft.Colors.with_opacity(0.045 if is_dark else 0.03, c.text)
         data_rows: list[ft.Control] = [header_row]
 
         rows_data = editing_pairs if editing_pairs else []
@@ -1140,23 +1169,27 @@ def _render_frontmatter(
             val_color, val_font = _value_style(val_val)
             row_bg = zebra_bg if idx % 2 == 1 else None
 
-            # 键 TextField：等宽灰色，无边框
+            # 键 TextField：品牌蓝色突出属性标识，等宽字体
             key_field = ft.TextField(
                 value=key_val,
                 text_size=base - 6,
-                color=c.muted,
-                text_style=ft.TextStyle(font_family=FONT_MONO),
+                color=_key_color,
+                text_style=ft.TextStyle(font_family=FONT_MONO, weight=ft.FontWeight.W_500),
                 border=ft.InputBorder.NONE,
                 fill_color=ft.Colors.TRANSPARENT,
                 dense=True,
-                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=3),
                 hint_text="键名",
-                hint_style=ft.TextStyle(size=base - 6, color=ft.Colors.with_opacity(0.4, c.muted)),
+                hint_style=ft.TextStyle(
+                    size=base - 6,
+                    color=ft.Colors.with_opacity(0.35, c.muted),
+                    font_family=FONT_MONO,
+                ),
                 on_change=lambda e, i=idx: _on_key_change(i, e.control.value or ""),
                 on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
                 on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
             )
-            # 值 TextField：按类型着色，无边框
+            # 值 TextField：按数据类型着色，无边框透明底
             val_field = ft.TextField(
                 value=val_val,
                 text_size=base - 5,
@@ -1165,24 +1198,30 @@ def _render_frontmatter(
                 border=ft.InputBorder.NONE,
                 fill_color=ft.Colors.TRANSPARENT,
                 dense=True,
-                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=3),
                 hint_text="值",
-                hint_style=ft.TextStyle(size=base - 5, color=ft.Colors.with_opacity(0.4, c.muted)),
+                hint_style=ft.TextStyle(
+                    size=base - 5,
+                    color=ft.Colors.with_opacity(0.35, c.muted),
+                ),
                 on_change=lambda e, i=idx: _on_value_change(i, e.control.value or ""),
                 on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
                 on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
             )
-            # 删除按钮
+            # 删除按钮：悬停时显红色警示
             del_btn = ft.IconButton(
                 icon=ft.Icons.CLOSE,
-                icon_size=12,
+                icon_size=13,
                 tooltip="删除此行",
                 padding=ft.Padding.all(4),
                 style=ft.ButtonStyle(
                     shape=ft.RoundedRectangleBorder(radius=Radius.SM),
-                    color=ft.Colors.with_opacity(0.5, c.muted),
+                    color={
+                        ft.ControlState.HOVERED: "#E5484D",
+                        ft.ControlState.DEFAULT: ft.Colors.with_opacity(0.4, c.muted),
+                    },
                     bgcolor={
-                        ft.ControlState.HOVERED: ft.Colors.with_opacity(0.1, c.text),
+                        ft.ControlState.HOVERED: ft.Colors.with_opacity(0.08, "#E5484D"),
                         ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT,
                     },
                 ),
@@ -1211,16 +1250,17 @@ def _render_frontmatter(
             )
             data_rows.append(row)
 
-        # ---- 新增行按钮 ----
+        # ---- 新增行按钮：悬停高亮 ----
         add_row_btn = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.ADD, size=13, color=c.muted),
+                    ft.Icon(ft.Icons.ADD, size=14, color=_key_color),
                     ft.Text(
                         value="添加属性",
                         size=base - 6,
-                        color=c.muted,
+                        color=_key_color,
                         font_family=FONT_MAIN,
+                        weight=ft.FontWeight.W_500,
                     ),
                 ],
                 spacing=Spacing.XS,
@@ -1233,8 +1273,8 @@ def _render_frontmatter(
         )
         data_rows.append(add_row_btn)
 
-        # ---- 表格容器：圆角裁剪 ----
-        table_border = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
+        # ---- 表格容器：圆角裁剪 + 清晰边框 ----
+        table_border = ft.Colors.with_opacity(0.14 if is_dark else 0.10, c.text)
         return ft.Container(
             content=ft.Column(
                 controls=data_rows,
@@ -1285,12 +1325,12 @@ def _render_frontmatter(
     )
 
     # ---- 卡片容器（Obsidian 风格：左侧彩色边框 + 浅色背景）----
-    border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
-    # 左侧边框色：复用 heading H1 色（红色系），与文档标题色阶呼应
-    accent = c.heading_colors.get(1, c.quote_bar)
+    border_color = ft.Colors.with_opacity(0.12 if is_dark else 0.08, c.text)
+    # 左侧强调色：与键名/标题色一致（_key_color），整体配色统一
+    accent = _key_color
     content_ctrl = ft.Container(
         content=main_content,
-        bgcolor=ft.Colors.with_opacity(0.4, c.code_block_bg),
+        bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
         border_radius=Radius.MD,
         padding=ft.Padding.only(
             left=Spacing.MD, right=Spacing.MD,

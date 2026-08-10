@@ -716,7 +716,7 @@ class KeyDispatcher:
                 cb["new"]()
             elif matches(combo, shortcuts.get("toggle_sidebar", "ctrl+b")):
                 cb["toggle_sidebar"]()
-            elif matches(combo, shortcuts.get("toggle_theme", "ctrl+shift+t")):
+            elif matches(combo, shortcuts.get("toggle_theme", "ctrl+.")):
                 cb["toggle_theme"]()
             elif matches(combo, shortcuts.get("toggle_raw", "ctrl+/")):
                 if actions is not None:

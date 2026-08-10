@@ -251,6 +251,7 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
     # ============ 视图菜单 ============
     view_controls = [
         _menu_item("源码模式", "Ctrl+/", on_click=lambda e: _do_editor("toggle_raw"), c=c),
+        _menu_item("切换主题", "Ctrl+.", on_click=lambda e: ctx.toggle_theme(), c=c),
         _menu_item("切换侧边栏", "Ctrl+Shift+B", on_click=lambda e: ctx.toggle_sidebar(), c=c),
         _menu_item("切换自动换行", "Ctrl+Shift+R", on_click=lambda e: ctx.toggle_word_wrap(), c=c),
     ]

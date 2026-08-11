@@ -27,7 +27,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "redo": "ctrl+y",
         "redo_alt": "ctrl+shift+z",
         "toggle_sidebar": "ctrl+shift+b",
-        "toggle_theme": "ctrl+.",
+        "toggle_theme": "alt+t",
         "toggle_raw": "ctrl+/",
         "open_settings": "ctrl+comma",
         "focus_mode": "ctrl+shift+k",
@@ -134,7 +134,7 @@ ACTION_REGISTRY: list[ActionDef] = [
     ActionDef("toggle_sidebar", "切换侧边栏", "both", "视图", "显示或隐藏侧边栏。",
               {"browse": "ctrl+shift+b", "edit": "escape"}),
     ActionDef("toggle_theme", "切换主题", "browse", "视图", "在亮色与暗色主题间切换。",
-              {"browse": "ctrl+."}),
+              {"browse": "alt+t"}),
     ActionDef("toggle_raw", "原文模式", "both", "写作", "在可视化编辑与原始 Markdown 间切换。",
               {"browse": "ctrl+/", "edit": "ctrl+enter"}),
     ActionDef("open_settings", "打开设置", "browse", "设置", "进入设置中心。",
@@ -238,9 +238,11 @@ _INLINE_FORMAT_ACTIONS: tuple[str, ...] = (
 #   而 DEFAULT_SHORTCUTS 中 toggle_sidebar(edit) 用 "escape"，需归一化才能匹配。
 # - comma ↔ ,：open_settings 默认 "ctrl+comma"，_combo 把 "," 保持为 ","，
 #   归一化后 "ctrl+comma" 与 "ctrl+," 等价。
+# - period ↔ .：toggle_theme 默认 "ctrl+."，_combo 把 "period" 映射为 "."，
+#   归一化后 "ctrl+period" 与 "ctrl+." 等价。
 # - : ↔ ;：Shift+; 在 US 键盘产生 ":"，Ctrl+Shift+; 的 _combo 输出为 "ctrl+shift+:"，
 #   归一化后与 "ctrl+shift+;" 等价，保证 insert_datetime 快捷键匹配。
-_KEY_ALIASES: dict[str, str] = {"escape": "esc", "comma": ",", ":": ";"}
+_KEY_ALIASES: dict[str, str] = {"escape": "esc", "comma": ",", "period": ".", ":": ";"}
 
 
 def normalize(combo: str) -> str:

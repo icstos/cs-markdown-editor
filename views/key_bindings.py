@@ -32,6 +32,11 @@ def _combo(e) -> str:
 
     与 services.shortcuts.normalize 配套：ctrl+comma 在 normalize 中转为 ctrl+,，
     此处也把 "comma" 映射为 ","，保证 matches() 比对一致。
+
+    Flet 的 KeyboardEvent.key 对部分标点返回键名而非字符（逗号→"comma"、
+    句号→"period"），此处统一映射为字符，使 combo 输出与 settings 中的
+    字符形式（"ctrl+," / "ctrl+."）可比较。其他标点（/ \\ ` ; 等）Flet
+    直接返回字符，无需映射。
     """
     parts: list[str] = []
     if getattr(e, "ctrl", False) or getattr(e, "meta", False):
@@ -50,6 +55,7 @@ def _combo(e) -> str:
         "arrowdown": "down",
         " ": "space",
         "comma": ",",
+        "period": ".",
         "escape": "esc",
         "enter": "enter",
         ":": ";",  # Shift+; 产生 ":"（US 键盘），归一化为 ";" 保证 Ctrl+Shift+; 匹配
@@ -435,14 +441,31 @@ class KeyDispatcher:
                 page.run_task(cb["open_folder"])
             return
 
-        # Alt+Z 切换自动换行：两层均生效（VSCode 风格），置于 layer 判定之前。
-        if matches(combo, browse_sc.get("toggle_word_wrap", "alt+z")):
+        # Ctrl+Shift+R 切换自动换行：两层均生效（VSCode 风格），置于 layer 判定之前。
+        if matches(combo, browse_sc.get("toggle_word_wrap", "ctrl+shift+r")):
             cb["toggle_word_wrap"]()
             return
 
         # Ctrl+\ 向右拆分编辑器：两层均生效（VSCode 风格），多视口查看同一文档。
         if matches(combo, browse_sc.get("toggle_split_editor", "ctrl+\\")):
             cb["toggle_split_editor"]()
+            return
+
+        # 视图菜单快捷键：两层均生效（与菜单项标签一致）。
+        # 编辑态另有各自绑定（toggle_raw=Ctrl+Enter、toggle_sidebar=Escape），
+        # 在 _handle_shortcuts edit 分支处理，与此处互不冲突。
+        # Ctrl+Shift+B 切换侧边栏
+        if matches(combo, browse_sc.get("toggle_sidebar", "ctrl+shift+b")):
+            cb["toggle_sidebar"]()
+            return
+        # Alt+T 切换主题
+        if matches(combo, browse_sc.get("toggle_theme", "alt+t")):
+            cb["toggle_theme"]()
+            return
+        # Ctrl+/ 源码模式
+        if matches(combo, browse_sc.get("toggle_raw", "ctrl+/")):
+            if actions is not None:
+                actions.toggle_raw()
             return
 
         # PageUp / PageDown：两层均生效（编辑态光标翻页跟随，浏览态纯滚动）。
@@ -714,13 +737,6 @@ class KeyDispatcher:
                 page.run_task(cb["save_as"])
             elif matches(combo, shortcuts.get("new", "ctrl+n")):
                 cb["new"]()
-            elif matches(combo, shortcuts.get("toggle_sidebar", "ctrl+b")):
-                cb["toggle_sidebar"]()
-            elif matches(combo, shortcuts.get("toggle_theme", "ctrl+.")):
-                cb["toggle_theme"]()
-            elif matches(combo, shortcuts.get("toggle_raw", "ctrl+/")):
-                if actions is not None:
-                    actions.toggle_raw()
             elif matches(combo, shortcuts.get("open_settings", "ctrl+comma")):
                 cb["open_settings"]()
             elif matches(combo, shortcuts.get("focus_mode", "ctrl+k")):

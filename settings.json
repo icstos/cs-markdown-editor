@@ -18,8 +18,8 @@
   "sidebar_panel": "files",
   "sidebar_width": 256,
   "recent_files": [
-    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\InBox.md",
+    "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\README.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\000-模块管理-importlib-pkgutil-pip-venv-pipreqs-pipdeptree_copy.md",
     "C:\\Users\\aigcs\\Desktop\\测试文档\\CHANGELOG.md",
@@ -50,7 +50,7 @@
       "redo": "ctrl+y",
       "redo_alt": "ctrl+shift+z",
       "toggle_sidebar": "ctrl+shift+b",
-      "toggle_theme": "ctrl+shift+l",
+      "toggle_theme": "alt+t",
       "toggle_raw": "ctrl+/",
       "open_settings": "ctrl+comma",
       "focus_mode": "ctrl+shift+k",

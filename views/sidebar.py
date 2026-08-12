@@ -631,6 +631,45 @@ def _wrap_context_menu(
     )
 
 
+def _wrap_blank_context_menu(
+    content: ft.Control,
+    root_dir: str,
+    on_action: Callable[[str, str], None],
+    c,
+) -> ft.ContextMenu:
+    """文件面板空白区域右键菜单（VSCode 资源管理器风格）。
+
+    仅包含不依赖具体文件项的操作：新建文件 / 新建文件夹 / 复制路径 / 打开文件位置。
+    path=root_dir（is_dir=True），复用 on_sidebar_context_action 的新建逻辑
+    （dir_path = path if is_dir else dirname(path) → 在根目录下创建）。
+    """
+    items: list[ft.PopupMenuItem] = [
+        ft.PopupMenuItem(
+            content="新建文件", icon=ft.Icons.NOTE_ADD,
+            on_click=lambda e, p=root_dir: on_action("new_file", p),
+        ),
+        ft.PopupMenuItem(
+            content="新建文件夹", icon=ft.Icons.CREATE_NEW_FOLDER,
+            on_click=lambda e, p=root_dir: on_action("new_folder", p),
+        ),
+        ft.PopupMenuItem(),  # 分隔
+        ft.PopupMenuItem(
+            content="复制路径", icon=ft.Icons.CONTENT_COPY,
+            on_click=lambda e, p=root_dir: on_action("copy_path", p),
+        ),
+        ft.PopupMenuItem(
+            content="打开文件位置", icon=ft.Icons.FOLDER_OPEN,
+            on_click=lambda e, p=root_dir: on_action("reveal", p),
+        ),
+    ]
+    return ft.ContextMenu(
+        content=content,
+        secondary_items=items,
+        key="blank-area",
+        expand=True,
+    )
+
+
 def _search_box(
     value: str,
     on_change: Callable[[str], None],
@@ -930,6 +969,12 @@ def _render_files_panel(
             first_item_prototype=True,
             padding=ft.Padding.symmetric(vertical=Spacing.XS),
         )
+
+    # 工作区模式：空白区域右键菜单（新建文件/文件夹、复制路径、打开文件位置）
+    # 右键文件/文件夹项时触发项级菜单（内层 ContextMenu 优先），
+    # 右键列表空白区域触发此菜单（VSCode 资源管理器风格）
+    if root_dir:
+        body = _wrap_blank_context_menu(body, root_dir, on_file_context_action, c)
 
     # 工作区模式：顶部文件夹名头 + 关闭按钮（VSCode 风格资源管理器标题栏）
     header_controls: list = []

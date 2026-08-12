@@ -24,6 +24,8 @@ import flet as ft
 
 from core.actions import EditorActions
 from models import BlockType
+from services.clipboard_html import get_clipboard_html_async
+from services.html_to_markdown import html_to_markdown
 from services.shortcuts import ShortcutManager, matches
 
 
@@ -861,14 +863,16 @@ class KeyDispatcher:
             return
 
     async def _do_paste_check(self) -> None:
-        """Ctrl+V 后异步检查剪贴板：优先图片粘贴，否则文本粘贴。
+        """Ctrl+V 后异步检查剪贴板：优先图片粘贴，否则智能文本粘贴。
 
         优先级（Typora 式）：
         1. paste_image_from_clipboard：剪贴板含图片/图片文件 → 落盘 ./assets/ 插入 ![](...)
            浏览/编辑两态均生效（浏览态插入到 cursor_line 行尾）
-        2. 文本粘贴：仅编辑态（cursor_li is not None），统一走 handle_paste
-           拆分多行（单行/多行均由 handle_paste 处理，原生 TextField 的
-           on_change 已被 paste_in_progress 标志拦截，无重复插入风险）
+        2. 智能文本粘贴（仅编辑态）：
+           a. 优先读取 HTML Format（Windows API），转换为 Markdown（保留链接/格式/换行）
+           b. HTML 不存在或转换失败 → 回退纯文本（Flet clipboard.get()）
+           统一走 handle_paste 拆分多行，原生 TextField 的 on_change 已被
+           paste_in_progress 标志拦截，无重复插入风险
         """
         await asyncio.sleep(0.05)
         actions = self._actions_ref.current
@@ -886,13 +890,8 @@ class KeyDispatcher:
             # 2. 文本粘贴仅编辑态
             if actions.cursor_li is None:
                 return
-            clipboard = self._clipboard_ref.current
-            if clipboard is None:
-                return
-            try:
-                text = await clipboard.get()
-            except Exception:
-                return
+            # 2a. 优先尝试 HTML Format 智能转换（Typora 式：保留链接/格式/换行）
+            text = await self._get_smart_paste_text()
             if not text:
                 return
             try:
@@ -903,12 +902,38 @@ class KeyDispatcher:
             # 兜底重置 paste_in_progress（handle_paste 内部已重置，此处防御性）
             self._end_paste(actions)
 
+    async def _get_smart_paste_text(self) -> str:
+        """智能获取粘贴文本：优先 HTML→Markdown 转换，回退纯文本。
+
+        浏览器复制富文本时同时写入 CF_UNICODETEXT（纯文本）和 HTML Format。
+        纯文本丢失链接 URL 和格式信息，HTML Format 保留完整结构。
+        此方法优先读 HTML Format 转为 Markdown，回退纯文本。
+        """
+        # 优先尝试 HTML Format（Windows API，非 Windows 返回 None）
+        try:
+            html = await get_clipboard_html_async()
+        except Exception:
+            html = None
+        if html and html.strip():
+            md = html_to_markdown(html)
+            if md and md.strip():
+                return md.rstrip("\n")
+        # 回退纯文本（Flet clipboard.get）
+        clipboard = self._clipboard_ref.current
+        if clipboard is None:
+            return ""
+        try:
+            return await clipboard.get() or ""
+        except Exception:
+            return ""
+
     async def _do_multi_cursor_paste(self) -> None:
         """多光标 Ctrl+V：读取剪贴板文本，智能粘贴到所有光标。
 
         VSCode 智能粘贴：剪贴板行数 == 光标数时逐行分配（第 i 行→第 i 个光标），
         否则全文插入到主光标并清除副光标（回退单光标粘贴）。
         图片粘贴优先于多光标文本粘贴。
+        优先 HTML→Markdown 转换（保留链接/格式），回退纯文本。
         """
         await asyncio.sleep(0.05)
         actions = self._actions_ref.current
@@ -923,13 +948,7 @@ class KeyDispatcher:
                     handled = False
                 if handled:
                     return
-            clipboard = self._clipboard_ref.current
-            if clipboard is None:
-                return
-            try:
-                text = await clipboard.get()
-            except Exception:
-                return
+            text = await self._get_smart_paste_text()
             if not text:
                 return
             try:

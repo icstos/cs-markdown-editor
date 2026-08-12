@@ -292,6 +292,7 @@ def App():
         page_ref=page_ref,
         tabs_ref=tabs_ref,
         active_index_ref=active_index_ref,
+        settings_ref=settings_ref,
         dispatcher_ref=dispatcher_ref,
         paste_old_draft=paste_old_draft,
         status_ref=status_ref,

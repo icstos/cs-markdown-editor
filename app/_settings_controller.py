@@ -96,7 +96,11 @@ def build_settings_controller(ctx):
         ctx.set_settings_tab(tab)
 
     def update_setting(key: str, value):
-        next_settings = dict(ctx.settings)
+        # 通过 settings_ref 读取最新 settings，避免闭包捕获的 ctx.settings
+        # 是过期快照（异步任务如自动保存运行时可能持有旧渲染周期的 ctx）。
+        # 否则 dict(ctx.settings) 会用旧快照覆盖最新值（如 workspace_folder 丢失）。
+        current = ctx.settings_ref.current if ctx.settings_ref is not None else ctx.settings
+        next_settings = dict(current)
         next_settings[key] = value
         ctx.set_settings(next_settings)
         save_settings(next_settings)

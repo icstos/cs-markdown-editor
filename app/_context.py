@@ -94,6 +94,7 @@ class AppContext:
     page_ref: ft.Ref
     tabs_ref: ft.Ref
     active_index_ref: ft.Ref
+    settings_ref: ft.Ref  # 最新 settings 快照（供异步任务读取，避免闭包捕获过期快照）
     dispatcher_ref: ft.Ref  # KeyDispatcher 实例
     paste_old_draft: ft.Ref  # 粘贴前 draft 快照（供 handle_paste 做 diff 定位）
     status_ref: ft.Ref  # 状态栏命令式更新器（update_cursor / update_counts）

@@ -74,9 +74,16 @@ def build_backup_controller(ctx):
     _loop_task_holder: dict[str, Any] = {"task": None}
 
     def _make_autosave_ctx() -> AutosaveContext:
-        """构造 AutosaveContext，读取 ctx 最新槽位（避免闭包捕获渲染期快照）。"""
+        """构造 AutosaveContext，读取 ctx 最新槽位（避免闭包捕获渲染期快照）。
+
+        settings 通过 settings_ref 读取最新值（自动保存循环捕获首次渲染的 ctx，
+        ctx.settings 是过期快照；settings_ref 每渲染同步，保证读到最新设置）。
+        """
+        current_settings = (
+            ctx.settings_ref.current if ctx.settings_ref is not None else ctx.settings
+        )
         return AutosaveContext(
-            settings=ctx.settings,
+            settings=current_settings,
             page_ref=ctx.page_ref,
             tabs_ref=ctx.tabs_ref,
             save_doc_fn=ctx.save_doc,

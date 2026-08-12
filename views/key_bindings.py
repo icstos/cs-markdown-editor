@@ -410,6 +410,10 @@ class KeyDispatcher:
                 if actions.clear_outward_sel is not None:
                     actions.clear_outward_sel()
                 return
+            # Enter：删除选区后在删除点换行（Typora 式：选中→Enter 替换为换行）
+            if norm == "enter" and actions.handle_outward_enter is not None:
+                actions.handle_outward_enter()
+                return
             # 可打印字符：打字替换 outward 选区（通用基础编辑行为，桌面端直觉）
             char = _extract_printable_char(e)
             if char is not None and actions.handle_outward_type_char is not None:

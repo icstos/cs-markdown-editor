@@ -429,6 +429,7 @@ def MarkdownEditor(
     ctx.on_pan_start_outward = outward_cbs["on_pan_start_outward"]
     ctx.delete_raw_range = outward_cbs["delete_raw_range"]
     ctx.handle_outward_delete = outward_cbs["handle_outward_delete"]
+    ctx.handle_outward_enter = outward_cbs["handle_outward_enter"]
     ctx.handle_outward_cut = outward_cbs["handle_outward_cut"]
     ctx.handle_outward_copy = outward_cbs["handle_outward_copy"]
     ctx.select_all = outward_cbs["select_all"]

@@ -97,6 +97,7 @@ def build_actions(ctx) -> EditorActions | None:
         extend_outward_end=lambda: ctx.extend_outward_step(ctx.step_end),
         handle_outward_cut=ctx.handle_outward_cut,
         handle_outward_delete=ctx.handle_outward_delete,
+        handle_outward_enter=ctx.handle_outward_enter,
         handle_outward_copy=ctx.handle_outward_copy,
         clear_outward_sel=ctx.clear_outward_sel,
         select_all=ctx.select_all,

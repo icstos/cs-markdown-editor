@@ -331,6 +331,43 @@ def build_outward(ctx):
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
         _delete_raw_range(a_li, a_off, b_li, b_off)
 
+    def handle_outward_enter() -> None:
+        """Enter：删除 outward 选区内容后在删除点换行（原子操作）。
+
+        与 handle_outward_delete + on_submit 的区别：
+        - 单次 push_history（删除 + 换行合并为一个撤销操作）
+        - 通过 on_submit(override_li/override_off) 绕过 ctx.cursor_li 快照
+          （浏览态时为 None，直接调用 on_submit 会被拦截）
+        """
+        if ctx.outward_sel is None:
+            return
+        a_li, a_off, b_li, b_off = ctx.outward_sel
+        if (a_li, a_off) > (b_li, b_off):
+            a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        # 删除选区边界检查（围栏块不参与 raw 选区）
+        if not (0 <= a_li < len(ctx.document.lines)):
+            return
+        if _is_fence(ctx.document.lines[a_li]):
+            return
+        ctx.push_history()
+        ctx.undo_push_pending.current = True
+        try:
+            result = _compute_delete_result_impl(
+                ctx.document.lines, a_li, a_off, b_li, b_off)
+            if result is not None:
+                merge_li, merged_raw, new_lines = result
+                _reparse_atomic(ctx.document.lines[merge_li], merged_raw)
+                if new_lines is not ctx.document.lines:
+                    ctx.document.lines = new_lines
+        except Exception:
+            return
+        ctx.mark_dirty()
+        ctx.set_outward_sel(None)
+        # 在删除点换行：override 绕过 cursor_li 快照 + skip_history 避免双倍记录
+        ctx.on_submit("", override_li=a_li, override_off=a_off, skip_history=True)
+        # 强制重聚焦（与 _delete_raw_range 同型修复）
+        ctx.set_focus_seq(ctx.focus_seq + 1)
+
     def _extract_outward_text(a_li: int, a_off: int, b_li: int, b_off: int) -> str:
         """提取已排序选区文本（行级 raw 拼接）。
 
@@ -405,6 +442,7 @@ def build_outward(ctx):
         "clear_outward_sel": clear_outward_sel,
         "delete_raw_range": _delete_raw_range,
         "handle_outward_delete": handle_outward_delete,
+        "handle_outward_enter": handle_outward_enter,
         "handle_outward_cut": handle_outward_cut,
         "handle_outward_copy": handle_outward_copy,
         "select_all": select_all,

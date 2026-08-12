@@ -577,51 +577,59 @@ def build_cursor(ctx):
             ctx.suppress_blur.current = True
             _set_cursor(li, junction)
 
-    def on_submit(value: str):
-        """Enter：在光标处分割行，续行加列表/引用前缀。"""
-        if ctx.cursor_li is None:
+    def on_submit(value: str, *, override_li: int | None = None, override_off: int | None = None, skip_history: bool = False):
+        """Enter：在光标处分割行，续行加列表/引用前缀。
+
+        override_li/override_off：外部调用（如 outward 选区删除后换行）时强制指定
+        光标位置，绕过 ctx.cursor_li 快照（浏览态时为 None）。
+        skip_history：跳过 push_history（已由调用方 push 过，避免双倍历史记录）。
+        """
+        li = override_li if override_li is not None else ctx.cursor_li
+        if li is None:
             return
-        li = ctx.cursor_li
         if not (0 <= li < len(ctx.document.lines)):
             return
         line = ctx.document.lines[li]
         if _is_fence(line):
             return
 
-        # 回车前清理未上屏 IME composing 文本（安全网）：composing 期间按回车，
-        # IME 放弃 composing，on_change 的 value 为已上屏前缀。handle_char_input
-        # 的 delta 模型已裁剪文档区域，但部分 IME 可能不触发 on_change（仅 on_submit），
-        # 或事件顺序不确定 → 此处用 delta 模型再次检测同步，确保 composing 残留被清除。
-        # 若 handle_char_input 已同步（last_value==value），delta 无变化不会重复裁剪。
-        # push_history 之前执行：未上屏 composing 不应进入撤销栈（undo 不恢复废字符）。
-        _sess = ctx.input_session_ref.current
-        if _sess is not None and _sess.get("li") == li and _sess.get("start_off", -1) >= 0:
-            _lv = _sess.get("last_value", "")
-            if _lv and _lv != value:
-                _so = _sess["start_off"]
-                _raw = _line_raw(line)
-                # delta 计算：公共前缀后的 removed/inserted
-                _cp = 0
-                while _cp < len(_lv) and _cp < len(value) and _lv[_cp] == value[_cp]:
-                    _cp += 1
-                _removed = _lv[_cp:]
-                _inserted = value[_cp:]
-                if _removed or _inserted:
-                    _ds = max(0, min(_so + _cp, len(_raw)))
-                    _de = max(0, min(_so + len(_lv), len(_raw)))
-                    if _ds > _de:
-                        _ds = _de
-                    _new_raw = _raw[:_ds] + _inserted + _raw[_de:]
-                    _reparse_atomic(line, _new_raw)
-                    _sess["last_value"] = value
-                    ctx.cursor_ref.current.reset(_so + len(value), len(_new_raw))
-                    ctx.set_cursor_field_value(value)
-                    ctx.mark_dirty()
-                    # 多光标：同步 IME composing 清理 delta 到副光标
-                    ctx.broadcast_char_input(len(_removed), _inserted)
+        # IME 清理仅 TextField 原生 on_submit 触发时需要（override 调用跳过）
+        if override_li is None:
+            # 回车前清理未上屏 IME composing 文本（安全网）：composing 期间按回车，
+            # IME 放弃 composing，on_change 的 value 为已上屏前缀。handle_char_input
+            # 的 delta 模型已裁剪文档区域，但部分 IME 可能不触发 on_change（仅 on_submit），
+            # 或事件顺序不确定 → 此处用 delta 模型再次检测同步，确保 composing 残留被清除。
+            # 若 handle_char_input 已同步（last_value==value），delta 无变化不会重复裁剪。
+            # push_history 之前执行：未上屏 composing 不应进入撤销栈（undo 不恢复废字符）。
+            _sess = ctx.input_session_ref.current
+            if _sess is not None and _sess.get("li") == li and _sess.get("start_off", -1) >= 0:
+                _lv = _sess.get("last_value", "")
+                if _lv and _lv != value:
+                    _so = _sess["start_off"]
+                    _raw = _line_raw(line)
+                    # delta 计算：公共前缀后的 removed/inserted
+                    _cp = 0
+                    while _cp < len(_lv) and _cp < len(value) and _lv[_cp] == value[_cp]:
+                        _cp += 1
+                    _removed = _lv[_cp:]
+                    _inserted = value[_cp:]
+                    if _removed or _inserted:
+                        _ds = max(0, min(_so + _cp, len(_raw)))
+                        _de = max(0, min(_so + len(_lv), len(_raw)))
+                        if _ds > _de:
+                            _ds = _de
+                        _new_raw = _raw[:_ds] + _inserted + _raw[_de:]
+                        _reparse_atomic(line, _new_raw)
+                        _sess["last_value"] = value
+                        ctx.cursor_ref.current.reset(_so + len(value), len(_new_raw))
+                        ctx.set_cursor_field_value(value)
+                        ctx.mark_dirty()
+                        # 多光标：同步 IME composing 清理 delta 到副光标
+                        ctx.broadcast_char_input(len(_removed), _inserted)
 
-        ctx.push_history()
-        ctx.undo_push_pending.current = True
+        if not skip_history:
+            ctx.push_history()
+            ctx.undo_push_pending.current = True
         # HR 行 Enter：在下方插入新空行（不分割 ---，Typora 式）
         if line.block_type == BlockType.HR:
             ctx.clear_secondary_cursors()
@@ -633,8 +641,25 @@ def build_cursor(ctx):
             ctx.set_cursor(li + 1, 0)
             return
         raw = _line_raw(line)
-        off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
-        off = max(0, min(off, len(raw)))
+        if override_off is not None:
+            off = max(0, min(override_off, len(raw)))
+        else:
+            off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
+            # 行内选区：先删除选区内容（与换行合并为一个撤销操作）
+            if ctx.cursor_ref.current and ctx.cursor_ref.current.base != ctx.cursor_ref.current.extent:
+                cs = ctx.cursor_ref.current
+                sel_start = min(cs.base, cs.extent)
+                sel_end = max(cs.base, cs.extent)
+                sel_start = max(0, min(sel_start, len(raw)))
+                sel_end = max(0, min(sel_end, len(raw)))
+                if sel_start < sel_end:
+                    new_raw = raw[:sel_start] + raw[sel_end:]
+                    _reparse_atomic(line, new_raw, notify=False)
+                    ctx.mark_dirty()
+                    raw = _line_raw(line)
+                    off = sel_start
+                    cs.reset(off, len(raw))
+            off = max(0, min(off, len(raw)))
         before = raw[:off]
         after = raw[off:]
 
@@ -741,7 +766,9 @@ def build_cursor(ctx):
         ctx.suppress_blur.current = True
         _set_cursor(li + 1, len(cont_prefix))
         # 多光标：同步 Enter 分行到所有副光标（从下往上处理避免行号偏移）
-        ctx.broadcast_submit(value)
+        # override 调用（outward 选区换行）时跳过广播
+        if override_li is None:
+            ctx.broadcast_submit(value)
 
     return {
         "cursor_base": _cursor_base,

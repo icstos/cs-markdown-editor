@@ -90,11 +90,12 @@ class LineLayoutCache:
     单独计算（line_view.py）。content_width 现用于计算 wrap_width 实现软换行。
     """
 
-    def __init__(self, lines: list[Line], content_width: float, line_height: float = 1.6):
+    def __init__(self, lines: list[Line], content_width: float, line_height: float = 1.6, body_font_size: int = 16):
         self._layouts: list[LineLayout] = []
         self._total_height: float = 0.0
         self._line_height = line_height
         self._content_width = content_width
+        self._body_font_size = body_font_size
         self._build(lines)
 
     def get(self, li: int) -> LineLayout | None:
@@ -175,7 +176,7 @@ class LineLayoutCache:
         y_acc = 0.0
         cw = self._content_width
         for li, line in enumerate(lines):
-            base = block_text_size(line.block_type, line.level)
+            base = block_text_size(line.block_type, line.level, self._body_font_size)
             text_h = base * self._line_height
             pad_top, pad_bottom, left_pad = _block_padding(line)
             if line.block_type in FENCE_BLOCK_TYPES:

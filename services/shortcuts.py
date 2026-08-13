@@ -56,6 +56,9 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "replace_all": "ctrl+alt+enter",
         "insert_date": "ctrl+;",
         "insert_datetime": "ctrl+shift+;",
+        "zoom_in": "ctrl+shift+=",
+        "zoom_out": "ctrl+shift+-",
+        "zoom_reset": "ctrl+shift+0",
     },
     "edit": {
         "save": "ctrl+s",
@@ -97,6 +100,9 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "replace_all": "ctrl+alt+enter",
         "insert_date": "ctrl+;",
         "insert_datetime": "ctrl+shift+;",
+        "zoom_in": "ctrl+shift+=",
+        "zoom_out": "ctrl+shift+-",
+        "zoom_reset": "ctrl+shift+0",
     },
 }
 
@@ -215,6 +221,12 @@ ACTION_REGISTRY: list[ActionDef] = [
               {"edit": "ctrl+shift+i"}),
     ActionDef("clear_format", "清除格式", "edit", "行内格式", "清除选中文本的所有行内格式标记。",
               {"edit": "ctrl+r"}),
+    ActionDef("zoom_in", "放大", "both", "视图", "放大界面（Ctrl+Shift+=），每次 +10%。",
+              {"browse": "ctrl+shift+=", "edit": "ctrl+shift+="}),
+    ActionDef("zoom_out", "缩小", "both", "视图", "缩小界面（Ctrl+Shift+-），每次 -10%。",
+              {"browse": "ctrl+shift+-", "edit": "ctrl+shift+-"}),
+    ActionDef("zoom_reset", "实际大小", "both", "视图", "重置缩放为 100%（Ctrl+Shift+0）。",
+              {"browse": "ctrl+shift+0", "edit": "ctrl+shift+0"}),
 ]
 
 _LAYERS = ("browse", "edit")
@@ -242,6 +254,8 @@ _INLINE_FORMAT_ACTIONS: tuple[str, ...] = (
 #   归一化后 "ctrl+period" 与 "ctrl+." 等价。
 # - : ↔ ;：Shift+; 在 US 键盘产生 ":"，Ctrl+Shift+; 的 _combo 输出为 "ctrl+shift+:"，
 #   归一化后与 "ctrl+shift+;" 等价，保证 insert_datetime 快捷键匹配。
+# - + ↔ =：Shift+= 在 US 键盘产生 "+"，_combo 中映射 "+" → "="（不用 _KEY_ALIASES，
+#   因 "+" 是组合键分隔符，normalize 的 split("+") 会破坏含 "+" 的组合键）。
 _KEY_ALIASES: dict[str, str] = {"escape": "esc", "comma": ",", "period": ".", ":": ";"}
 
 

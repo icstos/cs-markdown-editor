@@ -471,6 +471,7 @@ def LineView(
     cursor_value: str = "",
     content_width: float | None = None,
     line_height: float = 1.6,
+    body_font_size: int = 16,
     is_current_line: bool = False,
     is_flash: bool = False,
     # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，
@@ -554,7 +555,7 @@ def LineView(
     _current_colors() 与 CodeEditor 的 code_theme 重新取最新主题色。
     """
     c = _current_colors()
-    base = block_text_size(line.block_type, line.level)
+    base = block_text_size(line.block_type, line.level, body_font_size)
     is_active = is_current_line
 
     # 激活行：优先使用 cursor_ref.current.base（IME 组合期间最新位置）
@@ -760,6 +761,7 @@ def LineView(
         cursor_off=cursor_off_val,
         base_size=base,
         line_height=line_height,
+        body_font_size=body_font_size,
         content_width=content_width,
         cursor_overlay=overlay,
         precomputed_vlayout=shared_vlayout,

@@ -164,17 +164,21 @@ def _current_colors() -> Colors:
     return _LIGHT
 
 
-def block_text_size(block_type: BlockType, level: int = 0) -> int:
+def block_text_size(block_type: BlockType, level: int = 0, base_size: int = 16) -> int:
     """块级正文基础字号。
 
     标题字号递进 30→24→20→18→16→15：每级 -2~-6px，H6 略小于正文（16）
     以"小一号+加粗"区分；正文 16，代码 14（紧凑可读）。
+
+    base_size：正文字号基准（默认 16）。Typora 式缩放时传入缩放后的 body_font_size，
+    所有字号按比例联动（标题/代码/正文均基于 base_size 等比缩放）。
     """
+    _ratio = base_size / 16.0
     if block_type == BlockType.HEADING:
-        return {1: 30, 2: 24, 3: 20, 4: 18, 5: 16, 6: 15}.get(level, 16)
+        return max(8, round({1: 30, 2: 24, 3: 20, 4: 18, 5: 16, 6: 15}.get(level, 16) * _ratio))
     if block_type == BlockType.CODE:
-        return 14
-    return 16
+        return max(8, round(14 * _ratio))
+    return base_size
 
 
 # 字重递进：W_800→W_700→W_700→W_600→W_600→W_500

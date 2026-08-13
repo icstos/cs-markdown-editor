@@ -179,7 +179,7 @@ def build_navigation(ctx):
         line = ctx.document.lines[li]
         if _is_fence(line):
             return None
-        base = block_text_size(line.block_type, line.level)
+        base = block_text_size(line.block_type, line.level, ctx.body_font_size)
         _, _, left_pad = _block_padding(line)
         cw = ctx.content_width if ctx.content_width is not None else float("inf")
         wrap_width = _compute_wrap_width(cw, left_pad)

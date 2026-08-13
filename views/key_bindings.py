@@ -61,6 +61,8 @@ def _combo(e) -> str:
         "escape": "esc",
         "enter": "enter",
         ":": ";",  # Shift+; 产生 ":"（US 键盘），归一化为 ";" 保证 Ctrl+Shift+; 匹配
+        "+": "=",  # Shift+= 产生 "+"（US 键盘），映射为 "=" 保证 Ctrl+Shift+= 匹配
+        ")": "0",  # Shift+0 产生 ")"（US 键盘），映射为 "0" 保证 Ctrl+Shift+0 匹配
     }
     key = mapping.get(key, key)
     return "+".join(parts + [key])
@@ -450,6 +452,24 @@ class KeyDispatcher:
         # Ctrl+Shift+R 切换自动换行：两层均生效（VSCode 风格），置于 layer 判定之前。
         if matches(combo, browse_sc.get("toggle_word_wrap", "ctrl+shift+r")):
             cb["toggle_word_wrap"]()
+            return
+
+        # Typora 式缩放：Ctrl+Shift+= 放大 / Ctrl+Shift+- 缩小 / Ctrl+Shift+0 实际大小
+        # 两层均生效，置于 layer 判定之前确保编辑态也能触发。
+        if matches(combo, browse_sc.get("zoom_in", "ctrl+shift+=")):
+            _fn = cb.get("zoom_in")
+            if _fn is not None:
+                _fn()
+            return
+        if matches(combo, browse_sc.get("zoom_out", "ctrl+shift+-")):
+            _fn = cb.get("zoom_out")
+            if _fn is not None:
+                _fn()
+            return
+        if matches(combo, browse_sc.get("zoom_reset", "ctrl+shift+0")):
+            _fn = cb.get("zoom_reset")
+            if _fn is not None:
+                _fn()
             return
 
         # Ctrl+\ 向右拆分编辑器：两层均生效（VSCode 风格），多视口查看同一文档。

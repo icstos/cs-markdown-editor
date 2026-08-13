@@ -233,6 +233,20 @@ def build_settings_controller(ctx):
         """切换自动换行（VSCode 风格 Alt+Z）：开 = 软换行，关 = 长行不换行。"""
         update_setting("word_wrap", not ctx.settings.get("word_wrap", True))
 
+    def zoom_in():
+        """放大界面（Typora 式 Ctrl+Shift+=）：每次 +10%，上限 200%。"""
+        cur = ctx.settings.get("zoom", 100)
+        update_setting("zoom", min(200, cur + 10))
+
+    def zoom_out():
+        """缩小界面（Typora 式 Ctrl+Shift+-）：每次 -10%，下限 50%。"""
+        cur = ctx.settings.get("zoom", 100)
+        update_setting("zoom", max(50, cur - 10))
+
+    def zoom_reset():
+        """重置缩放为 100%（Typora 式 Ctrl+Shift+0）。"""
+        update_setting("zoom", 100)
+
     def change_sidebar_panel(panel: str):
         update_setting("sidebar_panel", panel)
 
@@ -258,6 +272,9 @@ def build_settings_controller(ctx):
         "import_shortcuts": import_shortcuts,
         "toggle_sidebar": toggle_sidebar,
         "toggle_word_wrap": toggle_word_wrap,
+        "zoom_in": zoom_in,
+        "zoom_out": zoom_out,
+        "zoom_reset": zoom_reset,
         "change_sidebar_panel": change_sidebar_panel,
         "change_sidebar_width": change_sidebar_width,
     }

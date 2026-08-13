@@ -110,6 +110,11 @@ def MarkdownEditor(
     content_padding_top = settings.get("content_padding_top", 24)
     show_footer = settings.get("show_footer", True)
     body_font_size = settings.get("body_font_size", 16)
+    # Typora 式缩放：zoom 百分比应用到正文字号和间距（50%~200%），整体视觉一致缩放
+    _zoom = settings.get("zoom", 100) / 100.0
+    body_font_size = max(8, round(body_font_size * _zoom))
+    content_padding = round(content_padding * _zoom)
+    content_padding_top = round(content_padding_top * _zoom)
     line_height = settings.get("line_height", 1.6)
     # show_toolbar prop：None 时回落到 settings，False 时强制隐藏（用于右侧拆分编辑器）
     show_toolbar = show_toolbar if show_toolbar is not None else settings.get("show_toolbar", True)

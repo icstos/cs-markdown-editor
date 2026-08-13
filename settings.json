@@ -4,6 +4,7 @@
   "content_padding_top": 24,
   "show_footer": true,
   "body_font_size": 16,
+  "zoom": 100,
   "line_height": 1.6,
   "font_family": "Alibaba",
   "auto_save": true,
@@ -14,7 +15,7 @@
   "code_theme_dark": "ATOM_ONE_DARK",
   "code_theme_light": "GITHUB",
   "export_format": "html",
-  "sidebar_open": true,
+  "sidebar_open": false,
   "sidebar_panel": "files",
   "sidebar_width": 256,
   "recent_files": [
@@ -79,7 +80,10 @@
       "replace_current": "alt+enter",
       "replace_all": "ctrl+alt+enter",
       "insert_date": "ctrl+;",
-      "insert_datetime": "ctrl+shift+;"
+      "insert_datetime": "ctrl+shift+;",
+      "zoom_in": "ctrl+shift+=",
+      "zoom_out": "ctrl+shift+-",
+      "zoom_reset": "ctrl+shift+0"
     },
     "edit": {
       "save": "ctrl+s",
@@ -120,7 +124,10 @@
       "replace_current": "alt+enter",
       "replace_all": "ctrl+alt+enter",
       "insert_date": "ctrl+;",
-      "insert_datetime": "ctrl+shift+;"
+      "insert_datetime": "ctrl+shift+;",
+      "zoom_in": "ctrl+shift+=",
+      "zoom_out": "ctrl+shift+-",
+      "zoom_reset": "ctrl+shift+0"
     }
   }
 }

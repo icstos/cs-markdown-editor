@@ -173,7 +173,7 @@ def build_scroll(ctx):
         if not (0 <= li < len(ctx.document.lines)):
             return ctx.body_font_size * ctx.line_height + 4
         line = ctx.document.lines[li]
-        base = block_text_size(line.block_type, line.level)
+        base = block_text_size(line.block_type, line.level, ctx.body_font_size)
         if line.block_type == BlockType.CODE:
             code = line.segments[0].text if line.segments else ""
             code_lines = max(1, code.count("\n") + 1)
@@ -314,7 +314,8 @@ def build_scroll(ctx):
             if info is not None:
                 _, vline, _ = info
                 base = block_text_size(
-                    ctx.document.lines[li].block_type, ctx.document.lines[li].level
+                    ctx.document.lines[li].block_type, ctx.document.lines[li].level,
+                    ctx.body_font_size,
                 )
                 cursor_y_in_line = vline.vline_idx * base * ctx.line_height
         _run_task_safe(page, _safe_scroll_to, li, cursor_y_in_line=cursor_y_in_line)
@@ -325,7 +326,7 @@ def build_scroll(ctx):
             return 0
         from views.pixel_layout import hit_test_line_x
         line = ctx.document.lines[li]
-        base = block_text_size(line.block_type, line.level)
+        base = block_text_size(line.block_type, line.level, ctx.body_font_size)
         return hit_test_line_x(line, x, base)
 
     def _get_layout_cache():
@@ -337,7 +338,7 @@ def build_scroll(ctx):
         if ctx.layout_cache_ref.current is None:
             from views.pixel_layout import LineLayoutCache
             ctx.layout_cache_ref.current = LineLayoutCache(
-                ctx.document.lines, ctx.content_width, ctx.line_height
+                ctx.document.lines, ctx.content_width, ctx.line_height, ctx.body_font_size
             )
         return ctx.layout_cache_ref.current
 

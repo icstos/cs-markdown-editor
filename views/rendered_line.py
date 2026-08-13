@@ -143,6 +143,7 @@ def RenderedLine(
     cursor_off: int | None = None,
     base_size: int | None = None,
     line_height: float = 1.6,
+    body_font_size: int = 16,
     content_width: float | None = None,
     cursor_overlay: ft.Control | None = None,
     # 预计算视觉行布局：(wrap_width, visual_lines)，由 LineView 共享传入避免重复计算
@@ -185,7 +186,7 @@ def RenderedLine(
     返回：内层 content（GestureDetector 包裹），由 line_view.py 外层包 _wrap_block。
     """
     c = _current_colors()
-    base = base_size or block_text_size(line.block_type, line.level)
+    base = base_size or block_text_size(line.block_type, line.level, body_font_size)
     weight = block_weight(line.block_type, line.level)
     style = _line_style(base, weight, line_height)
     heading_level = line.level if line.block_type == BlockType.HEADING else 0
@@ -610,7 +611,7 @@ def RenderedLine(
         if heading_level > 0:
             p_color = c.heading_colors.get(heading_level, c.text)
             p_weight = block_weight(BlockType.HEADING, heading_level)
-            p_size = block_text_size(BlockType.HEADING, heading_level)
+            p_size = block_text_size(BlockType.HEADING, heading_level, body_font_size)
         else:
             p_color = c.text
             p_weight = ft.FontWeight.NORMAL

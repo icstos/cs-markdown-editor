@@ -128,6 +128,7 @@ def build_line_controls(
                     cursor_value=cursor_field_value if is_act else "",
                     content_width=content_width,
                     line_height=line_height,
+                    body_font_size=ctx.body_font_size,
                     is_current_line=is_act,
                     is_flash=flash_li == i,
                     # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，

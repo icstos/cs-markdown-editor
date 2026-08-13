@@ -35,6 +35,7 @@ DEFAULT_SETTINGS: Settings = {
     "content_padding_top": 24,
     "show_footer": True,
     "body_font_size": 16,
+    "zoom": 100,  # 界面缩放百分比（Typora 式：Ctrl+Shift+= 放大 / Ctrl+Shift+- 缩小 / Ctrl+Shift+0 重置）
     "line_height": 1.6,
     "font_family": "Alibaba",
     "auto_save": True,

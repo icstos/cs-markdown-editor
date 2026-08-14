@@ -313,6 +313,7 @@ def build_cursor(ctx):
         # 避免双重渲染（render #1 用旧 value → IME 重复 on_change）。
         ctx.set_cursor_field_value(new_value)
         old_task = line.task
+        old_bt = line.block_type
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
         # 多光标：同步 delta（removed_len, inserted）到所有副光标
@@ -328,7 +329,16 @@ def build_cursor(ctx):
         # 导致"异常编辑任务列表标识"。
         # 结束会话清空 cursor_field_value，下次输入启动新会话时 start_off 已在
         # 前缀之后，last_value 只含内容部分，cursor_overlay 位置正确。
-        if line.task != old_task:
+        # block_type 变化（如输入 ">" 触发 PARAGRAPH → QUOTE）：用 rebuild=True
+        # 强制重建 TextField。rebuild=False 时 TextField value 从 ">" 变为 ""，
+        # 但 Flutter 端 selection 仍在 offset=1（超出空 value 长度），selection
+        # 无效导致光标消失。rebuild=True 递增 nav_seq → key 变化 → 重建控件 +
+        # focus_cursor_field effect 重新聚焦，新 TextField value="" selection=(0,0)。
+        # task 变化用 rebuild=False：task 行 skip_prefix=True（Checkbox 替代前缀），
+        # TextField 价值系不同，不重建不出问题且保 IME 组合态。
+        if line.block_type != old_bt:
+            _end_input_session(rebuild=True)
+        elif line.task != old_task:
             _end_input_session(rebuild=False)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
@@ -738,6 +748,19 @@ def build_cursor(ctx):
             if line.block_type == BlockType.LIST_UO and before.rstrip() in ("-", "*", "+"):
                 ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
+                ctx.mark_dirty()
+                ctx.suppress_blur.current = True
+                ctx.set_nav_seq(ctx.nav_seq + 1)
+                _set_cursor(li, 0)
+                return
+            # 空引用行尾 Enter（before 仅 > 前缀，无内容）→ 退出引用转普通段落
+            # Typora 式："> " + 回车 → 空行。去掉空格后全为 > 字符即纯前缀
+            if line.block_type == BlockType.QUOTE and before.strip() and all(
+                ch == ">" for ch in before.replace(" ", "")
+            ):
+                ctx.clear_secondary_cursors()
+                stripped = after.lstrip("> ").lstrip()
+                _reparse_atomic(line, stripped)
                 ctx.mark_dirty()
                 ctx.suppress_blur.current = True
                 ctx.set_nav_seq(ctx.nav_seq + 1)

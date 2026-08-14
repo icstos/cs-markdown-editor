@@ -47,6 +47,7 @@ def build_blocks(ctx):
         ctx.push_history()
         ctx.undo_push_pending.current = True
         line = ctx.document.lines[li]
+        old_block_type = line.block_type
         # 记录旧前缀长度和光标位置（_reparse_atomic 前）
         old_prefix_len = 0
         if line.segments and line.segments[0].seg_type in (
@@ -139,11 +140,21 @@ def build_blocks(ctx):
             content_off = max(0, old_off - old_prefix_len)
             new_raw_len = len(_line_raw(new_line))
             new_off = min(new_prefix_len + content_off, new_raw_len)
+            # 抑制 blur：工具栏/菜单点击已使 TextField 失焦，suppress_blur 防止
+            # on_blur 干扰后续 set_cursor 的聚焦逻辑（与 on_submit 一致）
+            ctx.suppress_blur.current = True
             ctx.set_cursor(li, new_off)
             # 递增 focus_seq 强制重聚焦：行类型变化但 cursor_li 不变时，
             # focus_cursor_field effect 不触发（依赖 cursor_li/nav_seq/focus_seq），
             # 工具栏/快捷键点击已使 TextField 失焦 → 光标消失。与 _on_tap_line 一致。
             ctx.set_focus_seq(ctx.focus_seq + 1)
+            # block_type 变化时结束输入会话：前缀段结构变化（如 PARAGRAPH→QUOTE），
+            # input_session.last_value 含旧前缀导致 cursor_overlay 位置偏移
+            # （前缀折叠为零宽度但 value 仍含前缀 → 光标与渲染层不对齐）
+            if old_block_type != new_line.block_type:
+                ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
+                ctx.set_cursor_field_value("")
+                ctx.set_nav_seq(ctx.nav_seq + 1)
 
     # ============ 任务列表 ============
     def toggle_task(li: int):

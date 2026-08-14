@@ -90,7 +90,11 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
                 break
             level += 1
             content = m2.group(1)
-        return BlockType.QUOTE, {"level": level, "content": content}
+        # 将 content 前导空格归入前缀，避免 parse_inline 丢失空格导致
+        # segments 拼接 != line.raw（光标位置计算兜底偏移）
+        stripped_content = content.lstrip(" ")
+        prefix = raw[: len(raw) - len(stripped_content)] if stripped_content else raw
+        return BlockType.QUOTE, {"level": level, "content": stripped_content, "prefix": prefix}
 
     if _RE_HR.match(raw):
         return BlockType.HR, {}
@@ -135,7 +139,8 @@ def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, di
         )
     if block_type == BlockType.QUOTE:
         lvl = info.get("level", 1)
-        return Segment(SegType.QUOTE_PREFIX, "> " * lvl, "", level=lvl), {"level": lvl}
+        prefix = info.get("prefix", "> " * lvl)
+        return Segment(SegType.QUOTE_PREFIX, prefix, "", level=lvl), {"level": lvl}
     return Segment(SegType.TEXT, "", ""), {}
 
 

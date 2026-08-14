@@ -534,6 +534,7 @@ def _wrap_context_menu(
     on_action: Callable[[str, str], None],
     compare_source: str | None = None,
     key: str | None = None,
+    menu_state: dict | None = None,
 ) -> ft.ContextMenu:
     """将列表项包裹在右键菜单中。
 
@@ -544,6 +545,11 @@ def _wrap_context_menu(
     「打开」语义：文件 → 编辑器（.md）/ 系统默认程序（非 .md）；文件夹 → 资源管理器打开。
     compare_source 非空时，文件项显示「与已选项目进行比较」。
     key 透传至 ft.ContextMenu，供 ListView 按路径复用项实例（虚拟化 reconciliation）。
+
+    menu_state 非空时（工作区模式，外层有空白菜单 GestureDetector），用
+    GestureDetector 监听 on_secondary_tap_down（按下阶段）置 inner_active 标志位，
+    供外层在 on_secondary_tap_up（抬起阶段）判断右键是否命中文件项——
+    避免右键文件项时内外两层菜单同时弹出。
     """
     items: list[ft.PopupMenuItem] = []
 
@@ -624,10 +630,34 @@ def _wrap_context_menu(
         )
     )
 
-    return ft.ContextMenu(
+    if menu_state is None:
+        # 最近文件列表模式：无外层空白菜单，保持默认自动触发即可
+        return ft.ContextMenu(
+            content=content,
+            secondary_items=items,
+            key=key,
+        )
+
+    # 工作区模式：外层空白菜单在 on_secondary_tap_up（抬起）检查标志位，
+    # 此处在 on_secondary_tap_down（按下）置位——按下必然先于抬起，
+    # 与客户端事件分发顺序/模型无关，避免右键文件项时两个菜单重叠。
+    # 回调仅置标志位，不消费事件，不影响左键点击与列表滚动。
+    def _on_inner_secondary(_e):
+        menu_state["inner_active"] = True
+
+    def _on_inner_close(_e):
+        menu_state["inner_active"] = False
+
+    detector = ft.GestureDetector(
         content=content,
+        on_secondary_tap_down=_on_inner_secondary,
+    )
+    return ft.ContextMenu(
+        content=detector,
         secondary_items=items,
         key=key,
+        on_dismiss=_on_inner_close,
+        on_select=_on_inner_close,
     )
 
 
@@ -636,12 +666,23 @@ def _wrap_blank_context_menu(
     root_dir: str,
     on_action: Callable[[str, str], None],
     c,
-) -> ft.ContextMenu:
+    menu_state: dict,
+) -> tuple[ft.GestureDetector, ft.ContextMenu]:
     """文件面板空白区域右键菜单（VSCode 资源管理器风格）。
 
     仅包含不依赖具体文件项的操作：新建文件 / 新建文件夹 / 复制路径 / 打开文件位置。
     path=root_dir（is_dir=True），复用 on_sidebar_context_action 的新建逻辑
     （dir_path = path if is_dir else dirname(path) → 在根目录下创建）。
+
+    返回 (blank_body, holder)：
+    - blank_body：GestureDetector 包裹列表主体，on_secondary_tap_up 手动 open 菜单；
+    - holder：零尺寸 ContextMenu 载体，不参与命中测试（自动触发物理上不可能），
+      仅在 open() 时显示 items——不依赖客户端对 secondary_trigger=None 的支持。
+
+    内外层用不同事件相位区分：文件项在内层 on_secondary_tap_down（按下）置
+    inner_active=True；外层在 on_secondary_tap_up（抬起）检查标志位——按下必然
+    先于抬起，与客户端的事件分发顺序/模型无关，确保右键文件/文件夹项时
+    只弹项级菜单、右键空白区域才弹此菜单。
     """
     items: list[ft.PopupMenuItem] = [
         ft.PopupMenuItem(
@@ -662,12 +703,25 @@ def _wrap_blank_context_menu(
             on_click=lambda e, p=root_dir: on_action("reveal", p),
         ),
     ]
-    return ft.ContextMenu(
+
+    async def _on_blank_secondary_up(e):
+        # 按下阶段命中文件项时内层已置位标志，此处（抬起阶段）跳过并复位
+        if menu_state.get("inner_active"):
+            menu_state["inner_active"] = False
+            return
+        await holder.open(global_position=e.global_position)
+
+    blank_body = ft.GestureDetector(
         content=content,
-        secondary_items=items,
-        key="blank-area",
+        on_secondary_tap_up=_on_blank_secondary_up,
         expand=True,
     )
+    holder = ft.ContextMenu(
+        content=ft.Container(width=0, height=0),
+        items=items,
+        key="blank-area",
+    )
+    return blank_body, holder
 
 
 def _search_box(
@@ -860,6 +914,9 @@ def _render_files_panel(
     # 当前打开文件绝对路径（用于高亮活动文件行）
     active_abs = os.path.abspath(file_path) if file_path else None
 
+    # 内外层右键菜单协调状态：右键文件项时 inner_active=True，外层空白菜单据此跳过
+    menu_state: dict = {"inner_active": False}
+
     if not flat:
         # flat 为空可能是真无文件，也可能是异步扫描进行中（首帧）。
         # 有过滤词时提示无匹配，否则提示无文件（异步加载完成后 fs_version 变化会刷新）。
@@ -921,6 +978,7 @@ def _render_files_panel(
                         on_action=on_file_context_action,
                         compare_source=compare_source,
                         key=f"tree-{abspath}",
+                        menu_state=menu_state,
                     )
                 )
             else:
@@ -960,6 +1018,7 @@ def _render_files_panel(
                         is_dir=True,
                         on_action=on_file_context_action,
                         key=f"tree-{abspath}",
+                        menu_state=menu_state,
                     )
                 )
         body = ft.ListView(
@@ -971,10 +1030,13 @@ def _render_files_panel(
         )
 
     # 工作区模式：空白区域右键菜单（新建文件/文件夹、复制路径、打开文件位置）
-    # 右键文件/文件夹项时触发项级菜单（内层 ContextMenu 优先），
-    # 右键列表空白区域触发此菜单（VSCode 资源管理器风格）
+    # 右键文件/文件夹项 → 内层项级菜单（按下阶段置标志）；
+    # 右键列表空白区域 → 外层 GestureDetector（抬起阶段检查标志）手动弹空白菜单
+    blank_holder: ft.Control | None = None
     if root_dir:
-        body = _wrap_blank_context_menu(body, root_dir, on_file_context_action, c)
+        body, blank_holder = _wrap_blank_context_menu(
+            body, root_dir, on_file_context_action, c, menu_state
+        )
 
     # 工作区模式：顶部文件夹名头 + 关闭按钮（VSCode 风格资源管理器标题栏）
     header_controls: list = []
@@ -1020,6 +1082,8 @@ def _render_files_panel(
                 content=_search_box(file_filter, set_file_filter, "过滤文件…", c),
             ),
             body,
+            # 空白菜单零尺寸载体（不占布局、不可命中），供手动 open() 显示
+            *( [blank_holder] if blank_holder is not None else [] ),
         ],
         spacing=0,
         expand=True,

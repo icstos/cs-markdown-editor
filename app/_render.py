@@ -123,6 +123,8 @@ def build_render(ctx) -> ft.Control:
         on_jump_to_line=ctx.jump_to_line,
         on_width_change=ctx.change_sidebar_width,
         on_file_context_action=ctx.on_sidebar_context_action,
+        # VSCode 风格文件树拖拽：文件/文件夹移动到目标文件夹
+        on_file_drop=ctx.move_fs_item,
         on_close_folder=lambda: ctx.update_setting("workspace_folder", None),
         # 搜索增强：跨文件结果点击（open + pending jump）+ 选项持久化（复用 update_setting）
         on_open_file_and_jump=ctx.open_file_and_jump,

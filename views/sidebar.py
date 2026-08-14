@@ -724,6 +724,128 @@ def _wrap_blank_context_menu(
     return blank_body, holder
 
 
+# ---- 文件树拖拽（VSCode 资源管理器风格） ----
+
+_DRAG_GROUP = "filetree"  # 拖拽组：仅文件树内部可互相拖放
+
+
+def _drop_allowed(src: str, dst_dir: str) -> bool:
+    """拖放合法性（与 file_ops.move_path 校验一致，UI 层提前判断控制高亮）。"""
+    if not src or not dst_dir:
+        return False
+    try:
+        src_abs = os.path.abspath(src)
+        dst_abs = os.path.abspath(dst_dir)
+    except OSError:
+        return False
+    if not os.path.isdir(dst_abs):
+        return False
+    if os.path.dirname(src_abs) == dst_abs:
+        return False  # 已在目标文件夹中
+    if os.path.isdir(src_abs):
+        s, d = os.path.normcase(src_abs), os.path.normcase(dst_abs)
+        if d == s or d.startswith(s + os.sep):
+            return False  # 不能移到自身或其子文件夹
+    return True
+
+
+def _drag_feedback(name: str, icon_name: str, icon_color, c) -> ft.Control:
+    """拖拽时跟随指针的紧凑预览标签（图标 + 名称）。"""
+    return ft.Container(
+        bgcolor=ft.Colors.with_opacity(0.95, c.surface),
+        border=ft.Border.all(1, c.border),
+        border_radius=Radius.MD,
+        padding=ft.Padding.symmetric(horizontal=10, vertical=5),
+        content=ft.Row(
+            controls=[
+                ft.Icon(icon_name, size=13, color=icon_color),
+                ft.Text(
+                    name,
+                    size=12,
+                    color=c.text,
+                    font_family=FONT_MAIN,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+            ],
+            spacing=Spacing.SM,
+            tight=True,
+        ),
+    )
+
+
+def _wrap_draggable(
+    row: ft.Control,
+    ghost: ft.Control,
+    feedback: ft.Control,
+    drag_registry: dict,
+    path: str,
+    key: str | None = None,
+) -> ft.Draggable:
+    """将文件树行包装为可拖拽项。
+
+    - content_when_dragging：拖起后原位置显示半透明占位（VSCode 直觉）；
+    - drag_registry：id(Draggable) → 路径，DragTarget 事件经 e.src 反查源路径
+      （拖拽会话期间行不重建，id 映射稳定）；
+    - key 供 ListView 按路径复用行实例（虚拟化 reconciliation）。
+    """
+    d = ft.Draggable(
+        group=_DRAG_GROUP,
+        content=row,
+        content_when_dragging=ghost,
+        content_feedback=feedback,
+        key=key,
+    )
+    drag_registry[id(d)] = path
+    return d
+
+
+def _wrap_drop_target(
+    content: ft.Control,
+    dst_dir: str,
+    drag_registry: dict,
+    on_drop: Callable[[str, str], None],
+    set_highlight: Callable[[str | None], None],
+    key: str | None = None,
+) -> ft.DragTarget:
+    """将文件夹行（或根区域）包装为放置目标。
+
+    高亮采用状态驱动：Flet 0.86 组件 render 中创建的控件构建后被冻结，
+    禁止命令式 row.update()（抛 RuntimeError），故 on_will_accept/on_leave
+    仅调用 set_highlight 更新 Sidebar 的 drop_hover_dir state，由渲染层
+    根据该 state 计算行背景（VSCode 资源管理器直觉的合法目标高亮）。
+    非法目标（自身/子孙/原地）不高亮，松手静默忽略。
+    """
+    def _src_of(e) -> str | None:
+        src = getattr(e, "src", None)
+        return drag_registry.get(id(src)) if src is not None else None
+
+    def on_will_accept(e):
+        src = _src_of(e)
+        if src is not None and _drop_allowed(src, dst_dir):
+            set_highlight(dst_dir)
+        else:
+            set_highlight(None)
+
+    def on_leave(e):
+        set_highlight(None)
+
+    def on_accept(e):
+        set_highlight(None)
+        src = _src_of(e)
+        if src is not None and _drop_allowed(src, dst_dir):
+            on_drop(src, dst_dir)
+
+    return ft.DragTarget(
+        group=_DRAG_GROUP,
+        content=content,
+        on_will_accept=on_will_accept,
+        on_leave=on_leave,
+        on_accept=on_accept,
+        key=key,
+    )
+
+
 def _search_box(
     value: str,
     on_change: Callable[[str], None],
@@ -837,6 +959,10 @@ def _render_files_panel(
     expanded_dirs: frozenset[str] = frozenset(),
     on_toggle_dir: Callable[[str], None] | None = None,
     on_open_external: Callable[[str], None] | None = None,
+    on_file_drop: Callable[[str, str], None] | None = None,
+    # 拖拽悬停高亮（状态驱动）：当前悬停目标文件夹路径 + setter
+    highlight_dir: str | None = None,
+    set_highlight_dir: Callable[[str | None], None] | None = None,
 ) -> ft.Control:
     """文件面板：有根目录显示文件树+过滤；否则显示最近文件列表。
 
@@ -851,6 +977,8 @@ def _render_files_panel(
     - 文件行：_file_icon 按扩展名映射 + chevron 占位（与文件夹对齐）
     - 点击分流：.md → 编辑器打开；非 .md → 系统默认程序打开（on_open_external）
     - active 高亮仅对 .md 文件生效（非 md 不在编辑器打开，无需高亮）
+    - 拖拽移动（on_file_drop 非空时启用）：文件/文件夹可拖到文件夹行或根空白区，
+      合法目标行高亮，松手移动；拖起后原位半透明 + 指针跟随预览标签
     """
     # 无根目录：最近文件列表
     if not root_dir:
@@ -916,6 +1044,13 @@ def _render_files_panel(
 
     # 内外层右键菜单协调状态：右键文件项时 inner_active=True，外层空白菜单据此跳过
     menu_state: dict = {"inner_active": False}
+    # 拖拽注册表：id(Draggable) → 路径（本渲染周期有效，DragTarget 事件反查源路径）
+    drag_registry: dict = {}
+    # 高亮 setter 兜底 no-op（独立调用本函数时无需真实 state）
+    _set_hl: Callable[[str | None], None] = (
+        set_highlight_dir if set_highlight_dir is not None else (lambda v: None)
+    )
+    can_drag = on_file_drop is not None
 
     if not flat:
         # flat 为空可能是真无文件，也可能是异步扫描进行中（首帧）。
@@ -944,43 +1079,59 @@ def _render_files_panel(
                     _file_click = lambda e, p=abspath: on_open_external(p)
                 else:
                     _file_click = None
-                rows.append(
-                    _wrap_context_menu(
-                        _list_item(
-                            ft.Row(
-                                controls=[
-                                    ft.Container(width=14),  # chevron 占位，与文件夹行对齐
-                                    ft.Icon(
-                                        icon_name,
-                                        size=13,
-                                        color=c.link if is_active else icon_color,
-                                    ),
-                                    ft.Text(
-                                        name,
-                                        size=12,
-                                        color=c.text,
-                                        font_family=FONT_MAIN,
-                                        weight=ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL,
-                                        max_lines=1,
-                                        overflow=ft.TextOverflow.ELLIPSIS,
-                                        expand=True,
-                                    ),
-                                ],
-                                spacing=Spacing.MD,
-                            ),
-                            c,
-                            on_click=_file_click,
-                            indent=indent,
-                            active=is_active,
+
+                def _build_file_row() -> ft.Container:
+                    return _list_item(
+                        ft.Row(
+                            controls=[
+                                ft.Container(width=14),  # chevron 占位，与文件夹行对齐
+                                ft.Icon(
+                                    icon_name,
+                                    size=13,
+                                    color=c.link if is_active else icon_color,
+                                ),
+                                ft.Text(
+                                    name,
+                                    size=12,
+                                    color=c.text,
+                                    font_family=FONT_MAIN,
+                                    weight=ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    expand=True,
+                                ),
+                            ],
+                            spacing=Spacing.MD,
                         ),
-                        abspath or "",
-                        is_dir=False,
-                        on_action=on_file_context_action,
-                        compare_source=compare_source,
-                        key=f"tree-{abspath}",
-                        menu_state=menu_state,
+                        c,
+                        on_click=_file_click,
+                        indent=indent,
+                        active=is_active,
                     )
+
+                inner = _wrap_context_menu(
+                    _build_file_row(),
+                    abspath or "",
+                    is_dir=False,
+                    on_action=on_file_context_action,
+                    compare_source=compare_source,
+                    key=f"tree-{abspath}" if not can_drag else None,
+                    menu_state=menu_state,
                 )
+                if can_drag and abspath:
+                    # 拖拽模式：行包 Draggable（原位半透明占位 + 指针跟随预览）
+                    rows.append(
+                        _wrap_draggable(
+                            inner,
+                            ft.Container(opacity=0.35, content=_build_file_row()),
+                            _drag_feedback(name, icon_name, icon_color, c),
+                            drag_registry,
+                            abspath,
+                            key=f"tree-{abspath}",
+                        )
+                    )
+                else:
+                    rows.append(inner)
             else:
                 # 文件夹行：chevron（▸折叠/▾展开）+ 动态 folder icon + 整行点击 toggle
                 is_expanded = bool(abspath and abspath in expanded_dirs)
@@ -990,37 +1141,65 @@ def _render_files_panel(
                     _dir_click: Callable | None = lambda e, p=abspath: on_toggle_dir(p)
                 else:
                     _dir_click = None
-                rows.append(
-                    _wrap_context_menu(
-                        _list_item(
-                            ft.Row(
-                                controls=[
-                                    ft.Icon(chevron_icon, size=14, color=c.muted),
-                                    ft.Icon(folder_icon, size=13, color=c.muted),
-                                    ft.Text(
-                                        name,
-                                        size=12,
-                                        color=c.text,
-                                        font_family=FONT_MAIN,
-                                        weight=ft.FontWeight.W_600,
-                                        max_lines=1,
-                                        overflow=ft.TextOverflow.ELLIPSIS,
-                                        expand=True,
-                                    ),
-                                ],
-                                spacing=Spacing.MD,
-                            ),
-                            c,
-                            on_click=_dir_click,
-                            indent=indent,
+
+                def _build_dir_row() -> ft.Container:
+                    return _list_item(
+                        ft.Row(
+                            controls=[
+                                ft.Icon(chevron_icon, size=14, color=c.muted),
+                                ft.Icon(folder_icon, size=13, color=c.muted),
+                                ft.Text(
+                                    name,
+                                    size=12,
+                                    color=c.text,
+                                    font_family=FONT_MAIN,
+                                    weight=ft.FontWeight.W_600,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    expand=True,
+                                ),
+                            ],
+                            spacing=Spacing.MD,
                         ),
-                        abspath or "",
-                        is_dir=True,
-                        on_action=on_file_context_action,
-                        key=f"tree-{abspath}",
-                        menu_state=menu_state,
+                        c,
+                        on_click=_dir_click,
+                        indent=indent,
                     )
+
+                dir_row = _build_dir_row()
+                # 拖拽悬停高亮（状态驱动）：构建期按 highlight_dir 计算背景，
+                # 事件回调经 set_highlight_dir 触发重渲染刷新（控件冻结禁 update）
+                if can_drag and abspath == highlight_dir:
+                    dir_row.bgcolor = ft.Colors.with_opacity(0.18, c.link)
+                inner = _wrap_context_menu(
+                    dir_row,
+                    abspath or "",
+                    is_dir=True,
+                    on_action=on_file_context_action,
+                    key=f"tree-{abspath}" if not can_drag else None,
+                    menu_state=menu_state,
                 )
+                if can_drag and abspath:
+                    # 拖拽模式：行包 Draggable，再包 DragTarget（文件夹 = 放置目标）
+                    draggable = _wrap_draggable(
+                        inner,
+                        ft.Container(opacity=0.35, content=_build_dir_row()),
+                        _drag_feedback(name, folder_icon, c.muted, c),
+                        drag_registry,
+                        abspath,
+                    )
+                    rows.append(
+                        _wrap_drop_target(
+                            draggable,
+                            abspath,
+                            drag_registry,
+                            on_file_drop,
+                            _set_hl,
+                            key=f"tree-{abspath}",
+                        )
+                    )
+                else:
+                    rows.append(inner)
         body = ft.ListView(
             controls=rows,
             spacing=0,
@@ -1037,6 +1216,13 @@ def _render_files_panel(
         body, blank_holder = _wrap_blank_context_menu(
             body, root_dir, on_file_context_action, c, menu_state
         )
+        # 根区域拖放目标：拖到列表空白区（行间/底部）= 移动到工作区根目录
+        if can_drag:
+            body = _wrap_drop_target(
+                body, root_dir, drag_registry, on_file_drop,
+                _set_hl, key="root-drop",
+            )
+            body.expand = True  # 撑满 Column（原 GestureDetector expand 链延续）
 
     # 工作区模式：顶部文件夹名头 + 关闭按钮（VSCode 风格资源管理器标题栏）
     header_controls: list = []
@@ -1558,6 +1744,8 @@ def Sidebar(
     replace_actions_ref: ft.Ref | None = None,
     # VSCode 风格文件树：非 md 文件用系统默认程序打开（资源管理器双击直觉）
     on_open_external: Callable[[str], None] | None = None,
+    # VSCode 风格文件树拖拽：文件/文件夹移动到目标文件夹 (src, dst_dir)
+    on_file_drop: Callable[[str, str], None] | None = None,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
@@ -1607,6 +1795,9 @@ def Sidebar(
     # 内部状态：文件过滤与文档搜索词
     file_filter, set_file_filter = ft.use_state("")
     search_query, set_search_query = ft.use_state("")
+    # 拖拽悬停高亮：当前悬停的放置目标文件夹路径（None = 无高亮）。
+    # Flet 0.86 冻结控件禁止命令式 update，高亮必须走 set_state 重渲染
+    drop_hover_dir, set_drop_hover_dir = ft.use_state(None)
     # 替换状态：替换文本、当前匹配索引、替换后跳转索引
     replace_text, set_replace_text = ft.use_state("")
     current_match_idx, set_current_match_idx = ft.use_state(0)
@@ -2178,6 +2369,9 @@ def Sidebar(
             expanded_dirs=expanded_dirs,
             on_toggle_dir=_toggle_dir,
             on_open_external=on_open_external,
+            on_file_drop=on_file_drop,
+            highlight_dir=drop_hover_dir,
+            set_highlight_dir=set_drop_hover_dir,
         )
     elif active_panel == "outline":
         panel = _render_outline_panel(toc_entries, on_jump_to_line, c)

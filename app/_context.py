@@ -147,6 +147,8 @@ class AppContext:
     update_tab_for_renamed_file: Callable = field(default=lambda *a: None)
     close_tabs_for_path: Callable = field(default=lambda *a: None)
     on_sidebar_context_action: Callable = field(default=lambda *a: None)
+    # 侧边栏拖拽移动文件/文件夹：(src_path, dst_dir) -> None
+    move_fs_item: Callable = field(default=lambda *a: None)
 
     # diff_controller 组
     get_text_for_compare: Callable = field(default=lambda *a: "")

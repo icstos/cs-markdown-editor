@@ -116,6 +116,42 @@ def duplicate_file(src_path: str) -> str:
     return dest_path
 
 
+def move_path(src_path: str, dst_dir: str) -> str:
+    """将文件/文件夹移动到 dst_dir 下（侧边栏拖拽），返回新路径。
+
+    合法性校验（非法抛 ValueError）：
+    - 源不存在 / 目标不是存在的文件夹
+    - 源已在目标文件夹中（原地移动）
+    - 源是文件夹时，目标不能是源自身或其子孙（循环移动）
+
+    目标下同名冲突时自动重命名为 "name (1)" / "name (1).ext"（资源管理器直觉，
+    无阻断）。
+    """
+    if not os.path.exists(src_path):
+        raise FileNotFoundError(f"源不存在：{src_path}")
+    if not os.path.isdir(dst_dir):
+        raise ValueError("目标不是文件夹")
+    src_abs = os.path.abspath(src_path)
+    dst_abs = os.path.abspath(dst_dir)
+    if os.path.dirname(src_abs) == dst_abs:
+        raise ValueError("已在目标文件夹中")
+    if os.path.isdir(src_abs):
+        src_nc = os.path.normcase(src_abs)
+        dst_nc = os.path.normcase(dst_abs)
+        if dst_nc == src_nc or dst_nc.startswith(src_nc + os.sep):
+            raise ValueError("不能移动到自身或其子文件夹")
+    name = os.path.basename(src_abs)
+    dest = os.path.join(dst_abs, name)
+    if os.path.exists(dest):
+        base, ext = os.path.splitext(name)
+        counter = 1
+        while os.path.exists(os.path.join(dst_abs, f"{base} ({counter}){ext}")):
+            counter += 1
+        dest = os.path.join(dst_abs, f"{base} ({counter}){ext}")
+    shutil.move(src_abs, dest)
+    return dest
+
+
 def delete_path(path: str) -> None:
     """删除文件。文件不存在时抛出 FileNotFoundError。"""
     if not os.path.exists(path):

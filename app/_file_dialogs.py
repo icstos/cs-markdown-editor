@@ -317,6 +317,77 @@ def build_file_dialogs(ctx):
         elif action == "delete" and path:
             open_delete_dialog(path, is_dir=False)
 
+    def update_tabs_for_moved_path(old_path: str, new_path: str):
+        """文件/文件夹移动后，同步更新引用其路径的标签（前缀替换）。
+
+        与 update_tab_for_renamed_file（精确匹配）不同，本函数做前缀替换：
+        移动文件夹时其内部所有已打开文件（file_path / diff 两侧路径及
+        document.file_path）一并改写为新前缀。
+        """
+        old_abs = os.path.abspath(old_path)
+        old_nc = os.path.normcase(old_abs)
+        new_abs = os.path.abspath(new_path)
+
+        def retarget(p: str | None) -> str | None:
+            if not p:
+                return p
+            p_abs = os.path.abspath(p)
+            p_nc = os.path.normcase(p_abs)
+            if p_nc == old_nc:
+                return new_abs
+            if p_nc.startswith(old_nc + os.sep):
+                return os.path.join(new_abs, p_abs[len(old_abs) + 1:])
+            return p
+
+        ts = list(ctx.tabs_ref.current)
+        changed = False
+        for i, t in enumerate(ts):
+            updates = {}
+            if t.get("type") == "diff":
+                for side in ("left", "right"):
+                    new_p = retarget(t.get(f"{side}_path"))
+                    if new_p != t.get(f"{side}_path"):
+                        updates[f"{side}_path"] = new_p
+                        doc = t.get(f"{side}_doc")
+                        if doc is not None:
+                            doc.file_path = new_p
+            else:
+                new_p = retarget(t.get("file_path"))
+                if new_p != t.get("file_path"):
+                    updates["file_path"] = new_p
+                    doc = t.get("document")
+                    if doc is not None:
+                        doc.file_path = new_p
+            if updates:
+                ts[i] = {**t, **updates}
+                changed = True
+        if changed:
+            ctx.set_tabs(ts)
+            ctx.tabs_ref.current = ts
+
+    def move_fs_item(src: str, dst_dir: str):
+        """侧边栏拖拽移动文件/文件夹到 dst_dir。
+
+        合法性由 file_ops.move_path 校验（原地/循环移动抛 ValueError → snack 提示）；
+        同名冲突自动重命名 "name (1)"。移动后同步 tabs 引用路径并刷新文件树。
+        """
+        try:
+            new_path = file_ops.move_path(src, dst_dir)
+        except ValueError as e:
+            show_snack(f"无法移动：{e}")
+            return
+        except Exception as e:
+            show_snack(f"移动失败：{e}")
+            return
+        update_tabs_for_moved_path(src, new_path)
+        ctx.bump_fs_version()  # 刷新侧边栏文件树
+        old_name = os.path.basename(src)
+        new_name = os.path.basename(new_path)
+        if new_name != old_name:
+            show_snack(f"目标已存在同名项，已移动并重命名为：{new_name}")
+        else:
+            show_snack(f"已移动：{new_name}")
+
     def on_sidebar_context_action(action: str, path: str):
         """侧边栏文件/文件夹右键菜单回调。
 
@@ -391,6 +462,7 @@ def build_file_dialogs(ctx):
         "copy_path": copy_path,
         "update_tab_for_renamed_file": update_tab_for_renamed_file,
         "close_tabs_for_path": close_tabs_for_path,
+        "move_fs_item": move_fs_item,
         "on_file_dialog_confirm": on_file_dialog_confirm,
         "on_file_dialog_cancel": on_file_dialog_cancel,
         "open_input_dialog": open_input_dialog,

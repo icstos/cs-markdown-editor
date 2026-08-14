@@ -355,6 +355,7 @@ def App():
     ctx.close_tabs_for_path = dialog_cbs["close_tabs_for_path"]
     ctx.on_tab_context_action = dialog_cbs["on_tab_context_action"]
     ctx.on_sidebar_context_action = dialog_cbs["on_sidebar_context_action"]
+    ctx.move_fs_item = dialog_cbs["move_fs_item"]
 
     # 非 md 文件用系统默认程序打开（资源管理器双击直觉）：try/except 捕获后 SnackBar 提示
     def _open_external(path: str):

@@ -29,6 +29,7 @@ from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors, only_
 _MD_EXTS = (".md", ".markdown")
 _MAX_DEPTH = 8  # 文件树扫描最大深度（VSCode 风格全类型扫描，8 层覆盖典型项目结构）
 _MAX_FILES = 5000  # 单次扫描文件数上限保护（防止 node_modules 等巨型目录拖慢 UI）
+_WATCH_INTERVAL = 2.0  # 外部文件系统变化轮询间隔（秒）：VSCode watcher 的零依赖替代
 _MAX_RESULTS = 200  # 当前文档搜索结果上限，防止超长文档卡顿
 _PREVIEW_RADIUS = 30  # 搜索预览匹配位前后字符数
 # 跨文件搜索性能保护
@@ -174,6 +175,60 @@ def _scan_files(
         return result
 
     return _walk(root, 0)
+
+
+def _tree_signature(tree: list) -> str:
+    """文件树内容签名：递归拼接「目录相对路径 + 文件绝对路径」。
+
+    目录节点仅存 name（_scan_files 格式），walk 时按「父/子」累积相对路径；
+    文件节点用绝对路径。签名与树内容一一对应，供轮询 watcher 做变更比较。
+    返回 str（而非 list/tuple）：ft.Ref 内部用 weakref 存值，内置容器不可弱引用。
+    """
+    parts: list[str] = []
+
+    def _walk(node, dir_path: str):
+        if node[0] == "file":
+            parts.append("f:" + node[2])
+        else:
+            d = dir_path + "/" + node[1]
+            parts.append("d:" + d)
+            for child in node[2]:
+                _walk(child, d)
+
+    for n in tree:
+        _walk(n, "")
+    return "\n".join(parts)
+
+
+async def poll_fs_changes(
+    root_dir: str,
+    interval: float,
+    base_holder,
+    on_change: Callable[[], None],
+    should_stop: Callable[[], bool] | None = None,
+) -> None:
+    """轮询监测 root_dir 文件树变化，变化时调用 on_change()（模块级便于单测）。
+
+    覆盖外部程序对文件夹的创建/删除/重命名（文件内容修改不影响树结构，不触发）。
+    每轮在后台线程重扫（与 _scan_files 同源同限：深度/数量/忽略目录一致），
+    签名 != base_holder.current 时更新基准并上报（天然按 interval 节流）。
+
+    base_holder.current 为 None 时先做一次基准扫描；调用方在应用内文件操作
+    触发重扫后把最新签名写入 base_holder，避免轮询对同一变更重复上报。
+    should_stop() 返回 True 时退出（任务 cancel 的兜底，防目录切换后旧轮询残留）。
+    """
+    if base_holder.current is None:
+        base_holder.current = _tree_signature(
+            await asyncio.to_thread(_scan_files, root_dir)
+        )
+    while True:
+        await asyncio.sleep(interval)
+        if should_stop is not None and should_stop():
+            return
+        sig = _tree_signature(await asyncio.to_thread(_scan_files, root_dir))
+        if sig != base_holder.current:
+            base_holder.current = sig
+            on_change()
 
 
 def _filter_tree(tree: list, query: str) -> list:
@@ -2266,10 +2321,15 @@ def Sidebar(
         }
 
     # ---- 文件树：异步扫描 + scan_token 防竞态 ----
-    # use_effect 依赖 [root_dir, fs_version]：根目录切换 / 文件增删改后重扫。
-    # asyncio.to_thread 把同步磁盘扫描移出 UI 线程；scan_token 丢弃过期结果。
+    # use_effect 依赖 [root_dir, fs_version]：根目录切换 / 文件增删改后重扫 /
+    # 外部变化轮询上报后重扫。asyncio.to_thread 把同步磁盘扫描移出 UI 线程；
+    # scan_token 丢弃过期结果。
     file_tree, set_file_tree = ft.use_state(())
     scan_token_ref = ft.use_ref(0)
+    # 外部变化轮询 watcher 状态：基准签名（str 可弱引用，list/tuple 不行）+ 任务句柄。
+    # 声明在 _scan_fs 前：重扫成功后同步基准，应用内变更不会被轮询重复上报。
+    watch_base = ft.use_ref(None)
+    watch_task_ref = ft.use_ref(None)
 
     def _scan_fs():
         if not root_dir or not os.path.isdir(root_dir):
@@ -2291,12 +2351,45 @@ def Sidebar(
             # 卸载后的状态更新（与 status_bar._update_counts 同模式）。
             try:
                 set_file_tree(tuple(tree))
+                # watcher 基准同步：应用内操作引发的这次重扫即最新事实，
+                # 轮询以此为基准，不再对同一变更重复 bump。
+                watch_base.current = _tree_signature(tree)
             except RuntimeError:
                 pass
 
         page.run_task(_do_scan)
 
     ft.use_effect(_scan_fs, [root_dir, fs_version])
+
+    # ---- 外部文件系统变化监测（轮询 watcher，零依赖）----
+    # 后台每 _WATCH_INTERVAL 秒重扫 root_dir，外部程序创建/删除/重命名文件 →
+    # 树签名变化 → on_bump_fs_version 走既有 fs_version 重扫链路（文件树/
+    # 跨文件搜索同步刷新）。root_dir 变化时 cleanup 取消旧任务并重置基准，
+    # effect 重启监测新目录；组件卸载时同样取消，无任务残留。
+    def _watch_fs():
+        if on_bump_fs_version is None:
+            return  # 无变更上报通道（如独立预览场景），不启动监测
+        if not root_dir or not os.path.isdir(root_dir):
+            return
+        page = page_ref.current
+        if page is None:
+            return
+        my_root = root_dir  # 锚定本次监测目录（root 切换后旧任务由 cleanup 取消）
+        bump = on_bump_fs_version
+
+        async def _run():
+            await poll_fs_changes(my_root, _WATCH_INTERVAL, watch_base, bump)
+
+        watch_task_ref.current = page.run_task(_run)
+
+    def _stop_watch_fs():
+        t = watch_task_ref.current
+        if t is not None:
+            t.cancel()
+            watch_task_ref.current = None
+        watch_base.current = None  # 目录切换/卸载：基准失效，重启时重新初始化
+
+    ft.use_effect(_watch_fs, [root_dir], cleanup=_stop_watch_fs)
 
     # ---- 文件夹展开/折叠状态（VSCode 风格动态扁平化）----
     # frozenset 不可变，== 比较内容触发更新；存目录绝对路径（与 _flatten_tree 的

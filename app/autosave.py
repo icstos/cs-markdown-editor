@@ -82,11 +82,18 @@ def autosave_all_dirty(ctx: AutosaveContext, *, force: bool = False) -> int:
         return 0
     ts = ctx.tabs_ref.current or []
     triggered = 0
+    seen_docs: set[int] = set()  # 共享同一 document 的多副本只保存一次
     for i, tab in enumerate(ts):
-        if tab_is_dirty(tab) and autosave_enabled_for(ctx.settings, tab, force=force):
-            # force=True 时透传给 save_doc，跳过外部修改检测的对话框
-            page.run_task(ctx.save_doc_fn, i, force)
-            triggered += 1
+        if not (tab_is_dirty(tab) and autosave_enabled_for(ctx.settings, tab, force=force)):
+            continue
+        doc = tab.get("document")
+        if tab.get("type") != "diff" and doc is not None:
+            if id(doc) in seen_docs:
+                continue  # 同文件另一组副本：共享内容，跳过重复保存
+            seen_docs.add(id(doc))
+        # force=True 时透传给 save_doc，跳过外部修改检测的对话框
+        page.run_task(ctx.save_doc_fn, i, force)
+        triggered += 1
     if triggered and ctx.set_status_fn is not None:
         ctx.set_status_fn("已自动保存", "success")
     return triggered

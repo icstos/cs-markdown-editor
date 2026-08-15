@@ -68,6 +68,15 @@ def App():
     )
     active_index, set_active_index = ft.use_state(0)
     session, set_session = ft.use_state(0)  # 切换标签时自增，强制编辑器重置内部状态
+    # 拆分编辑组（VSCode 风格）：每侧组各自的激活标签全局索引与会话计数。
+    # 不变式：active_index == 焦点侧组的激活索引（activate_index 统一维护）。
+    # session_left/right 仅该组激活标签变化时递增 → 另一侧编辑器 key 不变，
+    # 光标/滚动不重置；编辑器 key 统一用组会话（f"{session_left}-0" 等），
+    # 切换拆分模式时左编辑器 key 不变、不重建。
+    active_index_left, set_active_index_left = ft.use_state(0)
+    active_index_right, set_active_index_right = ft.use_state(0)
+    session_left, set_session_left = ft.use_state(0)
+    session_right, set_session_right = ft.use_state(0)
     # 跨文件"打开后跳转"：open_file_by_path(path, jump_to=(li, off)) 暂存跳转任务，
     # session 变化（重建 MarkdownEditor）或 sig 变化（文件已是当前 tab，session 不变）
     # 时 _fire_pending_jump effect 消费并调用 jump_to_line(li, off)。
@@ -127,6 +136,16 @@ def App():
     tabs_ref.current = tabs
     active_index_ref = ft.use_ref(active_index)
     active_index_ref.current = active_index
+    # 组激活索引 / 组会话计数 ref 镜像：控制器（activate_index / do_close_many）
+    # 与异步回调读取最新值，避免闭包捕获渲染期快照（同 tabs_ref 模式）。
+    active_index_left_ref = ft.use_ref(active_index_left)
+    active_index_left_ref.current = active_index_left
+    active_index_right_ref = ft.use_ref(active_index_right)
+    active_index_right_ref.current = active_index_right
+    session_left_ref = ft.use_ref(session_left)
+    session_left_ref.current = session_left
+    session_right_ref = ft.use_ref(session_right)
+    session_right_ref.current = session_right
     # update_setting_ref：打破 shortcut_mgr ↔ update_setting 前向引用循环。
     # shortcut_mgr 构造时 lambda 捕获此 ref，控制器装配后写入实际 update_setting。
     update_setting_ref = ft.use_ref(None)
@@ -254,6 +273,10 @@ def App():
         capturing=capturing,
         split_editor=split_editor,
         active_pane=active_pane,
+        active_index_left=active_index_left,
+        active_index_right=active_index_right,
+        session_left=session_left,
+        session_right=session_right,
         fs_version=fs_version,
         # 派生值
         cur_tab=cur_tab,
@@ -279,6 +302,10 @@ def App():
         set_capturing=set_capturing,
         set_split_editor=set_split_editor,
         set_active_pane=set_active_pane,
+        set_active_index_left=set_active_index_left,
+        set_active_index_right=set_active_index_right,
+        set_session_left=set_session_left,
+        set_session_right=set_session_right,
         # Refs
         is_diff_tab_ref=is_diff_tab_ref,
         diff_nav_left=diff_nav_left,
@@ -287,6 +314,10 @@ def App():
         nav_ref=nav_ref,
         nav_ref_split=nav_ref_split,
         active_pane_ref=active_pane_ref,
+        active_index_left_ref=active_index_left_ref,
+        active_index_right_ref=active_index_right_ref,
+        session_left_ref=session_left_ref,
+        session_right_ref=session_right_ref,
         picker_holder=picker_holder,
         clipboard_holder=clipboard_holder,
         page_ref=page_ref,
@@ -319,6 +350,10 @@ def App():
     ctx.do_close_many = tab_cbs["do_close_many"]
     ctx.request_close = tab_cbs["request_close"]
     ctx.close_tab = tab_cbs["close_tab"]
+    # 统一激活入口 + 新标签入口 + 会话计数（拆分组感知，file_io/diff/backup 共用）
+    ctx.activate_index = tab_cbs["activate_index"]
+    ctx.append_and_activate = tab_cbs["append_and_activate"]
+    ctx.bump_tab_session = tab_cbs["bump_tab_session"]
     # 渲染期同步：close_tab 每次渲染新建但行为一致（仅读稳定 ref/setter），
     # 写入 ref 供稳定化的 close_current_tab 读取最新实例。
     close_tab_ref.current = tab_cbs["close_tab"]
@@ -435,6 +470,7 @@ def App():
     ctx.apply_content_layout = focus_cbs["apply_content_layout"]
     ctx.jump_to_line = focus_cbs["jump_to_line"]
     ctx.on_dirty_change = focus_cbs["on_dirty_change"]
+    ctx.on_dirty_change_pane = focus_cbs["on_dirty_change_pane"]
 
     keyboard_cbs = build_keyboard(ctx)
     # 打破前向引用循环：update_setting 装配后写入 ref，shortcut_mgr 的 lambda 即可调用

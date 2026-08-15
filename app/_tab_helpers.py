@@ -21,6 +21,7 @@
 - Tab 类型别名（PEP 695）统一定义在此处，main.py 反向导入。
 """
 
+import itertools
 import os
 from typing import Any
 
@@ -28,6 +29,30 @@ from utils.file_helpers import file_name
 
 # PEP 695 类型别名：标签页字典（统一 tab 字段注解，替代裸 dict）
 type Tab = dict[str, Any]
+
+# 标签唯一 ID 计数器（模块级，进程内唯一）：update_tab 等不可变更新会替换
+# tab dict 对象，身份追踪用 _tid 而非 id()（GC 后 id 可能复用导致误判）
+_TID_COUNTER = itertools.count(1)
+
+
+def new_tab(**fields) -> Tab:
+    """构造新标签字典：自动分配唯一 _tid 与 group（默认 0=左组）。
+
+    所有标签创建点统一走此工厂，保证 _tid / group 字段不缺失。
+    """
+    fields.setdefault("group", 0)
+    fields["_tid"] = next(_TID_COUNTER)
+    return fields
+
+
+def tab_group(tab: Tab) -> int:
+    """标签所属编辑组：0=左，1=右（拆分编辑器）。缺省视为 0。"""
+    return tab.get("group", 0) or 0
+
+
+def group_indices(tabs: list[Tab], group: int) -> list[int]:
+    """返回属于 group 的标签在 tabs 中的全局索引列表（保持顺序）。"""
+    return [i for i, t in enumerate(tabs) if tab_group(t) == group]
 
 
 def tab_is_dirty(tab: Tab) -> bool:

@@ -33,7 +33,7 @@ import os
 import flet as ft
 
 import parser
-from app._tab_helpers import tab_paths
+from app._tab_helpers import tab_group, tab_paths
 from services import file_ops, shortcut
 from services.file_io import read_text
 from services.ui_feedback import show_snack as _show_snack_impl
@@ -163,6 +163,10 @@ def build_file_dialogs(ctx):
                     last_mtime = None
                 ts = list(ctx.tabs_ref.current)
                 if 0 <= tab_index < len(ts):
+                    # 同文件实时同步：共享旧 document 的所有标签（含另一组
+                    # 副本）统一替换为新 doc、清脏、各自 bump 会话重建编辑器
+                    old_doc = ts[tab_index].get("document")
+                    ctx.bump_tab_session(tab_index)
                     ts[tab_index] = {
                         **ts[tab_index],
                         "document": doc,
@@ -170,9 +174,20 @@ def build_file_dialogs(ctx):
                         "dirty": False,
                         "_last_known_mtime": last_mtime,
                     }
+                    for j in range(len(ts)):
+                        if (j != tab_index and old_doc is not None
+                                and ts[j].get("document") is old_doc
+                                and ts[j].get("type") != "diff"):
+                            ctx.bump_tab_session(j)
+                            ts[j] = {
+                                **ts[j],
+                                "document": doc,
+                                "file_path": target,
+                                "dirty": False,
+                                "_last_known_mtime": last_mtime,
+                            }
                     ctx.set_tabs(ts)
                     ctx.tabs_ref.current = ts
-                    ctx.set_session(ctx.session + 1)
                     show_snack("已重新加载最新内容")
             except Exception as e:
                 show_snack(f"重载失败：{e}")
@@ -244,9 +259,16 @@ def build_file_dialogs(ctx):
         if action == "close":
             ctx.close_tab(index)
         elif action == "close_others":
-            ctx.request_close([j for j in range(len(ts)) if j != index])
+            # 组内语义（VSCode）：仅关闭该标签所属组的其他标签（非拆分时即全部）
+            g = tab_group(tab)
+            ctx.request_close([
+                j for j in range(len(ts))
+                if j != index and tab_group(ts[j]) == g
+            ])
         elif action == "close_all":
-            ctx.request_close(list(range(len(ts))))
+            # 组内语义：仅关闭该标签所属组的全部标签
+            g = tab_group(tab)
+            ctx.request_close([j for j in range(len(ts)) if tab_group(ts[j]) == g])
         elif action == "swap_diff":
             # 仅对比标签有效：交换左右侧文档/路径/脏状态，便于从不同视角审阅差异
             if not is_diff:
@@ -265,7 +287,7 @@ def build_file_dialogs(ctx):
             ctx.tabs_ref.current = new_tabs
             # 切换焦点到原主动侧的对侧，保持视觉焦点对应同一文档
             ctx.set_diff_active_pane(1 - ctx.diff_active_pane_ref.current)
-            ctx.set_session(ctx.session + 1)
+            ctx.bump_tab_session(index)
         elif action == "copy_path":
             page = ctx.page_ref.current
             if path and page is not None:

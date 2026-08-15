@@ -53,6 +53,12 @@ class AppContext:
     capturing: tuple
     split_editor: bool
     active_pane: int
+    # 每侧编辑组的激活标签全局索引（不变式：active_index == 焦点侧组的激活索引）
+    active_index_left: int
+    active_index_right: int
+    # 每侧编辑器重建计数器：仅该组激活标签变化时递增（另一侧编辑器不重置光标）
+    session_left: int
+    session_right: int
     fs_version: int  # 文件系统版本号：文件增删改后递增，驱动侧边栏文件树重扫
 
     # ============ 派生值 ============
@@ -80,6 +86,10 @@ class AppContext:
     set_capturing: Callable
     set_split_editor: Callable
     set_active_pane: Callable
+    set_active_index_left: Callable
+    set_active_index_right: Callable
+    set_session_left: Callable
+    set_session_right: Callable
 
     # ============ Refs（稳定区）============
     is_diff_tab_ref: ft.Ref
@@ -89,6 +99,12 @@ class AppContext:
     nav_ref: ft.Ref
     nav_ref_split: ft.Ref
     active_pane_ref: ft.Ref
+    # 每侧组激活索引 ref 镜像（异步回调读取最新值，同 tabs_ref 模式）
+    active_index_left_ref: ft.Ref
+    active_index_right_ref: ft.Ref
+    # 每侧会话计数 ref 镜像（同值自增模式，供单事件内多次 bump 不丢计数）
+    session_left_ref: ft.Ref
+    session_right_ref: ft.Ref
     picker_holder: ft.Ref
     clipboard_holder: ft.Ref
     page_ref: ft.Ref
@@ -109,6 +125,12 @@ class AppContext:
     do_close_many: Callable = field(default=lambda *a: None)
     request_close: Callable = field(default=lambda *a: None)
     close_tab: Callable = field(default=lambda *a: None)
+    # 统一激活入口：按标签所属组设置组激活索引 + 焦点切换 + 会话计数
+    activate_index: Callable = field(default=lambda *a: None)
+    # 追加新标签（new_tab 字段）并激活（file_io / diff / backup 打开统一入口）
+    append_and_activate: Callable = field(default=lambda *a: None)
+    # 指定标签内容被整体替换（重载/外部修改）后递增其所属组的会话计数
+    bump_tab_session: Callable = field(default=lambda *a: None)
     # 稳定化「关闭当前标签」：use_memo 实例，读 close_tab_ref + active_index_ref，
     # 身份跨渲染不变 → DiffHeader @ft.memo 的 on_close prop 稳定，头部 memo 成立。
     close_current_tab: Callable = field(default=lambda: None)
@@ -194,6 +216,8 @@ class AppContext:
     apply_content_layout: Callable = field(default=lambda: None)
     jump_to_line: Callable = field(default=lambda *a: None)
     on_dirty_change: Callable = field(default=lambda *a: None)
+    # 拆分模式下按视口上报脏状态：更新对应组激活标签（而非全局 active_index）
+    on_dirty_change_pane: Callable = field(default=lambda *a: None)
 
     # keyboard 组
     bind_keyboard: Callable = field(default=lambda: None)

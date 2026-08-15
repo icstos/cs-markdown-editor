@@ -89,23 +89,24 @@ def build_diff_controller(ctx):
             "right_doc": right_doc,
             "left_dirty": False,
             "right_dirty": False,
+            "group": 0,  # diff 标签全宽渲染，固定左组
         }
-        # 复用当前空白未命名标签（完全替换，避免残留 editor 字段），否则追加新标签
-        if is_blank_untitled(ctx.cur_tab):
-            new_tabs = list(ctx.tabs)
-            new_tabs[ctx.active_index] = new_tab
-            new_idx = ctx.active_index
+        # 复用左组空白未命名标签（完全替换，避免残留 editor 字段；焦点在右组时
+        # 不动右组空白——diff 固定左组），否则追加新标签（激活自动聚焦左组）
+        ts = ctx.tabs_ref.current
+        li = ctx.active_index_left_ref.current
+        cur = ts[li] if 0 <= li < len(ts) else None
+        if cur is not None and is_blank_untitled(cur):
+            new_tabs = list(ts)
+            new_tabs[li] = {**new_tab, "_tid": cur.get("_tid")}
+            ctx.set_tabs(new_tabs)
+            ctx.tabs_ref.current = new_tabs
+            ctx.activate_index(li)
+            ctx.bump_tab_session(li)  # 内容整体替换为 diff 视图 → 重建该组
         else:
-            new_tabs = list(ctx.tabs)
-            new_tabs.append(new_tab)
-            new_idx = len(new_tabs) - 1
-        ctx.set_tabs(new_tabs)
-        ctx.tabs_ref.current = new_tabs
-        ctx.set_active_index(new_idx)
-        ctx.active_index_ref.current = new_idx
+            ctx.append_and_activate(dict(new_tab))
         ctx.set_diff_active_pane(0)
         ctx.diff_active_pane_ref.current = 0
-        ctx.set_session(ctx.session + 1)
 
     def on_diff_dirty_change(side: int, dirty: bool):
         """对比标签侧文档脏状态变化回调。

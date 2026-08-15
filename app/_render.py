@@ -42,7 +42,7 @@ import os
 import flet as ft
 
 import parser
-from app._tab_helpers import tab_display_name
+from app._tab_helpers import tab_display_name, tab_group
 from styles import get_colors
 from views.diff_markers import DiffHeader
 from views.diff_view import compute_diff_for_editors
@@ -154,11 +154,10 @@ def build_render(ctx) -> ft.Control:
     def _pane_content_cb(is_active: bool):
         return ctx.schedule_status_count_update if is_active else None
 
-    # 编辑器公共 props：左右两视口共享（仅 nav_ref / key / show_toolbar / on_editor_focus 不同）
+    # 编辑器公共 props：不含 document/file_path/on_dirty_change（单编辑器与
+    # 拆分两侧各自绑定——拆分下左右组激活标签不同，脏状态按组路由）
     # MarkText 风格重构：show_toolbar=False 隐藏原有顶部工具栏，功能已收纳进全局菜单栏
     _editor_common = {
-        "document": ctx.document,
-        "file_path": ctx.file_path,
         "show_toolbar": False,
         "on_new": ctx.new_doc,
         "on_open": lambda: ctx.page_ref.current.run_task(ctx.open_doc),
@@ -167,7 +166,6 @@ def build_render(ctx) -> ft.Control:
         "on_export_html": lambda: ctx.page_ref.current.run_task(ctx.export_doc, "html"),
         "on_export_docx": lambda: ctx.page_ref.current.run_task(ctx.export_doc, "docx"),
         "on_export_pdf": lambda: ctx.page_ref.current.run_task(ctx.export_doc, "pdf"),
-        "on_dirty_change": ctx.on_dirty_change,
         "clipboard_ref": ctx.clipboard_holder,
         "picker_ref": ctx.picker_holder,
         "theme_mode": ctx.theme_mode,
@@ -179,15 +177,28 @@ def build_render(ctx) -> ft.Control:
         "shortcut_mgr": ctx.shortcut_mgr,
     }
 
+    # 组激活标签安全读取：拆分下两侧编辑器各自绑定所属组激活标签
+    def _group_tab(g: int) -> dict:
+        ts = ctx.tabs
+        gi = ctx.active_index_right if g == 1 else ctx.active_index_left
+        return ts[gi] if 0 <= gi < len(ts) else {}
+
     if ctx.is_diff_tab:
         editor_area = _build_diff_area(ctx, sidebar_open, _pane_cursor_cb, _pane_content_cb)
     elif ctx.split_editor:
-        editor_area = _build_split_area(ctx, _editor_common, _pane_cursor_cb, _pane_content_cb)
+        editor_area = _build_split_area(
+            ctx, _editor_common, _group_tab, _pane_cursor_cb, _pane_content_cb
+        )
     else:
         editor_area = ft.Container(
             content=MarkdownEditor(
-                key=f"{ctx.session}-0",  # 与拆分时左视口同 key，切换拆分不重置左视口光标
+                # key 用左组会话：与拆分时左视口同 key，切换拆分不重置左视口光标；
+                # 非拆分态激活标签=左组激活（不变式），session_left 随激活变化递增
+                key=f"{ctx.session_left}-0",
                 nav_ref=ctx.nav_ref,
+                document=ctx.document,
+                file_path=ctx.file_path,
+                on_dirty_change=ctx.on_dirty_change,
                 on_cursor_move=ctx.push_cursor_to_status,
                 on_content_change=ctx.schedule_status_count_update,
                 **_editor_common,
@@ -239,18 +250,82 @@ def build_render(ctx) -> ft.Control:
     # ============ 顶部多文档标签栏 ============
     # MarkText 风格：标签栏最左侧嵌入全局菜单栏（文件/编辑/段落/格式/视图/帮助），
     # 替代原有顶部工具栏区域。所有功能通过 ctx 装配槽 + get_active_nav 路由。
+    # 拆分模式（非对比标签）：标签行同步分左右——每组一个 TabBar，只显示该组
+    # 标签（VSCode「向右拆分」直觉：标签行与编辑区同步分栏）。
     global_menu = build_global_menu(ctx, ctx.theme_mode)
-    tab_bar = TabBar(
-        tabs=ctx.tabs,
-        active_index=ctx.active_index,
-        theme_mode=ctx.theme_mode,
-        on_select=ctx.select_tab,
-        on_close=ctx.close_tab,
-        on_new=ctx.new_doc,
-        on_context_action=ctx.on_tab_context_action,
-        compare_source=ctx.compare_source,
-        leading=global_menu,
-    )
+
+    def _group_tab_bar(g: int, leading) -> ft.Control:
+        """构造 g 组（0=左 / 1=右）的 TabBar：过滤该组标签，索引映射回全局。
+
+        TabBar 回调的索引相对于过滤后的组内列表，这里统一映射为全局索引后
+        再路由到 select_tab / close_tab / on_tab_context_action（组语义由
+        控制器按标签所属组处理：close_others/close_all 仅影响该组）。
+        """
+        idxs = [i for i, t in enumerate(ctx.tabs) if tab_group(t) == g]
+        tabs_g = [ctx.tabs[i] for i in idxs]
+        active_g = ctx.active_index_right if g == 1 else ctx.active_index_left
+        try:
+            pos = idxs.index(active_g)
+        except ValueError:
+            pos = 0
+
+        def _sel(gi: int):
+            if 0 <= gi < len(idxs):
+                ctx.select_tab(idxs[gi])
+
+        def _close(gi: int):
+            if 0 <= gi < len(idxs):
+                ctx.close_tab(idxs[gi])
+
+        def _ctx_action(action: str, gi: int):
+            # close_all 由 TabBar 固定传 idx=0：映射到该组任一标签即可
+            #（控制器按标签所属组展开语义）；其余 action 用点击标签全局索引
+            idx = idxs[gi] if 0 <= gi < len(idxs) else (idxs[0] if idxs else 0)
+            ctx.on_tab_context_action(action, idx)
+
+        def _new():
+            # 点哪组的「+」就在哪组新建：先聚焦该组（set_active_pane 同步写
+            # ref），new_doc 读 active_pane_ref 定向到焦点组
+            if ctx.split_editor:
+                ctx.set_active_pane(g)
+            ctx.new_doc()
+
+        return TabBar(
+            tabs=tabs_g,
+            active_index=pos,
+            theme_mode=ctx.theme_mode,
+            on_select=_sel,
+            on_close=_close,
+            on_new=_new,
+            on_context_action=_ctx_action,
+            compare_source=ctx.compare_source,
+            leading=leading,
+        )
+
+    if ctx.split_editor and not ctx.is_diff_tab:
+        # 拆分：双 TabBar 并排（全局菜单栏在左组，中缝分隔线与编辑区对齐）
+        _c_tb = get_colors(ctx.theme_mode)
+        tab_bar = ft.Row(
+            controls=[
+                ft.Container(content=_group_tab_bar(0, global_menu), expand=True),
+                ft.VerticalDivider(width=1, color=_c_tb.border),
+                ft.Container(content=_group_tab_bar(1, None), expand=True),
+            ],
+            spacing=0,
+        )
+    else:
+        # 单栏（非拆分 / 对比标签全宽）：全部标签共用一行
+        tab_bar = TabBar(
+            tabs=ctx.tabs,
+            active_index=ctx.active_index,
+            theme_mode=ctx.theme_mode,
+            on_select=ctx.select_tab,
+            on_close=ctx.close_tab,
+            on_new=ctx.new_doc,
+            on_context_action=ctx.on_tab_context_action,
+            compare_source=ctx.compare_source,
+            leading=global_menu,
+        )
 
     main_col = ft.Column(
         controls=[
@@ -460,21 +535,30 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
     )
 
 
-def _build_split_area(ctx, editor_common: dict, pane_cursor_cb, pane_content_cb) -> ft.Control:
-    """构造拆分编辑区：左 + 分隔线 + 右，各占一半。
+def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pane_content_cb) -> ft.Control:
+    """构造拆分编辑区：左 + 分隔线 + 右，各组绑定本组激活标签的文档。
 
-    两视口共享同一 document（@ft.observable），各自独立光标/滚动。
-    editor_common 已含 show_toolbar=False（MarkText 风格，工具栏收纳进全局菜单）。
-    pane_cursor_cb / pane_content_cb 按焦点视口路由状态栏命令式上报
-    （active_pane 决定哪侧上报）。
+    左右两组独立标签列表（tab.group 0/1），各自激活标签的 document/file_path
+    分别绑定到对应视口——两侧可打开不同文件独立编辑。编辑器 key 用各组
+    session 计数（f"{session_left}-0" / f"{session_right}-1"）：
+    - 仅本组激活标签变化时本组编辑器重建，另一侧光标/滚动不重置；
+    - 左视口 key 与单编辑器模式一致，切换拆分不重置左视口状态。
+    on_dirty_change 按组路由（on_dirty_change_pane），脏状态精确写到
+    对应组激活标签。pane_cursor_cb / pane_content_cb 按焦点视口路由
+    状态栏命令式上报（active_pane 决定哪侧上报）。
     """
+    left_tab = group_tab_fn(0)
+    right_tab = group_tab_fn(1)
     return ft.Row(
         controls=[
             ft.Container(
                 content=MarkdownEditor(
-                    key=f"{ctx.session}-0",
+                    key=f"{ctx.session_left}-0",
                     nav_ref=ctx.nav_ref,
+                    document=left_tab.get("document"),
+                    file_path=left_tab.get("file_path"),
                     on_editor_focus=lambda: ctx.set_active_pane(0),
+                    on_dirty_change=lambda d: ctx.on_dirty_change_pane(0, d),
                     on_cursor_move=pane_cursor_cb(ctx.active_pane == 0),
                     on_content_change=pane_content_cb(ctx.active_pane == 0),
                     **editor_common,
@@ -485,10 +569,13 @@ def _build_split_area(ctx, editor_common: dict, pane_cursor_cb, pane_content_cb)
             ft.VerticalDivider(width=1, color=get_colors(ctx.theme_mode).border),
             ft.Container(
                 content=MarkdownEditor(
-                    key=f"{ctx.session}-1",
+                    key=f"{ctx.session_right}-1",
                     nav_ref=ctx.nav_ref_split,
+                    document=right_tab.get("document"),
+                    file_path=right_tab.get("file_path"),
                     on_editor_focus=lambda: ctx.set_active_pane(1),
                     keyboard_autofocus=False,
+                    on_dirty_change=lambda d: ctx.on_dirty_change_pane(1, d),
                     on_cursor_move=pane_cursor_cb(ctx.active_pane == 1),
                     on_content_change=pane_content_cb(ctx.active_pane == 1),
                     **editor_common,

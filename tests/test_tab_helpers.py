@@ -12,8 +12,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app._tab_helpers import (
     doc_has_text,
+    group_indices,
     is_blank_untitled,
+    new_tab,
     tab_display_name,
+    tab_group,
     tab_is_dirty,
     tab_paths,
 )
@@ -43,6 +46,42 @@ def _diff_tab(**overrides):
     }
     tab.update(overrides)
     return tab
+
+
+# ---------------- new_tab / tab_group / group_indices（拆分编辑组）----------------
+def test_new_tab_defaults_group_left_and_unique_tid():
+    """new_tab 默认 group=0（左组），_tid 进程内唯一递增。"""
+    t1 = new_tab(document=None, file_path=None, dirty=False)
+    t2 = new_tab(document=None, file_path=None, dirty=False, group=1)
+    assert t1["group"] == 0
+    assert t2["group"] == 1
+    assert isinstance(t1["_tid"], int) and isinstance(t2["_tid"], int)
+    assert t1["_tid"] != t2["_tid"]
+
+
+def test_tab_group_missing_defaults_left():
+    """无 group 字段的旧标签视为左组（0）。"""
+    assert tab_group({}) == 0
+    assert tab_group({"group": None}) == 0
+
+
+def test_tab_group_returns_field():
+    """返回标签 group 字段值。"""
+    assert tab_group({"group": 1}) == 1
+    assert tab_group({"group": 0}) == 0
+
+
+def test_group_indices_filters_and_keeps_order():
+    """group_indices 返回属于该组的全局索引（保持顺序）。"""
+    tabs = [
+        {"group": 0},  # 0
+        {"group": 1},  # 1
+        {},            # 2（缺省 0）
+        {"group": 1},  # 3
+        {"group": 0},  # 4
+    ]
+    assert group_indices(tabs, 0) == [0, 2, 4]
+    assert group_indices(tabs, 1) == [1, 3]
 
 
 # ---------------- tab_is_dirty ----------------

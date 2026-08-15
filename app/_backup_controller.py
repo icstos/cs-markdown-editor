@@ -100,6 +100,7 @@ def build_backup_controller(ctx):
             return 0
         ts = ctx.tabs_ref.current or []
         count = 0
+        seen_docs: set[int] = set()  # 共享同一 document 的多副本只备份一次
         for tab in ts:
             # 对比标签两侧各自备份
             if tab.get("type") == "diff":
@@ -119,6 +120,9 @@ def build_backup_controller(ctx):
             doc = tab.get("document")
             if doc is None:
                 continue
+            if id(doc) in seen_docs:
+                continue  # 同文件另一组副本：共享内容，跳过重复备份
+            seen_docs.add(id(doc))
             content = parser.serialize(doc)
             if not content.strip():
                 continue
@@ -353,13 +357,18 @@ def build_backup_controller(ctx):
 
             abs_path = os.path.abspath(path)
 
-            # 找到对应的 tab（仅普通编辑标签，对比标签不弹对话框）
-            tab_index, tab = _find_editor_tab_by_path(abs_path)
-            if tab is None:
+            # 找到所有引用该路径的普通编辑标签（拆分下同文件左右各一份副本）
+            matches = _find_editor_tabs_by_path(abs_path)
+            if not matches:
                 continue
+            tab_index = matches[0][0]  # 弹窗指向第一个匹配副本
 
-            # 自我写入过滤：通过 mtime 比较判断是否为外部修改
-            last_mtime = tab.get("_last_known_mtime")
+            # 自我写入过滤：任一副本保存过（mtime 最大值）即视为自身写入。
+            # 多副本只比第一个副本会误报——另一副本保存后 mtime 更新，
+            # 本副本仍是旧值，会被误判为外部修改。
+            mtimes = [t.get("_last_known_mtime") for _, t in matches
+                      if t.get("_last_known_mtime") is not None]
+            last_mtime = max(mtimes) if mtimes else None
             if last_mtime is not None:
                 if change_type == Change.deleted:
                     # os.replace 在 Windows 上触发 deleted + added 事件序列：
@@ -385,21 +394,22 @@ def build_backup_controller(ctx):
             _show_external_change_dialog(abs_path, tab_index)
             return  # 一次只弹一个对话框
 
-    def _find_editor_tab_by_path(path: str):
-        """根据文件路径找到对应的普通编辑标签。
+    def _find_editor_tabs_by_path(path: str) -> list[tuple[int, dict]]:
+        """根据文件路径找到所有引用它的普通编辑标签（拆分下可有多副本）。
 
-        返回 (tab_index, tab) 或 (None, None)。
-        对比标签不参与外部修改检测（重载逻辑更复杂，暂不支持）。
+        返回 [(tab_index, tab), ...]（按 tabs 顺序）。对比标签不参与外部
+        修改检测（重载逻辑更复杂，暂不支持）。
         """
         ts = ctx.tabs_ref.current or []
         abs_path = os.path.abspath(path)
+        matches = []
         for i, tab in enumerate(ts):
             if tab.get("type") == "diff":
                 continue
             p = tab.get("file_path")
             if p and os.path.abspath(p) == abs_path:
-                return i, tab
-        return None, None
+                matches.append((i, tab))
+        return matches
 
     def _show_external_change_dialog(path: str, tab_index: int):
         """弹出外部修改重载确认对话框。"""
@@ -526,19 +536,15 @@ def build_backup_controller(ctx):
             return
         body, _cursor, _scroll = result
         doc = parser.parse_markdown(body)
-        # 新建标签载入备份内容（file_path=None 表示未命名草稿）
-        new_tabs = list(ctx.tabs_ref.current)
-        new_tabs.append({
+        # 新建标签载入备份内容（file_path=None 表示未命名草稿），
+        # 在焦点侧组打开（拆分下恢复到正在编辑的那一侧）
+        g = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
+        ctx.append_and_activate({
             "document": doc,
             "file_path": None,
             "dirty": doc_has_text(doc),
+            "group": g,
         })
-        ctx.set_tabs(new_tabs)
-        ctx.tabs_ref.current = new_tabs
-        new_idx = len(new_tabs) - 1
-        ctx.set_active_index(new_idx)
-        ctx.active_index_ref.current = new_idx
-        ctx.set_session(ctx.session + 1)
         ctx.set_recovery_open(False)
         ctx.show_snack(f"已恢复草稿（共 {len(body.splitlines())} 行），请确认是否保存")
 

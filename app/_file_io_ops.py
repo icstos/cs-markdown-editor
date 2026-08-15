@@ -37,7 +37,7 @@ import os
 import flet as ft
 
 import parser
-from app._tab_helpers import is_blank_untitled
+from app._tab_helpers import is_blank_untitled, tab_group
 from config.settings import save_settings
 from services import shortcut
 from services.backup import is_large_content, write_backup
@@ -117,12 +117,13 @@ def build_file_io_ops(ctx):
                 ctx.open_external(path)
                 return
 
-        # 已在某普通编辑标签打开：直接切换（对比标签不算重复打开）
-        for i, t in enumerate(ctx.tabs):
-            if t.get("file_path") == path:
-                if i != ctx.active_index:
-                    ctx.set_active_index(i)
-                    ctx.set_session(ctx.session + 1)
+        # 组内去重（左右标签完全独立）：目标组（焦点侧组）已打开该路径 → 激活
+        # 该组标签；仅另一组打开时在目标组开独立副本——同文件左右各一份，
+        # 光标 / 撤销历史 / 脏状态互不影响。对比标签不算重复打开。
+        g = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
+        for i, t in enumerate(ctx.tabs_ref.current):
+            if t.get("file_path") == path and tab_group(t) == g:
+                ctx.activate_index(i)
                 # 同 tab 也需触发 jump —— pending_jump_sig 已递增，effect 会跑
                 return
         # 正在加载中：忽略重复请求（防止用户快速双击文件树触发多次加载）
@@ -156,7 +157,8 @@ def build_file_io_ops(ctx):
 
         加载期间 UI 事件循环保持响应，用户可继续编辑其他标签。加载完成后
         基于 tabs_ref.current（最新 tabs）决定复用空白标签还是追加新标签，
-        避免加载期间用户操作导致的竞态。
+        避免加载期间用户操作导致的竞态。目标组 = 完成时的焦点侧组
+        （拆分下打开到正在编辑的那一侧）。
         """
         fname = os.path.basename(path)
         set_status_message(f"正在打开 {fname}...", "info")
@@ -178,33 +180,39 @@ def build_file_io_ops(ctx):
             last_mtime = os.path.getmtime(path)
         except OSError:
             last_mtime = None
-        # 再次检查是否已被其他路径加载（极端竞态兜底）
+        # 目标组 = 完成时焦点侧组：组内去重（另一组的副本不算重复，独立打开）
+        g = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
         for t in ctx.tabs_ref.current:
-            if t.get("file_path") == path:
+            if t.get("file_path") == path and tab_group(t) == g:
                 _loading_paths.discard(path)
                 set_status_message(None)
                 return
-        # 基于最新 tabs 判断：当前激活标签为空白未命名时复用，否则追加新标签
-        ts = ctx.tabs_ref.current
-        ai = ctx.active_index_ref.current
-        cur = ts[ai] if 0 <= ai < len(ts) else None
-        if cur is not None and is_blank_untitled(cur):
-            ctx.update_active(
-                document=doc, file_path=path, dirty=False,
-                _last_known_mtime=last_mtime,
-            )
+        # 同文件实时同步：另一组已打开该路径 → 共享其 document 对象（含
+        # 未保存修改），两侧编辑实时互见；丢弃刚 parse 的独立副本
+        for t in ctx.tabs_ref.current:
+            if t.get("file_path") == path and t.get("document") is not None:
+                doc = t["document"]
+                last_mtime = t.get("_last_known_mtime")
+                _shared_doc_dirty = bool(t.get("dirty"))
+                break
         else:
-            new_tabs = list(ts)
-            new_tabs.append({
-                "document": doc, "file_path": path, "dirty": False,
-                "_last_known_mtime": last_mtime,
+            _shared_doc_dirty = False
+        # 空白复用仅限目标组的激活标签（另一组的空白不动）
+        ts = ctx.tabs_ref.current
+        gi = ctx.active_index_right_ref.current if g == 1 else ctx.active_index_left_ref.current
+        cur = ts[gi] if 0 <= gi < len(ts) else None
+        if cur is not None and is_blank_untitled(cur):
+            # 复用目标组空白标签：document 整体替换 → 显式重建该组编辑器
+            ctx.update_tab(gi, document=doc, file_path=path,
+                           dirty=_shared_doc_dirty,
+                           _last_known_mtime=last_mtime)
+            ctx.activate_index(gi)
+            ctx.bump_tab_session(gi)
+        else:
+            ctx.append_and_activate({
+                "document": doc, "file_path": path, "dirty": _shared_doc_dirty,
+                "_last_known_mtime": last_mtime, "group": g,
             })
-            ctx.set_tabs(new_tabs)
-            ctx.tabs_ref.current = new_tabs
-            new_idx = len(new_tabs) - 1
-            ctx.set_active_index(new_idx)
-            ctx.active_index_ref.current = new_idx
-        ctx.set_session(ctx.session + 1)
         push_recent_file(path)
         _loading_paths.discard(path)
         set_status_message(f"已打开 {fname}", "success")
@@ -222,39 +230,47 @@ def build_file_io_ops(ctx):
             last_mtime = os.path.getmtime(path)
         except OSError:
             last_mtime = None
-        if is_blank_untitled(ctx.cur_tab):
-            ctx.update_active(
-                document=doc, file_path=path, dirty=False,
-                _last_known_mtime=last_mtime,
-            )
+        # 目标组 = 焦点侧组：组内去重（另一组的副本不算重复，独立打开）
+        g = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
+        ts = ctx.tabs_ref.current
+        for t in ts:
+            if t.get("file_path") == path and tab_group(t) == g:
+                return
+        # 同文件实时同步：另一组已打开该路径 → 共享其 document 对象
+        _shared_doc_dirty = False
+        for t in ts:
+            if t.get("file_path") == path and t.get("document") is not None:
+                doc = t["document"]
+                last_mtime = t.get("_last_known_mtime")
+                _shared_doc_dirty = bool(t.get("dirty"))
+                break
+        gi = ctx.active_index_right_ref.current if g == 1 else ctx.active_index_left_ref.current
+        cur = ts[gi] if 0 <= gi < len(ts) else None
+        if cur is not None and is_blank_untitled(cur):
+            ctx.update_tab(gi, document=doc, file_path=path,
+                           dirty=_shared_doc_dirty,
+                           _last_known_mtime=last_mtime)
+            ctx.activate_index(gi)
+            ctx.bump_tab_session(gi)
         else:
-            new_tabs = list(ctx.tabs)
-            new_tabs.append({
-                "document": doc, "file_path": path, "dirty": False,
-                "_last_known_mtime": last_mtime,
+            ctx.append_and_activate({
+                "document": doc, "file_path": path, "dirty": _shared_doc_dirty,
+                "_last_known_mtime": last_mtime, "group": g,
             })
-            ctx.set_tabs(new_tabs)
-            ctx.tabs_ref.current = new_tabs
-            new_idx = len(new_tabs) - 1
-            ctx.set_active_index(new_idx)
-            ctx.active_index_ref.current = new_idx
-        ctx.set_session(ctx.session + 1)
         push_recent_file(path)
 
     def new_doc():
-        """新建标签：当前标签为空白未命名时复用，否则追加新空标签。"""
-        if is_blank_untitled(ctx.cur_tab):
-            return  # 已是空文档，无需新增
-        new_tabs = list(ctx.tabs)
-        new_tabs.append(
-            {"document": parser.parse_markdown(""), "file_path": None, "dirty": False}
-        )
-        ctx.set_tabs(new_tabs)
-        ctx.tabs_ref.current = new_tabs
-        new_idx = len(new_tabs) - 1
-        ctx.set_active_index(new_idx)
-        ctx.active_index_ref.current = new_idx
-        ctx.set_session(ctx.session + 1)
+        """新建标签：焦点侧组激活标签为空白未命名时复用，否则在该组追加空标签。"""
+        g = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
+        ts = ctx.tabs_ref.current
+        gi = ctx.active_index_right_ref.current if g == 1 else ctx.active_index_left_ref.current
+        cur = ts[gi] if 0 <= gi < len(ts) else None
+        if cur is not None and is_blank_untitled(cur):
+            return  # 该组已是空文档，无需新增
+        ctx.append_and_activate({
+            "document": parser.parse_markdown(""), "file_path": None,
+            "dirty": False, "group": g,
+        })
 
     async def open_doc():
         picker = ctx.picker_holder.current
@@ -451,14 +467,20 @@ def build_file_io_ops(ctx):
             tab["_last_known_mtime"] = os.path.getmtime(path)
         except OSError:
             pass
-        # 不可变更新该 tab，基于最新 tabs_ref 避免批量保存时覆盖前序结果
+        # 不可变更新该 tab，基于最新 tabs_ref 避免批量保存时覆盖前序结果；
+        # 共享同一 document 的其他标签（同文件另一组副本）同步 dirty=False /
+        # mtime / 路径——内容实时同步，保存状态也必须一致
         latest = list(ctx.tabs_ref.current)
-        latest[tab_index] = {
-            **latest[tab_index],
-            "file_path": path,
-            "dirty": False,
-            "_last_known_mtime": tab.get("_last_known_mtime"),
-        }
+        for j in range(len(latest)):
+            if (j == tab_index
+                    or (latest[j].get("document") is doc
+                        and latest[j].get("type") != "diff")):
+                latest[j] = {
+                    **latest[j],
+                    "file_path": path,
+                    "dirty": False,
+                    "_last_known_mtime": tab.get("_last_known_mtime"),
+                }
         ctx.set_tabs(latest)
         ctx.tabs_ref.current = latest
         push_recent_file(path)

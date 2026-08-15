@@ -341,6 +341,7 @@ def App():
     ctx.open_doc = file_cbs["open_doc"]
     ctx.open_folder = file_cbs["open_folder"]
     ctx.save_doc = file_cbs["save_doc"]
+    ctx.force_save_doc = file_cbs["force_save_doc"]
     ctx.save_as_doc = file_cbs["save_as_doc"]
     ctx.export_doc = file_cbs["export_doc"]
 

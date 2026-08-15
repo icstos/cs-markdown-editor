@@ -32,8 +32,9 @@ def write_text(path: str, text: str) -> None:
     """UTF-8 直接写入文本（保留供不要求原子性的场景使用）。
 
     保存主路径请改用 write_text_atomic 以获得崩溃安全保障。
+    newline="" 与 write_text_atomic 保持一致（\n 原样写出，不做平台换行转换）。
     """
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(text)
 
 
@@ -66,15 +67,19 @@ def write_text_atomic(path: str, text: str) -> None:
         dir=target_dir,
     )
     try:
-        # 用 os.fdopen 包装文件描述符写入，避免 NamedTemporaryFile 跨平台差异
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+        # 用 os.fdopen 包装文件描述符写入，避免 NamedTemporaryFile 跨平台差异。
+        # newline="" 禁用换行转换：默认模式会把 \n / 裸 \r 转为 os.linesep
+        # （Windows 为 \r\n），内存文本一旦含 \r（如粘贴引入的 CRLF），
+        # 写入-读回经换行转换后 SHA256 必不匹配，导致校验误判。
+        with os.fdopen(tmp_fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
             f.flush()
             # fsync 确保数据写入物理磁盘（系统断电后仍可恢复）
             os.fsync(f.fileno())
 
-        # 完整性校验：重读临时文件并比对 SHA256，防止写缓存异常
-        with open(tmp_path, encoding="utf-8") as f:
+        # 完整性校验：重读临时文件并比对 SHA256，防止写缓存异常。
+        # 同样 newline="" 原样读回（不做 universal newlines 归一），保证字节级 round-trip
+        with open(tmp_path, encoding="utf-8", newline="") as f:
             verified = f.read()
         if hashlib.sha256(verified.encode("utf-8")).hexdigest() != src_digest:
             raise OSError("写入完整性校验失败：临时文件内容与原文不匹配")

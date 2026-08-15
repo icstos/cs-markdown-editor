@@ -338,13 +338,13 @@ def build_file_io_ops(ctx):
             # 保存左侧
             if left_dirty and left_path and left_doc is not None:
                 if not await _save_one_side_atomic(
-                    left_path, left_doc, tab, "left"
+                    left_path, left_doc, tab, "left", tab_index
                 ):
                     return False
             # 保存右侧
             if right_dirty and right_path and right_doc is not None:
                 if not await _save_one_side_atomic(
-                    right_path, right_doc, tab, "right"
+                    right_path, right_doc, tab, "right", tab_index
                 ):
                     return False
             latest = list(ctx.tabs_ref.current)
@@ -405,7 +405,22 @@ def build_file_io_ops(ctx):
             # 写入失败兜底：将当前内容写入备份目录，确保数据不丢失
             write_backup(ctx.settings, tab, text)
             set_status_message(f"保存失败：{e}", "error")
-            ctx.show_snack(f"保存失败：{e}（已自动备份到恢复目录）")
+            # 弹「强制保存」对话框：用户可选择跳过原子校验，直接以当前内容写入
+            ctx.set_file_dialog({
+                "mode": "confirm",
+                "title": "保存失败",
+                "icon": ft.Icons.SAVE_OUTLINED,
+                "message": (
+                    f"保存 {os.path.basename(path)} 时出错：\n{e}\n\n"
+                    "当前内容已自动备份到恢复目录。\n"
+                    "是否强制以当前内容直接写入文件？（跳过完整性校验）"
+                ),
+                "confirm_label": "强制保存",
+                "cancel_label": "取消",
+                "action": "force_save",
+                "target": path,
+                "target_tab_index": tab_index,
+            })
             return False
         doc.file_path = path
         doc.dirty = False
@@ -431,11 +446,11 @@ def build_file_io_ops(ctx):
         return True
 
     async def _save_one_side_atomic(
-        path: str, doc, tab_data: dict, side: str
+        path: str, doc, tab_data: dict, side: str, tab_index: int
     ) -> bool:
         """对比标签单侧保存（原子写入 + 覆盖前备份）。返回是否成功。
 
-        side="left" / "right"，用于错误提示。
+        side="left" / "right"，用于错误提示；tab_index 供失败弹窗定位标签。
         """
         # 覆盖前备份
         _backup_before_overwrite(path, parser.serialize(doc), tab_data)
@@ -448,12 +463,98 @@ def build_file_io_ops(ctx):
             write_backup(ctx.settings, tab_data, parser.serialize(doc))
             side_label = "左侧" if side == "left" else "右侧"
             set_status_message(f"{side_label}保存失败：{e}", "error")
-            ctx.show_snack(f"{side_label}保存失败：{e}（已自动备份）")
+            # 弹「强制保存」对话框（对比标签：force_save_doc 会分别处理脏侧）
+            ctx.set_file_dialog({
+                "mode": "confirm",
+                "title": "保存失败",
+                "icon": ft.Icons.SAVE_OUTLINED,
+                "message": (
+                    f"保存 {file_name(path)}（{side_label}）时出错：\n{e}\n\n"
+                    "当前内容已自动备份到恢复目录。\n"
+                    "是否强制以当前内容直接写入文件？（跳过完整性校验）"
+                ),
+                "confirm_label": "强制保存",
+                "cancel_label": "取消",
+                "action": "force_save",
+                "target": path,
+                "target_tab_index": tab_index,
+            })
             return False
+
+    def force_save_doc(tab_index: int | None = None) -> bool:
+        """强制以当前编辑器内容保存（跳过原子写入与完整性校验）。
+
+        保存失败弹窗中用户选择「强制保存」后调用：write_text 直接写入目标
+        文件（不经临时文件/SHA256 校验）。进入此路径前，失败方已将当前
+        内容自动备份到恢复目录，数据安全有兜底。
+        """
+        if tab_index is None:
+            tab_index = ctx.active_index_ref.current
+        ts = ctx.tabs_ref.current
+        if not (0 <= tab_index < len(ts)):
+            return False
+        tab = ts[tab_index]
+
+        # ---- 对比标签：分别强制保存脏侧 ----
+        if tab.get("type") == "diff":
+            all_ok = True
+            for side in ("left", "right"):
+                doc = tab.get(f"{side}_doc")
+                p = tab.get(f"{side}_path")
+                if not (tab.get(f"{side}_dirty", False) and p and doc is not None):
+                    continue
+                try:
+                    write_text(p, parser.serialize(doc))
+                    doc.dirty = False
+                except Exception as e:
+                    all_ok = False
+                    side_label = "左侧" if side == "left" else "右侧"
+                    write_backup(ctx.settings, tab, parser.serialize(doc))
+                    set_status_message(f"{side_label}强制保存失败：{e}", "error")
+            if all_ok:
+                latest = list(ctx.tabs_ref.current)
+                latest[tab_index] = {
+                    **latest[tab_index],
+                    "left_dirty": False,
+                    "right_dirty": False,
+                }
+                ctx.set_tabs(latest)
+                ctx.tabs_ref.current = latest
+                set_status_message("已强制保存", "success")
+            return all_ok
+
+        # ---- 普通编辑标签 ----
+        doc = tab.get("document")
+        path = tab.get("file_path")
+        if doc is None or not path:
+            return False
+        text = parser.serialize(doc)
+        try:
+            write_text(path, text)
+        except Exception as e:
+            write_backup(ctx.settings, tab, text)
+            set_status_message(f"强制保存失败：{e}", "error")
+            ctx.show_snack(f"强制保存失败：{e}（当前内容已备份到恢复目录）")
+            return False
+        doc.file_path = path
+        doc.dirty = False
+        try:
+            last_mtime = os.path.getmtime(path)
+        except OSError:
+            last_mtime = None
+        latest = list(ctx.tabs_ref.current)
+        latest[tab_index] = {
+            **latest[tab_index],
+            "dirty": False,
+            "_last_known_mtime": last_mtime,
+        }
+        ctx.set_tabs(latest)
+        ctx.tabs_ref.current = latest
+        set_status_message("已强制保存", "success")
+        return True
 
     def _check_external_modification(tab: dict, path: str) -> str:
         """检测原文件是否被外部程序修改。
-
         返回值：
         - "modified"：文件被外部修改（mtime 大于上次记录）
         - "unchanged"：未变化
@@ -608,6 +709,7 @@ def build_file_io_ops(ctx):
         "open_doc": open_doc,
         "open_folder": open_folder,
         "save_doc": save_doc,
+        "force_save_doc": force_save_doc,
         "save_as_doc": save_as_doc,
         "export_doc": export_doc,
         "set_status_message": set_status_message,

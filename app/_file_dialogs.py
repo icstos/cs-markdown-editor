@@ -142,6 +142,12 @@ def build_file_dialogs(ctx):
                 show_snack(f"已删除：{fname}")
             except Exception as e:
                 show_snack(f"删除失败：{e}")
+        elif action == "force_save":
+            # 保存失败后强制以当前内容写入（跳过原子写入与完整性校验）
+            tab_index = state.get("target_tab_index")
+            page = ctx.page_ref.current
+            if tab_index is not None and page is not None:
+                page.run_task(ctx.force_save_doc, tab_index)
         elif action == "reload_external":
             # 外部修改检测：用户选择「重新加载」→ 用磁盘最新内容覆盖当前标签
             tab_index = state.get("target_tab_index")

@@ -149,6 +149,8 @@ class AppContext:
     on_sidebar_context_action: Callable = field(default=lambda *a: None)
     # 侧边栏拖拽移动文件/文件夹：(src_path, dst_dir) -> None
     move_fs_item: Callable = field(default=lambda *a: None)
+    # 强制以当前编辑器内容保存（保存失败弹窗「强制保存」）：tab_index -> bool
+    force_save_doc: Callable = field(default=lambda *a: False)
 
     # diff_controller 组
     get_text_for_compare: Callable = field(default=lambda *a: "")

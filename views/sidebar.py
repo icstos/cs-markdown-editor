@@ -23,6 +23,7 @@ from collections.abc import Callable
 import flet as ft
 
 from models import BlockType, Document, SegType
+from services import shortcut
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors, only_border
 
 _MD_EXTS = (".md", ".markdown")
@@ -83,6 +84,8 @@ _FILE_ICON_MAP: dict[str, str] = {
     ".mp4": ft.Icons.MOVIE,
     ".mov": ft.Icons.MOVIE,
     ".avi": ft.Icons.MOVIE,
+    # Windows 快捷方式（指向 .md 的快捷方式在行渲染处叠加文档图标 + 角标）
+    ".lnk": ft.Icons.SHORTCUT,
 }
 
 
@@ -91,6 +94,8 @@ def _file_icon(name: str, c) -> tuple[str, str]:
 
     .md/.markdown 用 c.link 主题色突出可编辑文件；其余统一 c.muted 避免色彩过载。
     未知扩展名兜底 INSERT_DRIVE_FILE_OUTLINED。扩展名匹配大小写不敏感。
+    .lnk 快捷方式用 SHORTCUT 图标（指向 .md 的快捷方式在文件行渲染处
+    覆盖为文档图标 + 角标，见 _render_files_panel）。
     """
     lower = name.lower()
     _, ext = os.path.splitext(lower)
@@ -457,20 +462,27 @@ def _collect_md_paths(tree: list) -> list[str]:
     扫描改为全类型后此处必须按 _MD_EXTS 过滤，否则跨文件搜索会尝试读取
     图片/二进制等非文本文件（_search_in_file 的 UnicodeDecodeError 兜底
     会静默跳过，但浪费 IO 且语义不符）。
+    快捷方式：指向 .md 的 .lnk 以目标路径参与搜索（搜索目标内容，点击
+    打开目标文档）；目标与树内 .md 重复时去重保序。
     """
     paths: list[str] = []
 
     def _walk(node):
         if node[0] == "file":
-            if node[1].lower().endswith(_MD_EXTS):
+            name_l = node[1].lower()
+            if name_l.endswith(_MD_EXTS):
                 paths.append(node[2])
+            elif name_l.endswith(".lnk"):
+                target = shortcut.resolve_md_target(node[2])
+                if target:
+                    paths.append(target)
         else:
             for child in node[2]:
                 _walk(child)
 
     for node in tree:
         _walk(node)
-    return paths
+    return list(dict.fromkeys(paths))  # 去重保序
 
 
 def _build_preview_spans(
@@ -1091,15 +1103,40 @@ def _render_files_panel(
         for kind, name, abspath, depth in flat:
             indent = depth * 14 + Spacing.XL
             if kind == "file":
-                is_md = name.lower().endswith(_MD_EXTS)
+                # 快捷方式：解析指向的 .md 目标（有 mtime/size 缓存，仅 .lnk 读盘）。
+                # 目标有效时按 .md 对待：文档图标+角标、点击进编辑器、
+                # active 高亮匹配目标路径（打开目标后快捷方式行亮起）
+                lnk_target = (
+                    shortcut.resolve_md_target(abspath)
+                    if abspath and shortcut.is_shortcut(name)
+                    else None
+                )
+                is_md = name.lower().endswith(_MD_EXTS) or lnk_target is not None
                 is_active = (
                     is_md
                     and active_abs is not None
                     and abspath is not None
-                    and os.path.abspath(abspath) == active_abs
+                    and (
+                        os.path.abspath(abspath) == active_abs
+                        # normcase：目标路径大小写可能与实际文件不一致（解析来源）
+                        or (
+                            lnk_target is not None
+                            and os.path.normcase(lnk_target)
+                            == os.path.normcase(active_abs)
+                        )
+                    )
                 )
-                icon_name, icon_color = _file_icon(name, c)
-                # 点击分流：.md → 编辑器打开；非 .md → 系统默认程序（on_open_external 缺省 no-op）
+                # 指向 .md 的快捷方式：文档图标 + link 主题色（与 .md 视觉一致）
+                if lnk_target is not None:
+                    icon_name, icon_color = ft.Icons.DESCRIPTION, c.link
+                else:
+                    icon_name, icon_color = _file_icon(name, c)
+                # 快捷方式行 tooltip 显示目标路径（资源管理器「指向 …」直觉）
+                name_tooltip = (
+                    f"→ {lnk_target}" if lnk_target is not None else name
+                )
+                # 点击分流：.md / 指向 .md 的快捷方式 → 编辑器打开（open_file_by_path
+                # 内部解析 .lnk）；其余快捷方式与非 md → 系统默认程序
                 if is_md:
                     _file_click: Callable | None = lambda e, p=abspath: on_open_file(p)
                 elif on_open_external is not None:
@@ -1107,16 +1144,32 @@ def _render_files_panel(
                 else:
                     _file_click = None
 
+                def _file_row_icon() -> ft.Control:
+                    """文件图标：快捷方式（指向 md）叠加 SHORTCUT 小角标。"""
+                    icon = ft.Icon(
+                        icon_name,
+                        size=13,
+                        color=c.link if is_active else icon_color,
+                    )
+                    if lnk_target is None:
+                        return icon
+                    # 角标完全落在 14x14 图标槽内（Stack 默认 HARD_EDGE 裁剪）
+                    return ft.Stack(
+                        controls=[
+                            icon,
+                            ft.Icon(ft.Icons.SHORTCUT, size=8, color=c.muted,
+                                    left=6, bottom=0),
+                        ],
+                        width=14,
+                        height=14,
+                    )
+
                 def _build_file_row() -> ft.Container:
                     return _list_item(
                         ft.Row(
                             controls=[
                                 ft.Container(width=14),  # chevron 占位，与文件夹行对齐
-                                ft.Icon(
-                                    icon_name,
-                                    size=13,
-                                    color=c.link if is_active else icon_color,
-                                ),
+                                _file_row_icon(),
                                 ft.Text(
                                     name,
                                     size=12,
@@ -1126,6 +1179,7 @@ def _render_files_panel(
                                     max_lines=1,
                                     overflow=ft.TextOverflow.ELLIPSIS,
                                     expand=True,
+                                    tooltip=name_tooltip,
                                 ),
                             ],
                             spacing=Spacing.MD,

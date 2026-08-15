@@ -40,3 +40,4 @@ wheels/
 # Scrapy stuff
 .scrapy
 # --- END: template .gitignore  ---
+settings.json

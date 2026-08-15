@@ -34,7 +34,7 @@ import flet as ft
 
 import parser
 from app._tab_helpers import tab_paths
-from services import file_ops
+from services import file_ops, shortcut
 from services.file_io import read_text
 from services.ui_feedback import show_snack as _show_snack_impl
 
@@ -410,17 +410,36 @@ def build_file_dialogs(ctx):
                     file_ops.reveal_in_explorer(path)
                 except Exception as e:
                     show_snack(f"打开失败：{e}")
-            elif path.lower().endswith((".md", ".markdown")):
+            elif path.lower().endswith((".md", ".markdown", ".lnk")):
+                # .lnk 由 open_file_by_path 统一分流：目标 .md → 编辑器，
+                # 其他 → 系统默认程序（与侧边栏点击行为一致）
                 ctx.open_file_by_path(path)
             else:
                 # 非 md 文件：用系统默认程序打开（与侧边栏点击行为一致）
                 ctx.open_external(path)
         elif action == "select_for_compare":
             if not is_dir:
-                ctx.select_for_compare(path)
+                # .lnk 快捷方式：比较其指向的 .md 目标内容（而非快捷方式文件本身）
+                compare_path = (
+                    shortcut.resolve_md_target(path)
+                    if shortcut.is_shortcut(path)
+                    else path
+                )
+                if compare_path:
+                    ctx.select_for_compare(compare_path)
+                else:
+                    show_snack("该快捷方式未指向 Markdown 文件，无法比较")
         elif action == "compare_with_selected":
             if not is_dir:
-                ctx.compare_with_selected(path)
+                compare_path = (
+                    shortcut.resolve_md_target(path)
+                    if shortcut.is_shortcut(path)
+                    else path
+                )
+                if compare_path:
+                    ctx.compare_with_selected(compare_path)
+                else:
+                    show_snack("该快捷方式未指向 Markdown 文件，无法比较")
         elif action == "new_file":
             dir_path = path if is_dir else os.path.dirname(path)
             open_input_dialog(

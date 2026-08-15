@@ -39,6 +39,7 @@ import flet as ft
 import parser
 from app._tab_helpers import is_blank_untitled
 from config.settings import save_settings
+from services import shortcut
 from services.backup import is_large_content, write_backup
 from services.export import export_to_docx, export_to_html, export_to_pdf
 from services.file_io import read_text, write_text, write_text_atomic
@@ -90,11 +91,31 @@ def build_file_io_ops(ctx):
         时序：open 触发 session 变化重建 MarkdownEditor，EditorActions 写入 nav_ref 后，
         _fire_pending_jump effect 消费 pending_jump_ref 调用 jump_to_line(li, off)。
         文件已是当前 tab 时 session 不变，靠 pending_jump_sig 递增触发 effect。
+
+        快捷方式支持（资源管理器直觉）：
+        - .lnk 指向 .md/.markdown → 打开/编辑目标文档（最近文件记录目标路径）
+        - .lnk 指向其他类型 → 交系统默认程序打开快捷方式（启动目标程序）
+        - .lnk 目标失效（被移动/删除）→ SnackBar 提示，不打开
         """
         # 先登记 pending jump（无论后续 session 是否变化，effect 都会触发）
         if jump_to is not None:
             ctx.pending_jump_ref.current = jump_to
             ctx.set_pending_jump_sig(ctx.pending_jump_sig + 1)
+
+        # 快捷方式解析：统一入口分流（侧边栏点击 / 右键打开 / 最近文件 / Ctrl+O）
+        if shortcut.is_shortcut(path):
+            target = shortcut.resolve_shortcut_target(path)
+            if target and target.lower().endswith((".md", ".markdown")):
+                if not os.path.isfile(target):
+                    ctx.show_snack(
+                        f"快捷方式目标不存在：{os.path.basename(target)}（可能已被移动或删除）"
+                    )
+                    return
+                path = target
+            else:
+                # 非 md 目标 / 解析失败：交系统打开快捷方式本身（启动目标或提示无效）
+                ctx.open_external(path)
+                return
 
         # 已在某普通编辑标签打开：直接切换（对比标签不算重复打开）
         for i, t in enumerate(ctx.tabs):
@@ -241,7 +262,8 @@ def build_file_io_ops(ctx):
             return
         files = await picker.pick_files(
             dialog_title="打开 Markdown",
-            allowed_extensions=["md", "markdown", "txt"],
+            # lnk：指向 .md 的快捷方式（open_file_by_path 解析后打开目标文档）
+            allowed_extensions=["md", "markdown", "txt", "lnk"],
             file_type=ft.FilePickerFileType.CUSTOM,
         )
         if not files:

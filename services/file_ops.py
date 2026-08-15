@@ -85,9 +85,14 @@ def rename_path(old_path: str, new_name: str) -> str:
     new_name = sanitize_name(new_name)
     if not new_name:
         raise ValueError("名称不能为空")
-    # 如果是文件且原名有 .md 扩展名，确保新名也有
-    if os.path.isfile(old_path) and old_path.lower().endswith((".md", ".markdown")):
-        new_name = ensure_md_extension(new_name)
+    # 如果是文件：.md/.markdown 强制保持 md 扩展；其他有扩展名的文件
+    # （如 .lnk 快捷方式）在新名未写扩展时保留原扩展——资源管理器直觉，
+    # 防止「快捷方式.lnk → 重命名为 新名字」后丢失扩展导致快捷方式失效
+    if os.path.isfile(old_path):
+        if old_path.lower().endswith((".md", ".markdown")):
+            new_name = ensure_md_extension(new_name)
+        elif "." not in new_name:
+            new_name += os.path.splitext(old_path)[1]
     dir_path = os.path.dirname(old_path)
     new_path = os.path.join(dir_path, new_name)
     if os.path.exists(new_path) and os.path.abspath(new_path) != os.path.abspath(old_path):

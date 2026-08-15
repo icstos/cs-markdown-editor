@@ -114,6 +114,7 @@ def make_actions(
         toggle_task_at_cursor=rec("toggle_task_at_cursor"),
         format_task=rec("format_task"),
         format_table=rec("format_table"),
+        insert_text=rec("insert_text"),
         code_focus_ref=code_ref,
         handle_code_backspace=_code_backspace,
         table_focus_ref=table_ref,
@@ -432,10 +433,10 @@ def test_ctrl_shift_tab_prev_tab():
     assert "prev_tab" in app_calls
 
 
-def test_alt_z_toggle_word_wrap():
+def test_ctrl_shift_r_toggle_word_wrap():
     app_calls: list = []
     d, app_calls, _ = make_dispatcher(None, app_calls)
-    d.handle(evt("z", alt=True))
+    d.handle(evt("r", ctrl=True, shift=True))
     assert "toggle_word_wrap" in app_calls
 
 
@@ -591,19 +592,19 @@ def test_ctrl_shift_m_sets_math_block():
     assert "set_block" in calls
 
 
-def test_ctrl_shift_t_formats_task():
+def test_ctrl_shift_l_formats_task():
     calls: list = []
     actions = make_actions(calls, cursor_li=0)
     d, _, _ = make_dispatcher(actions, [])
-    d.handle(evt("t", ctrl=True, shift=True))
+    d.handle(evt("l", ctrl=True, shift=True))
     assert "format_task" in calls
 
 
-def test_ctrl_alt_t_formats_table():
+def test_ctrl_t_formats_table():
     calls: list = []
     actions = make_actions(calls, cursor_li=0)
     d, _, _ = make_dispatcher(actions, [])
-    d.handle(evt("t", ctrl=True, alt=True))
+    d.handle(evt("t", ctrl=True))
     assert "format_table" in calls
 
 
@@ -723,10 +724,10 @@ def test_browse_ctrl_o_open():
     assert any(fn == d._app_callbacks["open"] for fn, _ in fake_page.tasks)
 
 
-def test_browse_ctrl_shift_l_toggle_theme():
+def test_browse_alt_t_toggle_theme():
     app_calls: list = []
     d, app_calls, _ = make_dispatcher(None, app_calls)
-    d.handle(evt("l", ctrl=True, shift=True))
+    d.handle(evt("t", alt=True))
     assert "toggle_theme" in app_calls
 
 

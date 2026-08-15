@@ -638,9 +638,9 @@ def _wrap_context_menu(
             key=key,
         )
 
-    # 工作区模式：外层空白菜单在 on_secondary_tap_up（抬起）检查标志位，
-    # 此处在 on_secondary_tap_down（按下）置位——按下必然先于抬起，
-    # 与客户端事件分发顺序/模型无关，避免右键文件项时两个菜单重叠。
+    # 工作区模式：行菜单由 ContextMenu 原生 down 触发（Listener 实现）。
+    # 此标志 GD 仅在非拖拽模式生效（拖拽模式下被行 DragTarget 吞掉，天然
+    # 失效但无害——行/空白分流由手势竞技场与行占位 GD 完成，见 _wrap_row_gesture）。
     # 回调仅置标志位，不消费事件，不影响左键点击与列表滚动。
     def _on_inner_secondary(_e):
         menu_state["inner_active"] = True
@@ -675,14 +675,19 @@ def _wrap_blank_context_menu(
     （dir_path = path if is_dir else dirname(path) → 在根目录下创建）。
 
     返回 (blank_body, holder)：
-    - blank_body：GestureDetector 包裹列表主体，on_secondary_tap_up 手动 open 菜单；
+    - blank_body：GestureDetector 包裹列表主体（含其外层根 DragTarget），
+      on_secondary_tap_down 手动 open 菜单，必须在所有 DragTarget 外层
+      （实测 DragTarget 会吞掉其子孙 GD 的右键 tap 识别器）；
     - holder：零尺寸 ContextMenu 载体，不参与命中测试（自动触发物理上不可能），
       仅在 open() 时显示 items——不依赖客户端对 secondary_trigger=None 的支持。
 
-    内外层用不同事件相位区分：文件项在内层 on_secondary_tap_down（按下）置
-    inner_active=True；外层在 on_secondary_tap_up（抬起）检查标志位——按下必然
-    先于抬起，与客户端的事件分发顺序/模型无关，确保右键文件/文件夹项时
-    只弹项级菜单、右键空白区域才弹此菜单。
+    行/空白分流机制（拖拽模式）：行级菜单由行 ContextMenu 原生 down 触发
+    （Listener 实现，不受 DragTarget 影响）；行的最外层「竞技场占位 GD」
+    （见 _wrap_row_gesture）以更深的识别器在右键行时赢得手势竞技场，本 GD
+    被竞技场拒绝——只有右键空白区域时本 GD 才是唯一识别器而获胜并弹菜单。
+
+    inner_active 标志为非拖拽模式的兜底（无 DragTarget 时行内标志 GD 存活，
+    置位后此处跳过；行菜单 on_dismiss/on_select 复位，无残留）。
     """
     items: list[ft.PopupMenuItem] = [
         ft.PopupMenuItem(
@@ -704,8 +709,9 @@ def _wrap_blank_context_menu(
         ),
     ]
 
-    async def _on_blank_secondary_up(e):
-        # 按下阶段命中文件项时内层已置位标志，此处（抬起阶段）跳过并复位
+    async def _on_blank_secondary_down(e):
+        # child-first：右键文件项时内层已置位标志（同 down 相位、必先执行），
+        # 此处跳过并复位；右键空白区域时标志为 False → 立即弹空白菜单
         if menu_state.get("inner_active"):
             menu_state["inner_active"] = False
             return
@@ -713,7 +719,7 @@ def _wrap_blank_context_menu(
 
     blank_body = ft.GestureDetector(
         content=content,
-        on_secondary_tap_up=_on_blank_secondary_up,
+        on_secondary_tap_down=_on_blank_secondary_down,
         expand=True,
     )
     holder = ft.ContextMenu(
@@ -842,6 +848,27 @@ def _wrap_drop_target(
         on_will_accept=on_will_accept,
         on_leave=on_leave,
         on_accept=on_accept,
+        key=key,
+    )
+
+
+def _wrap_row_gesture(row: ft.Control, key: str | None = None) -> ft.GestureDetector:
+    """行级「竞技场占位」GestureDetector（拖拽模式下行的最外层包装）。
+
+    背景（Flet 0.86 / Flutter 实测行为）：DragTarget 会吞掉其子孙
+    GestureDetector 的右键 tap 识别器——行内各 GD 的 secondary_tap_down
+    均无法送达 Python；行级菜单靠 ContextMenu 原生 down 触发（Listener
+    实现，不受影响）。但若行上无任何存活的 secondary tap 识别器，右键行
+    时外层空白菜单 GD 将成为手势竞技场中唯一识别器而获胜，误弹空白菜单。
+
+    此占位 GD 位于行 DragTarget 外层（识别器存活）、比外层空白菜单 GD
+    更深（先加入竞技场，右键行时获胜），回调为空操作——实际菜单由行级
+    ContextMenu 原生弹出，外层空白 GD 被竞技场拒绝，空白菜单只在真正
+    的空白区域触发。key 供 ListView 按路径复用行实例（虚拟化 reconciliation）。
+    """
+    return ft.GestureDetector(
+        content=row,
+        on_secondary_tap_down=lambda _e: None,
         key=key,
     )
 
@@ -1119,14 +1146,18 @@ def _render_files_panel(
                     menu_state=menu_state,
                 )
                 if can_drag and abspath:
-                    # 拖拽模式：行包 Draggable（原位半透明占位 + 指针跟随预览）
+                    # 拖拽模式：行包 Draggable（原位半透明占位 + 指针跟随预览），
+                    # 最外层再包「竞技场占位 GD」——右键行时以更深的识别器赢得
+                    # 手势竞技场，阻止外层空白菜单 GD 误触发（见 _wrap_row_gesture）
                     rows.append(
-                        _wrap_draggable(
-                            inner,
-                            ft.Container(opacity=0.35, content=_build_file_row()),
-                            _drag_feedback(name, icon_name, icon_color, c),
-                            drag_registry,
-                            abspath,
+                        _wrap_row_gesture(
+                            _wrap_draggable(
+                                inner,
+                                ft.Container(opacity=0.35, content=_build_file_row()),
+                                _drag_feedback(name, icon_name, icon_color, c),
+                                drag_registry,
+                                abspath,
+                            ),
                             key=f"tree-{abspath}",
                         )
                     )
@@ -1180,7 +1211,8 @@ def _render_files_panel(
                     menu_state=menu_state,
                 )
                 if can_drag and abspath:
-                    # 拖拽模式：行包 Draggable，再包 DragTarget（文件夹 = 放置目标）
+                    # 拖拽模式：行包 Draggable，再包 DragTarget（文件夹 = 放置目标），
+                    # 最外层「竞技场占位 GD」同文件行（见 _wrap_row_gesture）
                     draggable = _wrap_draggable(
                         inner,
                         ft.Container(opacity=0.35, content=_build_dir_row()),
@@ -1189,12 +1221,14 @@ def _render_files_panel(
                         abspath,
                     )
                     rows.append(
-                        _wrap_drop_target(
-                            draggable,
-                            abspath,
-                            drag_registry,
-                            on_file_drop,
-                            _set_hl,
+                        _wrap_row_gesture(
+                            _wrap_drop_target(
+                                draggable,
+                                abspath,
+                                drag_registry,
+                                on_file_drop,
+                                _set_hl,
+                            ),
                             key=f"tree-{abspath}",
                         )
                     )
@@ -1209,20 +1243,22 @@ def _render_files_panel(
         )
 
     # 工作区模式：空白区域右键菜单（新建文件/文件夹、复制路径、打开文件位置）
-    # 右键文件/文件夹项 → 内层项级菜单（按下阶段置标志）；
-    # 右键列表空白区域 → 外层 GestureDetector（抬起阶段检查标志）手动弹空白菜单
+    # 包裹顺序关键（实测 Flet/Flutter 行为）：DragTarget 会吞掉其子孙
+    # GestureDetector 的右键 tap 识别器，故空白菜单 GD 必须在根 DragTarget
+    # 外层（GD > DT > ListView）；行/空白分流靠手势竞技场（行占位 GD 更深
+    # 先赢，见 _wrap_row_gesture），右键行弹行级菜单、右键空白弹空白菜单
     blank_holder: ft.Control | None = None
     if root_dir:
-        body, blank_holder = _wrap_blank_context_menu(
-            body, root_dir, on_file_context_action, c, menu_state
-        )
-        # 根区域拖放目标：拖到列表空白区（行间/底部）= 移动到工作区根目录
+        # 根区域拖放目标在内层：拖到列表空白区（行间/底部）= 移动到工作区根目录
         if can_drag:
             body = _wrap_drop_target(
                 body, root_dir, drag_registry, on_file_drop,
                 _set_hl, key="root-drop",
             )
-            body.expand = True  # 撑满 Column（原 GestureDetector expand 链延续）
+        # 空白菜单 GD 最外层（自带 expand=True 撑满 Column）
+        body, blank_holder = _wrap_blank_context_menu(
+            body, root_dir, on_file_context_action, c, menu_state
+        )
 
     # 工作区模式：顶部文件夹名头 + 关闭按钮（VSCode 风格资源管理器标题栏）
     header_controls: list = []

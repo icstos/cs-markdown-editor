@@ -18,10 +18,8 @@
   "sidebar_open": true,
   "sidebar_panel": "files",
   "sidebar_width": 256,
-  "recent_files": [
-    "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs\\1-Projects\\cs-image-viewer.md"
-  ],
-  "workspace_folder": "C:\\Users\\aigcs\\CSTOS\\projects\\cs-private\\cs-docs",
+  "recent_files": [],
+  "workspace_folder": "C:\\Users\\aigcs\\AppData\\Local\\Temp\\pytest-of-aigcs\\pytest-208\\test_open_folder_atomic_merge_0\\workspace",
   "search_folder": false,
   "search_case_sensitive": false,
   "search_whole_word": false,

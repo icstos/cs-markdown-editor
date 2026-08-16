@@ -90,11 +90,7 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
                 break
             level += 1
             content = m2.group(1)
-        # 将 content 前导空格归入前缀，避免 parse_inline 丢失空格导致
-        # segments 拼接 != line.raw（光标位置计算兜底偏移）
-        stripped_content = content.lstrip(" ")
-        prefix = raw[: len(raw) - len(stripped_content)] if stripped_content else raw
-        return BlockType.QUOTE, {"level": level, "content": stripped_content, "prefix": prefix}
+        return BlockType.QUOTE, {"level": level, "content": content}
 
     if _RE_HR.match(raw):
         return BlockType.HR, {}
@@ -114,7 +110,9 @@ def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, di
     """
     if block_type == BlockType.HEADING:
         lvl = info["level"]
-        return Segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl), {"level": lvl}
+        return Segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl), {
+            "level": lvl
+        }
     if block_type == BlockType.LIST_UO:
         indent = info.get("indent", 0)
         marker = info["marker"]
@@ -129,18 +127,21 @@ def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, di
                 "",
                 level=indent,
             ), attrs
-        return Segment(SegType.LIST_PREFIX, f"{indent_sp}{marker} ", "", level=indent), {"level": indent}
+        return Segment(
+            SegType.LIST_PREFIX, f"{indent_sp}{marker} ", "", level=indent
+        ), {"level": indent}
     if block_type == BlockType.LIST_O:
         indent = info.get("indent", 0)
         indent_sp = " " * indent
         return (
-            Segment(SegType.LIST_PREFIX, f"{indent_sp}{info['num']}. ", "", level=indent),
+            Segment(
+                SegType.LIST_PREFIX, f"{indent_sp}{info['num']}. ", "", level=indent
+            ),
             {"level": indent},
         )
     if block_type == BlockType.QUOTE:
         lvl = info.get("level", 1)
-        prefix = info.get("prefix", "> " * lvl)
-        return Segment(SegType.QUOTE_PREFIX, prefix, "", level=lvl), {"level": lvl}
+        return Segment(SegType.QUOTE_PREFIX, "> " * lvl, "", level=lvl), {"level": lvl}
     return Segment(SegType.TEXT, "", ""), {}
 
 

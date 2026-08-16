@@ -42,6 +42,7 @@ from views.editor._helpers import (
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
+
 def build_cursor(ctx):
     """构造光标核心闭包组（IME 核心组，紧耦合不拆散）。
 
@@ -130,7 +131,11 @@ def build_cursor(ctx):
                 ctx.set_cursor_field_value(new_lv)
             else:
                 # 光标不在会话末尾：静默清空会话（不递增 nav_seq）
-                ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
+                ctx.input_session_ref.current = {
+                    "li": -1,
+                    "start_off": -1,
+                    "last_value": "",
+                }
                 ctx.set_cursor_field_value("")
         ctx.set_cursor_off(new_off)
         ctx.preferred_col_ref.current = None
@@ -268,7 +273,7 @@ def build_cursor(ctx):
         if state["li"] != li or state["start_off"] < 0:
             raw = _line_raw(line)
             off = ctx.cursor_off
-            if off + len(value) <= len(raw) and raw[off:off + len(value)] == value:
+            if off + len(value) <= len(raw) and raw[off : off + len(value)] == value:
                 state["li"], state["start_off"], state["last_value"] = li, off, value
                 ctx.cursor_ref.current.reset(off + len(value), len(raw))
                 ctx.set_cursor_field_value(value)
@@ -284,10 +289,14 @@ def build_cursor(ctx):
 
         # Delta 计算：公共前缀后的 removed/inserted
         cp = 0
-        while cp < len(old_value) and cp < len(new_value) and old_value[cp] == new_value[cp]:
+        while (
+            cp < len(old_value)
+            and cp < len(new_value)
+            and old_value[cp] == new_value[cp]
+        ):
             cp += 1
-        removed = old_value[cp:]    # 被删除部分
-        inserted = new_value[cp:]   # 被插入部分
+        removed = old_value[cp:]  # 被删除部分
+        inserted = new_value[cp:]  # 被插入部分
 
         # 无变化：忽略（防重复 on_change）
         if not removed and not inserted:
@@ -313,7 +322,6 @@ def build_cursor(ctx):
         # 避免双重渲染（render #1 用旧 value → IME 重复 on_change）。
         ctx.set_cursor_field_value(new_value)
         old_task = line.task
-        old_bt = line.block_type
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
         # 多光标：同步 delta（removed_len, inserted）到所有副光标
@@ -329,16 +337,7 @@ def build_cursor(ctx):
         # 导致"异常编辑任务列表标识"。
         # 结束会话清空 cursor_field_value，下次输入启动新会话时 start_off 已在
         # 前缀之后，last_value 只含内容部分，cursor_overlay 位置正确。
-        # block_type 变化（如输入 ">" 触发 PARAGRAPH → QUOTE）：用 rebuild=True
-        # 强制重建 TextField。rebuild=False 时 TextField value 从 ">" 变为 ""，
-        # 但 Flutter 端 selection 仍在 offset=1（超出空 value 长度），selection
-        # 无效导致光标消失。rebuild=True 递增 nav_seq → key 变化 → 重建控件 +
-        # focus_cursor_field effect 重新聚焦，新 TextField value="" selection=(0,0)。
-        # task 变化用 rebuild=False：task 行 skip_prefix=True（Checkbox 替代前缀），
-        # TextField 价值系不同，不重建不出问题且保 IME 组合态。
-        if line.block_type != old_bt:
-            _end_input_session(rebuild=True)
-        elif line.task != old_task:
+        if line.task != old_task:
             _end_input_session(rebuild=False)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
@@ -373,7 +372,11 @@ def build_cursor(ctx):
             # 清空 input_session：防止下次 on_change 用旧 session 计算错误 delta
             # （原生 TextField 粘贴可能已触发 on_change 但被 handle_char_input 跳过，
             # input_session 仍保留旧值，需重置以启动新会话）
-            ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
+            ctx.input_session_ref.current = {
+                "li": -1,
+                "start_off": -1,
+                "last_value": "",
+            }
             ctx.set_cursor_field_value("")
         ctx.push_history()
         ctx.undo_push_pending.current = True
@@ -402,7 +405,7 @@ def build_cursor(ctx):
             last_raw = parts[-1] + after
             last_line = parser.parse_markdown(last_raw).lines[0]
             # 原地插入多行 + notify()，避免 O(N) 列表重建
-            ctx.document.lines[li + 1:li + 1] = middle + [last_line]
+            ctx.document.lines[li + 1 : li + 1] = middle + [last_line]
             ctx.document.notify()
             ctx.mark_dirty()
             last_li = li + 1 + len(middle)
@@ -467,11 +470,7 @@ def build_cursor(ctx):
             # 任务行内容首 Backspace：转为普通列表项（Typora 式，不破坏前缀）
             # 光标在内容起点（off == prefix_len）时，- [ ] → -（无论内容是否为空）。
             # 空内容也降级：否则走默认删除会删掉前缀字符 "]"，破坏 task 标识。
-            if (
-                line.task
-                and line.segments
-                and off == len(line.segments[0].raw)
-            ):
+            if line.task and line.segments and off == len(line.segments[0].raw):
                 ctx.clear_secondary_cursors()
                 ctx.push_history()
                 ctx.undo_push_pending.current = True
@@ -488,7 +487,7 @@ def build_cursor(ctx):
                 _set_cursor(li, len(new_prefix))
                 return
             ctx.push_line_edit(li, raw)
-            new_raw = raw[:off - 1] + raw[off:]
+            new_raw = raw[: off - 1] + raw[off:]
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
             # 轻量光标更新：不递增 nav_seq，避免 TextField 重建（性能优化）
@@ -560,7 +559,7 @@ def build_cursor(ctx):
             return
         if off < len(raw):
             ctx.push_line_edit(li, raw)
-            new_raw = raw[:off] + raw[off + 1:]
+            new_raw = raw[:off] + raw[off + 1 :]
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
             # 光标位置不变，仅更新 cursor_ref 的 raw_len（不触发 _set_cursor 开销）
@@ -587,7 +586,13 @@ def build_cursor(ctx):
             ctx.suppress_blur.current = True
             _set_cursor(li, junction)
 
-    def on_submit(value: str, *, override_li: int | None = None, override_off: int | None = None, skip_history: bool = False):
+    def on_submit(
+        value: str,
+        *,
+        override_li: int | None = None,
+        override_off: int | None = None,
+        skip_history: bool = False,
+    ):
         """Enter：在光标处分割行，续行加列表/引用前缀。
 
         override_li/override_off：外部调用（如 outward 选区删除后换行）时强制指定
@@ -612,14 +617,20 @@ def build_cursor(ctx):
             # 若 handle_char_input 已同步（last_value==value），delta 无变化不会重复裁剪。
             # push_history 之前执行：未上屏 composing 不应进入撤销栈（undo 不恢复废字符）。
             _sess = ctx.input_session_ref.current
-            if _sess is not None and _sess.get("li") == li and _sess.get("start_off", -1) >= 0:
+            if (
+                _sess is not None
+                and _sess.get("li") == li
+                and _sess.get("start_off", -1) >= 0
+            ):
                 _lv = _sess.get("last_value", "")
                 if _lv and _lv != value:
                     _so = _sess["start_off"]
                     _raw = _line_raw(line)
                     # delta 计算：公共前缀后的 removed/inserted
                     _cp = 0
-                    while _cp < len(_lv) and _cp < len(value) and _lv[_cp] == value[_cp]:
+                    while (
+                        _cp < len(_lv) and _cp < len(value) and _lv[_cp] == value[_cp]
+                    ):
                         _cp += 1
                     _removed = _lv[_cp:]
                     _inserted = value[_cp:]
@@ -654,9 +665,16 @@ def build_cursor(ctx):
         if override_off is not None:
             off = max(0, min(override_off, len(raw)))
         else:
-            off = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
+            off = (
+                ctx.cursor_ref.current.base
+                if ctx.cursor_ref.current
+                else ctx.cursor_off
+            )
             # 行内选区：先删除选区内容（与换行合并为一个撤销操作）
-            if ctx.cursor_ref.current and ctx.cursor_ref.current.base != ctx.cursor_ref.current.extent:
+            if (
+                ctx.cursor_ref.current
+                and ctx.cursor_ref.current.base != ctx.cursor_ref.current.extent
+            ):
                 cs = ctx.cursor_ref.current
                 sel_start = min(cs.base, cs.extent)
                 sel_end = max(cs.base, cs.extent)
@@ -734,9 +752,18 @@ def build_cursor(ctx):
             # 任务项空内容（before 仅前缀，无内容）→ Enter 退出任务列表转为普通段落
             # 必须检查 before 仅含前缀（- [ ] / - [x]），不能仅用 _RE_TASK_MARKER.match
             # 否则 `- [ ] task` 光标在末尾时 before="- [ ] task" 也会匹配，误清空内容
-            if (
-                line.task
-                and before.strip() in ("- [ ]", "- [x]", "- [X]")
+            if line.task and before.strip() in ("- [ ]", "- [x]", "- [X]"):
+                ctx.clear_secondary_cursors()
+                _reparse_atomic(line, after.lstrip())
+                ctx.mark_dirty()
+                ctx.suppress_blur.current = True
+                ctx.set_nav_seq(ctx.nav_seq + 1)
+                _set_cursor(li, 0)
+                return
+            if line.block_type == BlockType.LIST_UO and before.rstrip() in (
+                "-",
+                "*",
+                "+",
             ):
                 ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
@@ -745,28 +772,9 @@ def build_cursor(ctx):
                 ctx.set_nav_seq(ctx.nav_seq + 1)
                 _set_cursor(li, 0)
                 return
-            if line.block_type == BlockType.LIST_UO and before.rstrip() in ("-", "*", "+"):
-                ctx.clear_secondary_cursors()
-                _reparse_atomic(line, after.lstrip())
-                ctx.mark_dirty()
-                ctx.suppress_blur.current = True
-                ctx.set_nav_seq(ctx.nav_seq + 1)
-                _set_cursor(li, 0)
-                return
-            # 空引用行尾 Enter（before 仅 > 前缀，无内容）→ 退出引用转普通段落
-            # Typora 式："> " + 回车 → 空行。去掉空格后全为 > 字符即纯前缀
-            if line.block_type == BlockType.QUOTE and before.strip() and all(
-                ch == ">" for ch in before.replace(" ", "")
+            if line.block_type == BlockType.LIST_O and _RE_O_PREFIX.match(
+                before.rstrip()
             ):
-                ctx.clear_secondary_cursors()
-                stripped = after.lstrip("> ").lstrip()
-                _reparse_atomic(line, stripped)
-                ctx.mark_dirty()
-                ctx.suppress_blur.current = True
-                ctx.set_nav_seq(ctx.nav_seq + 1)
-                _set_cursor(li, 0)
-                return
-            if line.block_type == BlockType.LIST_O and _RE_O_PREFIX.match(before.rstrip()):
                 ctx.clear_secondary_cursors()
                 _reparse_atomic(line, after.lstrip())
                 ctx.mark_dirty()

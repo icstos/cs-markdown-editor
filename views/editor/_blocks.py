@@ -47,11 +47,12 @@ def build_blocks(ctx):
         ctx.push_history()
         ctx.undo_push_pending.current = True
         line = ctx.document.lines[li]
-        old_block_type = line.block_type
         # 记录旧前缀长度和光标位置（_reparse_atomic 前）
         old_prefix_len = 0
         if line.segments and line.segments[0].seg_type in (
-            SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX,
+            SegType.HEADING_PREFIX,
+            SegType.LIST_PREFIX,
+            SegType.QUOTE_PREFIX,
         ):
             old_prefix_len = len(line.segments[0].raw)
         old_off = ctx.cursor_base(len(_line_raw(line)))
@@ -59,12 +60,20 @@ def build_blocks(ctx):
         if block_type == BlockType.HEADING:
             new_raw = "#" * level + " " + content
         elif block_type == BlockType.LIST_UO:
-            indent_sp = " " * line.level if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O) else ""
+            indent_sp = (
+                " " * line.level
+                if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O)
+                else ""
+            )
             # task=True：转为任务列表项（- [ ] content）；默认 False 走普通无序列表
             prefix = "- [ ] " if task else "- "
             new_raw = indent_sp + prefix + content
         elif block_type == BlockType.LIST_O:
-            indent_sp = " " * line.level if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O) else ""
+            indent_sp = (
+                " " * line.level
+                if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O)
+                else ""
+            )
             new_raw = f"{indent_sp}1. " + content
         elif block_type == BlockType.QUOTE:
             new_raw = "> " + content
@@ -75,7 +84,9 @@ def build_blocks(ctx):
             # PARAGRAPH（工具栏"代码块"按钮曾因此失效）。改用 _make_code_line
             # （基于 parse_markdown）整体替换，与 TABLE 一致的早返回模式。
             new_line = _make_code_line("", content)
-            ctx.document.lines = ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1:]
+            ctx.document.lines = (
+                ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1 :]
+            )
             ctx.mark_dirty()
             # 退出光标编辑态，代码块 CodeEditor 待用户点击聚焦编辑
             ctx.set_cursor_line(li)
@@ -98,9 +109,13 @@ def build_blocks(ctx):
                 nl.segments = [Segment(SegType.TEXT, raw, raw)]
                 return nl
 
-            ctx.document.lines = (
-                [*ctx.document.lines[:li], _mk_table_line(header_raw), _mk_table_line(sep_raw), _mk_table_line(data_raw), *ctx.document.lines[li + 1:]]
-            )
+            ctx.document.lines = [
+                *ctx.document.lines[:li],
+                _mk_table_line(header_raw),
+                _mk_table_line(sep_raw),
+                _mk_table_line(data_raw),
+                *ctx.document.lines[li + 1 :],
+            ]
             ctx.mark_dirty()
             # 退出光标编辑态，进入表格编辑态（TableView auto_focus 首格）
             ctx.set_cursor_line(li)
@@ -133,28 +148,20 @@ def build_blocks(ctx):
             new_line = ctx.document.lines[li]
             new_prefix_len = 0
             if new_line.segments and new_line.segments[0].seg_type in (
-                SegType.HEADING_PREFIX, SegType.LIST_PREFIX, SegType.QUOTE_PREFIX,
+                SegType.HEADING_PREFIX,
+                SegType.LIST_PREFIX,
+                SegType.QUOTE_PREFIX,
             ):
                 new_prefix_len = len(new_line.segments[0].raw)
             # 光标在内容部分的相对偏移（光标在前缀部分时视为 0）
             content_off = max(0, old_off - old_prefix_len)
             new_raw_len = len(_line_raw(new_line))
             new_off = min(new_prefix_len + content_off, new_raw_len)
-            # 抑制 blur：工具栏/菜单点击已使 TextField 失焦，suppress_blur 防止
-            # on_blur 干扰后续 set_cursor 的聚焦逻辑（与 on_submit 一致）
-            ctx.suppress_blur.current = True
             ctx.set_cursor(li, new_off)
             # 递增 focus_seq 强制重聚焦：行类型变化但 cursor_li 不变时，
             # focus_cursor_field effect 不触发（依赖 cursor_li/nav_seq/focus_seq），
             # 工具栏/快捷键点击已使 TextField 失焦 → 光标消失。与 _on_tap_line 一致。
             ctx.set_focus_seq(ctx.focus_seq + 1)
-            # block_type 变化时结束输入会话：前缀段结构变化（如 PARAGRAPH→QUOTE），
-            # input_session.last_value 含旧前缀导致 cursor_overlay 位置偏移
-            # （前缀折叠为零宽度但 value 仍含前缀 → 光标与渲染层不对齐）
-            if old_block_type != new_line.block_type:
-                ctx.input_session_ref.current = {"li": -1, "start_off": -1, "last_value": ""}
-                ctx.set_cursor_field_value("")
-                ctx.set_nav_seq(ctx.nav_seq + 1)
 
     # ============ 任务列表 ============
     def toggle_task(li: int):
@@ -169,7 +176,9 @@ def build_blocks(ctx):
         content = _inline_content(line)
         body = prefix_raw.lstrip()
         marker = m.group(1) if (m := _RE_UO_MARKER.match(body)) else "-"
-        new_prefix = f"{' ' * (line.level or 0)}{marker} [{'x' if line.checked else ' '}] "
+        new_prefix = (
+            f"{' ' * (line.level or 0)}{marker} [{'x' if line.checked else ' '}] "
+        )
         new_raw = new_prefix + content
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()

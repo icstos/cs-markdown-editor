@@ -11,7 +11,7 @@
 - **光标级实时渲染**：点击任意位置即显示光标，输入字符立即融入渲染样式；语法标记（`#`、`**`、`` ` ``、`-`、`>` 等）在非激活段透明，仅光标所在段的最小语法标记变灰可见，对齐 Typora 最小语法噪声
 - **像素级光标对齐**：基于 HarfBuzz（与 Skia/Flutter 同引擎）整形测量文本 advance，光标 X 坐标与渲染层 TextSpan 像素级贴合；Flet 默认 letter_spacing 已补偿
 - **IME 友好**：透明 TextField 不设 `value` 属性，由 `use_effect` 异步清空内部值；同行输入 `key` 不变（基于 `li + nav_seq`），保持 IME 组合态不被重渲染打断
-- **多文档标签页**：顶部标签栏支持并行编辑多个文档，未保存修改标星号 `*`；新建 / 关闭 / 切换标签，关闭未保存文档时弹出确认对话框；右键菜单支持「打开 / 选择以进行比较 / 与已选项目进行比较 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除 / 关闭 / 关闭其他 / 关闭全部」；普通编辑标签与文件对比标签并存、自由切换
+- **多文档标签页**：顶部标签栏支持并行编辑多个文档，未保存修改标星号 `*`；新建 / 关闭 / 切换标签，关闭未保存文档时弹出确认对话框；右键菜单支持「打开 / 选择以进行比较 / 与已选项目进行比较 / 新建文件 / 新建文件夹 / 复制路径 / 打开文件位置 / 重命名 / 创建副本 / 删除 / 关闭 / 关闭其他 / 关闭全部」；普通编辑标签与文件对比标签并存、自由切换；拆分模式下标签行同步分左右，两组标签完全独立（同一文件可在两侧各开一份，内容实时同步）
 - **跨段光标导航**：方向键在段间 / 行间无缝移动，`Home` / `End` 跳转行首 / 行尾，`Ctrl+Home` / `Ctrl+End` 跳文档首末，`PageUp` / `PageDown` 翻页；上下方向键跨短行时记忆列偏移（VSCode 风格），点击命中按中点吸附到最近段边界
 - **行首 / 行尾合并**：`Backspace` 在行首与前一行合并，`Delete` 在行尾与下一行合并——所有行内块类型（标题 / 列表 / 引用 / 段落）行为一致，光标落在合并点
 - **向外选区**：`Shift+Click` 或 `Shift+方向键` 从编辑光标起始跨段 / 跨行选区，高亮覆盖范围；支持 `Ctrl+X` 剪切、`Backspace` / `Delete` 删除、`Escape` 取消、`Ctrl+C` 复制选区 raw 文本
@@ -19,7 +19,7 @@
 - **URL 智能折叠**：链接 `[text](url)` 与图片 `![alt](url)` 的 URL 子段根据光标位置动态折叠——光标在文本/alt 段时 URL 折叠为零宽度（最小语法噪声），光标进入 URL 段时完整可见；链接编辑视为常规文本编辑，光标移出链接区间即自动折叠回渲染态
 - **图片交互（Typora 式）**：左键点击图片进入 `![alt](url)` 源码编辑（光标定位到图片段，激活行渲染源码）；右键弹出上下文菜单：拷贝图片 Markdown / 拷贝图片（二进制写入系统剪贴板）/ 将图像另存为（FilePicker 保存对话框）/ 删除图片（移除图片段并重解析，混合行保留其余文本）；支持本地路径、http(s) URL、data URI 三类图片源
 - **自适应宽度与软换行**：长行超出视口时按可用宽度自动断行（CJK 逐字、西文按词），`Alt+Z` 一键切换自动换行开关（VSCode 风格，设置持久化）；窗口尺寸变化时段落宽度实时自适应重排
-- **向右拆分编辑器**：`Ctrl+\` 将当前文档在右侧拆分出第二视口（VSCode 风格），两视口共享同一文档、独立光标与滚动，便于多处对照查看与编辑
+- **向右拆分编辑器（左右独立标签组）**：`Ctrl+\` 开启 VSCode 风格拆分——标签行与编辑区同步分左右两栏，各自拥有**独立标签列表**，可同时打开不同文件并行编辑；开启时右侧默认以当前文件创建副本。交互直觉对齐 VSCode：点击某组标签即聚焦该组、`Ctrl+Tab` 仅焦点组内循环、右键「关闭其他 / 关闭全部」仅影响当前组、点哪组「+」就在哪组新建、打开 / 新建 / 恢复备份均定向到焦点侧组；右组标签全部关闭时自动收起拆分。同一文件左右各开一份时两侧**共享同一文档对象**——任一侧编辑实时同步到另一侧（光标 / 滚动 / 撤销历史仍独立），脏状态 / 保存 / 外部重载联动一致；再次 `Ctrl+\` 合并：右组空白标签丢弃、非空白标签并入左组
 - **文件对比（标签化双编辑器 diff）**：VSCode 风格的文件对比以标签形式管理——在标签或侧边栏文件上右键「选择以进行比较」标记源文件，再在另一文件上右键「与已选项目进行比较」即创建对比标签（`type: "diff"`）。对比标签内左右并排两个原生可编辑 `MarkdownEditor`，行级 diff 背景着色标识差异（绿色=新增、红色=删除、灰色=修改），缺失侧行高间隙对齐保持视觉对应。对比头部显示「左文件名 → 右文件名」及差异统计（`+新增` / `-删除` / `~修改`）。两侧均可直接编辑，差异标记实时重算；`Ctrl+S` 分别保存两侧脏文档到各自路径。左右侧像素级同步滚动（VSCode 行为：一侧到底时另一侧可继续独立滚动）；右键「交换左右侧」可快速切换对比视角
 - **列表 / 引用缩进**：`Tab` / `Shift+Tab` 在列表项内调整缩进级别（每级 2 空格，与色阶同步：每次缩进切换一种项目符颜色）；在引用行内调整引用嵌套层级（增减 `>` 前缀），左侧彩色边框随之重排。智能效果：有序列表缩进时序号重置为 1（嵌套子列表自然计数）、任务列表保留勾选状态、`Shift+Tab` 在顶级时转为普通段落（移除标记保留内容）、缩进有上限（列表 6 级 / 引用 6 级）防止无限嵌套；光标保留在文字中的相对位置
 - **行级撤销快照**：单行编辑（字符输入 / backspace / delete / 行内格式包裹）使用 `LineEditSnapshot` 行级快照（内存 O(1)/操作），行结构变化（回车 / 行合并 / 多行粘贴）才使用全文快照；撤销栈固定容量 50，大文档不膨胀
@@ -64,6 +64,8 @@
 ### 文件与导出
 
 - 新建 / 打开 / 保存（`.md` / `.markdown` / `.txt`）
+- **快捷方式（`.lnk`）支持**：指向 `.md` 的 Windows 快捷方式在文件树与「打开」对话框中与常规 `.md` 一致——打开 / 编辑作用于目标实际文件（编辑保存写回原文件，标签显示目标文件名）；复制 / 移动 / 重命名 / 删除仅操作快捷方式本身；目标失效（被移动或删除）时显示置灰断链样式；快捷方式链式指向另一快捷方式时自动展开（最多 5 层）
+- **文件夹实时监测**：打开文件夹后后台轮询监测外部变化（创建 / 删除 / 重命名 / 移动等树结构变化），文件树自动刷新——零依赖方案（后台线程重扫 + 签名对比，2 秒间隔天然节流，无第三方库）；应用内文件操作触发的重扫会同步监测基准，不会被轮询重复上报；切换目录时旧监测自动退出
 - 导出 HTML（mistune 渲染，含表格、脚注、任务列表等扩展）
 - 自动保存（可配置间隔，异步回写避免阻塞 UI）
 - 最近文件列表（侧边栏无 `file_path` 时显示）
@@ -129,7 +131,7 @@ cs-markdown-editor
 | `Ctrl+,` | 打开设置 |
 | `Ctrl+Shift+K` | 切换聚焦模式 |
 | `Alt+Z` | 切换自动换行（VSCode 风格） |
-| `Ctrl+\` | 向右拆分编辑器 / 关闭拆分（VSCode 风格，多视口查看同一文档） |
+| `Ctrl+\` | 向右拆分编辑器 / 关闭拆分（VSCode 风格，左右独立标签组；开启时右侧默认打开当前文件副本，同文件两侧实时同步） |
 
 ### 编辑态（光标在文档中）
 
@@ -178,17 +180,17 @@ cs-markdown-editor
 │  app/               App 组件（AppContext + 控制器模式）       │
 │    __init__.py      App：hooks → ctx → 控制器装配 → render    │
 │    _context.py      AppContext：状态容器（稳定区+快照区+装配槽）│
-│    _tab_management  标签 CRUD + 关闭确认                      │
-│    _file_io_ops     文件读写/打开/保存/导出                   │
+│    _tab_management  组感知标签 CRUD（激活/关闭/循环按组）      │
+│    _file_io_ops     文件读写/打开/保存/导出（组内去重+共享doc）│
 │    _file_dialogs    对话框 + 右键菜单分发                     │
 │    _diff_controller 对比标签创建/脏状态                       │
 │    _settings_...    设置/主题/快捷键捕获/侧边栏               │
-│    _split_editor    拆分/对比焦点视口切换                     │
-│    _focus_router    焦点路由/跳转/脏状态上报                  │
+│    _split_editor    拆分组开关（右组创建/合并）/焦点视口切换   │
+│    _focus_router    焦点路由/跳转/脏状态按组路由与同步        │
 │    _keyboard        KeyDispatcher 装配 + 绑定                 │
 │    _render          渲染树：sidebar/editor_area/footer/Stack  │
-│    _tab_helpers     纯函数（is_blank_untitled 等）            │
-│    autosave.py      自动保存（debounce 2s）                   │
+│    _tab_helpers     纯函数（new_tab/tab_group/group_indices…）│
+│    autosave.py      自动保存（间隔触发+共享doc去重）          │
 │    diff_scroll_sync DiffScrollSync（对比双视口同步滚动）      │
 ├──────────────────────────────────────────────────────────────┤
 │  views/             声明式 Flet 视图组件                      │
@@ -324,20 +326,48 @@ raw-flat 映射（_build_raw_to_flat_map）
 
 渲染层与光标测量**共用同一 `_line_visual_layout` 断行算法**，换行点天然一致；上下方向键 / PageUp / PageDown 按视觉行导航，跨视觉行保持记忆列（`preferred_col_ref`）。窗口尺寸变化时 `viewport_w` state 触发 `content_width` 重算，段落实时重排。
 
-### 向右拆分编辑器（多视口）
+### 向右拆分编辑器（左右独立标签组）
 
-`Ctrl+\`（VSCode 风格）将当前文档在右侧拆分出第二个 `MarkdownEditor` 视口：
+`Ctrl+\`（VSCode 风格）开启拆分：标签行与编辑区同步分左右两栏，**每组拥有独立标签列表**（`tab.group`：0=左 / 1=右），可打开不同文件并行编辑：
 
 ```
-main.py
-  ├─ split_editor state（是否拆分）+ active_pane state（0=左, 1=右 焦点跟踪）
-  ├─ nav_ref / nav_ref_split：两视口各自的 EditorActions 引用
-  ├─ 两视口共享同一 document（@ft.observable，修改自动同步）
-  ├─ KeyDispatcher.actions_ref = 焦点视口的 nav_ref（键盘事件作用于焦点视口）
-  └─ 左视口 key=f"{session}-0"（拆分 / 非拆分同 key → 切换拆分不重置左视口光标）
+app/
+  ├─ split_editor / active_pane state（是否拆分 / 焦点组 0=左 1=右）
+  ├─ active_index_left / active_index_right：各组激活标签全局索引（独立 state + ref 镜像）
+  ├─ session_left / session_right：各组编辑器会话计数（key 的一部分）
+  │   └─ 仅本组激活标签变化时递增 → 另一侧编辑器 key 不变，光标/滚动不重置
+  ├─ tabs[i]["group"]：标签归属组（缺省 0=左；diff 标签固定左组全宽渲染）
+  ├─ nav_ref / nav_ref_split：两组编辑器各自的 EditorActions 引用
+  └─ KeyDispatcher.actions_ref = 焦点组编辑器的 nav_ref（键盘事件作用于焦点组）
 ```
 
-焦点跟踪：光标 TextField 聚焦时经 `on_cursor_focus → on_editor_focus → _set_active_pane` 切换 `active_pane`（同值不重渲染）；状态栏光标位置、TOC 跳转、键盘事件均跟随焦点视口。右视口隐藏工具栏（`show_toolbar=False`）且不抢占 autofocus（`keyboard_autofocus=False`），保持简洁。
+**开启 / 合并**（`app/_split_editor.py`）：开启时右组以**当前焦点侧激活标签**创建副本——直接共享源标签的同一 `document` 对象（含未保存修改与 dirty），焦点切到右组；合并时右组空白标签丢弃、非空白标签改 `group=0` 并入左组，按对象身份重新定位左组激活。
+
+**组感知标签管理**（`app/_tab_management.py`）：
+
+- `activate_index`：统一激活入口——设置所属组激活索引、切换焦点侧、按组递增会话计数（同组同标签且焦点已在该组时完全 no-op）
+- `do_close_many`：按组选择新激活（组内右邻居优先、不跨组取标签）；右组清空时自动收起拆分（拆分态下右组不可为空的不变式）
+- `cycle_tab`（`Ctrl+Tab`）：仅焦点组内循环
+- 右键「关闭其他 / 关闭全部」：仅关闭该标签所属组的标签（组内语义）
+
+**渲染**（`app/_render.py`）：拆分且非 diff 标签时双 `TabBar` 并排（各过滤显示本组标签，组内索引映射回全局索引；全局菜单栏在左组头部，中缝分隔线与编辑区对齐）；双 `MarkdownEditor` 各绑定本组激活标签的 document，key 为 `f"{session_left}-0"` / `f"{session_right}-1"`——左视口 key 与单编辑器模式一致，切换拆分不重置左视口状态。
+
+**同文件多副本实时同步**（共享 document 对象，`@ft.observable` 自动传播）：
+
+```
+打开语义（_file_io_ops）：组内去重——同组已打开该路径则激活该组标签；
+  另一组已打开 → 目标组新建副本并共享其 document（含未保存修改）
+同步链路：
+  ├─ 脏状态（_focus_router.on_dirty_change_pane）：一侧变脏/干净 → 按
+  │   document 身份同步所有共享副本
+  ├─ 保存（save_doc）：任一侧保存 → 共享副本同步 dirty=False + mtime + 路径
+  ├─ 外部重载（_file_dialogs）：磁盘新内容统一替换所有共享副本 + 各自重建编辑器
+  ├─ 外部修改检测（_backup_controller）：自我写入过滤取所有副本 mtime 最大值
+  │   （否则另一副本保存会被误判为外部修改）
+  └─ 自动保存 / 定时备份：按 document 身份去重，同内容不双写盘 / 双备份
+```
+
+焦点跟踪：点击某组标签 / 编辑区、光标 TextField 聚焦时切换 `active_pane`（同值不重渲染）；状态栏光标位置、TOC 跳转、键盘事件均跟随焦点组。右组编辑器隐藏工具栏（`show_toolbar=False`）且不抢占 autofocus（`keyboard_autofocus=False`），保持简洁。
 
 ### 文件对比（标签化双编辑器 diff）
 
@@ -476,17 +506,18 @@ cs-markdown-editor/
 ├── app/                     # App 组件包（AppContext + 控制器模式）
 │   ├── __init__.py          # App 组件：hooks → ctx 构造 → 控制器装配 → render
 │   ├── _context.py          # AppContext dataclass（kw_only：稳定区+快照区+装配槽）
-│   ├── _tab_management.py   # 标签 CRUD / 切换 / 批量关闭 / 关闭确认
-│   ├── _file_io_ops.py      # 文件读写 / 打开 / 保存 / 导出 / 最近文件
-│   ├── _file_dialogs.py     # 文件操作对话框 + 标签/侧边栏右键菜单分发
+│   ├── _tab_management.py   # 组感知标签 CRUD / 统一激活 / 批量关闭 / 关闭确认 / 会话计数
+│   ├── _file_io_ops.py      # 文件读写 / 打开（组内去重+共享doc）/ 保存 / 导出 / 最近文件
+│   ├── _file_dialogs.py     # 文件操作对话框 + 标签/侧边栏右键菜单分发 + 外部重载同步
 │   ├── _diff_controller.py  # 对比标签创建 / 选源 / 脏状态上报
 │   ├── _settings_controller.py # 设置更新 / 主题 / 快捷键捕获 / 侧边栏 / 导入导出
-│   ├── _split_editor.py     # 拆分编辑器 / 对比焦点视口切换
-│   ├── _focus_router.py     # 焦点路由 / 跳转 / 脏状态上报
+│   ├── _split_editor.py     # 拆分组开关（右组创建/合并）/ 对比焦点视口切换
+│   ├── _focus_router.py     # 焦点路由 / 跳转 / 脏状态按组路由与共享副本同步
 │   ├── _keyboard.py         # KeyDispatcher 构造 + page.on_keyboard_event 绑定
-│   ├── _render.py           # 渲染树：sidebar/editor_area/footer/tab_bar/dialogs/Stack
-│   ├── _tab_helpers.py      # 纯函数：is_blank_untitled / tab_display_name / tab_is_dirty / tab_paths
-│   ├── autosave.py          # 自动保存（debounce 2s，AutosaveContext 注入依赖）
+│   ├── _render.py           # 渲染树：sidebar/双TabBar/editor_area/footer/dialogs/Stack
+│   ├── _tab_helpers.py      # 纯函数：new_tab / tab_group / group_indices / is_blank_untitled …
+│   ├── _backup_controller.py # 定时备份 / 自动保存 / 外部修改检测（多副本mtime过滤）/ 崩溃恢复
+│   ├── autosave.py          # 自动保存（间隔触发 + 共享doc去重，AutosaveContext 注入依赖）
 │   └── diff_scroll_sync.py  # DiffScrollSync：对比双视口同步滚动状态机（4-ref + 60ms 追赶）
 ├── config/
 │   ├── settings.py          # DEFAULT_SETTINGS / load_settings / save_settings（深合并 shortcuts）
@@ -499,7 +530,11 @@ cs-markdown-editor/
 │   └── document.py          # Segment / Line / Document（@ft.observable）
 ├── services/
 │   ├── shortcuts.py         # ShortcutManager：读取/更新/重置/冲突检测 + ACTION_REGISTRY
-│   └── file_io.py           # read_text / write_text
+│   ├── shortcut.py          # .lnk 快捷方式解析（MS-SHLLINK 纯解析 + PowerShell 回退 + 缓存 + 链式展开）
+│   ├── file_io.py           # read_text / write_text（原子写入）
+│   ├── file_ops.py          # 文件树操作（新建/重命名/删除/复制/移动/在资源管理器中显示）
+│   ├── backup.py / recovery.py / export.py # 备份 / 崩溃恢复 / 导出
+│   └── clipboard_html.py / html_to_markdown.py # 富文本剪贴板转换
 ├── utils/
 │   ├── segment_helpers.py   # PREFIX_SEGTYPES / MONO_SEGTYPES / WRAP_SYNTAX / display_text / split_seg_for_display
 │   ├── text_layout.py       # HarfBuzz measure_text_offsets / measure_text_width / image_fit_size
@@ -537,7 +572,7 @@ cs-markdown-editor/
     ├── file_dialogs.py      # 文件操作对话框：新建文件/文件夹/重命名/删除确认
     ├── toolbar.py           # 格式工具栏：块级/行内按钮，tooltip 动态显示自定义键位
     ├── tab_bar.py           # 顶部多文档标签栏（含 diff 标签渲染）+ ConfirmCloseDialog + 右键菜单
-    ├── sidebar.py           # 侧边栏：文件树 / 大纲（点击跳转带高亮脉冲）/ 搜索
+    ├── sidebar.py           # 侧边栏：文件树（.lnk快捷方式/外部变化轮询监测）/ 大纲 / 搜索
     ├── settings_dialog.py   # 设置对话框：五分区配置面板 + 快捷键捕获式自定义
     ├── raw_editor.py        # 原文模式编辑器（RawEditor）
     ├── tool_area.py         # 工具栏区域容器
@@ -545,11 +580,16 @@ cs-markdown-editor/
 ```
 
 ```
-tests/                      # 单元测试（python -m tests.test_<name>）
-├── test_soft_wrap.py       # 软换行 2D 视觉行布局 / raw-flat 映射 / span 切片（37 项）
-├── test_table_smoke.py     # 表格行解析与拼接冒烟测试
-├── test_task_smoke.py      # 任务列表解析冒烟测试
-└── test_image_ops.py       # 图片操作（二进制获取/扩展名/文件名/删除段，14 项）
+tests/                      # 单元测试（python -m pytest tests/ -q，共 970+ 项）
+├── 解析/序列化：test_parser_roundtrip / test_serialize / test_reparse / test_selection_ops / test_highlight / test_mixed_format_toggle
+├── 编辑器交互：test_soft_wrap（2D视觉行）/ test_cursor*（IME/段尾/围栏提交）/ test_paste / test_history / test_extract_outward
+├── 标签管理：test_tab_management（组感知激活/关闭）/ test_tab_helpers（new_tab/tab_group/group_indices）
+├── 拆分编辑器：test_split_editor（拆分开合/递归回归）/ test_open_dedupe（组内去重）/ test_shared_doc_sync（共享document同步）
+├── 文件侧边栏：test_shortcut（.lnk解析）/ test_fs_watch（文件夹监测）/ test_sidebar_file_tree / test_sidebar_search / test_sidebar_replace / test_open_folder
+├── 保存备份：test_file_io / test_autosave / test_backup
+├── 文件对比：test_diff_scroll_sync
+├── 岛屿/渲染：test_table_smoke / test_table_copy / test_table_inline_render / test_fence_code_backspace / test_hr_render / test_task_smoke / test_image_ops / test_image_paste
+└── 其他：test_key_bindings / test_shortcuts / test_text_layout / test_editor_helpers / test_export / test_utils_helpers …
 ```
 
 ### 样式系统（`styles.py`）
@@ -596,8 +636,10 @@ tests/                      # 单元测试（python -m tests.test_<name>）
 - **软换行共用断行算法**：渲染层（`_maybe_stack_multi`）与光标层（`_cursor_overlay`）共用 `_line_visual_layout`，换行点天然一致；光标 Y 按视觉行序号 × 行高定位，避免渲染与光标错位
 - **raw-flat 映射**：`_build_raw_to_flat_map` 建立原始 Markdown 偏移 ↔ 渲染文本位置映射，支持跨视觉行 span 切片；前缀段末偏移特殊处理（映射到 `flat_pos + display_len` 而非 `flat_pos`）
 - **视口宽度去重**：`viewport_w_ref` 缓存上次宽度，`on_size_change` 仅在 >1px 变化时 `set_viewport_w`，避免微小抖动触发频繁重排
-- **拆分编辑器共享文档**：两视口传入同一 `document` 对象，`@ft.observable` 自动同步；左视口 `key=f"{session}-0"` 在拆分 / 非拆分下保持一致，切换拆分不重置左视口光标状态
-- **拆分焦点跟踪**：`active_pane` state + `active_pane_ref` 镜像（防同值重渲染），`KeyDispatcher.actions_ref` 与状态栏光标位置均按焦点视口选择 `nav_ref` / `nav_ref_split`；右视口 `keyboard_autofocus=False` 避免挂载时抢走左视口焦点
+- **拆分编辑器左右独立标签组**：`tab.group`（0=左 / 1=右）+ 每组独立的 `active_index_left/right` / `session_left/right`，标签行与编辑区同步分栏；不变式 `active_index == 焦点侧组激活索引` 由 `activate_index` 统一维护；编辑器 key 用组会话（左视口与单编辑器模式同 key）→ 切换拆分不重置左视口、仅本组激活变化只重建本组编辑器
+- **同文件多副本共享 document**：拆分开启 / 跨组打开同文件时副本直接引用同一 `document` 对象（非 re-parse 复制），`@ft.observable` 自动传播实现实时同步；光标 / 滚动 / 撤销历史是编辑器内部状态天然独立。配套元数据同步：脏状态按 document 身份联动、保存后副本同步清脏 + mtime、外部重载统一替换所有副本、自动保存 / 定时备份按 document 身份去重（同内容不双写盘）
+- **拆分焦点跟踪**：`active_pane` state + `active_pane_ref` 镜像（防同值重渲染），`KeyDispatcher.actions_ref` 与状态栏光标位置均按焦点组选择 `nav_ref` / `nav_ref_split`；右组编辑器 `keyboard_autofocus=False` 避免挂载时抢走左组焦点
+- **控制器闭包构造期捕获原始 setter**：ctx 装配槽与 state setter 同名（如 `ctx.set_active_pane` 先以原始 setter 构造、后被控制器返回值覆盖），控制器闭包运行时读 `ctx.set_active_pane` 会递归调用自身（`RecursionError`）——所有控制器统一在 `build_*(ctx)` 构造期捕获原始 state setter 再使用
 - **行内格式 Toggle**：`apply_inline_format` 检测选区是否已被对应语法包裹，已包裹则取消（移除两侧标记）、未包裹则包裹，包裹后通过 `outward_sel` 保持选区；浏览态（`cursor_li is None`）优先处理 `outward_sel`，无需先进入编辑态
 - **链接常规文本编辑**：链接编辑不再走专用字段跳转状态机，视为常规文本编辑，依赖渲染层 `split_seg_for_display` 按光标位置自动显示 / 折叠 URL；避免 `set_nav_seq+1` 重建 TextField 导致快速输入丢失
 - **对比标签融入 tabs 系统**：文件对比以 `type: "diff"` 标签管理，复用 tabs 的切换 / 关闭 / 脏状态确认流程，避免独立 overlay 视图的焦点 / 状态管理复杂度；`_tab_is_dirty` / `_tab_paths` 辅助函数统一 editor 与 diff 标签的脏状态判断和路径匹配，使关闭确认 / 自动保存 / 文件重命名同步等流程无需分支特判

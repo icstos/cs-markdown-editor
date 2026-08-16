@@ -2,7 +2,7 @@
 
 ## 1. 项目核心定义
 
-- **定位**：对标 Typora 的光标级所见即所得（WYSIWYG）Markdown 桌面编辑器。核心能力：Stack 双层架构（底层渲染层 + 顶层透明 TextField 光标层）、像素级光标对齐（HarfBuzz）、IME 友好输入、软换行 2D 视觉行布局、多文档标签、文件对比 diff、拆分编辑器、侧边栏文件树/大纲/搜索、快捷键自定义、自动保存与崩溃恢复。
+- **定位**：对标 Typora 的光标级所见即所得（WYSIWYG）Markdown 桌面编辑器。核心能力：Stack 双层架构（底层渲染层 + 顶层透明 TextField 光标层）、像素级光标对齐（HarfBuzz）、IME 友好输入、软换行 2D 视觉行布局、多文档标签、文件对比 diff、拆分编辑器（左右独立标签组，同文件副本共享 document 实时同步）、侧边栏文件树（.lnk 快捷方式支持 + 外部变化实时监测）/大纲/搜索、快捷键自定义、自动保存与崩溃恢复。
 - **技术栈与版本**：
   - Python ≥ 3.12（`requires-python`，模型层用 `StrEnum`）
   - Flet ≥ 0.86.2（声明式组件：`@ft.component` + `use_state`/`use_effect` + `@ft.observable`/`@ft.memo`，启动 `ft.run(main)` + `page.render(App)`）
@@ -32,7 +32,9 @@
 | 代码块/表格/公式围栏岛屿 | `views/editor/_fence.py`、`views/table_view.py`、`utils/table_helpers.py` | `.trae/documents/table-refactoring-plan.md`、`.trae/documents/公式功能实现计划.md` |
 | 标签栏/多文档管理 | `app/_tab_management.py`、`app/_tab_helpers.py`、`views/tab_bar.py` | `.trae/documents/top-tab-bar-multi-doc.md` |
 | 文件对比（diff 标签） | `app/_diff_controller.py`、`views/diff_view.py`、`app/diff_scroll_sync.py`、`views/diff_markers.py` | `.trae/documents/diff-as-tab.md` |
-| 拆分编辑器（多视口） | `app/_split_editor.py`、`app/_focus_router.py` | `.trae/documents/split-editor.md` |
+| 拆分编辑器（左右独立标签组/共享document同步） | `app/_split_editor.py`、`app/_tab_management.py`、`app/_focus_router.py`、`app/_tab_helpers.py` | `README.md`「向右拆分编辑器（左右独立标签组）」 |
+| 快捷方式（.lnk）解析/操作语义 | `services/shortcut.py`、`views/sidebar.py`、`app/_file_dialogs.py` | `tests/test_shortcut.py`、`README.md`「文件与导出」 |
+| 文件夹实时监测（文件树刷新） | `views/sidebar.py`（`poll_fs_changes`）、`tests/test_fs_watch.py` | `README.md`「文件与导出」 |
 | 侧边栏文件树/拖拽/右键菜单/大纲/搜索 | `views/sidebar.py`、`app/_file_dialogs.py` | `.trae/documents/vscode-style-file-tree.md`、`.trae/documents/sidebar-search-enhancement.md`、`.trae/documents/sidebar-drag-resize-fix.md` |
 | 文件 IO/打开/保存/导出/最近文件 | `app/_file_io_ops.py`、`services/file_io.py`、`services/export.py`、`services/clipboard_html.py`、`services/html_to_markdown.py` | `README.md`「文件与导出」 |
 | 自动保存/备份/崩溃恢复 | `app/autosave.py`、`services/backup.py`、`services/recovery.py`、`app/_backup_controller.py`、`views/recovery_dialog.py` | `config/settings.py` 注释、`README.md` |
@@ -99,6 +101,9 @@
 - 必须将 flet 的 `DeprecationWarning` 视为错误（`pyproject.toml` 已配置 `filterwarnings = ["error::DeprecationWarning:flet.*"]`），后果：使用废弃 API 时测试直接失败。
 - 必须保持 `models/__init__.py` 重新导出全部公共符号（`from models import Document` 等引用兼容），后果：外部引用断链。
 - 必须使用 `dispatcher_ref`（每次渲染同步最新 KeyDispatcher 实例）而非空依赖 effect 闭包捕获，后果：快捷键修改后不生效。
+- 禁止控制器闭包运行时调用与自身装配槽同名的 `ctx.set_*`（如 `ctx.set_active_pane` 在 `app/__init__.py` 装配后已被控制器函数覆盖），必须在 `build_*(ctx)` 构造期先捕获原始 state setter 再使用，后果：闭包读到自身 → 无限自调用 `RecursionError`（已踩坑，`tests/test_split_editor.py` 有装配覆盖回归测试）。
+- 必须维护拆分编辑组不变式：`active_index == 焦点侧组激活索引`（经 `app/_tab_management.py` 的 `activate_index` 统一维护）；拆分态下右组不可为空（`do_close_many` 右组清空时自动收起拆分）。后果：手写 `set_active_index` 绕过统一入口会破坏标签行 / 编辑器 / 焦点三处状态一致性。
+- 同文件多副本必须共享同一 `document` 对象（拆分开启 / 跨组打开时直接引用，非 re-parse 复制），且所有元数据变更（dirty / mtime / 路径 / 外部重载）必须按 document 身份（`is` 比较）同步所有副本、自动保存与定时备份必须按 document 身份去重。后果：副本内容与脏标记不一致——关闭确认误判、同内容双写盘、另一副本保存被误判为外部修改。
 
 ## 5. 标准验证流程
 

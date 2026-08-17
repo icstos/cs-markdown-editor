@@ -38,6 +38,17 @@ from services import file_ops, shortcut
 from services.file_io import read_text
 from services.ui_feedback import show_snack as _show_snack_impl
 
+# 对话框实例计数器：每次弹窗递增。作为 FileActionDialog 的 key 触发重挂载，
+# 使输入框 use_state 重新以 input_value 初始化（新建文件/文件夹不再保留上次
+# 输入内容），并重新 autofocus 聚焦编辑。
+_dialog_seq: int = 0
+
+
+def _next_dialog_seq() -> int:
+    global _dialog_seq
+    _dialog_seq += 1
+    return _dialog_seq
+
 
 def build_file_dialogs(ctx):
     """构造文件对话框与右键菜单控制器闭包组。
@@ -219,6 +230,7 @@ def build_file_dialogs(ctx):
         """弹出输入对话框（新建文件/文件夹/重命名）。"""
         ctx.set_file_dialog({
             "mode": "input",
+            "instance": _next_dialog_seq(),
             "title": title,
             "icon": icon,
             "input_label": label,
@@ -237,6 +249,7 @@ def build_file_dialogs(ctx):
         msg = f"确定删除{'文件夹' if is_dir else '文件'}「{fname}」？\n此操作不可撤销。"
         ctx.set_file_dialog({
             "mode": "confirm",
+            "instance": _next_dialog_seq(),
             "title": title,
             "icon": ft.Icons.DELETE_OUTLINE,
             "message": msg,

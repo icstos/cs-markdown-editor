@@ -363,6 +363,9 @@ def build_render(ctx) -> ft.Control:
     if _fd is not None:
         file_dialog_view = FileActionDialog(
             visible=True,
+            # 每次弹窗 instance 递增 → key 变化 → 组件重挂载：输入框 state
+            # 重新初始化（新建文件/文件夹不再保留上次输入）并重新 autofocus
+            key=f"fd-{_fd.get('instance', 0)}",
             mode=_fd["mode"],
             title=_fd["title"],
             theme_mode=ctx.theme_mode,
@@ -381,6 +384,7 @@ def build_render(ctx) -> ft.Control:
     else:
         file_dialog_view = FileActionDialog(
             visible=False,
+            key="fd-hidden",
             mode="confirm",
             title="",
             theme_mode=ctx.theme_mode,

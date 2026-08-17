@@ -15,12 +15,12 @@
 状态分层：
 - document：observable Document（行列表 + 文件元信息）
 - cursor_li / cursor_off：光标位置（激活行号 + 行级 raw 偏移）
-- nav_seq：仅撤销/重做等强制重建场景递增（同行输入不递增，保 IME 组合态）
+- nav_seq：仅撤销/重做/光标移动等强制重建场景递增（同行输入不递增，保 IME 组合态）
 
 硬约束（来自重构架构说明书 / core/actions.py docstring）：
 - cursor_ref 必须是 ft.use_ref（非 state），避免重渲染打断 IME
 - 透明 cursor TextField 不设 value 属性；value 清空由 use_effect([clear_value_seq]) 异步执行
-- nav_seq 仅在撤销/重做时递增（同行输入不递增以保 IME 组合态）
+- nav_seq 仅在撤销/重做/光标移动时递增（同行输入不递增以保 IME 组合态）
 - cursor_li=None 表浏览态；cursor_off 为行级 raw 偏移 0..len(line.raw)
 - 所有 use_* hook 必须在组件函数体顶层顺序调用（Flet 0.86 约束）
 - IME 热路径必须用 reparse_line_atomic（仅 1 次 observable 通知）
@@ -552,7 +552,9 @@ def MarkdownEditor(
     # ============ use_effect：聚焦 cursor TextField ============
     # 依赖 cursor_li + nav_seq + focus_seq + word_wrap + viewport_w：
     # - cursor_li 变化：切换行，TextField key 含 li，key 变 → 新控件需聚焦
-    # - nav_seq 变化：撤销/重做，TextField key 含 seq，key 变 → 新控件需聚焦
+    # - nav_seq 变化：撤销/重做/光标移动（移动脉冲，见 _set_cursor）。TextField
+    #   key 含 seq，key 变 → 新控件需聚焦 → Flutter 光标以不透明相位重启闪烁，
+    #   保证快速移动（含同行移动）时光标持续可视
     # - focus_seq 变化：点击同一位置（cursor_li/off 均不变，但点击已使 TextField
     #   失焦），须强制重聚焦避免光标丢失
     # - word_wrap/viewport_w 变化：视觉行布局变化更新 TextField 的 left/top/width

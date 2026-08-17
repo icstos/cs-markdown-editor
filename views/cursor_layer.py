@@ -13,7 +13,9 @@
 IME 友好策略（key = li + nav_seq）：
 - 同行输入：li/nav_seq 均不变 → key 不变 → 不重建 → IME 组合态保持
 - 切换行：li 变 → key 变 → 重建（旧行释放 TextField，新行创建）
-- 撤销/重做：nav_seq 变 → key 变 → 重建（强制刷新内部状态）
+- 撤销/重做/光标移动：nav_seq 变 → key 变 → 重建（强制刷新内部状态；
+  光标移动的重建+重聚焦同时让闪烁重启到可见相位，避免快速移动时
+  光标停在熄灭相位从视线中丢失）
 
 定位参数（由 _cursor_overlay 计算，2D 视觉行定位）：
 - cursor_px_x：光标 X（相对视觉行左起点，vline.offsets_x[local_off]）
@@ -77,14 +79,16 @@ def cursor_text_field(
       on_focus/on_blur：聚焦/失焦回调
       on_selection_change：光标位置变化回调（用于跟踪 selection）
       field_ref：TextField 引用（editor 端 use_effect 调 focus()）
-      nav_seq：仅撤销/重做等强制重建场景递增；同 li 输入不递增以保持 IME 组合态
+      nav_seq：撤销/重做/光标移动等强制重建场景递增；同 li 输入不递增以保持 IME 组合态
       content_width：行内容最大宽度（用于计算 TextField 右边界，IME 友好宽度）
 
     key 策略（IME 友好）：
       key = f"cursor-field-li-{li}-seq-{nav_seq}"
       - 同行输入：li/nav_seq 均不变 → key 不变 → 不重建 → IME 组合态保持
       - 切换行：li 变 → key 变 → 重建（合理，旧行释放 TextField）
-      - 撤销/重做：nav_seq 变 → key 变 → 重建（强制刷新内部状态）
+      - 撤销/重做/光标移动：nav_seq 变 → key 变 → 重建（强制刷新内部状态；
+        光标移动的重建+重聚焦让 Flutter 光标以不透明相位重启闪烁，
+        保证快速移动时持续可视）
       输入后 value 清空由 editor 端 _end_input_session 异步执行（光标移动时触发）。
 
     value 属性策略（IME 关键）：
@@ -109,7 +113,7 @@ def cursor_text_field(
     else:
         w = 200.0
     kwargs: dict = {
-        # key = li + nav_seq：同行输入不重建（保 IME），切行/撤销时重建
+        # key = li + nav_seq：同行输入不重建（保 IME），切行/撤销/移动时重建
         "key": f"cursor-field-li-{li}-seq-{nav_seq}",
         # value 属性：镜像 input_session 的 last_value，重渲染时 Flet 同步 value
         # 到 Flutter 端，避免 value 被重置为空导致 IME 重新触发 on_change

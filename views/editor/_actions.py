@@ -6,7 +6,7 @@
 行为约束（来自 core/actions.py docstring）：
 - 必填字段在 dataclass 构造时即校验（slots=True 缺失立即 TypeError）
 - cursor_ref 为 ft.Ref[CursorState]：main.py 实时读取 .current.base/.extent
-- nav_seq 仅撤销/重做递增（同行输入不递增以保 IME 组合态）
+- nav_seq 仅撤销/重做/光标移动递增（同行输入不递增以保 IME 组合态）
 
 依赖项：
 - core.actions.EditorActions

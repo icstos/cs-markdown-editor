@@ -14,7 +14,7 @@ handle_char_input / handle_paste / backspace_core / delete_core / on_submit
 - cursor_ref 必须是 use_ref（非 state），避免重渲染打断 IME
 - cursor TextField value=cursor_field_value（非空镜像），重渲染时 Flet 同步到
   Flutter 端保留 IME 内部状态（Phase 0 验证：value="" 会被同步清空打断 IME）
-- nav_seq 仅在撤销/重做/会话结束时递增（同行输入不递增以保 IME 组合态）
+- nav_seq 仅在撤销/重做/光标移动/会话结束时递增（同行输入不递增以保 IME 组合态）
 - IME 热路径必须用 _reparse_atomic（仅 1 次 observable 通知）
 
 依赖项：
@@ -78,7 +78,13 @@ def build_cursor(ctx):
             ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def _set_cursor(li: int | None, off: int = 0, *, clear_preferred: bool = True):
-        """设置光标位置：cursor_li + cursor_off（不递增 nav_seq 以保 IME 组合态）。"""
+        """设置光标位置：cursor_li + cursor_off + 移动脉冲（nav_seq++）。
+
+        移动脉冲：每次光标移动递增 nav_seq → TextField key 变化 → 重建 + 重聚焦。
+        Flutter 光标在重建聚焦瞬间以不透明相位重启闪烁，保证快速移动（含同行
+        左/右移动）时光标持续可视，与跨行移动行为一致。打字路径
+        （handle_char_input / _move_cursor_inline）不经过本函数，IME 组合态不受影响。
+        """
         if li is None:
             ctx.set_cursor_li(None)
             _end_input_session()
@@ -106,6 +112,10 @@ def build_cursor(ctx):
         if clear_preferred:
             ctx.preferred_col_ref.current = None
         ctx.cursor_ref.current.reset(off, raw_len)
+        # 移动脉冲：nav_seq++ 强制 TextField 重建 + use_effect 重聚焦，
+        # 重启闪烁到可见相位（同行移动与跨行移动一致，避免快速移动时
+        # 光标停在闪烁"熄灭"相位从视线中丢失）。
+        ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def _move_cursor_inline(li: int, new_off: int, new_raw_len: int):
         """同行内轻量光标移动：不递增 nav_seq，不重建 TextField。

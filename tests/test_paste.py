@@ -177,11 +177,11 @@ def test_single_line_paste_with_paste_in_progress_resets_flag():
     assert ("set_nav_seq", 1) in calls
 
 
-def test_single_line_paste_without_paste_in_progress_no_rebuild():
-    """非 paste_in_progress 路径的单行粘贴（程序调用）：不递增 nav_seq。
+def test_single_line_paste_without_paste_in_progress_triggers_move_pulse():
+    """非 paste_in_progress 路径的单行粘贴（程序调用）：光标落点触发移动脉冲。
 
-    程序调用 handle_paste（如拖拽插入）不走 paste_in_progress 路径，
-    不应触发 nav_seq 重建（避免不必要的控件销毁重建）。
+    程序调用 handle_paste（如拖拽插入）同样经过 _set_cursor 定位光标，
+    移动脉冲递增 nav_seq → TextField 重建 + 重聚焦（闪烁重启到可见相位）。
     """
     doc = Document(lines=[_para_line("abc")])
     ctx, calls = _make_ctx(doc, cursor_li=0, base=1, paste_active=False)
@@ -190,9 +190,9 @@ def test_single_line_paste_without_paste_in_progress_no_rebuild():
     handle_paste("XY")
 
     assert doc.lines[0].raw == "aXYbc"
-    # nav_seq 不递增
+    # 移动脉冲递增 nav_seq
     nav_seq_calls = [c for c in calls if isinstance(c, tuple) and c[:1] == ("set_nav_seq",)]
-    assert nav_seq_calls == []
+    assert nav_seq_calls == [("set_nav_seq", 1)]
 
 
 # ================ 多行粘贴（Ctrl+V）—— Bug 修复核心 ================
@@ -269,9 +269,9 @@ def test_multi_line_paste_with_paste_in_progress_resets_flag():
     assert ctx.paste_in_progress_ref.current is False
     # input_session 已清空
     assert ctx.input_session_ref.current["li"] == -1
-    # 多行粘贴 cursor_li 变化自动重建，不手动递增 nav_seq
+    # 多行粘贴 cursor_li 变化自动重建；_set_cursor 移动脉冲再递增（重建+重聚焦）
     nav_seq_calls = [c for c in calls if isinstance(c, tuple) and c[:1] == ("set_nav_seq",)]
-    assert nav_seq_calls == []
+    assert nav_seq_calls == [("set_nav_seq", 1)]
 
 
 def test_multi_line_paste_preserves_line_structure():

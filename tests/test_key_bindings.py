@@ -772,11 +772,21 @@ def test_edit_ctrl_enter_toggle_raw():
     assert "toggle_raw" in calls
 
 
-def test_edit_escape_toggle_sidebar():
+def test_edit_escape_does_not_toggle_sidebar():
+    """Esc 不再切换侧边栏（仅 Ctrl+Shift+B 可切换）。"""
     app_calls: list = []
     actions = make_actions([], cursor_li=0)
     d, app_calls, _ = make_dispatcher(actions, app_calls)
     d.handle(evt("escape"))
+    assert "toggle_sidebar" not in app_calls
+
+
+def test_edit_ctrl_shift_b_toggle_sidebar():
+    """编辑态 Ctrl+Shift+B 切换侧边栏（两层统一键位）。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls)
+    d.handle(evt("b", ctrl=True, shift=True))
     assert "toggle_sidebar" in app_calls
 
 

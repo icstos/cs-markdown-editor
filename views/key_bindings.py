@@ -478,8 +478,9 @@ class KeyDispatcher:
             return
 
         # 视图菜单快捷键：两层均生效（与菜单项标签一致）。
-        # 编辑态另有各自绑定（toggle_raw=Ctrl+Enter、toggle_sidebar=Escape），
-        # 在 _handle_shortcuts edit 分支处理，与此处互不冲突。
+        # 编辑态 toggle_raw=Ctrl+Enter 在 _handle_shortcuts edit 分支处理；
+        # toggle_sidebar 两层统一用 Ctrl+Shift+B（Esc 不再切换侧边栏），
+        # 在此处处理，与 edit 分支互不冲突。
         # Ctrl+Shift+B 切换侧边栏
         if matches(combo, browse_sc.get("toggle_sidebar", "ctrl+shift+b")):
             cb["toggle_sidebar"]()
@@ -813,8 +814,6 @@ class KeyDispatcher:
         elif matches(combo, shortcuts.get("toggle_raw", "ctrl+enter")):
             if actions is not None:
                 actions.toggle_raw()
-        elif matches(combo, shortcuts.get("toggle_sidebar", "escape")):
-            cb["toggle_sidebar"]()
         elif matches(combo, shortcuts.get("copy", "ctrl+c")):
             if actions is None or actions.cursor_li is None:
                 page.run_task(self._do_copy)

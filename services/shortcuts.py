@@ -67,7 +67,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "redo": "ctrl+y",
         "redo_alt": "ctrl+shift+z",
         "toggle_raw": "ctrl+enter",
-        "toggle_sidebar": "escape",
+        "toggle_sidebar": "ctrl+shift+b",
         "focus_mode": "ctrl+shift+k",
         "toggle_word_wrap": "ctrl+shift+r",
         "format_bold": "ctrl+b",
@@ -138,7 +138,7 @@ ACTION_REGISTRY: list[ActionDef] = [
     ActionDef("redo_alt", "重做（备用）", "both", "编辑", "兼容 VS Code 风格的重做键位。",
               {"browse": "ctrl+shift+z", "edit": "ctrl+shift+z"}),
     ActionDef("toggle_sidebar", "切换侧边栏", "both", "视图", "显示或隐藏侧边栏。",
-              {"browse": "ctrl+shift+b", "edit": "escape"}),
+              {"browse": "ctrl+shift+b", "edit": "ctrl+shift+b"}),
     ActionDef("toggle_theme", "切换主题", "browse", "视图", "在亮色与暗色主题间切换。",
               {"browse": "alt+t"}),
     ActionDef("toggle_raw", "原文模式", "both", "写作", "在可视化编辑与原始 Markdown 间切换。",
@@ -246,8 +246,8 @@ _INLINE_FORMAT_ACTIONS: tuple[str, ...] = (
 
 
 # 键别名词典：把用户/系统多种写法归一化为 _combo 输出的规范形式。
-# - escape ↔ esc：_combo 把 KeyboardEvent.key="escape" 映射为 "esc"，
-#   而 DEFAULT_SHORTCUTS 中 toggle_sidebar(edit) 用 "escape"，需归一化才能匹配。
+# - escape ↔ esc：_combo 把 KeyboardEvent.key="escape" 映射为 "esc"。
+#   Escape 仍用于多光标清空 / 取消捕获 / 清除外向选区（不参与 toggle_sidebar）。
 # - comma ↔ ,：open_settings 默认 "ctrl+comma"，_combo 把 "," 保持为 ","，
 #   归一化后 "ctrl+comma" 与 "ctrl+," 等价。
 # - period ↔ .：toggle_theme 默认 "ctrl+."，_combo 把 "period" 映射为 "."，

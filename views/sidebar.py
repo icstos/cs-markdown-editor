@@ -85,7 +85,8 @@ _FILE_ICON_MAP: dict[str, str] = {
     ".mp4": ft.Icons.MOVIE,
     ".mov": ft.Icons.MOVIE,
     ".avi": ft.Icons.MOVIE,
-    # Windows 快捷方式（指向 .md 的快捷方式在行渲染处叠加文档图标 + 角标）
+    # Windows 快捷方式：一律 SHORTCUT 主图标（与 .md 的 DESCRIPTION 在形状上区分），
+    # 指向 .md 的快捷方式在行渲染处改用 link 主题色（见 _file_row_icon_data）
     ".lnk": ft.Icons.SHORTCUT,
 }
 
@@ -95,14 +96,33 @@ def _file_icon(name: str, c) -> tuple[str, str]:
 
     .md/.markdown 用 c.link 主题色突出可编辑文件；其余统一 c.muted 避免色彩过载。
     未知扩展名兜底 INSERT_DRIVE_FILE_OUTLINED。扩展名匹配大小写不敏感。
-    .lnk 快捷方式用 SHORTCUT 图标（指向 .md 的快捷方式在文件行渲染处
-    覆盖为文档图标 + 角标，见 _render_files_panel）。
+    .lnk 快捷方式用 SHORTCUT 图标，与 .md 的 DESCRIPTION 文档图标在形状上区分。
     """
     lower = name.lower()
     _, ext = os.path.splitext(lower)
     icon = _FILE_ICON_MAP.get(ext, ft.Icons.INSERT_DRIVE_FILE_OUTLINED)
     color = c.link if ext in (".md", ".markdown") else c.muted
     return icon, color
+
+
+def _file_row_icon_data(
+    name: str, abspath: str | None, c
+) -> tuple[str, str, str | None]:
+    """按文件扩展名返回 (图标名, 颜色, tooltip)。
+
+    与 _file_icon 的区别：.lnk 一律用 SHORTCUT 主图标（不随目标类型变化），
+    确保链接与 .md 文档在图标形状上一眼可分；指向 .md 的快捷方式用 c.link
+    主题色提示「可在编辑器中打开」，tooltip 显示目标路径（资源管理器直觉）。
+    其余文件直接委托 _file_icon，tooltip 为 None。
+    """
+    if abspath and shortcut.is_shortcut(name):
+        lnk_target = shortcut.resolve_md_target(abspath)
+        icon = ft.Icons.SHORTCUT
+        color = c.link if lnk_target is not None else c.muted
+        tooltip = f"→ {lnk_target}" if lnk_target is not None else None
+        return icon, color, tooltip
+    icon, color = _file_icon(name, c)
+    return icon, color, None
 
 
 # ---- 数据派生 ----
@@ -1068,7 +1088,9 @@ def _render_files_panel(
 
     VSCode 风格文件树：
     - 文件夹行：chevron（▸/▾）+ 动态 folder icon（折叠/展开）+ 整行点击 toggle
-    - 文件行：_file_icon 按扩展名映射 + chevron 占位（与文件夹对齐）
+    - 文件行：_file_row_icon_data 按扩展名映射图标（.md=DESCRIPTION 文档图标；
+      .lnk=SHORTCUT 链接图标，与 .md 在形状上一眼可分）+ chevron 占位
+    - 最近文件列表同样按扩展名区分图标（不再统一一个图标）
     - 点击分流：.md → 编辑器打开；非 .md → 系统默认程序打开（on_open_external）
     - active 高亮仅对 .md 文件生效（非 md 不在编辑器打开，无需高亮）
     - 拖拽移动（on_file_drop 非空时启用）：文件/文件夹可拖到文件夹行或根空白区，
@@ -1079,36 +1101,42 @@ def _render_files_panel(
         existing = [p for p in recent_files if os.path.exists(p)]
         if not existing:
             return _empty_hint("暂无最近文件\n打开或保存一个文件后此处会显示", c)
-        items = [
-            _wrap_context_menu(
-                _list_item(
-                    ft.Row(
-                        controls=[
-                            ft.Icon(
-                                ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=14, color=c.muted
-                            ),
-                            ft.Text(
-                                os.path.basename(p),
-                                size=12,
-                                color=c.text,
-                                font_family=FONT_MAIN,
-                                max_lines=1,
-                                overflow=ft.TextOverflow.ELLIPSIS,
-                            ),
-                        ],
-                        spacing=Spacing.MD,
-                    ),
-                    c,
-                    on_click=lambda e, p=p: on_open_file(p),
-                ),
-                p,
-                is_dir=False,
-                on_action=on_file_context_action,
-                compare_source=compare_source,
-                key=f"recent-{p}",
+
+        items = []
+        for p in existing:
+            # 按扩展名区分图标；.lnk 用 SHORTCUT，指向 .md 时 tooltip 显示目标路径
+            icon_name, icon_color, tooltip = _file_row_icon_data(
+                os.path.basename(p), p, c
             )
-            for p in existing
-        ]
+            items.append(
+                _wrap_context_menu(
+                    _list_item(
+                        ft.Row(
+                            controls=[
+                                ft.Icon(icon_name, size=14, color=icon_color),
+                                ft.Text(
+                                    os.path.basename(p),
+                                    size=12,
+                                    color=c.text,
+                                    font_family=FONT_MAIN,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    expand=True,
+                                    tooltip=tooltip,
+                                ),
+                            ],
+                            spacing=Spacing.MD,
+                        ),
+                        c,
+                        on_click=lambda e, p=p: on_open_file(p),
+                    ),
+                    p,
+                    is_dir=False,
+                    on_action=on_file_context_action,
+                    compare_source=compare_source,
+                    key=f"recent-{p}",
+                )
+            )
         return ft.Column(
             controls=[
                 ft.Container(
@@ -1181,9 +1209,12 @@ def _render_files_panel(
                         )
                     )
                 )
-                # 指向 .md 的快捷方式：文档图标 + link 主题色（与 .md 视觉一致）
-                if lnk_target is not None:
-                    icon_name, icon_color = ft.Icons.DESCRIPTION, c.link
+                # .lnk 一律 SHORTCUT 主图标（与 .md 的 DESCRIPTION 在形状上区分）；
+                # 指向 .md 的快捷方式用 link 主题色提示「可在编辑器中打开」
+                if shortcut.is_shortcut(name):
+                    icon_name, icon_color = ft.Icons.SHORTCUT, (
+                        c.link if lnk_target is not None else c.muted
+                    )
                 else:
                     icon_name, icon_color = _file_icon(name, c)
                 # 快捷方式行 tooltip 显示目标路径（资源管理器「指向 …」直觉）
@@ -1200,23 +1231,11 @@ def _render_files_panel(
                     _file_click = None
 
                 def _file_row_icon() -> ft.Control:
-                    """文件图标：快捷方式（指向 md）叠加 SHORTCUT 小角标。"""
-                    icon = ft.Icon(
+                    """文件图标：.lnk 用 SHORTCUT，与 .md 文档图标一眼可分。"""
+                    return ft.Icon(
                         icon_name,
                         size=13,
                         color=c.link if is_active else icon_color,
-                    )
-                    if lnk_target is None:
-                        return icon
-                    # 角标完全落在 14x14 图标槽内（Stack 默认 HARD_EDGE 裁剪）
-                    return ft.Stack(
-                        controls=[
-                            icon,
-                            ft.Icon(ft.Icons.SHORTCUT, size=8, color=c.muted,
-                                    left=6, bottom=0),
-                        ],
-                        width=14,
-                        height=14,
                     )
 
                 def _build_file_row() -> ft.Container:

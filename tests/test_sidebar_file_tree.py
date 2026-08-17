@@ -8,6 +8,8 @@
 - views.sidebar._collect_md_paths：混入非 md 节点只返回 md / 深度优先字母序 / 空树
 - views.sidebar._file_icon：.md 返回 DESCRIPTION+link 色 / 已知扩展名映射 /
   未知兜底 / 大小写不敏感 / 非 md 用 muted 色
+- views.sidebar._file_row_icon_data：.md 委托 _file_icon / .lnk 一律 SHORTCUT /
+  指向 .md 的快捷方式用 link 色 + 目标 tooltip / 其余 .lnk 用 muted 色
 - services.file_ops.open_external：mock platform.system 验证 Windows/macOS/Linux
   分流 / 文件不存在抛错
 
@@ -15,6 +17,7 @@
 """
 
 import os
+import struct
 import sys
 import types
 from unittest.mock import patch
@@ -25,14 +28,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import flet as ft
 
+from services import shortcut
 from services.file_ops import open_external
 from views.sidebar import (
     _collect_md_paths,
     _file_icon,
+    _file_row_icon_data,
     _flatten_tree,
     _scan_files,
 )
-
 
 # ---- 辅助 ----
 
@@ -364,6 +368,82 @@ def test_file_icon_non_md_uses_muted_color():
     assert color == c.muted
     _, color = _file_icon("script.py", c)
     assert color == c.muted
+
+
+# ---- _file_row_icon_data ----
+
+_LNK_CLSID = bytes.fromhex("0114020000000000C000000000000046")
+
+
+def _lnk_header(flags: int) -> bytes:
+    """最小 MS-SHLLINK Header（与 test_shortcut.py 同构）。"""
+    h = struct.pack("<I", 0x4C) + _LNK_CLSID + struct.pack("<I", flags)
+    h += struct.pack("<I", 0x80)  # FileAttributes: NORMAL
+    h += struct.pack("<Q", 0) * 3  # 时间戳
+    h += struct.pack("<I", 0)  # FileSize
+    h += struct.pack("<i", 0)  # IconIndex
+    h += struct.pack("<I", 1)  # ShowCommand
+    h += struct.pack("<H", 0) + struct.pack("<H", 0) + struct.pack("<I", 0) * 2
+    assert len(h) == 0x4C
+    return h
+
+
+def _lnk_link_info_ansi(target: str) -> bytes:
+    """LinkInfo：仅 ANSI LocalBasePath（指向 target）。"""
+    path = target.encode("ascii") + b"\x00"
+    header = struct.pack("<I", 0x1C) + struct.pack("<I", shortcut._LI_FLAG_LOCAL_BASE)
+    header += struct.pack("<I", 0)  # VolumeIDOffset
+    header += struct.pack("<I", 0x1C)  # LocalBasePathOffset
+    header += struct.pack("<I", 0) + struct.pack("<I", 0)
+    body = header + path
+    return struct.pack("<I", len(body) + 4) + body
+
+
+def _write_lnk(path: str, target: str):
+    with open(path, "wb") as f:
+        f.write(_lnk_header(shortcut._FLAG_HAS_LINK_INFO) + _lnk_link_info_ansi(target))
+
+
+def test_file_row_icon_data_md():
+    """.md 委托 _file_icon：DESCRIPTION + link 色，无 tooltip。"""
+    c = _make_colors()
+    icon, color, tooltip = _file_row_icon_data("note.md", r"C:\x\note.md", c)
+    assert icon == ft.Icons.DESCRIPTION
+    assert color == c.link
+    assert tooltip is None
+
+
+def test_file_row_icon_data_lnk_to_md(tmp_path):
+    """指向 .md 的快捷方式：SHORTCUT 图标 + link 色 + 目标 tooltip。"""
+    c = _make_colors()
+    md = tmp_path / "target.md"
+    md.write_text("# t", encoding="utf-8")
+    lnk = tmp_path / "shortcut.lnk"
+    _write_lnk(str(lnk), str(md))
+    icon, color, tooltip = _file_row_icon_data("shortcut.lnk", str(lnk), c)
+    assert icon == ft.Icons.SHORTCUT
+    assert color == c.link
+    assert tooltip == f"→ {md}"
+
+
+def test_file_row_icon_data_lnk_other(tmp_path):
+    """不指向 .md 的快捷方式：SHORTCUT 图标 + muted 色，无 tooltip。"""
+    c = _make_colors()
+    lnk = tmp_path / "app.lnk"
+    _write_lnk(str(lnk), str(tmp_path / "app.exe"))
+    icon, color, tooltip = _file_row_icon_data("app.lnk", str(lnk), c)
+    assert icon == ft.Icons.SHORTCUT
+    assert color == c.muted
+    assert tooltip is None
+
+
+def test_file_row_icon_data_other_extension():
+    """其他扩展名走 _file_icon 映射。"""
+    c = _make_colors()
+    icon, color, tooltip = _file_row_icon_data("pic.png", r"C:\x\pic.png", c)
+    assert icon == ft.Icons.IMAGE
+    assert color == c.muted
+    assert tooltip is None
 
 
 # ---- open_external：平台分流 ----

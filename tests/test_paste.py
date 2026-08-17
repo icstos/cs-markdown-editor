@@ -82,6 +82,7 @@ def _make_ctx(
         paste_in_progress_ref=FakeRef(paste_active),
         secondary_cursors_ref=FakeRef(list(secondary_cursors) if secondary_cursors else []),
         preferred_col_ref=FakeRef(None),
+        cursor_pulse_ref=FakeRef(0.0),
         push_history=lambda: calls.append("push_history"),
         undo_push_pending=FakeRef(True),
         mark_dirty=lambda: calls.append("mark_dirty"),
@@ -269,9 +270,9 @@ def test_multi_line_paste_with_paste_in_progress_resets_flag():
     assert ctx.paste_in_progress_ref.current is False
     # input_session 已清空
     assert ctx.input_session_ref.current["li"] == -1
-    # 多行粘贴 cursor_li 变化自动重建；_set_cursor 移动脉冲再递增（重建+重聚焦）
+    # 多行粘贴跨行（cursor_li 变化）：key=li 已自动重建，无需移动脉冲
     nav_seq_calls = [c for c in calls if isinstance(c, tuple) and c[:1] == ("set_nav_seq",)]
-    assert nav_seq_calls == [("set_nav_seq", 1)]
+    assert nav_seq_calls == []
 
 
 def test_multi_line_paste_preserves_line_structure():

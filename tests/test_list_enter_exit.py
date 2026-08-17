@@ -106,6 +106,7 @@ def _make_ctx(document: Document, cursor_li: int, base: int,
         paste_in_progress_ref=FakeRef(False),
         secondary_cursors_ref=FakeRef([]),
         preferred_col_ref=FakeRef(None),
+        cursor_pulse_ref=FakeRef(0.0),
         push_history=lambda: calls.append("push_history"),
         undo_push_pending=FakeRef(True),
         mark_dirty=lambda: calls.append("mark_dirty"),
@@ -210,7 +211,13 @@ def test_empty_quote_enter_preserves_cursor():
 
     assert doc.lines[0].block_type != BlockType.QUOTE
     assert doc.lines[0].raw == ""
-    _assert_cursor_preserved(calls, ctx, 0)
+    # 光标位置 (0,0) 未变化：零状态写入（性能优化），重建由 on_submit 显式 nav_seq 承担
+    assert not any(
+        isinstance(c, tuple) and c[0] in ("set_cursor_li", "set_cursor_off", "set_cursor_line")
+        for c in calls
+    )
+    assert ("set_nav_seq", 1) in calls
+    assert ctx.suppress_blur.current is True
 
 
 # ================ 有内容列表 Enter 分割（不受影响，回归测试） ================

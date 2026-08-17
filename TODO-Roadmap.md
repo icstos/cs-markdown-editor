@@ -1,7 +1,13 @@
 # Roadmap
 - 跨平台、替代Typora、VSCode（markdown部分）的文档编辑器
 # TODO
-
+- [x] 2026-08-18：优化光标功能性能，避免相关移动、重建占用资源过多，保持低负载、高性能，极速响应。
+  - 同位置移动（点击同一位置）：零状态写入直接返回
+  - 跨行移动：key=li 已触发重建，不再递增 nav_seq（省 1 次 state 更新）
+  - 会话结束已重建（_end_input_session）时不重复脉冲
+  - 同行移动脉冲节流：_CURSOR_PULSE_INTERVAL=250ms 窗口内只重建一次
+    TextField（首个移动立即脉冲即时可见；长按/连击方向键不再逐键销毁重建）
+  - 位置更新仍逐键渲染（left/top 实时），仅重建被节流；IME 路径不受影响
 - [x] 2026-08-18：新建文件、新建文件夹时，需要重置弹窗里的输入框、并聚焦进行编辑（当前会保留上次的输入内容）
   - 弹窗 state 增加递增 instance，作为 FileActionDialog 的 key 触发组件重挂载
   - 输入框 use_state 重新以 input_value 初始化（新建为空）+ 重新 autofocus 聚焦编辑；
@@ -10,7 +16,7 @@
 - [ ] 2026-08-17：引用语法，整块背景变浅蓝
 - [ ] 2026-08-17：优化设置
 - [x] 2026-08-18：光标移动时，保持持续可视，避免快速移动光标时光标从视线中丢失
-  - 方案：保留闪烁，移动瞬间强制点亮——_set_cursor 每次移动递增 nav_seq（移动脉冲），
+  - 方案：保留闪烁，移动瞬间强制点亮——_set_cursor 递增 nav_seq（移动脉冲），
     cursor TextField key 变化 → 重建 + use_effect 重聚焦 → Flutter 光标以不透明相位
     重启闪烁（同行移动与跨行移动行为一致），静止后恢复正常闪烁
   - IME 安全：打字路径（handle_char_input / _move_cursor_inline）不经过 _set_cursor，

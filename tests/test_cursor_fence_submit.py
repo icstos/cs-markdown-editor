@@ -60,6 +60,7 @@ def _make_ctx(document: Document, cursor_li: int, base: int) -> tuple[types.Simp
         # 其余 on_submit 默认分支可能触及（不被围栏路径调用，仅占位防 AttributeError）
         nav_seq=0,
         set_nav_seq=lambda n: None,
+        cursor_pulse_ref=FakeRef(0.0),
         input_session_ref=FakeRef({"li": -1, "start_off": -1, "last_value": ""}),
         set_cursor_off=lambda off: None,
         set_clear_value_seq=lambda n: None,

@@ -154,6 +154,8 @@ class EditorContext:
     # KeyDispatcher Ctrl+V 时置 True；_do_paste_check 完成后置 False。
     # handle_char_input 入口检测：True 时跳过（由 handle_paste 统一处理）。
     paste_in_progress_ref: ft.Ref = field(default=None)
+    # float：上次同行移动脉冲时间戳（monotonic），_set_cursor 节流重建用
+    cursor_pulse_ref: ft.Ref = field(default=None)
 
     # ============ 装配槽（跨工厂调用，工厂装配后写入）============
     # 共享闭包

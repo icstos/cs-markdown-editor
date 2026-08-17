@@ -25,6 +25,8 @@ handle_char_input / handle_paste / backspace_core / delete_core / on_submit
 - views.editor._helpers（_next_line_raw / _RE_O_PREFIX / _RE_FENCE_TRIGGER / _make_code_line）
 """
 
+import time
+
 import parser
 from models import BlockType
 from utils.segment_helpers import is_fence as _is_fence
@@ -41,6 +43,13 @@ from views.editor._helpers import (
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
+
+# 同行移动脉冲节流窗口（秒）：Flutter 光标闪烁半周期约 250ms，窗口内只重建
+# 一次 TextField 即可保证光标始终处于可见相位；长按/连击方向键时不逐键重建
+# （逐键仅更新位置渲染），显著降低 TextField 销毁重建与焦点往返开销。
+_CURSOR_PULSE_INTERVAL = 0.25
+# 模块级别名：测试可 patch（views.editor._cursor._monotonic）控制节流时间
+_monotonic = time.monotonic
 
 
 def build_cursor(ctx):
@@ -78,12 +87,18 @@ def build_cursor(ctx):
             ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def _set_cursor(li: int | None, off: int = 0, *, clear_preferred: bool = True):
-        """设置光标位置：cursor_li + cursor_off + 移动脉冲（nav_seq++）。
+        """设置光标位置：cursor_li + cursor_off + 节流移动脉冲（nav_seq++）。
 
-        移动脉冲：每次光标移动递增 nav_seq → TextField key 变化 → 重建 + 重聚焦。
-        Flutter 光标在重建聚焦瞬间以不透明相位重启闪烁，保证快速移动（含同行
-        左/右移动）时光标持续可视，与跨行移动行为一致。打字路径
-        （handle_char_input / _move_cursor_inline）不经过本函数，IME 组合态不受影响。
+        移动脉冲：同行移动递增 nav_seq → TextField key 变化 → 重建 + 重聚焦，
+        Flutter 光标在重建聚焦瞬间以不透明相位重启闪烁，保证快速移动时光标
+        持续可视。性能优化（低负载、极速响应）：
+        - 同位置移动（点击同一位置等）：零状态写入，直接返回
+        - 跨行移动：key=li 已触发重建，不再递增 nav_seq（省 1 次 state 更新）
+        - 会话结束已重建（_end_input_session 递增 nav_seq）时不再重复脉冲
+        - 快速连击/长按方向键：_CURSOR_PULSE_INTERVAL 窗口内只脉冲一次
+          （首个移动立即脉冲保证即时可见；位置更新本身仍逐键渲染）
+        打字路径（handle_char_input / _move_cursor_inline）不经过本函数，
+        IME 组合态不受影响。
         """
         if li is None:
             ctx.set_cursor_li(None)
@@ -94,8 +109,9 @@ def build_cursor(ctx):
         raw_len = len(_line_raw(ctx.document.lines[li]))
         off = max(0, min(off, raw_len))
 
-        # 检测输入会话是否需要结束（光标不连续或切换行）
+        # 会话清理（先于同位置判断：异位会话需结束，即使落点与当前一致）
         state = ctx.input_session_ref.current
+        rebuilt = False
         if state["li"] >= 0:
             if state["li"] != li:
                 # 跨行：cursor_li 变化已使 TextField key 变化 → 自动重建，
@@ -104,7 +120,13 @@ def build_cursor(ctx):
             elif state["start_off"] >= 0:
                 expected_off = state["start_off"] + len(state["last_value"])
                 if off != expected_off:
-                    _end_input_session()
+                    _end_input_session()  # nav_seq++ → 已重建
+                    rebuilt = True
+
+        old_li, old_off = ctx.cursor_li, ctx.cursor_off
+        if li == old_li and off == old_off:
+            # 同位置移动：无任何状态变化（Flet setter 同值自动跳过），零开销返回
+            return
 
         ctx.set_cursor_li(li)
         ctx.set_cursor_off(off)
@@ -112,10 +134,14 @@ def build_cursor(ctx):
         if clear_preferred:
             ctx.preferred_col_ref.current = None
         ctx.cursor_ref.current.reset(off, raw_len)
-        # 移动脉冲：nav_seq++ 强制 TextField 重建 + use_effect 重聚焦，
-        # 重启闪烁到可见相位（同行移动与跨行移动一致，避免快速移动时
-        # 光标停在闪烁"熄灭"相位从视线中丢失）。
-        ctx.set_nav_seq(ctx.nav_seq + 1)
+
+        # 移动脉冲（仅同行移动需要；跨行 key=li 已重建、会话结束已重建则跳过）。
+        # 节流：窗口内只重建一次 TextField，避免长按/连击方向键逐键销毁重建。
+        if li == old_li and not rebuilt:
+            now = _monotonic()
+            if now - (ctx.cursor_pulse_ref.current or 0.0) >= _CURSOR_PULSE_INTERVAL:
+                ctx.cursor_pulse_ref.current = now
+                ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def _move_cursor_inline(li: int, new_off: int, new_raw_len: int):
         """同行内轻量光标移动：不递增 nav_seq，不重建 TextField。

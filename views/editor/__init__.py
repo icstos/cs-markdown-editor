@@ -141,6 +141,8 @@ def MarkdownEditor(
     cursor_ref = ft.use_ref(CursorState())
     # 粘贴时抑制 on_blur
     suppress_blur = ft.use_ref(False)
+    # 同行移动脉冲节流时间戳（monotonic）：_set_cursor 窗口内只重建一次 TextField
+    cursor_pulse_ref = ft.use_ref(0.0)
     # 原文模式
     raw_mode, set_raw_mode = ft.use_state(False)
     raw_draft, set_raw_draft = ft.use_state("")
@@ -316,6 +318,7 @@ def MarkdownEditor(
         input_session_ref=input_session_ref,
         cursor_ref=cursor_ref,
         suppress_blur=suppress_blur,
+        cursor_pulse_ref=cursor_pulse_ref,
         list_view_ref=list_view_ref,
         scroll_offset_ref=scroll_offset_ref,
         viewport_h_ref=viewport_h_ref,

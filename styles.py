@@ -47,6 +47,7 @@ class Colors:
     math_bg: str
     quote_fg: str
     quote_bar: str
+    quote_bg: str  # 引用块整块背景（浅蓝，Typora 式柔和）
     code_block_bg: str
     code_block_fg: str
     hover: str
@@ -85,6 +86,7 @@ _LIGHT = Colors(
     math_bg="#FAF0F5",       # 浅紫粉底
     quote_fg="#595959",
     quote_bar="#DDE0E6",     # 偏冷中性灰，去黄感
+    quote_bg="#EEF4FC",      # 极浅蓝底（引用整块背景）
     code_block_bg="#F6F8FA", # GitHub 风格浅灰
     code_block_fg="#1F2329",
     hover="#F0F7FF",         # 浅蓝 hover
@@ -121,6 +123,7 @@ _DARK = Colors(
     math_bg="#281D24",       # 偏暖暗紫底
     quote_fg="#B0B8C1",
     quote_bar="#353B43",     # 偏暖中性灰
+    quote_bg="#1D2733",      # 暗蓝灰底（引用整块背景）
     code_block_bg="#1A1D22", # 代码块底，与 surface 一致
     code_block_fg="#E6EDF3",
     hover="#1F242B",         # 偏暖 hover

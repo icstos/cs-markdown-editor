@@ -282,17 +282,19 @@ def raw_to_visible_spans(
             raw_offset = seg_end
             continue
         is_last = seg_idx == seg_count - 1
+        is_prefix = seg.seg_type in PREFIX_SEGTYPES
 
-        # 光标是否在本段范围内（末段含右端点，非末段也含右端点，与 pixel_layout 一致）
-        # 修复 Bug：光标在包裹段末尾（==高亮==|后文）时标记被折叠，光标位置与标记不对齐
+        # 光标是否在本段范围内（末段含右端点；块级前缀段段末尾即内容起点，
+        # 光标落在边界上视为已离开前缀，避免引用/标题零宽前缀展开导致
+        # caret 偏右；行内段含右端点，与 pixel_layout 一致）
         if cursor_raw_offset is None:
             cursor_in_seg = False
         elif is_last:
             cursor_in_seg = seg_start <= cursor_raw_offset <= seg_end
+        elif is_prefix:
+            cursor_in_seg = seg_start <= cursor_raw_offset < seg_end
         else:
             cursor_in_seg = seg_start <= cursor_raw_offset <= seg_end
-
-        is_prefix = seg.seg_type in PREFIX_SEGTYPES
 
         # 段基础样式
         if is_prefix:

@@ -29,6 +29,7 @@ import time
 
 import parser
 from models import BlockType
+from utils.segment_helpers import PREFIX_SEGTYPES
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import _fix_ime_doubling
@@ -50,6 +51,20 @@ _reparse_atomic = parser.reparse_line_atomic
 _CURSOR_PULSE_INTERVAL = 0.25
 # 模块级别名：测试可 patch（views.editor._cursor._monotonic）控制节流时间
 _monotonic = time.monotonic
+
+
+def _prefix_sig(line) -> tuple:
+    """块级前缀结构签名：前缀段类型/raw + level + task。
+
+    用于检测输入过程中引用/列表/标题前缀的出现、消失或变化（如输入 ">"
+    创建引用、"> " 补齐前缀、">> " 加深层级）。前缀结构变化时：
+    - 渲染树形状变化 → cursor TextField 重建 → 需 nav_seq 递增重聚焦（否则光标消失）
+    - 会话 last_value 含旧前缀（引用前缀渲染零宽度）→ 光标 X 漂移 → 需结束会话
+    """
+    if line.segments and line.segments[0].seg_type in PREFIX_SEGTYPES:
+        s0 = line.segments[0]
+        return (s0.seg_type, s0.raw, line.level, line.task)
+    return (None, None, line.level, line.task)
 
 
 def build_cursor(ctx):
@@ -357,24 +372,25 @@ def build_cursor(ctx):
         # 确保 line.notify() 引发的重渲染使用最新的 cursor_field_value，
         # 避免双重渲染（render #1 用旧 value → IME 重复 on_change）。
         ctx.set_cursor_field_value(new_value)
-        old_task = line.task
+        old_psig = _prefix_sig(line)
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
         # 多光标：同步 delta（removed_len, inserted）到所有副光标
         ctx.broadcast_char_input(len(removed), inserted)
-        # task 状态变化（如输入 "- [ ] " 触发 PARAGRAPH → task 行）：
-        # reparse 把前缀 "- [ ] " 重新解析为 LIST_PREFIX 段，渲染层切换到 task
-        # 分支（skip_prefix=True），cursor_overlay 坐标系从行起点变为内容起点。
-        # 但 input_session.last_value 仍含旧前缀（如 "- [ ] "），导致 cursor_overlay
-        # 的 _eff_value 含前缀 → start_local=0 → cursor_px_x=0，再经 task 前缀扣除
-        # vline.offsets_x[prefix_len] 后变负，光标跑到 Stack 左边外消失。
-        # 同时 last_value 含前缀时，后续 Backspace 的 _move_cursor_inline 会缩短
-        # last_value（含前缀），而 backspace_core 删除 raw[off-1]（前缀字符 "]")，
-        # 导致"异常编辑任务列表标识"。
-        # 结束会话清空 cursor_field_value，下次输入启动新会话时 start_off 已在
-        # 前缀之后，last_value 只含内容部分，cursor_overlay 位置正确。
-        if line.task != old_task:
+        # 块级前缀结构变化（输入 ">" 创建引用 / "- " 创建列表 / "#" 创建
+        # 标题，或补齐/加深前缀）：
+        # 1. 渲染树形状变化使 cursor TextField 重建（与 on_submit 同型问题），
+        #    需显式递增 nav_seq 触发 use_effect 重聚焦，否则光标消失；
+        # 2. 会话 last_value 仍含旧前缀（如 "> "），但引用前缀渲染零宽度，
+        #    光标 X 漂移（_eff_value 含前缀 → caret 偏右一个前缀宽度）；
+        # 3. last_value 含前缀时后续 Backspace 的 _move_cursor_inline 会缩短
+        #    前缀字符，导致"异常编辑引用/列表标识"。
+        # 结束会话清空 cursor_field_value，下次输入启动新会话时 start_off 已
+        # 在前缀之后，last_value 只含内容部分，cursor_overlay 位置正确。
+        if _prefix_sig(line) != old_psig:
             _end_input_session(rebuild=False)
+            ctx.suppress_blur.current = True
+            ctx.set_nav_seq(ctx.nav_seq + 1)
 
     def handle_paste(clip_text: str, old_draft: str = ""):
         """多行粘贴：在光标处插入 clip_text，多行时拆分为新行。

@@ -832,8 +832,13 @@ def _spans_with_selection(
 
         if inter_start >= inter_end:
             # 不在高亮范围
-            # 段末尾也属于本段（与其他渲染路径一致用 <=，修复包裹段末尾标记折叠 Bug）
-            if cursor_off is not None and seg_start <= cursor_off <= seg_end:
+            # 段末尾也属于本段（与其他渲染路径一致用 <=，修复包裹段末尾标记折叠 Bug）；
+            # 块级前缀段例外：段末尾即内容起点，光标落在边界上视为已离开前缀
+            if cursor_off is not None and (
+                seg_start <= cursor_off <= seg_end
+                if not is_prefix
+                else seg_start <= cursor_off < seg_end
+            ):
                 # 光标在段内：标记变灰
                 spans.extend(_gray_marker_spans(seg, base, heading_level))
             else:
@@ -903,16 +908,19 @@ def _build_raw_to_flat_map(
             continue
 
         is_last = seg_idx == seg_count - 1
+        is_prefix = seg.seg_type in PREFIX_SEGTYPES
         if cursor_off is None:
             cursor_in_seg = False
         elif is_last:
             cursor_in_seg = seg_start <= cursor_off <= seg_end
+        elif is_prefix:
+            # 块级前缀段：段末尾即内容起点，光标落在边界上视为已离开前缀
+            # （引用/标题前缀渲染零宽度，避免 caret 偏右一个前缀宽度）
+            cursor_in_seg = seg_start <= cursor_off < seg_end
         else:
             # 非末段：段末尾也属于本段（与 pixel_layout / segment_view 一致用 <=）
             # 修复 Bug：光标在包裹段末尾时标记被折叠，flat 映射与可见标记不对齐
             cursor_in_seg = seg_start <= cursor_off <= seg_end
-
-        is_prefix = seg.seg_type in PREFIX_SEGTYPES
 
         # 选区交集判断
         if has_selection:

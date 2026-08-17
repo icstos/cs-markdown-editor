@@ -31,6 +31,7 @@ from styles import (
     card_shadow,
     only_border,
 )
+from utils.segment_helpers import PREFIX_SEGTYPES
 from views.cursor_layer import cursor_text_field, make_strut
 from views.pixel_layout import (
     _block_padding,
@@ -39,7 +40,6 @@ from views.pixel_layout import (
     _line_visual_layout,
 )
 from views.rendered_line import RenderedLine
-
 
 # 代码块语言选择下拉框的常用语言清单
 _COMMON_LANGS: list[tuple[str, str]] = [
@@ -180,9 +180,9 @@ def _wrap_block(
     if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O):
         pad_left = line.level * 20
     elif line.block_type == BlockType.QUOTE:
-        # 多级嵌套引用：逐层包裹左侧彩色边框，颜色复用 heading_colors
-        # （红橙绿青蓝紫），与标题/大纲/列表色阶统一。最外层 = level 1 = 红，
-        # 每深入一级切换下一色，一眼区分引用层级。层级 > 6 钳制到第 6 色。
+        # 多级嵌套引用：整块浅蓝背景（Typora 式柔和区分）+ 逐层包裹左侧
+        # 彩色边框，颜色复用 heading_colors（红橙绿青蓝紫），与标题/大纲/
+        # 列表色阶统一。最外层 = level 1 = 红，每深入一级切换下一色。
         # 边框色降不透明度至 0.5：半透明叠加背景天然去饱和，呈更浅、偏灰的
         # 柔和色调，避免高饱和色块喧宾夺主，保持界面清爽专业。
         lvl = line.level or 1
@@ -191,10 +191,14 @@ def _wrap_block(
             level = lvl - i
             base_color = c.heading_colors.get(min(level, 6), c.quote_bar)
             color = ft.Colors.with_opacity(0.5, base_color)
+            kwargs_bg = {
+                "bgcolor": ft.Colors.with_opacity(0.55, c.quote_bg),
+            } if i == lvl - 1 else {}  # 整块浅蓝底只挂最外层，避免多层叠色变深
             content = ft.Container(
                 content=content,
                 padding=ft.Padding.only(left=Spacing.XL),
                 border=only_border(left=ft.BorderSide(3, color)),
+                **kwargs_bg,
             )
 
     # HR 行 padding 8+8（与 pixel_layout._block_padding HR 分支一致，保证光标 Y 对齐）
@@ -894,10 +898,21 @@ def LineView(
                 width=float("inf"),
             )
 
+    # 最外层 Container 点击兜底：点击引用缩进/边框、列表缩进等 padding 死区时
+    # 定位光标到内容起点（内层 GestureDetector 只覆盖内容区）。桌面端直觉：
+    # 点击整行任意位置（含引用左侧色条）即可编辑。
+    content_start_off = 0
+    if line.segments and line.segments[0].seg_type in PREFIX_SEGTYPES:
+        content_start_off = len(line.segments[0].raw)
     return _wrap_block(
         inner, line, base, line_idx,
         is_current_line=is_current_line, on_size_change=on_line_size_change,
         diff_mark=diff_mark,
+        on_click=(
+            lambda e, li=line_idx, off=content_start_off: on_tap(li, off)
+            if on_tap is not None
+            else None
+        ),
     )
 
 

@@ -278,10 +278,16 @@ def _line_raw_offsets_x(
         seg_end = raw_offset + len(seg.raw)
         is_last = seg_idx == seg_count - 1
 
+        is_prefix = seg.seg_type in PREFIX_SEGTYPES
         if cursor_raw_offset is None:
             cursor_in_seg = False
         elif is_last:
             cursor_in_seg = seg_start <= cursor_raw_offset <= seg_end
+        elif is_prefix:
+            # 块级前缀段（# / - / >）：段末尾即内容起点，光标落在边界上视为
+            # 已离开前缀（标记折叠）。引用/标题前缀渲染零宽度，若按 <= 展开，
+            # 点击内容起点时光标 caret 会偏右一个前缀宽度。
+            cursor_in_seg = seg_start <= cursor_raw_offset < seg_end
         else:
             # 非末段：段末尾（seg_end）也属于本段（与末段一致用 <=）。
             # 修复 Bug：光标在包裹段末尾（如 ==高亮==|后文）时标记被折叠，
@@ -292,7 +298,6 @@ def _line_raw_offsets_x(
 
         font, size = _seg_font_metrics(seg, base)
         seg_raw_len = len(seg.raw)
-        is_prefix = seg.seg_type in PREFIX_SEGTYPES
 
         if cursor_in_seg:
             # 光标在段内：cluster 级整形 raw（含标记，标记变灰可见占宽度）。

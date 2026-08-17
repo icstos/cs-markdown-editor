@@ -81,16 +81,25 @@ def _detect_block(raw: str) -> tuple[BlockType, dict]:
 
     m = _RE_QUOTE.match(raw)
     if m:
-        # 嵌套引用：循环剥离 > 前缀，计算嵌套深度
+        # 嵌套引用：循环剥离 > 前缀，计算嵌套深度；同时累计实际前缀字符
+        # （">" / "> " / ">> " 等，保持 line.raw == "".join(segments.raw)
+        # 不变量，避免 ">x"、">>x" 等无空格写法段/行长度不一致导致
+        # 光标偏移数组错位）。
         level = 1
         content = m.group(1)
+        prefix = raw[: m.start(1)]
         while True:
             m2 = _RE_QUOTE.match(content)
             if not m2:
                 break
             level += 1
+            prefix += content[: m2.start(1)]
             content = m2.group(1)
-        return BlockType.QUOTE, {"level": level, "content": content}
+        return BlockType.QUOTE, {
+            "level": level,
+            "content": content,
+            "prefix": prefix,
+        }
 
     if _RE_HR.match(raw):
         return BlockType.HR, {}
@@ -141,7 +150,10 @@ def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, di
         )
     if block_type == BlockType.QUOTE:
         lvl = info.get("level", 1)
-        return Segment(SegType.QUOTE_PREFIX, "> " * lvl, "", level=lvl), {"level": lvl}
+        # 前缀 raw 用源码实际字符（">" / "> " / ">> "），保证
+        # line.raw == "".join(segments.raw) 不变量（编辑/序列化/光标偏移依赖）
+        prefix = info.get("prefix") or "> " * lvl
+        return Segment(SegType.QUOTE_PREFIX, prefix, "", level=lvl), {"level": lvl}
     return Segment(SegType.TEXT, "", ""), {}
 
 

@@ -9,15 +9,15 @@
   - Flet 客户端 page 级 on_keyboard_event 只转发 KeyDownEvent（KeyRepeatEvent 被丢弃），
     长按方向键不会自动重复；KeyboardListener 控件转发 key_repeat（仅 key 无修饰键）
   - 左/右：客户端 key_repeat 驱动（同行移动不重建 TextField，焦点稳定）
-  - 上/下：跨行移动重建 cursor TextField（key 含 li），重建瞬间焦点悬空导致
-    key_repeat 丢失 → 改用定时器自驱动（KeyDown 启动 / KeyUp、其他键、
-    到达文档边界连续两次无位移停止），路由与 KeyDispatcher 一致
-  - 边界检测修正（真正的根因）：计时器闭包捕获的 ctx.cursor_li 是启动时的
-    渲染快照，跨渲染永不更新；垂直移动又保持同列（cursor_ref.base 不变），
-    旧实现用它判"无位移"→ 跑 1-2 步就误停。改为读 nav_ref.current 里的
-    actions.cursor_li（稳定 ref，每帧重建写入最新值），容忍 3 tick 渲染滞后
-  - 兜底：上/下 key_repeat 若 KeyDown 未启动定时器，首个 repeat 幂等启动；
-    松 Shift 等修饰键不误停
+  - 上/下：页面级 KeyDispatcher 自驱动定时器（真正的根因：cursor TextField 的
+    ignore_up_down_keys 对上/下键返回 handled，Flutter 焦点链叶子优先分发，
+    TextField 先吞掉上/下键 → 编辑器 KeyboardListener 永远收不到上/下键事件，
+    定时器从 _on_key_down 启动的方案根本不会触发；KeyDispatcher 用 HardwareKeyboard
+    全局处理器（焦点分发之前）能看到所有 KeyDown，KeyUp 不被拦截仍走
+    KeyboardListener 到达 editor _on_key_up 停止）
+  - 左/右：TextField 不拦截 → KeyboardListener key_repeat 驱动（无需定时器）
+  - 边界检测读 nav_ref.current 的 actions.cursor_li（每帧重建写入最新值），
+    而非闭包捕获的快照；容忍 3 tick 渲染滞后；松 Shift 等修饰键不误停
   - 守卫：浏览态/原文模式/原生控件（代码块/表格/公式）不启动自驱动
 - [x] 2026-08-18：修复BUG：修复对引用功能的编辑支持，当前存在行首使用>创建引用语法后光标消失、引用块无法点击编辑问题。要求遵循桌面端软件交互直觉，符合用户体验，界面美观、科学、清晰，操作自然丝滑
 - [x] 2026-08-18：引用行内容为空时，按下回车键，行回退到常规段落（退出引用语法、保持光标）

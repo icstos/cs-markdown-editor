@@ -22,8 +22,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from views.editor import _key as key_mod
 from views.editor._key import build_key as build_editor_key
+from views.key_bindings import KeyDispatcher
 
 
 class FakeRef:

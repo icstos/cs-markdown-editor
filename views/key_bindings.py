@@ -179,7 +179,6 @@ class KeyDispatcher:
             return
         if self._native_field_focused(actions):
             return
-        self._arrow_repeat_ref.current = True
 
         async def _loop():
             stall = 0
@@ -214,7 +213,8 @@ class KeyDispatcher:
                 if self._arrow_repeat_ref is not None:
                     self._arrow_repeat_ref.current = None
 
-        asyncio.create_task(_loop())
+        # 任务引用存入共享 ref（防 GC + 供 while 条件检查运行状态）
+        self._arrow_repeat_ref.current = asyncio.create_task(_loop())
 
     def _stop_arrow_repeat(self) -> None:
         if self._arrow_repeat_ref is not None:

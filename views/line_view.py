@@ -935,6 +935,16 @@ def _parse_yaml_pairs(content: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def _pairs_to_yaml(pairs: list) -> str:
+    """把键值对列表序列化为 YAML 文本（跳过键为空的行，两侧空白剥离）。
+
+    与 _commit_pairs 写回文档的口径一致；供写回与“外部内容同步判定”共用，
+    保证对比口径相同（编辑态含待定空键行时不会误判为外部变更）。
+    """
+    filtered = [(k.strip(), v.strip()) for k, v in pairs if k.strip()]
+    return "\n".join(f"{k}: {v}" for k, v in filtered) if filtered else ""
+
+
 def _render_frontmatter(
     line: Line,
     line_idx: int,
@@ -1066,6 +1076,17 @@ def _render_frontmatter(
         [list(p) for p in pairs] if pairs else []
     )
 
+    # 文档内容外部变更（撤销/重做/拆分视口对侧编辑/外部重载）时同步本地编辑态：
+    # 否则撤销后表格仍显示修改前的旧内容，Ctrl+Z 看似失效。
+    # 仅当文档内容与当前编辑态序列化不一致时才重置，避免打断正在输入的内容
+    # （含键为空尚未写入文档的待定行），也不会与自身 _commit_pairs 写回产生回路。
+    def _sync_editing_pairs() -> None:
+        if content == _pairs_to_yaml(editing_pairs):
+            return
+        set_editing_pairs([list(p) for p in pairs] if pairs else [])
+
+    ft.use_effect(_sync_editing_pairs, [content])
+
     def _value_style(val: str) -> tuple[str, str]:
         """根据值内容推断 (color, font_family)。
 
@@ -1092,12 +1113,7 @@ def _render_frontmatter(
 
         跳过键为空的行（避免 YAML 语法错误）；过滤后全空则写空串。
         """
-        # 过滤：键非空的行才保留
-        filtered = [(k.strip(), v.strip()) for k, v in new_pairs if k.strip()]
-        if filtered:
-            yaml_text = "\n".join(f"{k}: {v}" for k, v in filtered)
-        else:
-            yaml_text = ""
+        yaml_text = _pairs_to_yaml(new_pairs)
         if on_change_code is not None:
             on_change_code(line_idx, yaml_text)
 

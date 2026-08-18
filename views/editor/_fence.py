@@ -48,32 +48,35 @@ def build_fence(ctx):
         if not (0 <= li < len(ctx.document.lines)):
             return
         line = ctx.document.lines[li]
-        # frontmatter 复用 CodeEditor 编辑，与代码块同等处理
+        if line.block_type not in (BlockType.CODE, BlockType.FRONTMATTER):
+            return
+        old_text = line.segments[0].text if line.segments else ""
+        if old_text == value:
+            return
+        # 撤销历史：修改前捕获/推入快照（必须在修改 line 之前执行）。
+        # 聚焦会话（字段聚焦）：首次修改推入聚焦快照，整个会话只占一个撤销条目；
+        # 撤销/重做后聚焦快照被清空，此处惰性重新捕获，保证继续编辑仍可撤销。
+        # 未聚焦的离散操作（×删除/拖拽排序/粘贴行/剪切行等，无聚焦快照）：
+        # 惰性捕获修改前状态并推入，每次操作独立撤销条目，修复 Ctrl+Z 无效。
+        if not ctx.restoring.current:
+            if ctx.code_focus_ref.current == li:
+                if ctx.code_edit_snapshot.current is None:
+                    ctx.code_edit_snapshot.current = ctx.make_snapshot()
+                    ctx.code_edit_changed.current = False
+                if not ctx.code_edit_changed.current:
+                    ctx.history_ref.current.push(ctx.code_edit_snapshot.current)
+                    ctx.code_edit_changed.current = True
+            else:
+                ctx.history_ref.current.push(ctx.make_snapshot())
+        # 应用修改
         if line.block_type == BlockType.CODE:
-            old_text = line.segments[0].text if line.segments else ""
-            if old_text == value:
-                return
             line.segments[0].text = value
             line.segments[0].raw = value
             line.raw = f"```{line.lang}\n{value}\n```"
-        elif line.block_type == BlockType.FRONTMATTER:
-            old_text = line.segments[0].text if line.segments else ""
-            if old_text == value:
-                return
+        else:
             line.segments[0].text = value
             line.segments[0].raw = value
             line.raw = f"---\n{value}\n---" if value else "---\n---"
-        else:
-            return
-        # 代码块编辑防抖：第一次修改时将快照推入历史，整个编辑会话只占一个撤销条目
-        # 这样即使在代码块聚焦时按 Ctrl+Z 也能正常撤销
-        if (
-            not ctx.code_edit_changed.current
-            and ctx.code_edit_snapshot.current is not None
-            and not ctx.restoring.current
-        ):
-            ctx.history_ref.current.push(ctx.code_edit_snapshot.current)
-        ctx.code_edit_changed.current = True
         if not ctx.document.dirty:
             ctx.mark_dirty()
 

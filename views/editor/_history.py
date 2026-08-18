@@ -114,6 +114,12 @@ def build_history(ctx):
         finally:
             ctx.restoring.current = False
             ctx.undo_push_pending.current = True
+            # 撤销/重做后旧聚焦快照已失效（文档已在快照之后被修改）：清空会话态，
+            # 下次代码块/frontmatter 修改时由 on_change_code 惰性重新捕获，
+            # 保证撤销后继续编辑仍能再次撤销。
+            if getattr(ctx, "code_edit_snapshot", None) is not None:
+                ctx.code_edit_snapshot.current = None
+                ctx.code_edit_changed.current = False
 
     def undo():
         hist = ctx.history_ref.current

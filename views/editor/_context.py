@@ -156,6 +156,8 @@ class EditorContext:
     paste_in_progress_ref: ft.Ref = field(default=None)
     # float：上次同行移动脉冲时间戳（monotonic），_set_cursor 节流重建用
     cursor_pulse_ref: ft.Ref = field(default=None)
+    # 上/下键自驱动重复任务标志（asyncio.Task | None），_key.py 长按导航用
+    arrow_repeat_ref: ft.Ref = field(default=None)
 
     # ============ 装配槽（跨工厂调用，工厂装配后写入）============
     # 共享闭包

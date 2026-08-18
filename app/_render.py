@@ -196,6 +196,7 @@ def build_render(ctx) -> ft.Control:
                 # 非拆分态激活标签=左组激活（不变式），session_left 随激活变化递增
                 key=f"{ctx.session_left}-0",
                 nav_ref=ctx.nav_ref,
+                arrow_repeat_ref=ctx.arrow_repeat_ref,
                 document=ctx.document,
                 file_path=ctx.file_path,
                 on_dirty_change=ctx.on_dirty_change,

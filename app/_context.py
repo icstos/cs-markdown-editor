@@ -113,6 +113,7 @@ class AppContext:
     settings_ref: ft.Ref  # 最新 settings 快照（供异步任务读取，避免闭包捕获过期快照）
     dispatcher_ref: ft.Ref  # KeyDispatcher 实例
     paste_old_draft: ft.Ref  # 粘贴前 draft 快照（供 handle_paste 做 diff 定位）
+    arrow_repeat_ref: ft.Ref  # 上/下键自驱动重复标志（KeyDispatcher 与 editor _on_key_up 共享）
     status_ref: ft.Ref  # 状态栏命令式更新器（update_cursor / update_counts）
 
     # ============ 装配槽（跨控制器调用，控制器装配后写入）============

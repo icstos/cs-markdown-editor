@@ -80,6 +80,7 @@ def build_keyboard(ctx):
         capturing=ctx.capturing,
         on_capture=ctx.on_capture,
         on_cancel_capture=ctx.on_cancel_capture,
+        arrow_repeat_ref=ctx.arrow_repeat_ref,
     )
 
     def bind_keyboard():

@@ -151,6 +151,8 @@ def App():
     update_setting_ref = ft.use_ref(None)
     # 粘贴前的 draft 快照（供 handle_paste 做 diff 定位粘贴位置）
     paste_old_draft = ft.use_ref("")
+    # 上/下键自驱动重复标志（KeyDispatcher 启动/停止，editor _on_key_up 停止）
+    arrow_repeat_ref = ft.use_ref(None)
     # dispatcher_ref：渲染期同步赋值最新 dispatcher，_handler 通过 ref 读取。
     # 修复 use_effect(_bind_keyboard, []) 空依赖导致 _handler 闭包捕获首次渲染
     # dispatcher 的过期问题——改快捷键后新键位才能立即生效（无需重启）。
@@ -326,6 +328,7 @@ def App():
         settings_ref=settings_ref,
         dispatcher_ref=dispatcher_ref,
         paste_old_draft=paste_old_draft,
+        arrow_repeat_ref=arrow_repeat_ref,
         status_ref=status_ref,
         sidebar_replace_ref=sidebar_replace_ref,
         # 自动备份 / 崩溃恢复 / 状态消息 UI 状态

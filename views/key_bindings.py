@@ -139,6 +139,7 @@ class KeyDispatcher:
         capturing: tuple[str | None, str | None] = (None, None),
         on_capture: Callable[[str, str, str], None] | None = None,
         on_cancel_capture: Callable[[], None] | None = None,
+        arrow_repeat_ref: ft.Ref | None = None,
     ):
         self._shortcut_mgr = shortcut_mgr
         self._actions_ref = actions_ref
@@ -151,6 +152,73 @@ class KeyDispatcher:
         self._capturing = capturing
         self._on_capture = on_capture
         self._on_cancel_capture = on_cancel_capture
+        self._arrow_repeat_ref = arrow_repeat_ref
+
+    # ---- 上/下键长按自驱动重复 ----
+    _REPEAT_DELAY = 0.35
+    _REPEAT_INTERVAL = 0.04
+
+    def _start_arrow_repeat(self, norm: str) -> None:
+        """上/下键 KeyDown 启动自驱动重复定时器。
+
+        Flet 客户端 TextField 的 ignore_up_down_keys 对上/下键返回
+        KeyEventResult.handled，Flutter 焦点链分发是叶子优先（leaf→root），
+        TextField 先吞掉上/下键 → 编辑器 KeyboardListener 永远收不到上/下键事件。
+        因此上/下键重复必须由页面级 KeyDispatcher 驱动（HardwareKeyboard 全局
+        处理器，在焦点分发之前调用，能看到所有 KeyDown）。KeyUp 不被
+        ignore_up_down_keys 拦截，仍通过 KeyboardListener 到达编辑器 _on_key_up。
+        """
+        if self._arrow_repeat_ref is None:
+            return
+        if norm not in ("arrowup", "arrowdown"):
+            return
+        if self._arrow_repeat_ref.current is not None:
+            return
+        actions = self._actions_ref.current
+        if actions is None or getattr(actions, "cursor_li", None) is None:
+            return
+        if self._native_field_focused(actions):
+            return
+        self._arrow_repeat_ref.current = True
+
+        async def _loop():
+            stall = 0
+            prev_pos: tuple | None = None
+            try:
+                await asyncio.sleep(self._REPEAT_DELAY)
+                while self._arrow_repeat_ref is not None and self._arrow_repeat_ref.current is not None:
+                    actions = self._actions_ref.current
+                    if actions is None or getattr(actions, "cursor_li", None) is None:
+                        break
+                    cs = actions.cursor_ref.current if actions.cursor_ref else None
+                    cur = (actions.cursor_li, cs.base if cs is not None else None)
+                    if prev_pos is not None and cur == prev_pos:
+                        stall += 1
+                        if stall >= 3:
+                            break
+                    else:
+                        stall = 0
+                    prev_pos = cur
+                    shift = bool(actions.shift_pressed_ref.current) if actions.shift_pressed_ref else False
+                    if shift:
+                        handler = {
+                            "arrowup": getattr(actions, "extend_outward_up", None),
+                            "arrowdown": getattr(actions, "extend_outward_down", None),
+                        }[norm]
+                        if handler is not None:
+                            handler()
+                    else:
+                        {"arrowup": actions.move_up, "arrowdown": actions.move_down}[norm]()
+                    await asyncio.sleep(self._REPEAT_INTERVAL)
+            finally:
+                if self._arrow_repeat_ref is not None:
+                    self._arrow_repeat_ref.current = None
+
+        asyncio.create_task(_loop())
+
+    def _stop_arrow_repeat(self) -> None:
+        if self._arrow_repeat_ref is not None:
+            self._arrow_repeat_ref.current = None
 
     # ---- 共享工具 ----
     @staticmethod
@@ -233,6 +301,10 @@ class KeyDispatcher:
             return
 
         actions: EditorActions | None = self._actions_ref.current
+
+        # 上/下键长按自驱动重复：非上/下键按下时停止（防 KeyUp 丢失后残留滚动）
+        if norm not in ("arrowup", "arrowdown") and self._arrow_repeat_ref is not None:
+            self._stop_arrow_repeat()
 
         # 用 KeyboardEvent.shift 可靠同步 Shift 状态到 shift_pressed_ref。
         # KeyboardListener 的 KeyDownEvent.key 对 Shift 可能返回 "Shift Left" /
@@ -397,9 +469,11 @@ class KeyDispatcher:
                     return
                 if norm == "arrowup" and actions.extend_outward_up is not None:
                     actions.extend_outward_up()
+                    self._start_arrow_repeat(norm)
                     return
                 if norm == "arrowdown" and actions.extend_outward_down is not None:
                     actions.extend_outward_down()
+                    self._start_arrow_repeat(norm)
                     return
                 if norm == "home" and actions.extend_outward_home is not None:
                     actions.extend_outward_home()
@@ -551,6 +625,9 @@ class KeyDispatcher:
 
         if layer == "edit" and actions is not None:
             if self._handle_edit_nav(actions, e, norm):
+                # 上/下键编辑态导航成功：启动长按自驱动重复（页面级，不依赖 KeyboardListener）
+                if norm in ("arrowup", "arrowdown"):
+                    self._start_arrow_repeat(norm)
                 return
 
         # 浏览态 Backspace：删除 SelectionArea 选区文本

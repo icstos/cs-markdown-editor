@@ -78,6 +78,7 @@ def MarkdownEditor(
     on_export_pdf: Callable[[], None] | None = None,
     on_dirty_change: Callable[[bool], None] | None = None,
     nav_ref: ft.Ref | None = None,
+    arrow_repeat_ref: ft.Ref | None = None,
     clipboard_ref: ft.Ref | None = None,
     picker_ref: ft.Ref | None = None,
     theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
@@ -143,6 +144,8 @@ def MarkdownEditor(
     suppress_blur = ft.use_ref(False)
     # 同行移动脉冲节流时间戳（monotonic）：_set_cursor 窗口内只重建一次 TextField
     cursor_pulse_ref = ft.use_ref(0.0)
+    # 上/下键自驱动重复标志：由 App 传入（KeyDispatcher 与 editor _on_key_up 共享）
+    arrow_repeat_ref = arrow_repeat_ref if arrow_repeat_ref is not None else ft.use_ref(None)
     # 原文模式
     raw_mode, set_raw_mode = ft.use_state(False)
     raw_draft, set_raw_draft = ft.use_state("")
@@ -319,6 +322,7 @@ def MarkdownEditor(
         cursor_ref=cursor_ref,
         suppress_blur=suppress_blur,
         cursor_pulse_ref=cursor_pulse_ref,
+        arrow_repeat_ref=arrow_repeat_ref,
         list_view_ref=list_view_ref,
         scroll_offset_ref=scroll_offset_ref,
         viewport_h_ref=viewport_h_ref,
@@ -746,6 +750,7 @@ def MarkdownEditor(
         autofocus=keyboard_autofocus,
         on_key_down=key_cbs["on_key_down"],
         on_key_up=key_cbs["on_key_up"],
+        on_key_repeat=key_cbs["on_key_repeat"],
         expand=True,
         content=ft.Column(
             controls=[

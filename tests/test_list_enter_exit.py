@@ -77,12 +77,12 @@ def _task_line(raw: str, checked: bool = False) -> Line:
     return line
 
 
-def _quote_line(raw: str) -> Line:
-    """引用行：QUOTE_PREFIX + TEXT。"""
-    marker = "> "
-    line = Line(block_type=BlockType.QUOTE, raw=raw)
+def _quote_line(raw: str, level: int = 1) -> Line:
+    """引用行：QUOTE_PREFIX + TEXT（支持多级嵌套）。"""
+    marker = "> " * level
+    line = Line(block_type=BlockType.QUOTE, raw=raw, level=level)
     line.segments = [
-        Segment(SegType.QUOTE_PREFIX, marker, marker),
+        Segment(SegType.QUOTE_PREFIX, marker, marker, level=level),
         Segment(SegType.TEXT, raw[len(marker):], raw[len(marker):]),
     ]
     return line
@@ -197,13 +197,9 @@ def test_empty_checked_task_list_enter_preserves_cursor():
 # ================ 空引用 Enter 退出 ================
 
 def test_empty_quote_enter_preserves_cursor():
-    """空引用 "> " + Enter（光标在行首）→ 转空行，cursor_li 保留 + nav_seq 递增。
-
-    引用退出走分支1（not before.strip()）：光标在行首 before="" 时触发。
-    光标在行尾（before="> "）走默认分割续行（Typora 式：续行加 "> " 前缀）。
-    """
+    """空引用 "> " + Enter（光标在行首）→ 转空行，cursor_li 保留 + nav_seq 递增。"""
     doc = Document(lines=[_quote_line("> ")])
-    # 光标在行首 offset=0 → before="" → 进入分支1
+    # 光标在行首 offset=0 → before="" → 退出引用
     ctx, calls = _make_ctx(doc, cursor_li=0, base=0)
     on_submit = build_cursor(ctx)["on_submit"]
 
@@ -218,6 +214,56 @@ def test_empty_quote_enter_preserves_cursor():
     )
     assert ("set_nav_seq", 1) in calls
     assert ctx.suppress_blur.current is True
+
+
+def test_empty_quote_enter_at_end_exits():
+    """空引用 "> " + Enter（光标在行尾，常见场景）→ 退出引用转空行，保持光标。
+
+    修复：before="> " 的 strip() 得 ">" 非空，旧逻辑走默认分割续行（引用
+    不退出）；现按引用标记集判断（strip("> ")），光标在前缀内或内容起点
+    均退出引用（Typora 式）。
+    """
+    doc = Document(lines=[_quote_line("> ")])
+    ctx, calls = _make_ctx(doc, cursor_li=0, base=2)  # 光标在行尾
+    on_submit = build_cursor(ctx)["on_submit"]
+
+    on_submit("> ")
+
+    # 行退出引用（空内容 reparse 为 BLANK）
+    assert doc.lines[0].block_type != BlockType.QUOTE
+    assert doc.lines[0].raw == ""
+    # 保持光标：行变空后光标仍在 (0,0)，nav_seq 递增重建重聚焦
+    _assert_cursor_preserved(calls, ctx, 0)
+
+
+def test_empty_nested_quote_enter_exits():
+    """嵌套空引用 "> > " + Enter → 整行退出引用（所有层级），保持光标。"""
+    doc = Document(lines=[_quote_line("> > ", level=2)])
+    ctx, calls = _make_ctx(doc, cursor_li=0, base=4)  # 光标在行尾
+    on_submit = build_cursor(ctx)["on_submit"]
+
+    on_submit("> > ")
+
+    assert doc.lines[0].block_type != BlockType.QUOTE
+    assert doc.lines[0].raw == ""
+    _assert_cursor_preserved(calls, ctx, 0)
+
+
+def test_nonempty_quote_enter_still_splits():
+    """有内容引用 "> x" + Enter（光标在行尾）→ 仍走默认分割续行（回归）。"""
+    doc = Document(lines=[_quote_line("> x")])
+    ctx, calls = _make_ctx(doc, cursor_li=0, base=3)
+    on_submit = build_cursor(ctx)["on_submit"]
+
+    on_submit("> x")
+
+    # 分割：原行保留 "> x"，新增 "> " 空引用行
+    assert doc.lines[0].block_type == BlockType.QUOTE
+    assert doc.lines[0].raw == "> x"
+    assert len(doc.lines) == 2
+    assert doc.lines[1].block_type == BlockType.QUOTE
+    # 光标移到新行前缀之后
+    assert ("set_cursor_li", 1) in calls
 
 
 # ================ 有内容列表 Enter 分割（不受影响，回归测试） ================

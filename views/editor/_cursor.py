@@ -786,11 +786,23 @@ def build_cursor(ctx):
 
         # 列表 / 引用：before 仅前缀（空内容）→ 退出列表/引用
         if line.block_type in (BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
+            # 引用空内容（before 仅引用标记，光标在前缀内或内容起点）→ Enter 退出引用
+            # Typora 式：空引用回车回退为常规段落，保持光标位置（行变空后仍在同一点）。
+            # 不能复用通用 before.strip() 判断："> " 的 strip() 得 ">" 非空，
+            # 需按引用标记集 strip（">x" 等无空格写法也会被正确剥离）。
+            if line.block_type == BlockType.QUOTE and not before.strip("> "):
+                ctx.clear_secondary_cursors()
+                stripped = after.lstrip("> ")
+                _reparse_atomic(line, stripped)
+                ctx.mark_dirty()
+                ctx.suppress_blur.current = True
+                ctx.set_nav_seq(ctx.nav_seq + 1)
+                _set_cursor(li, 0)
+                return
             if not before.strip():
                 ctx.clear_secondary_cursors()
+                # 引用已由上方专用分支处理；此处仅剩列表（光标在行首 before=""）
                 stripped = after.lstrip()
-                if line.block_type == BlockType.QUOTE:
-                    stripped = stripped.lstrip("> ")
                 _reparse_atomic(line, stripped)
                 ctx.mark_dirty()
                 # 递增 nav_seq + suppress_blur：block_type 变化使 TextField 重建，

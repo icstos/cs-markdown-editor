@@ -132,6 +132,8 @@ def build_render(ctx) -> ft.Control:
         compare_source=ctx.compare_source,
         fs_version=ctx.fs_version,
         sidebar_open=sidebar_open,
+        # Ctrl+F：切换搜索面板后聚焦搜索输入框（序号递增驱动 Sidebar effect）
+        search_focus_seq=ctx.search_focus_seq,
         # 替换功能：当前文档内存替换 + 跨文件写盘 + 快捷键桥接 ref
         on_replace_match_in_doc=_call_replace,
         on_replace_all_in_doc=_call_replace_all,

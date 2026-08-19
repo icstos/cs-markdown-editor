@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+### 2026-08-19 Ctrl+F：侧边栏切换到搜索面板并自动聚焦搜索输入框
+
+- `focus_search`（App 稳定闭包）在切换 `sidebar_panel=search` 后递增 `search_focus_seq`；Sidebar 收到序号变化后经 `use_effect` 聚焦搜索输入框（`views/sidebar.py` `_focus_search_field` + `search_field_ref`），菜单「查找 Ctrl+F」/「全局查找 Ctrl+Shift+F」同样生效
+- 搜索输入框 `_search_box` 增加 `ref` 参数（默认 None 不破坏文件过滤框等既有调用）
+- **修复测试污染 BUG**：`tests/test_open_folder.py` 的 `open_folder` 会经 `save_settings` 把最小 settings 写回真实 `settings.json`（曾把用户配置覆盖成残缺内容）；新增 autouse fixture 把 `save_settings` 重定向到 pytest 临时目录
+
 ### 2026-08-19 修复：首部元数据（YAML frontmatter）删除行内容后无法撤销（Ctrl+Z）
 
 - **修复未聚焦操作的撤销缺失**：直接点 × 删除行 / 拖拽排序 / 粘贴 / 剪切行时，若从未聚焦过属性字段（无聚焦快照），修改不会写入历史栈，Ctrl+Z 无效；现改为修改前惰性捕获快照并推入历史，每次离散操作独立撤销条目（`views/editor/_fence.py` `on_change_code`）

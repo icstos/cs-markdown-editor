@@ -53,6 +53,7 @@ class AppContext:
     capturing: tuple
     split_editor: bool
     active_pane: int
+    search_focus_seq: int = 0  # Ctrl+F 聚焦搜索框序号（递增驱动 Sidebar effect）
     # 每侧编辑组的激活标签全局索引（不变式：active_index == 焦点侧组的激活索引）
     active_index_left: int
     active_index_right: int
@@ -86,6 +87,7 @@ class AppContext:
     set_capturing: Callable
     set_split_editor: Callable
     set_active_pane: Callable
+    set_search_focus_seq: Callable = field(default=lambda *a: None)
     set_active_index_left: Callable
     set_active_index_right: Callable
     set_session_left: Callable

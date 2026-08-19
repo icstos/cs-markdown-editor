@@ -11,6 +11,7 @@ asyncio.run 直接驱动（与 test_autosave 一致，不引入 pytest-asyncio�
 """
 
 import asyncio
+import json
 import os
 import sys
 import types
@@ -20,8 +21,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
+import app._file_io_ops
 from app._file_io_ops import build_file_io_ops
 from views.sidebar import _resolve_files_root
+
+
+@pytest.fixture(autouse=True)
+def _no_real_settings_write(monkeypatch, tmp_path):
+    """隔离 save_settings：防止测试把最小 settings 写回真实 settings.json。
+
+    回归守护：open_folder 内直接调用 config.settings.save_settings（模块级导入），
+    测试 ctx 的 settings 只有最小键——若不拦截会把用户配置文件覆盖成残缺内容。
+    改为写入 pytest 临时目录，保留“持久化”语义供未来断言。
+    """
+    out = tmp_path / "settings_out.json"
+
+    def _fake_save(settings):
+        out.write_text(
+            json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    monkeypatch.setattr(app._file_io_ops, "save_settings", _fake_save)
 
 # ---- _resolve_files_root：根目录优先级 ----
 

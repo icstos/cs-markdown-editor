@@ -16,6 +16,7 @@ editor.nav_ref.jump_to_line。跨文件结果点击通过 on_open_file_and_jump(
 """
 
 import asyncio
+import contextlib
 import os
 import re
 from collections.abc import Callable
@@ -965,8 +966,12 @@ def _search_box(
     on_change: Callable[[str], None],
     placeholder: str,
     c,
+    ref: ft.Ref | None = None,
 ) -> ft.Control:
-    """侧边栏搜索/过滤输入框（下划线边框，紧凑）。"""
+    """侧边栏搜索/过滤输入框（下划线边框，紧凑）。
+
+    ref：外部持有输入框控件引用，供 Ctrl+F 聚焦（App → Sidebar 桥接）。
+    """
     return ft.TextField(
         value=value,
         hint_text=placeholder,
@@ -976,6 +981,7 @@ def _search_box(
         text_size=12,
         content_padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         on_change=lambda e: on_change(e.control.value or ""),
+        ref=ref,
     )
 
 
@@ -1680,6 +1686,7 @@ def _render_search_panel(
     total_matches: int = 0,
     on_prev_match: Callable[[], None] | None = None,
     on_next_match: Callable[[], None] | None = None,
+    search_field_ref: ft.Ref | None = None,
 ) -> ft.Control:
     """搜索面板：搜索框（+折叠按钮）+ 替换栏 + 选项工具栏 + 结果列表。
 
@@ -1705,7 +1712,7 @@ def _render_search_panel(
                 on_click=lambda e: _on_toggle_replace(not replace_expanded),
                 style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
             ),
-            _search_box(search_query, set_search_query, placeholder, c),
+            _search_box(search_query, set_search_query, placeholder, c, ref=search_field_ref),
         ],
         spacing=Spacing.XS,
     )
@@ -1910,6 +1917,8 @@ def Sidebar(
     on_open_external: Callable[[str], None] | None = None,
     # VSCode 风格文件树拖拽：文件/文件夹移动到目标文件夹 (src, dst_dir)
     on_file_drop: Callable[[str, str], None] | None = None,
+    # Ctrl+F 聚焦搜索框：App 递增序号，此处 use_effect 聚焦搜索输入框
+    search_focus_seq: int = 0,
 ):
     """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
 
@@ -1940,6 +1949,20 @@ def Sidebar(
 
     # 拖拽中标志：控制外层 Container animate（拖拽时 None 即时跟随，否则 200ms 动画）
     dragging, set_dragging = ft.use_state(False)
+
+    # 搜索输入框引用（Ctrl+F 聚焦）：App 的 focus_search 递增 search_focus_seq，
+    # 本组件渲染后 effect 检测到序号变化且搜索面板可见时聚焦输入框。
+    search_field_ref = ft.use_ref(None)
+
+    async def _focus_search_field():
+        if active_panel != "search":
+            return
+        field = search_field_ref.current
+        if field is not None:
+            with contextlib.suppress(Exception):
+                await field.focus()
+
+    ft.use_effect(_focus_search_field, [search_focus_seq, active_panel])
 
     # 外部 settings → 内部 width state 同步：
     # use_state 初始值仅首次挂载生效，reset_settings / 外部改 settings 后需 effect
@@ -2607,6 +2630,7 @@ def Sidebar(
             total_matches=total_matches if not _search_folder else 0,
             on_prev_match=_on_prev_match if not _search_folder else None,
             on_next_match=_on_next_match if not _search_folder else None,
+            search_field_ref=search_field_ref,
         )
 
     # 外层 Container 统一控制宽度 / 动画 / 裁剪（原 sidebar_container 逻辑内移）：

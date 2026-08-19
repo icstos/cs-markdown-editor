@@ -84,6 +84,10 @@ def App():
     pending_jump_ref = ft.use_ref(None)  # (li, off) | None
     pending_jump_sig, set_pending_jump_sig = ft.use_state(0)
     confirm_close, set_confirm_close = ft.use_state(None)  # 待确认关闭的 tab index | None
+    # Ctrl+F 聚焦搜索框：序号递增驱动 Sidebar 的 use_effect 聚焦搜索输入框。
+    # ref 记录最新值供稳定闭包读取；use_state 触发 Sidebar 渲染侧 effect。
+    search_focus_seq_ref = ft.use_ref(0)
+    search_focus_seq, set_search_focus_seq = ft.use_state(0)
     # 文件操作对话框状态：{"mode":"input"|"confirm", "action":..., "target":...} | None
     # 由右键菜单触发（新建文件/文件夹/重命名/删除），确认后执行对应文件操作
     file_dialog, set_file_dialog = ft.use_state(None)
@@ -263,6 +267,8 @@ def App():
         pending_jump_ref=pending_jump_ref,
         pending_jump_sig=pending_jump_sig,
         set_pending_jump_sig=set_pending_jump_sig,
+        search_focus_seq=search_focus_seq,
+        set_search_focus_seq=set_search_focus_seq,
         confirm_close=confirm_close,
         file_dialog=file_dialog,
         compare_source=compare_source,
@@ -575,6 +581,7 @@ def App():
     # ============ 搜索/替换稳定闭包（KeyDispatcher → App → Sidebar 桥接）============
     # 与 close_current_tab 同模式：use_memo([]) 创建一次，通过 ref 读取最新值。
     # update_setting_ref 在 settings_controller 装配后写入；settings_ref 每渲染同步。
+    # Ctrl+F 聚焦：search_focus_seq_ref 持最新序号，set_search_focus_seq 触发渲染。
     def _make_focus_search():
         def _focus():
             us = update_setting_ref.current
@@ -584,6 +591,9 @@ def App():
             if not s.get("sidebar_open", False):
                 us("sidebar_open", True)
             us("sidebar_panel", "search")
+            # 驱动 Sidebar 聚焦搜索输入框（面板切换 + 序号变化 → effect 聚焦）
+            search_focus_seq_ref.current += 1
+            set_search_focus_seq(search_focus_seq_ref.current)
         return _focus
 
     def _make_toggle_replace_bar():

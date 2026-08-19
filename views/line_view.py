@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import contextlib
 import re
 from collections.abc import Callable
 
@@ -121,6 +122,40 @@ async def _copy_code_to_clipboard(
     set_copied(True)
     await asyncio.sleep(1.2)
     set_copied(False)
+
+
+async def _copy_text_to_clipboard(clipboard_ref: ft.Ref | None, text: str) -> None:
+    """把文本写入系统剪贴板（无反馈闪烁版本，供前置元数据行复制/剪切）。"""
+    clipboard = clipboard_ref.current if clipboard_ref is not None else None
+    if clipboard is None:
+        return
+    with contextlib.suppress(Exception):
+        await clipboard.set(text)
+
+
+async def _paste_row_from_clipboard(
+    clipboard_ref: ft.Ref | None,
+    on_insert: Callable[[str, str], None],
+) -> None:
+    """从系统剪贴板读取文本，按 "key: value" 解析后插入新属性行。
+
+    无冒号则整段作为值、键为空（用户可补键名）。
+    """
+    clipboard = clipboard_ref.current if clipboard_ref is not None else None
+    if clipboard is None:
+        return
+    try:
+        text = await clipboard.get()
+    except Exception:
+        return
+    if not text:
+        return
+    if ":" in text:
+        key, _, val = text.partition(":")
+        on_insert(key.strip(), val.strip())
+    else:
+        # 无冒号：整段作为值，键留空（用户补键名）
+        on_insert("", text.strip())
 
 
 def _wrap_block(
@@ -945,6 +980,36 @@ def _pairs_to_yaml(pairs: list) -> str:
     return "\n".join(f"{k}: {v}" for k, v in filtered) if filtered else ""
 
 
+# 前置元数据属性行拖拽分组（避免与其他 Draggable 冲突）
+_FM_DRAG_GROUP = "frontmatter-rows"
+
+
+def _drag_src_idx(e, n_pairs: int) -> int | None:
+    """从拖拽事件解析源行索引。
+
+    行索引直接挂在 Draggable.data 上（替代 id 注册表）：组件重渲染后 e.src
+    可能指向旧对象，id() 查注册表会落空；data 随控件迁移/重建保留，无论
+    e.src 解析到新旧对象都能取回正确行索引。
+    """
+    src = getattr(e, "src", None)
+    if src is None:
+        return None
+    idx = getattr(src, "data", None)
+    if not isinstance(idx, int) or not (0 <= idx < n_pairs):
+        return None
+    return idx
+
+
+def _reorder_pairs(pairs: list, src_idx: int, dst_idx: int) -> list:
+    """把 src_idx 行移动到 dst_idx 位置，其余顺移（返回新列表）。"""
+    new_pairs = [list(p) for p in pairs]
+    if not (0 <= src_idx < len(new_pairs) and 0 <= dst_idx < len(new_pairs)):
+        return new_pairs
+    item = new_pairs.pop(src_idx)
+    new_pairs.insert(dst_idx, item)
+    return new_pairs
+
+
 def _render_frontmatter(
     line: Line,
     line_idx: int,
@@ -1004,6 +1069,10 @@ def _render_frontmatter(
     # ---- 状态 ----
     copied, set_copied = ft.use_state(False)
     is_collapsed, set_collapsed = ft.use_state(False)
+    # 复制/剪切的行缓冲（内部粘贴源，跨渲染保留）
+    copied_row, set_copied_row = ft.use_state(None)
+    # 拖拽悬停目标行索引（-1=无），用于合法目标高亮
+    drop_hover, set_drop_hover = ft.use_state(-1)
 
     # ---- 解析键值对 ----
     pairs = _parse_yaml_pairs(content) if content else []
@@ -1068,7 +1137,9 @@ def _render_frontmatter(
     )
 
     # ---- 可编辑属性表格 ----
+    _HANDLE_WIDTH = 22    # 拖拽把手列宽度
     _KEY_COL_WIDTH = 140  # 键列固定宽度
+    _MORE_BTN_WIDTH = 30  # 行操作菜单（⋮）列宽度
     _DEL_BTN_WIDTH = 32   # 删除按钮列宽度
 
     # 编辑态键值对列表：本地 state 管理实时编辑，变化时序列化写回文档
@@ -1152,17 +1223,138 @@ def _render_frontmatter(
         set_editing_pairs(new_pairs)
         _commit_pairs(new_pairs)
 
+    # ---- 行操作：复制 / 剪切 / 粘贴 / 删除（右键菜单 + ⋮ 按钮共用）----
+
+    def _row_text(idx: int) -> str:
+        """行序列化文本（"key: value"，用于系统剪贴板）。"""
+        if not (0 <= idx < len(editing_pairs)):
+            return ""
+        p = editing_pairs[idx]
+        return f"{p[0]}: {p[1]}" if p[0] else ""
+
+    def _copy_row(idx: int) -> None:
+        """复制行：写入内部缓冲区 + 系统剪贴板。"""
+        if not (0 <= idx < len(editing_pairs)):
+            return
+        pair = editing_pairs[idx]
+        set_copied_row((pair[0], pair[1]))
+        if page is not None:
+            page.run_task(_copy_text_to_clipboard, clipboard_ref, _row_text(idx))
+
+    def _cut_row(idx: int) -> None:
+        """剪切行：复制 + 删除。"""
+        _copy_row(idx)
+        _delete_row(idx)
+
+    def _paste_row(idx: int) -> None:
+        """在 idx 行之后插入一行：优先内部缓冲区（本会话复制），否则读系统剪贴板。"""
+        def _insert(k: str, v: str) -> None:
+            new_pairs = [list(p) for p in editing_pairs]
+            insert_at = min(idx + 1, len(new_pairs))
+            new_pairs.insert(insert_at, [k, v])
+            set_editing_pairs(new_pairs)
+            _commit_pairs(new_pairs)
+        if copied_row is not None:
+            _insert(copied_row[0], copied_row[1])
+            return
+        if page is not None:
+            page.run_task(_paste_row_from_clipboard, clipboard_ref, _insert)
+
+    def _row_menu_items(idx: int) -> list[ft.PopupMenuItem]:
+        """行操作菜单项：剪切 / 复制 / 粘贴 / 删除（桌面端交互直觉）。"""
+        return [
+            ft.PopupMenuItem(
+                content="剪切", icon=ft.Icons.CONTENT_CUT,
+                on_click=lambda e, i=idx: _cut_row(i),
+            ),
+            ft.PopupMenuItem(
+                content="复制", icon=ft.Icons.CONTENT_COPY,
+                on_click=lambda e, i=idx: _copy_row(i),
+            ),
+            ft.PopupMenuItem(
+                content="粘贴", icon=ft.Icons.CONTENT_PASTE,
+                on_click=lambda e, i=idx: _paste_row(i),
+            ),
+            ft.PopupMenuItem(),  # 分隔
+            ft.PopupMenuItem(
+                content="删除", icon=ft.Icons.DELETE_OUTLINE,
+                on_click=lambda e, i=idx: _delete_row(i),
+            ),
+        ]
+
+    # ---- 拖拽更换顺序 ----
+    # 行索引挂在 Draggable.data 上（见模块级 _drag_src_idx），事件时从 e.src 取回；
+    # 不依赖 id() 注册表——重渲染后 e.src 可能指向旧对象，id 查找会落空。
+    def _src_idx_of(e) -> int | None:
+        return _drag_src_idx(e, len(editing_pairs))
+
+    def _on_will_accept(e, dst_idx: int) -> bool:
+        """拖拽进入目标行：非自身时高亮（合法目标桌面直觉）。"""
+        src_idx = _src_idx_of(e)
+        ok = src_idx is not None and src_idx != dst_idx
+        set_drop_hover(dst_idx if ok else -1)
+        return True
+
+    def _on_drag_leave(e, _dst_idx: int) -> None:
+        set_drop_hover(-1)
+
+    def _on_row_drop(e, dst_idx: int) -> None:
+        """拖放：把源行移动到目标行位置，其余顺移。"""
+        set_drop_hover(-1)
+        src_idx = _src_idx_of(e)
+        if src_idx is None or src_idx == dst_idx:
+            return
+        new_pairs = _reorder_pairs(editing_pairs, src_idx, dst_idx)
+        if new_pairs == editing_pairs:
+            return
+        set_editing_pairs(new_pairs)
+        _commit_pairs(new_pairs)
+
+    def _row_preview(idx: int) -> ft.Control:
+        """拖拽时跟随指针的紧凑预览（key: value pill）。"""
+        p = editing_pairs[idx] if 0 <= idx < len(editing_pairs) else ["", ""]
+        return ft.Container(
+            bgcolor=ft.Colors.with_opacity(0.96, c.surface),
+            border=ft.Border.all(1, c.border),
+            border_radius=Radius.SM,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.DRAG_INDICATOR, size=12, color=c.muted),
+                    ft.Text(
+                        p[0] or "新属性",
+                        size=base - 6,
+                        color=_key_color,
+                        font_family=FONT_MONO,
+                        weight=ft.FontWeight.W_500,
+                    ),
+                    ft.Text(": ", size=base - 6, color=c.muted),
+                    ft.Text(
+                        p[1],
+                        size=base - 6,
+                        color=c.text,
+                        font_family=FONT_MAIN,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                ],
+                spacing=Spacing.XS,
+                tight=True,
+            ),
+        )
+
     def _build_property_table() -> ft.Control:
         """构造 Obsidian 风格的可编辑属性表格。
 
         表头行（属性 | 值 | 操作）+ 数据行（TextField 键/值 + 删除按钮），
         底部新增行按钮。键列固定宽度，值列自适应。整体圆角裁剪。
         """
-        # ---- 表头行：略深背景，与数据行明显分层 ----
+        # ---- 表头行：略深背景，与数据行明显分层（紧凑高度）----
         header_bg = ft.Colors.with_opacity(0.09 if is_dark else 0.06, c.text)
         header_row = ft.Container(
             content=ft.Row(
                 controls=[
+                    ft.Container(width=_HANDLE_WIDTH),  # 拖拽把手列占位
                     ft.Container(
                         content=ft.Text(
                             value="属性",
@@ -1182,17 +1374,18 @@ def _render_frontmatter(
                         weight=ft.FontWeight.W_600,
                         expand=True,
                     ),
-                    ft.Container(width=_DEL_BTN_WIDTH),
+                    ft.Container(width=_MORE_BTN_WIDTH + _DEL_BTN_WIDTH),  # 操作列占位
                 ],
                 spacing=0,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=header_bg,
-            padding=ft.Padding.symmetric(vertical=6),
+            padding=ft.Padding.symmetric(vertical=3),
         )
 
-        # ---- 数据行：斑马纹增强可读性 ----
+        # ---- 数据行：斑马纹增强可读性，拖拽悬停高亮合法目标 ----
         zebra_bg = ft.Colors.with_opacity(0.045 if is_dark else 0.03, c.text)
+        hover_bg = ft.Colors.with_opacity(0.10 if is_dark else 0.08, c.link)
         data_rows: list[ft.Control] = [header_row]
 
         rows_data = editing_pairs if editing_pairs else []
@@ -1202,7 +1395,7 @@ def _render_frontmatter(
             val_color, val_font = _value_style(val_val)
             row_bg = zebra_bg if idx % 2 == 1 else None
 
-            # 键 TextField：品牌蓝色突出属性标识，等宽字体
+            # 键 TextField：品牌蓝色突出属性标识，等宽字体（紧凑高度）
             key_field = ft.TextField(
                 value=key_val,
                 text_size=base - 6,
@@ -1211,7 +1404,7 @@ def _render_frontmatter(
                 border=ft.InputBorder.NONE,
                 fill_color=ft.Colors.TRANSPARENT,
                 dense=True,
-                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=3),
+                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
                 hint_text="键名",
                 hint_style=ft.TextStyle(
                     size=base - 6,
@@ -1222,7 +1415,7 @@ def _render_frontmatter(
                 on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
                 on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
             )
-            # 值 TextField：按数据类型着色，无边框透明底
+            # 值 TextField：按数据类型着色，无边框透明底（紧凑高度）
             val_field = ft.TextField(
                 value=val_val,
                 text_size=base - 5,
@@ -1231,7 +1424,7 @@ def _render_frontmatter(
                 border=ft.InputBorder.NONE,
                 fill_color=ft.Colors.TRANSPARENT,
                 dense=True,
-                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=3),
+                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
                 hint_text="值",
                 hint_style=ft.TextStyle(
                     size=base - 5,
@@ -1246,7 +1439,7 @@ def _render_frontmatter(
                 icon=ft.Icons.CLOSE,
                 icon_size=13,
                 tooltip="删除此行",
-                padding=ft.Padding.all(4),
+                padding=ft.Padding.all(2),
                 style=ft.ButtonStyle(
                     shape=ft.RoundedRectangleBorder(radius=Radius.SM),
                     color={
@@ -1260,15 +1453,50 @@ def _render_frontmatter(
                 ),
                 on_click=lambda e, i=idx: _delete_row(i),
             )
+            # 行操作菜单按钮（⋮）：剪切/复制/粘贴/删除（始终可用，不受字段原生菜单影响）
+            more_btn = ft.PopupMenuButton(
+                icon=ft.Icons.MORE_VERT,
+                icon_size=13,
+                icon_color=ft.Colors.with_opacity(0.4, c.muted),
+                items=_row_menu_items(idx),
+                padding=ft.Padding.all(2),
+            )
+            # 拖拽把手：仅把手可拖起（避免与键/值字段内的文本选择拖拽冲突）
+            handle = ft.Draggable(
+                group=_FM_DRAG_GROUP,
+                content=ft.Icon(
+                    ft.Icons.DRAG_INDICATOR,
+                    size=14,
+                    color=ft.Colors.with_opacity(0.35, c.muted),
+                ),
+                content_when_dragging=ft.Icon(
+                    ft.Icons.DRAG_INDICATOR,
+                    size=14,
+                    color=ft.Colors.with_opacity(0.15, c.muted),
+                ),
+                content_feedback=_row_preview(idx),
+                data=idx,
+            )
 
-            row = ft.Container(
+            # 行内容：把手 | 键 | 值 | ⋮ | ×（紧凑高度）
+            row_inner = ft.Container(
                 content=ft.Row(
                     controls=[
+                        ft.Container(
+                            content=handle,
+                            width=_HANDLE_WIDTH,
+                            alignment=ft.Alignment.CENTER,
+                        ),
                         ft.Container(
                             content=key_field,
                             width=_KEY_COL_WIDTH,
                         ),
                         val_field,
+                        ft.Container(
+                            content=more_btn,
+                            width=_MORE_BTN_WIDTH,
+                            alignment=ft.Alignment.CENTER,
+                        ),
                         ft.Container(
                             content=del_btn,
                             width=_DEL_BTN_WIDTH,
@@ -1278,9 +1506,19 @@ def _render_frontmatter(
                     spacing=0,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                bgcolor=row_bg,
-                padding=ft.Padding.symmetric(vertical=1),
+                bgcolor=hover_bg if drop_hover == idx else row_bg,
+                padding=ft.Padding.symmetric(vertical=0),
             )
+            # 放置目标：整行可接收拖放（拖起只能从把手开始）
+            row = ft.DragTarget(
+                group=_FM_DRAG_GROUP,
+                content=row_inner,
+                on_will_accept=lambda e, i=idx: _on_will_accept(e, i),
+                on_accept=lambda e, i=idx: _on_row_drop(e, i),
+                on_leave=lambda e, i=idx: _on_drag_leave(e, i),
+            )
+            # 右键菜单：剪切 / 复制 / 粘贴 / 删除
+            row = ft.ContextMenu(content=row, secondary_items=_row_menu_items(idx))
             data_rows.append(row)
 
         # ---- 新增行按钮：悬停高亮 ----

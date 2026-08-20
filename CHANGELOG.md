@@ -4,6 +4,11 @@
 
 ## [未发布]
 
+### 2026-08-20 快捷方式（.lnk）打开的文件：标签栏显示链接文件名
+
+- 打开指向 .md 的 .lnk 时，标签栏与状态栏显示链接文件名（如 `Deepseek-cordis.md.lnk`），而非目标文件名；`file_path` 仍存目标路径——编辑 / 保存 / 去重 / 外部修改监测全部作用于目标文档，仅显示名用链接名（`app/_file_io_ops.py` 打开时记录 `display_name`，`views/tab_bar.py` / `views/status_bar.py` / `app/_tab_helpers.py` 优先展示）
+- 新增测试：`tests/test_tab_helpers.py`（display_name 优先/回退）+ `tests/test_open_dedupe.py`（.lnk 打开带 display_name、复用空白标签写入 display_name、普通 .md 不带）
+
 ### 2026-08-19 Ctrl+F：侧边栏切换到搜索面板并自动聚焦搜索输入框
 
 - `focus_search`（App 稳定闭包）在切换 `sidebar_panel=search` 后递增 `search_focus_seq`；Sidebar 收到序号变化后经 `use_effect` 聚焦搜索输入框（`views/sidebar.py` `_focus_search_field` + `search_field_ref`），菜单「查找 Ctrl+F」/「全局查找 Ctrl+Shift+F」同样生效

@@ -13,8 +13,9 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app._file_io_ops import build_file_io_ops
+import app._file_io_ops
 import parser
+from app._file_io_ops import build_file_io_ops
 
 
 def _make_ctx(tabs, split_editor=False, active_pane=0, active_left=0, active_right=0):
@@ -113,9 +114,58 @@ class TestGroupOpenDedupe:
         # 复用后激活 + 重建该组编辑器
         ctx.activate_index.assert_called_once_with(1)
 
+    def test_lnk_open_keeps_link_name_as_display_name(self, tmp_path, monkeypatch):
+        """.lnk 快捷方式打开：标签记录链接文件名（display_name），file_path 为目标。"""
+        target = tmp_path / "Deepseek-cordis.md"
+        target.write_text("# 目标文档", encoding="utf-8")
+        lnk = tmp_path / "Deepseek-cordis.md.lnk"
+        # mock 快捷方式解析：is_shortcut → True，目标 → target
+        monkeypatch.setattr(app._file_io_ops.shortcut, "is_shortcut", lambda p: True)
+        monkeypatch.setattr(
+            app._file_io_ops.shortcut, "resolve_shortcut_target", lambda p: str(target)
+        )
+        ctx = _make_ctx([], split_editor=False)
+        cbs = build_file_io_ops(ctx)
+        cbs["open_file_by_path"](str(lnk))
+        ctx.append_and_activate.assert_called_once()
+        fields = ctx.append_and_activate.call_args[0][0]
+        # 标签名 = 链接文件名；file_path = 目标路径（编辑/保存作用于目标文档）
+        assert fields["display_name"] == "Deepseek-cordis.md.lnk"
+        assert fields["file_path"] == str(target)
+
+    def test_lnk_open_reuse_blank_sets_display_name(self, tmp_path, monkeypatch):
+        """.lnk 打开复用空白标签：display_name 一并写入。"""
+        target = tmp_path / "note.md"
+        target.write_text("# note", encoding="utf-8")
+        lnk = tmp_path / "note.md.lnk"
+        monkeypatch.setattr(app._file_io_ops.shortcut, "is_shortcut", lambda p: True)
+        monkeypatch.setattr(
+            app._file_io_ops.shortcut, "resolve_shortcut_target", lambda p: str(target)
+        )
+        ctx = _make_ctx([_tab(None, group=0)], split_editor=False, active_left=0)
+        cbs = build_file_io_ops(ctx)
+        cbs["open_file_by_path"](str(lnk))
+        ctx.append_and_activate.assert_not_called()
+        ctx.update_tab.assert_called_once()
+        _args, kwargs = ctx.update_tab.call_args
+        assert kwargs["display_name"] == "note.md.lnk"
+        assert kwargs["file_path"] == str(target)
+
+    def test_plain_md_open_has_no_display_name(self, tmp_path):
+        """普通 .md 打开不带 display_name（标签显示回退目标文件名）。"""
+        f = tmp_path / "plain.md"
+        f.write_text("# plain", encoding="utf-8")
+        ctx = _make_ctx([], split_editor=False)
+        cbs = build_file_io_ops(ctx)
+        cbs["open_file_by_path"](str(f))
+        fields = ctx.append_and_activate.call_args[0][0]
+        assert fields.get("display_name") is None
+        assert fields["file_path"] == str(f)
+
 
 if __name__ == "__main__":
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
     tmp = pathlib.Path(tempfile.mkdtemp())
     TestGroupOpenDedupe().test_same_group_reopen_activates_existing(tmp)
     TestGroupOpenDedupe().test_other_group_open_creates_independent_copy(tmp)

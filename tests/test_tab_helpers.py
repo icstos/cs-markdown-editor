@@ -194,6 +194,20 @@ def test_tab_display_name_editor_no_path():
     assert tab_display_name(_editor_tab(file_path=None)) == "未命名.md"
 
 
+def test_tab_display_name_prefers_display_name():
+    """.lnk 快捷方式打开时优先显示链接文件名（file_path 为目标路径）。"""
+    tab = _editor_tab(file_path="/docs/Deepseek-cordis.md")
+    tab["display_name"] = "Deepseek-cordis.md.lnk"
+    assert tab_display_name(tab) == "Deepseek-cordis.md.lnk"
+
+
+def test_tab_display_name_empty_display_name_falls_back():
+    """display_name 为空时回退 file_path 文件名（普通文件不带 display_name）。"""
+    tab = _editor_tab(file_path="/docs/note.md")
+    tab["display_name"] = ""
+    assert tab_display_name(tab) == "note.md"
+
+
 def test_tab_display_name_diff_both_paths():
     """diff 标签两侧有路径 → left ⟷ right。"""
     tab = _diff_tab(left_path="/a.md", right_path="/b.md")

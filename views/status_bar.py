@@ -71,6 +71,7 @@ def StatusBar(
     sidebar_open: bool,
     theme_mode: ft.ThemeMode,
     on_toggle_sidebar: Callable[[], None],
+    display_name: str | None = None,
     word_wrap: bool = True,
     on_toggle_word_wrap: Callable[[], None] | None = None,
     split_editor: bool = False,
@@ -136,7 +137,8 @@ def StatusBar(
         word_count, char_count, para_count, reading_min = counts
 
     row, col = cursor_pos
-    fname = _file_name(file_path)
+    # .lnk 快捷方式打开时显示链接文件名（file_path 为目标路径）
+    fname = display_name or _file_name(file_path)
 
     # ============ 更新器注册 ============
     # 注册进 status_ref.current 供 App 调用：update_cursor / update_counts。

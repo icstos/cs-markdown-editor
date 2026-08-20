@@ -103,6 +103,7 @@ def build_file_io_ops(ctx):
             ctx.set_pending_jump_sig(ctx.pending_jump_sig + 1)
 
         # 快捷方式解析：统一入口分流（侧边栏点击 / 右键打开 / 最近文件 / Ctrl+O）
+        display_name = None
         if shortcut.is_shortcut(path):
             target = shortcut.resolve_shortcut_target(path)
             if target and target.lower().endswith((".md", ".markdown")):
@@ -111,6 +112,9 @@ def build_file_io_ops(ctx):
                         f"快捷方式目标不存在：{os.path.basename(target)}（可能已被移动或删除）"
                     )
                     return
+                # 标签栏显示链接文件名（而非目标文件名）：file_path 仍存目标路径，
+                # 编辑/保存/去重/外部修改监测都作用于目标文档，仅显示名用 .lnk 名。
+                display_name = os.path.basename(path)
                 path = target
             else:
                 # 非 md 目标 / 解析失败：交系统打开快捷方式本身（启动目标或提示无效）
@@ -146,13 +150,13 @@ def build_file_io_ops(ctx):
         _loading_paths.add(path)
         page = ctx.page_ref.current
         if page is not None:
-            page.run_task(_async_open_file, path)
+            page.run_task(_async_open_file, path, display_name)
         else:
             # page 未就绪兜底：同步降级加载（启动初期极少触发）
             _loading_paths.discard(path)
-            _do_sync_load(path)
+            _do_sync_load(path, display_name)
 
-    async def _async_open_file(path: str):
+    async def _async_open_file(path: str, display_name: str | None = None):
         """异步加载文件：read_text + parse_markdown 在后台线程执行。
 
         加载期间 UI 事件循环保持响应，用户可继续编辑其他标签。加载完成后
@@ -160,7 +164,7 @@ def build_file_io_ops(ctx):
         避免加载期间用户操作导致的竞态。目标组 = 完成时的焦点侧组
         （拆分下打开到正在编辑的那一侧）。
         """
-        fname = os.path.basename(path)
+        fname = os.path.basename(display_name or path)
         set_status_message(f"正在打开 {fname}...", "info")
         try:
             # 后台线程执行 IO + 解析（asyncio.to_thread 在 Python 3.9+ 可用），
@@ -204,20 +208,22 @@ def build_file_io_ops(ctx):
         if cur is not None and is_blank_untitled(cur):
             # 复用目标组空白标签：document 整体替换 → 显式重建该组编辑器
             ctx.update_tab(gi, document=doc, file_path=path,
+                           display_name=display_name,
                            dirty=_shared_doc_dirty,
                            _last_known_mtime=last_mtime)
             ctx.activate_index(gi)
             ctx.bump_tab_session(gi)
         else:
             ctx.append_and_activate({
-                "document": doc, "file_path": path, "dirty": _shared_doc_dirty,
+                "document": doc, "file_path": path, "display_name": display_name,
+                "dirty": _shared_doc_dirty,
                 "_last_known_mtime": last_mtime, "group": g,
             })
         push_recent_file(path)
         _loading_paths.discard(path)
         set_status_message(f"已打开 {fname}", "success")
 
-    def _do_sync_load(path: str):
+    def _do_sync_load(path: str, display_name: str | None = None):
         """同步降级加载（page 未就绪时使用，启动初期极少触发）。"""
         try:
             text = read_text(path)
@@ -248,13 +254,15 @@ def build_file_io_ops(ctx):
         cur = ts[gi] if 0 <= gi < len(ts) else None
         if cur is not None and is_blank_untitled(cur):
             ctx.update_tab(gi, document=doc, file_path=path,
+                           display_name=display_name,
                            dirty=_shared_doc_dirty,
                            _last_known_mtime=last_mtime)
             ctx.activate_index(gi)
             ctx.bump_tab_session(gi)
         else:
             ctx.append_and_activate({
-                "document": doc, "file_path": path, "dirty": _shared_doc_dirty,
+                "document": doc, "file_path": path, "display_name": display_name,
+                "dirty": _shared_doc_dirty,
                 "_last_known_mtime": last_mtime, "group": g,
             })
         push_recent_file(path)

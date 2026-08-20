@@ -93,9 +93,16 @@ def is_blank_untitled(tab: Tab) -> bool:
 
 
 def tab_display_name(tab: Tab) -> str:
-    """统一标签显示名：diff 标签显示「left ⟷ right」，否则取文件名。"""
+    """统一标签显示名：diff 标签显示「left ⟷ right」，否则取文件名。
+
+    优先使用 display_name（.lnk 快捷方式打开时记录链接文件名），
+    无则回退 file_path 文件名（.lnk 打开时 file_path 存的是目标路径）。
+    """
     if tab.get("type") == "diff":
         left = os.path.basename(tab.get("left_path")) if tab.get("left_path") else "未命名"
         right = os.path.basename(tab.get("right_path")) if tab.get("right_path") else "未命名"
         return f"{left} ⟷ {right}"
+    dn = tab.get("display_name")
+    if dn:
+        return dn
     return file_name(tab.get("file_path"))

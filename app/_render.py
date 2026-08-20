@@ -230,10 +230,13 @@ def build_render(ctx) -> ft.Control:
         _footer_path = ctx.file_path
         _footer_split = ctx.split_editor
         _footer_split_cb = ctx.toggle_split_editor
+    # .lnk 快捷方式打开时显示链接文件名（file_path 为目标路径）
+    _footer_display = ctx.cur_tab.get("display_name")
     footer = (
         StatusBar(
             document=_footer_doc,
             file_path=_footer_path,
+            display_name=_footer_display,
             dirty=_footer_doc.dirty,
             sidebar_open=ctx.settings.get("sidebar_open", False),
             theme_mode=ctx.theme_mode,

@@ -80,7 +80,8 @@ def TabBar(
             leading_icon = ft.Icons.COMPARE_ARROWS
             leading_color = c.link
         else:
-            fname = _file_name(path)
+            # .lnk 快捷方式打开时 display_name 记录链接文件名（file_path 为目标路径）
+            fname = t.get("display_name") or _file_name(path)
             dirty = bool(t.get("dirty"))
             leading_icon = None
             leading_color = c.muted

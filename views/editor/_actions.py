@@ -76,6 +76,7 @@ def build_actions(ctx) -> EditorActions | None:
         format_task=ctx.format_task,
         format_table=ctx.format_table,
         insert_text=ctx.insert_text,
+        format_document=ctx.format_document,
         # ---- 代码块 ----
         code_focus_ref=ctx.code_focus_ref,
         handle_code_backspace=ctx.handle_code_backspace,

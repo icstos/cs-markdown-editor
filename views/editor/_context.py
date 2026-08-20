@@ -252,6 +252,7 @@ class EditorContext:
     toggle_task_at_cursor: Callable[[], None] = field(default=lambda: None)
     format_task: Callable[[], None] = field(default=lambda: None)
     format_table: Callable[[], None] = field(default=lambda: None)
+    format_document: Callable[[], None] = field(default=lambda: None)
     change_lang: Callable[[int, str], None] = field(default=lambda *a: None)
     insert_text: Callable[[str], None] = field(default=lambda *a: None)
 

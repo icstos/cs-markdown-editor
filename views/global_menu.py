@@ -203,6 +203,7 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
         _menu_item("删除行", "Ctrl+Shift+D", disabled=True, c=c),
         _separator(c),
         _menu_item("全选", "Ctrl+A", on_click=lambda e: _do_editor("select_all"), c=c),
+        _menu_item("格式化文档", "Shift+Alt+F", on_click=lambda e: _do_editor("format_document"), c=c),
         _menu_item("查找", "Ctrl+F", on_click=lambda e: ctx.focus_search(), c=c),
         _menu_item("替换", "Ctrl+H", on_click=lambda e: ctx.toggle_replace_bar(), c=c),
         _menu_item("全局查找", "Ctrl+Shift+F", on_click=lambda e: ctx.focus_search(), c=c),

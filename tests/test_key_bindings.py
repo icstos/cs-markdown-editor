@@ -115,6 +115,7 @@ def make_actions(
         format_task=rec("format_task"),
         format_table=rec("format_table"),
         insert_text=rec("insert_text"),
+        format_document=rec("format_document"),
         code_focus_ref=code_ref,
         handle_code_backspace=_code_backspace,
         table_focus_ref=table_ref,

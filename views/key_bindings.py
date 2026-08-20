@@ -568,6 +568,12 @@ class KeyDispatcher:
             if actions is not None:
                 actions.toggle_raw()
             return
+        # Shift+Alt+F 全文 Markdown 格式化：两层均生效（与 toggle_raw 同级，
+        # 代码块/表格聚焦时也格式化整篇文档）。
+        if matches(combo, browse_sc.get("format_markdown", "shift+alt+f")):
+            if actions is not None and getattr(actions, "format_document", None) is not None:
+                actions.format_document()
+            return
 
         # PageUp / PageDown：两层均生效（编辑态光标翻页跟随，浏览态纯滚动）。
         # 置于 layer 判定之前，确保浏览态也能响应。outward_sel 激活时顶部拦截块

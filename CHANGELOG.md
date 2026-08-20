@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+### 2026-08-20 Shift+Alt+F 全文 Markdown 格式化
+
+- 新增 `services/markdown_format.py` 纯函数格式化器，5 条规则：清理行尾多余空格与末尾统一换行；行内代码统一反引号包裹（内容首尾含反引号时升级分隔符并保留空格）；任务列表 `- [ ]`/`- [x]` 规范统一（含引用行内）；引用 `>` 后统一加空格、嵌套 `> >` 合并为连续前缀；中英文混排加半角空格（行内代码/代码块/frontmatter 内容不被改动）
+- 快捷键 `shift+alt+f`（browse/edit 两层，`services/shortcuts.py` DEFAULT_SHORTCUTS + ACTION_REGISTRY）；KeyDispatcher 两层路由 → 编辑器动作 `format_document`（`views/editor/_format.py`：全文格式化 + 推全文撤销快照 + 重建 lines + 退出编辑态，原文模式格式化 raw_draft）；编辑菜单「格式化文档」同步可用
+- 测试：`tests/test_markdown_format.py`（23 用例）+ `tests/test_editor_format.py`（6 用例）
+
 ### 2026-08-20 快捷方式（.lnk）打开的文件：标签栏显示链接文件名
 
 - 打开指向 .md 的 .lnk 时，标签栏与状态栏显示链接文件名（如 `Deepseek-cordis.md.lnk`），而非目标文件名；`file_path` 仍存目标路径——编辑 / 保存 / 去重 / 外部修改监测全部作用于目标文档，仅显示名用链接名（`app/_file_io_ops.py` 打开时记录 `display_name`，`views/tab_bar.py` / `views/status_bar.py` / `app/_tab_helpers.py` 优先展示）

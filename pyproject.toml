@@ -68,6 +68,7 @@ exclude = [
     "*.md",
     "*.log",
 ]
+hide_window_on_start = true
 
 [tool.flet.compile]
 app = true

@@ -32,6 +32,11 @@ save_and_close_pending / close_without_save / cancel_close
 
 import parser
 from app._tab_helpers import group_indices, new_tab, tab_group, tab_is_dirty
+from app.autosave import (
+    AutosaveContext,
+    autosave_all_dirty_sync,
+    autosave_on_switch_enabled,
+)
 
 
 def build_tab_management(ctx):
@@ -92,6 +97,40 @@ def build_tab_management(ctx):
         ctx.set_tabs(new_tabs)
         ctx.tabs_ref.current = new_tabs
 
+    def _current_settings():
+        """读取最新设置（settings_ref 每渲染同步，避免闭包捕获过期快照）。
+
+        用 getattr 防御：单测 Mock（SimpleNamespace）可能未注入 settings_ref。
+        """
+        ref = getattr(ctx, "settings_ref", None)
+        if ref is not None and ref.current is not None:
+            return ref.current
+        return getattr(ctx, "settings", {})
+
+    def _autosave_tabs_sync(indices: list[int] | tuple[int, ...] | range | None = None):
+        """切换/关闭文档前同步自动保存（开启 auto_save + auto_save_on_switch 时）。
+
+        同步写盘后立即更新 dirty 标记：保存成功的标签变为干净状态，
+        request_close 据此直接关闭不弹确认框；未命名标签（无路径）无法
+        自动保存，保持脏状态走既有确认流程。
+        """
+        settings = _current_settings()
+        if not autosave_on_switch_enabled(settings):
+            return
+        try:
+            autosave_all_dirty_sync(
+                AutosaveContext(
+                    settings=settings,
+                    page_ref=ctx.page_ref,
+                    tabs_ref=ctx.tabs_ref,
+                    save_doc_fn=ctx.save_doc,
+                    save_doc_sync_fn=ctx.save_doc_sync,
+                ),
+                indices=indices,
+            )
+        except Exception:
+            pass  # 自动保存失败不阻塞切换/关闭流程
+
     def activate_index(index: int):
         """统一激活入口：设置所属组激活索引、切换焦点侧、递增会话计数。
 
@@ -114,6 +153,10 @@ def build_tab_management(ctx):
             and ctx.active_index_ref.current == index
         ):
             return
+        # 切换文档前自动保存即将离开的文档：全局焦点侧激活标签 + 目标组原激活
+        # 标签（拆分下切换另一组标签时，该组被替换的文档也离开屏幕；共享同一
+        # document 的副本在 autosave_all_dirty_sync 内按对象去重只保存一次）
+        _autosave_tabs_sync([ctx.active_index_ref.current, old_idx])
         # 焦点切换：激活哪组就聚焦哪组（仅拆分时有意义）
         if ctx.split_editor and ctx.active_pane_ref.current != g:
             ctx.set_active_pane(g)
@@ -223,11 +266,19 @@ def build_tab_management(ctx):
         ctx.set_session(ctx.session + 1)
 
     def request_close(targets):
-        """请求关闭一批标签：干净标签直接关，含脏标签则弹统一确认。"""
+        """请求关闭一批标签：干净标签直接关，含脏标签则弹统一确认。
+
+        关闭前先同步自动保存待关闭标签（开启 auto_save + auto_save_on_switch
+        时）：有路径的脏标签写回原文件后变干净 → 直接关闭不弹确认；未命名
+        标签（无路径）无法自动保存，保持脏状态弹确认框由用户决定。
+        """
         ts = ctx.tabs_ref.current
         valid = [i for i in targets if 0 <= i < len(ts)]
         if not valid:
             return
+        # 自动保存待关闭标签（同步写盘，成功后 dirty 立即清除）
+        _autosave_tabs_sync(valid)
+        ts = ctx.tabs_ref.current  # 重新读取（autosave 可能已更新 dirty）
         if any(tab_is_dirty(ts[i]) for i in valid):
             ctx.set_confirm_close(valid)
         else:

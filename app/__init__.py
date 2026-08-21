@@ -385,6 +385,7 @@ def App():
     ctx.open_doc = file_cbs["open_doc"]
     ctx.open_folder = file_cbs["open_folder"]
     ctx.save_doc = file_cbs["save_doc"]
+    ctx.save_doc_sync = file_cbs["save_doc_sync"]
     ctx.force_save_doc = file_cbs["force_save_doc"]
     ctx.save_as_doc = file_cbs["save_as_doc"]
     ctx.export_doc = file_cbs["export_doc"]
@@ -436,6 +437,8 @@ def App():
     backup_cbs = build_backup_controller(ctx)
     ctx.start_backup_loop = backup_cbs["start_backup_loop"]
     ctx.trigger_autosave_now = backup_cbs["trigger_autosave_now"]
+    # 程序退出前同步自动保存所有脏标签到原文件（auto_save 开启时）
+    ctx.autosave_on_exit = backup_cbs["autosave_on_exit"]
     ctx.trigger_backup_now = backup_cbs["trigger_backup_now"]
     ctx.write_exit_sentinel = backup_cbs["write_exit_sentinel"]
     ctx.scan_recoverable = backup_cbs["scan_recoverable"]
@@ -655,10 +658,12 @@ def App():
     # 开关，备份始终运行）。返回 cleanup 取消任务，组件卸载 / 应用退出时调用。
     ft.use_effect(ctx.start_backup_loop, [])
 
-    # 窗口事件钩子：失焦 / 最小化 → 即时触发自动保存；关闭 / 断连 → 写退出哨兵。
+    # 窗口事件钩子：失焦 / 最小化 → 即时触发自动保存；关闭 / 断连 → 先同步
+    # 自动保存所有脏标签到原文件（autosave_on_exit），再写退出哨兵。
     # page.window.on_event 在桌面端捕获窗口状态变化（Flet 0.86+ API）；
     # on_disconnect 捕获 websocket 断连（含异常崩溃场景）。
-    # 两者共同确保崩溃前最后一次状态被备份。
+    # 两者共同确保崩溃/退出前最后一次状态既落盘到原文件（自动保存开启时）
+    # 也写入备份目录（哨兵 + 全量备份，未命名文档由恢复面板兜底）。
     def _bind_window_hooks():
         page = page_ref.current
         if page is None:
@@ -673,10 +678,12 @@ def App():
             if etype_str in ("blur", "minimize", "hide"):
                 ctx.trigger_autosave_now()
             elif etype_str == "close":
+                ctx.autosave_on_exit()
                 ctx.write_exit_sentinel()
 
         def _on_disconnect(_e):
-            # websocket 断连（含崩溃）→ 尽力写入退出哨兵
+            # websocket 断连（含崩溃）→ 尽力同步自动保存 + 写入退出哨兵
+            ctx.autosave_on_exit()
             ctx.write_exit_sentinel()
 
         # Flet 0.86+：page.window.on_event 替代旧的 page.on_window_event

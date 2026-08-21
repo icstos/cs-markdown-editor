@@ -91,6 +91,7 @@ def MarkdownEditor(
     shortcut_mgr=None,
     show_toolbar: bool | None = None,
     on_editor_focus: Callable[[], None] | None = None,
+    on_editor_blur: Callable[[], None] | None = None,
     keyboard_autofocus: bool = True,
     # diff 对比模式:diff_marks 映射行号→标记,diff_gaps 映射行号→间隙高度列表
     diff_marks: dict[int, str] | None = None,
@@ -268,6 +269,7 @@ def MarkdownEditor(
         shortcut_mgr=shortcut_mgr,
         show_toolbar=show_toolbar,
         on_editor_focus=on_editor_focus,
+        on_editor_blur=on_editor_blur,
         keyboard_autofocus=keyboard_autofocus,
         diff_marks=diff_marks,
         diff_gaps=diff_gaps,

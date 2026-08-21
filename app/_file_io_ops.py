@@ -497,6 +497,95 @@ def build_file_io_ops(ctx):
         set_status_message("已保存", "success")
         return True
 
+    def save_doc_sync(tab_index: int | None = None, force: bool = True) -> bool:
+        """同步静默保存指定标签（自动保存事件：切换/关闭/退出前调用）。
+
+        与 save_doc 的区别：
+        - 同步执行（阻塞写盘完成后返回），调用方无需 await 即可读取更新后的
+          dirty / mtime，适合事件回调中需要「保存完成后再继续」的场景；
+        - 全程无对话框：未命名标签（无路径）直接返回 False（不弹另存对话框），
+          外部修改检测跳过（force=True 语义，静默覆盖）；
+        - 写入失败时不弹「强制保存」对话框，仅兜底备份到恢复目录并返回 False。
+
+        对比标签分别保存两侧脏文档；普通标签走单文档保存。返回是否成功
+        （未命名标签 / 写入失败返回 False，非脏标签返回 True）。
+        """
+        if tab_index is None:
+            tab_index = ctx.active_index_ref.current
+        ts = ctx.tabs_ref.current
+        if not (0 <= tab_index < len(ts)):
+            return False
+        tab = ts[tab_index]
+
+        # ---- 对比标签：分别保存左右两侧脏文档 ----
+        if tab.get("type") == "diff":
+            ok = True
+            for side in ("left", "right"):
+                doc = tab.get(f"{side}_doc")
+                p = tab.get(f"{side}_path")
+                if not (tab.get(f"{side}_dirty", False) and p and doc is not None):
+                    continue
+                text = parser.serialize(doc)
+                _backup_before_overwrite(p, text, tab)
+                try:
+                    write_text_atomic(p, text)
+                    doc.dirty = False
+                except Exception:
+                    # 写入失败兜底：备份到恢复目录，不弹对话框（自动保存静默）
+                    write_backup(ctx.settings, tab, text)
+                    ok = False
+            if not ok:
+                return False
+            latest = list(ctx.tabs_ref.current)
+            latest[tab_index] = {
+                **latest[tab_index],
+                "left_dirty": False,
+                "right_dirty": False,
+            }
+            ctx.set_tabs(latest)
+            ctx.tabs_ref.current = latest
+            return True
+
+        # ---- 普通编辑标签：单文档保存 ----
+        doc = tab.get("document")
+        path = tab.get("file_path")
+        if doc is None or not path:
+            return False  # 未命名文档无法自动保存
+        if not tab.get("dirty"):
+            return True  # 已干净，无需写盘
+        text = parser.serialize(doc)
+        # 覆盖前备份：原文件存在时生成历史副本
+        _backup_before_overwrite(path, text, tab)
+        try:
+            write_text_atomic(path, text)
+        except Exception as e:
+            # 写入失败兜底：备份到恢复目录，静默失败（自动保存不打断流程）
+            write_backup(ctx.settings, tab, text)
+            set_status_message(f"自动保存失败：{e}", "error")
+            return False
+        doc.file_path = path
+        doc.dirty = False
+        # 记录保存后的 mtime，用于后续外部修改检测
+        try:
+            tab["_last_known_mtime"] = os.path.getmtime(path)
+        except OSError:
+            pass
+        # 共享同一 document 的其他标签（同文件另一组副本）同步 dirty=False / mtime
+        latest = list(ctx.tabs_ref.current)
+        for j in range(len(latest)):
+            if (j == tab_index
+                    or (latest[j].get("document") is doc
+                        and latest[j].get("type") != "diff")):
+                latest[j] = {
+                    **latest[j],
+                    "file_path": path,
+                    "dirty": False,
+                    "_last_known_mtime": tab.get("_last_known_mtime"),
+                }
+        ctx.set_tabs(latest)
+        ctx.tabs_ref.current = latest
+        return True
+
     async def _save_one_side_atomic(
         path: str, doc, tab_data: dict, side: str, tab_index: int
     ) -> bool:
@@ -761,6 +850,7 @@ def build_file_io_ops(ctx):
         "open_doc": open_doc,
         "open_folder": open_folder,
         "save_doc": save_doc,
+        "save_doc_sync": save_doc_sync,
         "force_save_doc": force_save_doc,
         "save_as_doc": save_as_doc,
         "export_doc": export_doc,

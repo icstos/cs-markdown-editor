@@ -278,6 +278,8 @@ def _behavior_panel(
                 ),
                 ft.Switch(label="窗口失焦时立即保存", value=settings.get("auto_save_on_blur", True),
                           on_change=lambda e: on_update("auto_save_on_blur", e.control.value)),
+                ft.Switch(label="切换/关闭文档时立即保存", value=settings.get("auto_save_on_switch", True),
+                          on_change=lambda e: on_update("auto_save_on_switch", e.control.value)),
 
                 ft.Container(height=Spacing.XL),
                 ft.Divider(color=c.border),

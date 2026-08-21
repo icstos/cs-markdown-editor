@@ -147,6 +147,8 @@ class EditorContext:
     math_field_ref: ft.Ref  # ft.Control | None
     math_edit_snapshot: ft.Ref  # EditorSnapshot | None
     math_edit_changed: ft.Ref  # bool
+    # 光标离开编辑器（cursor TextField 真实失焦）回调：触发即时自动保存等
+    on_editor_blur: Callable[[], None] | None = None
     # 多光标：ref 镜像（IME 期间同步读取），alt 键状态 ref
     secondary_cursors_ref: ft.Ref = field(default=None)
     alt_pressed_ref: ft.Ref = field(default=None)

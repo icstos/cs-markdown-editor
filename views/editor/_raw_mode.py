@@ -59,6 +59,9 @@ def build_raw_mode(ctx):
             ctx.suppress_blur.current = False
             return
         # 不主动退出：保留光标位置（Typora 式，点击别处由 on_tap 处理）
+        # 真实失焦（焦点移出编辑器）→ 通知父组件触发即时自动保存
+        if ctx.on_editor_blur is not None:
+            ctx.on_editor_blur()
 
     def on_cursor_focus():
         """cursor TextField 聚焦：通知父组件当前编辑器获得焦点（拆分视口跟踪 active pane）。"""

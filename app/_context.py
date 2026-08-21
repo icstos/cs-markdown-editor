@@ -157,6 +157,8 @@ class AppContext:
     open_doc: Callable = field(default=lambda: None)
     open_folder: Callable = field(default=lambda: None)
     save_doc: Callable = field(default=lambda *a: None)
+    # 同步静默保存（自动保存事件：切换/关闭/退出前调用，无对话框）
+    save_doc_sync: Callable = field(default=lambda *a: False)
     save_as_doc: Callable = field(default=lambda *a: None)
     export_doc: Callable = field(default=lambda: None)
     # 状态栏轻量消息推送：(msg, kind) -> None，kind ∈ info/success/warn/error

@@ -33,14 +33,20 @@ def _make_ctx(
     active_index_right: int = 0,
     session_left: int = 0,
     session_right: int = 0,
+    settings: dict | None = None,
+    save_doc_sync: MagicMock | None = None,
 ) -> SimpleNamespace:
     """构造最小 mock ctx，含 tab_management 控制器所需字段（含拆分组状态）。
 
     单组场景（split_editor=False）：active_index_left 缺省同步 active_index。
     拆分场景：调用方显式传入两侧组激活索引与焦点视口。
+    settings 缺省时自动保存相关开关默认关闭（不干扰既有用例）；
+    save_doc_sync 缺省为成功 mock（返回 True），供切换/关闭自动保存用例断言。
     """
     if active_index_left is None:
         active_index_left = active_index
+    settings = settings if settings is not None else {"auto_save": False}
+    save_doc_sync = save_doc_sync or MagicMock(return_value=True)
     return SimpleNamespace(
         tabs=list(tabs),
         active_index=active_index,
@@ -52,6 +58,9 @@ def _make_ctx(
         active_index_right=active_index_right,
         session_left=session_left,
         session_right=session_right,
+        settings=settings,
+        save_doc_sync=save_doc_sync,
+        page_ref=SimpleNamespace(current=None),
         tabs_ref=SimpleNamespace(current=list(tabs)),
         active_index_ref=SimpleNamespace(current=active_index),
         active_pane_ref=SimpleNamespace(current=active_pane),
@@ -461,3 +470,93 @@ class TestSplitGroups:
         ctx.set_session_left.assert_not_called()
         cbs["bump_tab_session"](0)  # 左组标签
         ctx.set_session_left.assert_called_once_with(1)
+
+
+# ============ 切换/关闭前同步自动保存（auto_save_on_switch）============
+
+class TestAutosaveOnSwitch:
+    """切换文档 / 关闭文档前的同步自动保存行为。"""
+
+    def _saving_ctx(self, tabs, active_index, **kw):
+        """构造开启 auto_save + auto_save_on_switch 的 ctx。
+
+        save_doc_sync 的 side_effect 模拟真实落盘效果：清除目标标签 dirty。
+        """
+        ctx = _make_ctx(
+            tabs,
+            active_index,
+            settings={"auto_save": True, "auto_save_on_switch": True},
+            **kw,
+        )
+
+        def _save_sync(i, force=False):
+            ts = ctx.tabs_ref.current
+            if 0 <= i < len(ts):
+                ts[i] = {**ts[i], "dirty": False}
+            return True
+
+        ctx.save_doc_sync = MagicMock(side_effect=_save_sync)
+        return ctx
+
+    def test_close_dirty_path_tab_autosaves_and_closes_directly(self):
+        """关闭脏但有路径的标签：先同步自动保存，保存后直接关闭不弹确认。"""
+        ctx = self._saving_ctx(
+            [_make_tab("/a.md", dirty=True), _make_tab("b", dirty=False)],
+            active_index=0,
+        )
+        cbs = build_tab_management(ctx)
+        cbs["request_close"]([0])
+        ctx.save_doc_sync.assert_called_once_with(0, force=True)
+        ctx.set_confirm_close.assert_not_called()
+        ctx.set_tabs.assert_called_once()  # 直接关闭
+
+    def test_close_dirty_untitled_tab_still_confirms(self):
+        """关闭脏但无路径（未命名）的标签：无法自动保存，仍弹确认。"""
+        ctx = self._saving_ctx([_make_tab(None, dirty=True)], active_index=0)
+        cbs = build_tab_management(ctx)
+        cbs["request_close"]([0])
+        ctx.save_doc_sync.assert_not_called()  # 无路径不触发
+        ctx.set_confirm_close.assert_called_once_with([0])
+        ctx.set_tabs.assert_not_called()
+
+    def test_close_autosave_disabled_keeps_confirm(self):
+        """auto_save_on_switch 关闭 → 不自动保存，脏标签照旧弹确认。"""
+        ctx = _make_ctx(
+            [_make_tab("/a.md", dirty=True)],
+            active_index=0,
+            settings={"auto_save": True, "auto_save_on_switch": False},
+        )
+        cbs = build_tab_management(ctx)
+        cbs["request_close"]([0])
+        ctx.save_doc_sync.assert_not_called()
+        ctx.set_confirm_close.assert_called_once_with([0])
+
+    def test_switch_saves_leaving_tab(self):
+        """切换文档：先同步自动保存即将离开的当前标签。"""
+        ctx = self._saving_ctx(
+            [_make_tab("/a.md", dirty=True), _make_tab("/b.md", dirty=False)],
+            active_index=0,
+        )
+        cbs = build_tab_management(ctx)
+        cbs["activate_index"](1)
+        ctx.save_doc_sync.assert_called_once_with(0, force=True)
+        # 切换本身正常执行
+        ctx.set_active_index.assert_called_once_with(1)
+
+    def test_switch_autosave_disabled_no_save(self):
+        """切换文档但 auto_save 主开关关闭 → 不自动保存。"""
+        ctx = _make_ctx(
+            [_make_tab("/a.md", dirty=True), _make_tab("/b.md", dirty=False)],
+            active_index=0,
+            settings={"auto_save": False, "auto_save_on_switch": True},
+        )
+        cbs = build_tab_management(ctx)
+        cbs["activate_index"](1)
+        ctx.save_doc_sync.assert_not_called()
+
+    def test_switch_same_tab_no_save(self):
+        """重复激活同一标签（no-op）→ 不触发自动保存。"""
+        ctx = self._saving_ctx([_make_tab("/a.md", dirty=True)], active_index=0)
+        cbs = build_tab_management(ctx)
+        cbs["activate_index"](0)
+        ctx.save_doc_sync.assert_not_called()

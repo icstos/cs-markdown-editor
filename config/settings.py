@@ -61,7 +61,8 @@ DEFAULT_SETTINGS: Settings = {
     # ============ 自动保存（Typora 风格间隔触发）============
     # auto_save=False 时全部失效；interval=5 表示每 5 分钟对有路径的脏文档自动写盘
     "auto_save_interval": 5,        # 自动保存间隔（分钟），范围 1-30
-    "auto_save_on_blur": True,      # 窗口失焦/最小化时立即触发一次自动保存
+    "auto_save_on_blur": True,      # 窗口失焦/最小化或光标离开编辑器时立即触发一次自动保存
+    "auto_save_on_switch": True,    # 切换/关闭文档时立即保存（需 auto_save 总开关开启）
     # ============ 自动备份与崩溃恢复（独立于自动保存，始终后台运行）============
     "backup_enabled": True,         # 总开关：关闭后不再生成备份，已存在备份仍可恢复
     "backup_interval": 10,          # 定时备份间隔（分钟），范围 5-60

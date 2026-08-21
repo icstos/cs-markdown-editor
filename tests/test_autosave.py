@@ -16,7 +16,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from app.autosave import AutosaveContext, autosave_all_dirty, autosave_enabled_for, schedule_autosave
+from app.autosave import (
+    AutosaveContext,
+    autosave_all_dirty,
+    autosave_all_dirty_sync,
+    autosave_enabled_for,
+    autosave_on_switch_enabled,
+    schedule_autosave,
+)
 
 
 # ---------------- 辅助工厂 ----------------
@@ -238,6 +245,143 @@ def test_autosave_all_dirty_no_status_fn_ok():
     # 不应抛异常
     result = autosave_all_dirty(ctx)
     assert result == 1
+
+
+def _make_ctx_sync(
+    settings=None,
+    tabs=None,
+    save_doc_sync_fn=None,
+    indices=None,
+) -> tuple[MagicMock, AutosaveContext]:
+    """创建支持同步保存的 AutosaveContext（autosave_all_dirty_sync 专用）。"""
+    settings = settings if settings is not None else {"auto_save": True}
+    tabs_list = tabs if tabs is not None else [_editor_tab("/tmp/note.md", dirty=True)]
+    tabs_ref = MagicMock()
+    tabs_ref.current = tabs_list
+    save_doc_sync_fn = save_doc_sync_fn or MagicMock(return_value=True)
+    ctx = AutosaveContext(
+        settings=settings,
+        page_ref=MagicMock(),
+        tabs_ref=tabs_ref,
+        save_doc_fn=MagicMock(),
+        save_doc_sync_fn=save_doc_sync_fn,
+    )
+    return save_doc_sync_fn, ctx
+
+
+# ---------------- autosave_on_switch_enabled ----------------
+def test_switch_enabled_all_on():
+    """auto_save + auto_save_on_switch 均开启 → True。"""
+    assert autosave_on_switch_enabled(
+        {"auto_save": True, "auto_save_on_switch": True}
+    ) is True
+
+
+def test_switch_enabled_auto_save_off():
+    """auto_save 关闭 → False（主开关优先）。"""
+    assert autosave_on_switch_enabled(
+        {"auto_save": False, "auto_save_on_switch": True}
+    ) is False
+
+
+def test_switch_enabled_switch_off():
+    """auto_save_on_switch 关闭 → False。"""
+    assert autosave_on_switch_enabled(
+        {"auto_save": True, "auto_save_on_switch": False}
+    ) is False
+
+
+def test_switch_enabled_defaults_true():
+    """缺省 auto_save_on_switch → 视为开启（兼容旧 settings.json）。"""
+    assert autosave_on_switch_enabled({"auto_save": True}) is True
+
+
+# ---------------- autosave_all_dirty_sync：前置守卫 ----------------
+def test_sync_auto_save_off():
+    """auto_save=False → 返回 0，不调用保存回调。"""
+    fn, ctx = _make_ctx_sync(settings={"auto_save": False})
+    assert autosave_all_dirty_sync(ctx) == 0
+    fn.assert_not_called()
+
+
+def test_sync_no_callback_injected():
+    """未注入 save_doc_sync_fn → 返回 0，不抛异常。"""
+    ctx = AutosaveContext(
+        settings={"auto_save": True},
+        page_ref=MagicMock(),
+        tabs_ref=MagicMock(),
+        save_doc_fn=MagicMock(),
+    )
+    tabs_ref = ctx.tabs_ref
+    tabs_ref.current = [_editor_tab("/x.md", dirty=True)]
+    assert autosave_all_dirty_sync(ctx) == 0
+
+
+def test_sync_force_skips_master_switch():
+    """force=True 跳过 auto_save 开关检查（程序退出场景）。"""
+    fn, ctx = _make_ctx_sync(settings={"auto_save": False})
+    assert autosave_all_dirty_sync(ctx, force=True) == 1
+    fn.assert_called_once_with(0, force=True)
+
+
+# ---------------- autosave_all_dirty_sync：同步保存行为 ----------------
+def test_sync_saves_dirty_path_tabs():
+    """脏且有路径 → 同步调用保存回调，返回计数。"""
+    fn, ctx = _make_ctx_sync(
+        tabs=[
+            _editor_tab("/a.md", dirty=True),
+            _editor_tab("/b.md", dirty=True),
+            _editor_tab("/c.md", dirty=False),
+            _editor_tab(None, dirty=True),
+        ]
+    )
+    assert autosave_all_dirty_sync(ctx) == 2
+    assert fn.call_count == 2
+    assert [c.args[0] for c in fn.call_args_list] == [0, 1]
+
+
+def test_sync_indices_filter():
+    """indices 限制扫描范围（关闭/切换时只保存涉及的标签）。"""
+    fn, ctx = _make_ctx_sync(
+        tabs=[
+            _editor_tab("/a.md", dirty=True),
+            _editor_tab("/b.md", dirty=True),
+        ]
+    )
+    assert autosave_all_dirty_sync(ctx, indices=[1]) == 1
+    fn.assert_called_once_with(1, force=True)
+
+
+def test_sync_out_of_range_indices_ignored():
+    """越界 indices 安全忽略。"""
+    fn, ctx = _make_ctx_sync(tabs=[_editor_tab("/a.md", dirty=True)])
+    assert autosave_all_dirty_sync(ctx, indices=[5]) == 0
+    fn.assert_not_called()
+
+
+def test_sync_diff_tab_saved():
+    """对比标签脏且有路径 → 同步保存。"""
+    fn, ctx = _make_ctx_sync(
+        tabs=[_diff_tab(left_path="/a.md", right_path="/b.md")]
+    )
+    assert autosave_all_dirty_sync(ctx) == 1
+    fn.assert_called_once_with(0, force=True)
+
+
+def test_sync_save_failure_continues():
+    """单个标签保存失败不影响其余标签。"""
+    def _flaky(i, force=False):
+        return False if i == 0 else True
+
+    fn, ctx = _make_ctx_sync(
+        tabs=[
+            _editor_tab("/a.md", dirty=True),
+            _editor_tab("/b.md", dirty=True),
+        ],
+        save_doc_sync_fn=MagicMock(side_effect=_flaky),
+    )
+    assert autosave_all_dirty_sync(ctx) == 1
+    assert fn.call_count == 2
 
 
 if __name__ == "__main__":

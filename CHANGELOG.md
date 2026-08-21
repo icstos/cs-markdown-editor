@@ -4,6 +4,16 @@
 
 ## [未发布]
 
+### 2026-08-21 增强自动保存：关闭/切换/失焦即时触发
+
+- **关闭程序时**：窗口 close 事件与 websocket 断连钩子在写退出哨兵前，先同步把所有脏且有路径的标签写回原文件（`app/_backup_controller.py` `autosave_on_exit`，受 `auto_save` 主开关控制；未命名文档仍由备份 + 启动恢复面板兑底）
+- **关闭文档时**：`request_close` 先同步自动保存待关闭标签——有路径的脏标签保存后变干净直接关闭、不再弹确认框；未命名标签无法自动保存，保持脏状态走既有确认流程（`app/_tab_management.py`）
+- **切换文档时**：`activate_index` 在切换前同步自动保存即将离开的文档（全局焦点侧 + 拆分下目标组被替换的标签，共享 document 去重只存一次）
+- **光标从文档移出时**：新增 `MarkdownEditor.on_editor_blur` 回调，cursor TextField 真实失焦（焦点移到侧边栏 / 菜单 / 另一窗格 / 另一窗口）时触发即时自动保存；编辑器内部点击（`suppress_blur`）不触发（`views/editor/_raw_mode.py` / `app/_render.py`）
+- **新设置** `auto_save_on_switch`（默认开启）：切换 / 关闭文档时保存的总闸，需 `auto_save` 主开关开启；设置面板「切换/关闭文档时立即保存」开关可调（`config/settings.py` / `views/settings_dialog.py`）
+- **同步保存原语**：`save_doc_sync`（`app/_file_io_ops.py`）同步静默写盘（原子写入 + 覆盖前备份 + 失败兑底，无对话框）；`autosave_all_dirty_sync`（`app/autosave.py`）支持 indices 范围扫描，供事件回调阻塞落盘后继续流程
+- 测试：`tests/test_autosave.py`（同步保存 / 开关门控 / indices 过滤）+ `tests/test_tab_management.py`（关闭直关 / 未命名仍确认 / 切换保存 / 开关门控）
+
 ### 2026-08-20 Shift+Alt+F 全文 Markdown 格式化
 
 - 新增 `services/markdown_format.py` 纯函数格式化器，5 条规则：清理行尾多余空格与末尾统一换行；行内代码统一反引号包裹（内容首尾含反引号时升级分隔符并保留空格）；任务列表 `- [ ]`/`- [x]` 规范统一（含引用行内）；引用 `>` 后统一加空格、嵌套 `> >` 合并为连续前缀；中英文混排加半角空格（行内代码/代码块/frontmatter 内容不被改动）

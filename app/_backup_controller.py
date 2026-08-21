@@ -44,7 +44,7 @@ from typing import Any
 
 import parser
 from app._tab_helpers import doc_has_text
-from app.autosave import AutosaveContext, autosave_all_dirty
+from app.autosave import AutosaveContext, autosave_all_dirty, autosave_all_dirty_sync
 from services.backup import (
     cleanup_old_backups,
     delete_backup as _delete_backup_file,
@@ -88,6 +88,7 @@ def build_backup_controller(ctx):
             tabs_ref=ctx.tabs_ref,
             save_doc_fn=ctx.save_doc,
             set_status_fn=ctx.set_status_message,
+            save_doc_sync_fn=ctx.save_doc_sync,
         )
 
     def _backup_all_tabs() -> int:
@@ -467,7 +468,7 @@ def build_backup_controller(ctx):
         return _cleanup
 
     def trigger_autosave_now():
-        """即时触发自动保存（窗口失焦 / 最小化时调用）。
+        """即时触发自动保存（窗口失焦 / 最小化 / 光标离开编辑器时调用）。
 
         仅在 auto_save_on_blur=True 时实际执行。扫描所有脏标签写回原文件。
         独立于 auto_save 开关：即使关闭定时自动保存，窗口失焦时仍可保存。
@@ -475,6 +476,25 @@ def build_backup_controller(ctx):
         if not ctx.settings.get("auto_save_on_blur", True):
             return
         autosave_all_dirty(_make_autosave_ctx(), force=True)
+
+    def autosave_on_exit():
+        """程序退出前同步自动保存：所有脏且有路径的标签立即写回原文件。
+
+        在窗口 close 事件 / websocket 断连钩子中调用（同步阻塞执行，确保
+        退出前落盘，事件循环随后关闭不再有机会执行异步任务）。
+
+        - 受 auto_save 主开关控制：关闭定时自动保存时不在退出前写原文件
+          （用户显式关闭自动写盘，未保存内容仍由 write_exit_sentinel 的
+          全量备份兜底，下次启动可恢复）
+        - 未命名文档（无路径）跳过：无法自动写盘，交给备份系统兜底
+        - 全程静默：不弹对话框 / 不推状态消息，任何异常吞掉不阻塞退出
+        """
+        if not ctx.settings.get("auto_save", False):
+            return
+        try:
+            autosave_all_dirty_sync(_make_autosave_ctx(), force=True)
+        except Exception:
+            pass
 
     def trigger_backup_now():
         """即时触发全量备份（退出 / 关闭前 / 崩溃钩子调用）。
@@ -572,6 +592,7 @@ def build_backup_controller(ctx):
     return {
         "start_backup_loop": start_backup_loop,
         "trigger_autosave_now": trigger_autosave_now,
+        "autosave_on_exit": autosave_on_exit,
         "trigger_backup_now": trigger_backup_now,
         "write_exit_sentinel": write_exit_sentinel,
         "scan_recoverable": scan_recoverable,

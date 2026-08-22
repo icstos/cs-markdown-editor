@@ -10,6 +10,8 @@
 
 - **换行后焦点/可见性兜底**：客户端在下一帧才应用 Stack children move + left/top 属性 更新，若移除焦点发生在重建之后，立即 focus() 已在其之前执行（no-op）→ 焦点丢失、 无法继续编辑。_refocus_on_wrap_change 延迟 0.1s 再聚焦一次，并调用 ensure_visible 确保光标所在视觉行可见（换行使行变高，视口底部输入时光标可能被推出可视区）（views/editor/_cursor.py）
 
+- **换行后文字被选中、继续输入覆盖选区**：换行触发（1→2 视觉行）时 Stack children 数量 变化，diff 对 cursor overlay 产生 move 操作 → Flutter 元素重挂载 → 焦点/IME 组合态被打断， Windows IME 提交并选中刚输入的文本 → 继续输入覆盖选区。① _maybe_stack_multi 把视觉行 Text 放入内层 Stack，overlay 作为外层 Stack 独立子项（index 稳定）——换行时外层 children 不变，不产生 move，overlay 不移动/不重挂载（views/rendered_line.py）；② _refocus_on_wrap_change 递增 wrap_sel_seq → 渲染层给 cursor TextField 传 collapsed 选区（caret 在 value 末尾）， 清掉 IME 提交并选中的文本；use_effect 随即复位（仅一次，平时不携带 selection prop， 不干扰 IME 组合态）（views/editor/_cursor.py / line_view.py / cursor_layer.py）
+
 - **继续编辑整行丢失（IME 翻倍误判）**：_fix_ime_doubling 非 ASCII 分支把合法连续输入误判为 IME 翻倍折叠——逐字累积（"你你你你" ← "你你你"）与上屏后行内容形如 X+X（"你"*14 ← "你"*13+"i"）时吞掉已输入内容，且折叠值回推客户端触发 on_change 级联清空整行。新增与 ASCII 分支同型的"逐字累积"守卫（len(value)==len(last_value)+1 且 startswith），仅全 ASCII composing 转上屏或新会话空 last_value 时才折叠（views/_editor_helpers.py）
 
 - 测试：tests/test_cursor_wrap_refocus.py（10 用例：换行触发重聚焦且会话保持 / 文档不丢 / 连续输入不误折叠 / IME 上屏不误折叠 / Backspace、Delete 收拢）+ tests/test_soft_wrap.py（_value_linear_width 5 用例）+ tests/test_editor_helpers.py（3 用例）

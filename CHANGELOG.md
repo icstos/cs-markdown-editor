@@ -8,6 +8,8 @@
 
 - **换行瞬间 IME 组合态保持（五笔/拼音不被上屏）**：输入使行视觉行数/光标视觉行变化（换行/收拢）时，会话值跨视觉行——单行 TextField 的 value 从 left 线性布局，旧代码 caret 渲染在距文字约一个 value 宽度之外且被字段裁切 → 光标"丢失"、IME 候选框 弹错位置。_cursor_overlay 改用 _value_linear_width（views/pixel_layout.py，与渲染层 同源 offsets_x 跨视觉行累加）定位 left = caret_x - textwidth，caret 精确落回光标像素 位置；handle_char_input / backspace_core / delete_core 编辑前后对比视觉行签名（_vline_signature），变化时仅递增 focus_seq 重聚焦——不重建 TextField、不结束会话， 正在拼写的编码不被打断、不上屏，可继续选择候选字（views/editor/_cursor.py）
 
+- **换行后焦点/可见性兜底**：客户端在下一帧才应用 Stack children move + left/top 属性 更新，若移除焦点发生在重建之后，立即 focus() 已在其之前执行（no-op）→ 焦点丢失、 无法继续编辑。_refocus_on_wrap_change 延迟 0.1s 再聚焦一次，并调用 ensure_visible 确保光标所在视觉行可见（换行使行变高，视口底部输入时光标可能被推出可视区）（views/editor/_cursor.py）
+
 - **继续编辑整行丢失（IME 翻倍误判）**：_fix_ime_doubling 非 ASCII 分支把合法连续输入误判为 IME 翻倍折叠——逐字累积（"你你你你" ← "你你你"）与上屏后行内容形如 X+X（"你"*14 ← "你"*13+"i"）时吞掉已输入内容，且折叠值回推客户端触发 on_change 级联清空整行。新增与 ASCII 分支同型的"逐字累积"守卫（len(value)==len(last_value)+1 且 startswith），仅全 ASCII composing 转上屏或新会话空 last_value 时才折叠（views/_editor_helpers.py）
 
 - 测试：tests/test_cursor_wrap_refocus.py（10 用例：换行触发重聚焦且会话保持 / 文档不丢 / 连续输入不误折叠 / IME 上屏不误折叠 / Backspace、Delete 收拢）+ tests/test_soft_wrap.py（_value_linear_width 5 用例）+ tests/test_editor_helpers.py（3 用例）

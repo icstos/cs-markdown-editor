@@ -896,13 +896,19 @@ def _wrap_draggable(
 
 def _wrap_drop_target(
     content: ft.Control,
-    dst_dir: str,
+    dst_dir: str | None,
     drag_registry: dict,
     on_drop: Callable[[str, str], None],
     set_highlight: Callable[[str | None], None],
     key: str | None = None,
 ) -> ft.DragTarget:
     """将文件夹行（或根区域）包装为放置目标。
+
+    dst_dir=None 时为「拒绝型」目标（文件行占位）：_drop_allowed 恒 False，
+    仅用于挡在根目录目标前——Flutter 拖拽命中取「最深同组目标」，若文件行
+    无 DragTarget，命中会穿透到外层根目录 DragTarget，松手即把文件移入
+    工作区根目录（拖拽抖动误移的根源）；占位目标把穿透挡在行内，
+    悬停不高亮、松手静默忽略。
 
     高亮采用状态驱动：Flet 0.86 组件 render 中创建的控件构建后被冻结，
     禁止命令式 row.update()（抛 RuntimeError），故 on_will_accept/on_leave
@@ -1281,16 +1287,25 @@ def _render_files_panel(
                 )
                 if can_drag and abspath:
                     # 拖拽模式：行包 Draggable（原位半透明占位 + 指针跟随预览），
+                    # 再包「拒绝型」DragTarget（dst_dir=None：文件行不是合法放置
+                    # 目标）——占位目标把命中挡在行内，防止穿透到外层根目录
+                    # DragTarget 导致松手误移入工作区根目录（见 _wrap_drop_target）；
                     # 最外层再包「竞技场占位 GD」——右键行时以更深的识别器赢得
                     # 手势竞技场，阻止外层空白菜单 GD 误触发（见 _wrap_row_gesture）
                     rows.append(
                         _wrap_row_gesture(
-                            _wrap_draggable(
-                                inner,
-                                ft.Container(opacity=0.35, content=_build_file_row()),
-                                _drag_feedback(name, icon_name, icon_color, c),
+                            _wrap_drop_target(
+                                _wrap_draggable(
+                                    inner,
+                                    ft.Container(opacity=0.35, content=_build_file_row()),
+                                    _drag_feedback(name, icon_name, icon_color, c),
+                                    drag_registry,
+                                    abspath,
+                                ),
+                                None,
                                 drag_registry,
-                                abspath,
+                                on_file_drop,
+                                _set_hl,
                             ),
                             key=f"tree-{abspath}",
                         )

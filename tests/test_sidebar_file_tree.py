@@ -32,10 +32,12 @@ from services import shortcut
 from services.file_ops import open_external
 from views.sidebar import (
     _collect_md_paths,
+    _drop_allowed,
     _file_icon,
     _file_row_icon_data,
     _flatten_tree,
     _scan_files,
+    _wrap_drop_target,
 )
 
 # ---- 辅助 ----
@@ -483,3 +485,78 @@ def test_open_external_file_not_found():
     """文件不存在抛 FileNotFoundError。"""
     with pytest.raises(FileNotFoundError):
         open_external("/nonexistent/path/file.xyz")
+
+
+# ---- 拖拽放置目标（文件树拖拽移动）----
+
+
+def test_drop_allowed_none_dst_rejects():
+    """dst_dir=None（文件行拒绝型占位目标）恒拒绝，防命中穿透到根目录。"""
+    assert not _drop_allowed("/a/b.md", None)
+    assert not _drop_allowed("/a/b.md", "")
+    assert not _drop_allowed(None, "/a")
+
+
+def test_drop_allowed_same_dir_rejects(tmp_path):
+    """源已在目标文件夹中：拒绝（防止原地拖拽造成抖动）。"""
+    src = tmp_path / "sub" / "b.md"
+    src.parent.mkdir()
+    src.write_text("x")
+    assert not _drop_allowed(str(src), str(src.parent))
+
+
+def test_drop_allowed_self_and_descendant_reject(tmp_path):
+    """文件夹不能移入自身或子孙；反向（独立文件夹入另一文件夹）合法。"""
+    a = tmp_path / "a"
+    b = a / "b"
+    c = tmp_path / "c"
+    b.mkdir(parents=True)
+    c.mkdir()
+    assert not _drop_allowed(str(a), str(a))
+    assert not _drop_allowed(str(a), str(b))
+    assert _drop_allowed(str(c), str(a))
+
+
+def test_wrap_drop_target_none_never_invokes_drop(tmp_path):
+    """文件行拒绝型目标：悬停清高亮、松手不触发移动（不误移入根目录）。"""
+    src_path = tmp_path / "b.md"
+    src_path.write_text("x")
+    registry: dict = {}
+    src = ft.Draggable(group="filetree", content=ft.Container())
+    registry[id(src)] = str(src_path)
+    drops: list = []
+    hl: list = []
+    dt = _wrap_drop_target(
+        ft.Container(), None, registry,
+        lambda s, d: drops.append((s, d)), hl.append,
+    )
+    e = types.SimpleNamespace(src=src)
+    dt.on_will_accept(e)
+    assert hl == [None]  # 悬停不高亮
+    dt.on_accept(e)
+    assert drops == []  # 松手不移动
+    assert hl == [None, None]  # accept 先清高亮
+
+
+def test_wrap_drop_target_folder_accepts(tmp_path):
+    """文件夹行目标：合法时悬停高亮目标、松手触发移动。"""
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    src_path = tmp_path / "b.md"
+    src_path.write_text("x")
+    registry: dict = {}
+    src = ft.Draggable(group="filetree", content=ft.Container())
+    registry[id(src)] = str(src_path)
+    drops: list = []
+    hl: list = []
+    dt = _wrap_drop_target(
+        ft.Container(), str(dst), registry,
+        lambda s, d: drops.append((s, d)), hl.append,
+    )
+    e = types.SimpleNamespace(src=src)
+    dt.on_will_accept(e)
+    assert hl == [str(dst)]  # 悬停高亮目标文件夹
+    dt.on_accept(e)
+    assert drops == [(str(src_path), str(dst))]  # 松手移动
+    assert hl == [str(dst), None]  # 移动后清高亮
+

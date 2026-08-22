@@ -4,6 +4,13 @@
 
 ## [未发布]
 
+### 2026-08-22 修复：侧边栏文件树拖拽精确落到文件夹所在行，消除抖动误移
+
+- **根因**：文件行没有行级 DragTarget，Flutter 拖拽命中取「最深同组目标」——指针在文件行（或行间空隙）上时命中穿透到包裹整个 ListView 的根目录 DragTarget，松手即把文件移入工作区根目录；拖拽过程中高亮在「悬停文件夹行」与「根目录行」间来回切换，表现为抖动异常移动。
+- **修复**：文件行在拖拽模式下包「拒绝型」DragTarget（dst_dir=None，_drop_allowed 恒 False）——占位目标把命中挡在行内，悬停不高亮、松手静默忽略；文件夹行目标不变（悬停高亮、松手移入该文件夹）；根空白区仍可拖到根目录（仅真正的空白区域触发）。命中路径为最深目标优先，因此只要指针在某一行上，该行（或其拒绝型占位）必胜，根目录目标永远不会在行内被选中
+（views/sidebar.py _wrap_drop_target / _render_files_panel）
+- 测试：tests/test_sidebar_file_tree.py 新增 5 用例（_drop_allowed 拒绝型目标/原地/自身/子孙；文件行占位不触发移动且清高亮；文件夹行合法时高亮+移动）
+
 ### 2026-08-22 修复：软换行触发时保持光标稳定与 IME 组合态，修复整行内容丢失
 
 - **换行瞬间 IME 组合态保持（五笔/拼音不被上屏）**：输入使行视觉行数/光标视觉行变化（换行/收拢）时，会话值跨视觉行——单行 TextField 的 value 从 left 线性布局，旧代码 caret 渲染在距文字约一个 value 宽度之外且被字段裁切 → 光标"丢失"、IME 候选框 弹错位置。_cursor_overlay 改用 _value_linear_width（views/pixel_layout.py，与渲染层 同源 offsets_x 跨视觉行累加）定位 left = caret_x - textwidth，caret 精确落回光标像素 位置；handle_char_input / backspace_core / delete_core 编辑前后对比视觉行签名（_vline_signature），变化时仅递增 focus_seq 重聚焦——不重建 TextField、不结束会话， 正在拼写的编码不被打断、不上屏，可继续选择候选字（views/editor/_cursor.py）

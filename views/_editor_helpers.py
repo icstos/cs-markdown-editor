@@ -103,7 +103,20 @@ def _fix_ime_doubling(value: str, last_value: str) -> str:
             return x
         return value
     # 非 ASCII commit 翻倍：last_value 区分合法连续
-    return x if last_value != x else value
+    # 合法连续输入（value = last_value + 1 字符，逐步累积，如 "你你你你" ← "你你你"）
+    # 不折叠：满足 len(value)==len(last_value)+1 且 value.startswith(last_value)，
+    # 与 ASCII 分支同型。IME 翻倍时 value=X+X，len(value)=2*len(X)，不满足该条件。
+    if last_value and len(value) == len(last_value) + 1 and value.startswith(last_value):
+        return value
+    if not last_value:
+        # 新会话单次上屏翻倍（如 "你你" ← ""）→ 折叠
+        return x
+    # composing 编码（全 ASCII，如 "wq"）转上屏翻倍：整段被 X+X 替换 → 折叠。
+    # 其余情况（last_value 含非 ASCII，如 "你"*13+"i" → "你"*14、连续上屏同字）
+    # 一律保留——折叠会吞掉用户已输入内容（整行丢失根因），宁可保留重复字符。
+    if all(ord(c) < 128 for c in last_value):
+        return x
+    return value
 
 
 def _detect_ime_compose(value: str, last_value: str) -> bool:

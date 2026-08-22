@@ -185,6 +185,33 @@ def test_ime_doubling_cjk_long_legitimate():
     assert _fix_ime_doubling("你你你你", "你你") == "你你你你"
 
 
+def test_ime_doubling_cjk_sequential_append_not_folded():
+    """连续输入相同 CJK 字符不折叠（整行丢失 BUG 回归）。
+
+    逐字累积（每轮 +1 字符）："你你你你" ← "你你你" 满足
+    len(value)==len(last_value)+1 且 startswith → 合法连续输入，非 IME 翻倍。
+    旧启发式 last_value != X 误判折叠，吞掉已输入内容。
+    """
+    assert _fix_ime_doubling("你你你你", "你你你") == "你你你你"
+    assert _fix_ime_doubling("你好你好", "你好你") == "你好你好"
+    assert _fix_ime_doubling("好" * 6, "好" * 5) == "好" * 6
+
+
+def test_ime_doubling_cjk_commit_with_composing_remnant_not_folded():
+    """IME 上屏（last_value 含 composing 残留）形如 X+X 不折叠（整行丢失 BUG 回归）。
+
+    满行末尾输入拼音触发软换行后继续上屏：last_value="你"*13+"i"（composing 残留），
+    value="你"*14 为合法内容（13 个已上屏 + 1 个新上屏）。旧启发式折叠成 "你"*7。
+    """
+    assert _fix_ime_doubling("你" * 14, "你" * 13 + "i") == "你" * 14
+
+
+def test_ime_doubling_cjk_composing_remnant_still_folded():
+    """composing 编码（全 ASCII）转上屏翻倍仍折叠：'你你' ← 'wq' → '你'。"""
+    assert _fix_ime_doubling("你你", "wq") == "你"
+    assert _fix_ime_doubling("你你", "n") == "你"
+
+
 def test_ime_doubling_mixed_not_folded():
     """混合 ASCII/非 ASCII 非双叠：原样返回。"""
     assert _fix_ime_doubling("a你b你", "") == "a你b你"

@@ -63,9 +63,10 @@ def _vline_signature(ctx, line, off: int) -> tuple[int, int] | None:
     移除焦点，而 cursor_li/nav_seq/focus_seq 均不变 → focus effect 不触发 →
     光标丢失、无法继续编辑（与 word_wrap/viewport_w 切换同型问题）。
 
-    编辑前后签名不同 → 递增 focus_seq 强制重聚焦（不递增 nav_seq，不重建
-    TextField，保 IME 组合态）。word_wrap 关闭（content_width=inf）时恒为
-    单视觉行，签名不变化，调用方据 _wrap_on 跳过计算。
+    编辑前后签名不同 → 结束会话 + nav_seq 重建 + 重聚焦（_refocus_on_wrap_change）：
+    会话值跨视觉行时单行 TextField 无法正确布局（光标脱离文字），且 value 镜像
+    跨边界导致光标 X 偏移；结束会话（value=""）后光标直接定位到当前位置。
+    不结束会话时（无活动会话）仅递增 focus_seq 重聚焦。
     """
     if _is_fence(line):
         return None
@@ -286,6 +287,26 @@ def build_cursor(ctx):
         # 上下滚动调整。行未构建的兜底由 _focus_cursor_field 内部处理。
         ctx.ensure_visible(li, only_when_offscreen=True)
 
+    def _refocus_on_wrap_change(old_vsig, new_vsig) -> None:
+        """软换行边界变化（触发换行/收拢）时结束会话并重建/重聚焦 TextField。
+
+        会话值跨视觉行时，单行 TextField 无法把 value 布局到多行：光标会渲染在
+        距文字约一个 value 宽度之外（"光标异常丢失"），且 value 镜像跨边界会在
+        后续输入中与文档失同步。结束会话（cursor_field_value=""）+ nav_seq 重建
+        + 重聚焦（与块级前缀结构变化 _prefix_sig 同一模式），光标直接定位到当前
+        位置。无活动会话时仅递增 focus_seq 重聚焦，不重建（省一次 TextField 重建）。
+        """
+        if old_vsig is None or old_vsig == new_vsig:
+            return
+        state = ctx.input_session_ref.current
+        had_session = state is not None and state["li"] >= 0 and state["start_off"] >= 0
+        if had_session:
+            _end_input_session(rebuild=False)
+            ctx.suppress_blur.current = True
+            ctx.set_nav_seq(ctx.nav_seq + 1)
+        else:
+            ctx.set_focus_seq(ctx.focus_seq + 1)
+
     def handle_char_input(value: str):
         """字符输入：delta 计算同步文档（IME 友好，单分支模型）。
 
@@ -355,8 +376,7 @@ def build_cursor(ctx):
                 _old_vsig = _vline_signature(ctx, line, cs.base) if _wrap_on(ctx) else None
                 _reparse_atomic(line, new_raw)
                 ctx.mark_dirty()
-                if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, new_off):
-                    ctx.set_focus_seq(ctx.focus_seq + 1)
+                _refocus_on_wrap_change(_old_vsig, _vline_signature(ctx, line, new_off))
                 cs.reset(new_off, len(new_raw))
                 ctx.set_cursor_off(new_off)
                 ctx.set_cursor_field_value(value)
@@ -424,17 +444,16 @@ def build_cursor(ctx):
         # 避免双重渲染（render #1 用旧 value → IME 重复 on_change）。
         ctx.set_cursor_field_value(new_value)
         old_psig = _prefix_sig(line)
-        # 软换行检测：编辑前后视觉行签名变化（触发换行/收拢）→ 递增 focus_seq
-        # 强制重聚焦（不递增 nav_seq，不重建 TextField，保 IME 组合态）。
-        # 中文输入法在满行末尾输入首个拼音触发软换行时，cursor TextField 的
-        # top 属性从 0 跳变到 vline_idx*text_h，Flutter 属性更新短暂移除焦点，
-        # 而 cursor_li/nav_seq/focus_seq 均不变 → focus effect 不触发 → 光标
-        # 丢失、组合态中断、无法继续编辑。
+        # 软换行检测：编辑前后视觉行签名变化（触发换行/收拢）→ 结束会话 + 重建
+        # + 重聚焦（_refocus_on_wrap_change）。中文输入法在满行末尾输入首个拼音
+        # 触发软换行时，cursor TextField 的 top 属性从 0 跳变到 vline_idx*text_h，
+        # Flutter 属性更新短暂移除焦点；且会话值跨视觉行时单行 TextField 无法正确
+        # 布局（光标脱离文字）。结束会话（value=""）+ nav_seq 重建 + 重聚焦后
+        # 光标直接定位到当前位置，后续输入从新会话开始，不再跨边界漂移。
         _old_vsig = _vline_signature(ctx, line, doc_end) if _wrap_on(ctx) else None
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
-        if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, new_off):
-            ctx.set_focus_seq(ctx.focus_seq + 1)
+        _refocus_on_wrap_change(_old_vsig, _vline_signature(ctx, line, new_off))
         # 多光标：同步 delta（removed_len, inserted）到所有副光标
         ctx.broadcast_char_input(len(removed), inserted)
         # 块级前缀结构变化（输入 ">" 创建引用 / "- " 创建列表 / "#" 创建
@@ -600,13 +619,12 @@ def build_cursor(ctx):
                 return
             ctx.push_line_edit(li, raw)
             new_raw = raw[: off - 1] + raw[off:]
-            # 软换行检测：删除使行收拢（视觉行数/光标视觉行变化）时重聚焦
-            # （不递增 nav_seq，避免 TextField 重建；与 handle_char_input 同型）
+            # 软换行检测：删除使行收拢（视觉行数/光标视觉行变化）时结束会话/
+            # 重建/重聚焦（与 handle_char_input 同型）
             _old_vsig = _vline_signature(ctx, line, off) if _wrap_on(ctx) else None
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
-            if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, off - 1):
-                ctx.set_focus_seq(ctx.focus_seq + 1)
+            _refocus_on_wrap_change(_old_vsig, _vline_signature(ctx, line, off - 1))
             # 轻量光标更新：不递增 nav_seq，避免 TextField 重建（性能优化）
             _move_cursor_inline(li, off - 1, len(new_raw))
             # 多光标：同步 Backspace 到所有副光标
@@ -677,13 +695,12 @@ def build_cursor(ctx):
         if off < len(raw):
             ctx.push_line_edit(li, raw)
             new_raw = raw[:off] + raw[off + 1 :]
-            # 软换行检测：删除使行收拢（视觉行数/光标视觉行变化）时重聚焦
-            # （不递增 nav_seq，避免 TextField 重建；与 handle_char_input 同型）
+            # 软换行检测：删除使行收拢（视觉行数/光标视觉行变化）时结束会话/
+            # 重建/重聚焦（与 handle_char_input 同型）
             _old_vsig = _vline_signature(ctx, line, off) if _wrap_on(ctx) else None
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
-            if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, off):
-                ctx.set_focus_seq(ctx.focus_seq + 1)
+            _refocus_on_wrap_change(_old_vsig, _vline_signature(ctx, line, off))
             # 光标位置不变，仅更新 cursor_ref 的 raw_len（不触发 _set_cursor 开销）
             ctx.cursor_ref.current.reset(off, len(new_raw))
             # 多光标：同步 Delete 到所有副光标

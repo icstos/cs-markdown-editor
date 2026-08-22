@@ -60,7 +60,6 @@ def _make_ctx(document: Document, cursor_li: int, base: int,
         push_line_edit=lambda li, raw: calls.append(("push_line_edit", li, raw)),
         mark_dirty=lambda: calls.append("mark_dirty"),
         set_cursor_field_value=lambda v: calls.append(("set_cursor_field_value", v)),
-        set_cursor_off=lambda off: calls.append(("set_cursor_off", off)),
         set_cursor_li=lambda li: calls.append(("set_cursor_li", li)),
         set_cursor_line=lambda li: calls.append(("set_cursor_line", li)),
         set_nav_seq=lambda n: calls.append(("set_nav_seq", n)),
@@ -82,26 +81,36 @@ def _make_ctx(document: Document, cursor_li: int, base: int,
         focus_seq=0,
         set_focus_seq=lambda n: calls.append(("set_focus_seq", n)),
     )
+    # 与真实 state setter 一致：同步 cursor_off 属性（会话结束后新会话起点依赖它）
+    ctx.set_cursor_off = lambda off: (calls.append(("set_cursor_off", off)), setattr(ctx, "cursor_off", off))
     return ctx, calls
 
 
 def test_wrap_triggers_refocus():
-    """输入触发软换行（视觉行数变化）→ 递增 focus_seq 重聚焦。"""
+    """输入触发软换行（视觉行数变化）→ 结束会话 + nav_seq 重建重聚焦。
+
+    会话值跨视觉行时单行 TextField 无法正确布局（光标脱离文字），且 value
+    镜像跨边界会漂移 → 结束会话（cursor_field_value=""）+ nav_seq 重建，
+    光标直接定位到当前位置，后续输入从新会话开始。
+    """
     doc = Document(lines=[_para_line("")])
     ctx, calls = _make_ctx(doc, cursor_li=0, base=0, content_width=200.0)
     handle_char_input = build_cursor(ctx)["handle_char_input"]
 
-    # 一次性插入 19 个 CJK 字（奇数长度避开 _fix_ime_doubling；19 * ~16px ≈ 304px
-    # > 200px 换行宽度）→ 1 vline → 2 vline
+    # 一次性插入 19 个 CJK 字（19 * ~16px ≈ 304px > 200px 换行宽度）→ 1 vline → 2 vline
     handle_char_input("你" * 19)
 
     assert doc.lines[0].raw == "你" * 19
-    # 触发软换行 → focus_seq 被递增（重聚焦，保持光标）
-    assert ("set_focus_seq", 1) in calls, f"应触发重聚焦，calls={calls}"
+    # 触发软换行 → nav_seq 递增（重建 TextField + 重聚焦，保持光标）
+    assert ("set_nav_seq", 1) in calls, f"应重建重聚焦，calls={calls}"
+    # 会话已结束：value 镜像清空（跨视觉行会话不再保留）
+    assert ("set_cursor_field_value", "") in calls, f"应清空会话 value，calls={calls}"
+    assert ctx.input_session_ref.current == {"li": -1, "start_off": -1, "last_value": ""}, \
+        f"会话应被重置，calls={calls}"
 
 
 def test_no_wrap_no_refocus():
-    """输入未触发软换行（视觉行数不变）→ 不递增 focus_seq。"""
+    """输入未触发软换行（视觉行数不变）→ 不重建、不重聚焦。"""
     doc = Document(lines=[_para_line("")])
     ctx, calls = _make_ctx(doc, cursor_li=0, base=0, content_width=200.0)
     handle_char_input = build_cursor(ctx)["handle_char_input"]
@@ -110,27 +119,64 @@ def test_no_wrap_no_refocus():
     handle_char_input("你")
 
     assert doc.lines[0].raw == "你"
-    # 未触发换行 → 不递增 focus_seq
-    assert not any(name == "set_focus_seq" for name, *_ in calls), \
-        f"不应触发重聚焦，calls={calls}"
+    # 未触发换行 → 不重建（nav_seq/focus_seq 均不变），会话保持
+    assert not any(name in ("set_nav_seq", "set_focus_seq") for name, *_ in calls), \
+        f"不应重建/重聚焦，calls={calls}"
+    assert ctx.input_session_ref.current["last_value"] == "你"
 
 
-def test_wrap_refocus_keeps_nav_seq_unchanged():
-    """软换行重聚焦不重建 TextField（不递增 nav_seq，保 IME 组合态）。"""
+def test_wrap_keeps_document_intact():
+    """软换行触发后文档内容不丢失（整行丢失 BUG 回归）。"""
     doc = Document(lines=[_para_line("")])
-    ctx, calls = _make_ctx(doc, cursor_li=0, base=0, content_width=200.0)
+    ctx, _calls = _make_ctx(doc, cursor_li=0, base=0, content_width=200.0)
     handle_char_input = build_cursor(ctx)["handle_char_input"]
 
     handle_char_input("你" * 19)
+    assert doc.lines[0].raw == "你" * 19
 
-    assert ("set_focus_seq", 1) in calls
-    # 纯软换行（无块级前缀变化）不应重建 TextField（nav_seq 不递增）
-    assert not any(name == "set_nav_seq" for name, *_ in calls), \
-        f"软换行不应递增 nav_seq，calls={calls}"
+    # 会话结束后继续输入：新会话逐字累积（每事件 +1 字符）跨边界增长，内容不被吞
+    for n in range(20, 25):
+        handle_char_input("你" * (n - 19))
+        assert doc.lines[0].raw == "你" * n, f"继续输入不应丢字，n={n} raw={doc.lines[0].raw!r}"
+
+
+def test_sequential_repeat_input_no_doubling_collapse():
+    """连续输入相同 CJK 字符不被 _fix_ime_doubling 误折叠（整行丢失根因）。
+
+    逐字累积（每轮 +1 字符）："你" → "你你" → "你你你" → "你你你你"，
+    第 4 个字符起 value 形如 X+X，旧启发式误判为 IME 翻倍折叠吞字。
+    """
+    doc = Document(lines=[_para_line("")])
+    ctx, _calls = _make_ctx(doc, cursor_li=0, base=0, content_width=200.0)
+    handle_char_input = build_cursor(ctx)["handle_char_input"]
+
+    handle_char_input("你")
+    handle_char_input("你你")
+    handle_char_input("你你你")
+    handle_char_input("你你你你")
+
+    assert doc.lines[0].raw == "你你你你", f"连续输入被误折叠，raw={doc.lines[0].raw!r}"
+
+
+def test_ime_commit_repeat_no_doubling_collapse():
+    """IME 上屏后行内容形如 X+X（含 composing 残留 last_value）不被误折叠。
+
+    满行末尾输入拼音触发软换行后继续上屏：last_value="你"*13+"i"（composing
+    残留），value="你"*14 为合法内容，旧启发式折叠成 "你"*7（整行丢失）。
+    """
+    doc = Document(lines=[_para_line("你" * 13 + "i")])
+    ctx, _calls = _make_ctx(doc, cursor_li=0, base=14, content_width=200.0,
+                            session={"li": 0, "start_off": 0, "last_value": "你" * 13 + "i"})
+    handle_char_input = build_cursor(ctx)["handle_char_input"]
+
+    handle_char_input("你" * 14)
+
+    assert doc.lines[0].raw == "你" * 14, f"上屏内容被误折叠，raw={doc.lines[0].raw!r}"
+
 
 
 def test_backspace_unwrap_triggers_refocus():
-    """Backspace 使行收拢（视觉行数变化）→ 递增 focus_seq 重聚焦。"""
+    """Backspace 使行收拢（无活动会话）→ 递增 focus_seq 重聚焦。"""
     # 13 个 CJK 字（13*16px ≈ 208px > 200px）→ 2 vlines；删 1 字 → 12 字 1 vline
     doc = Document(lines=[_para_line("你" * 13)])
     ctx, calls = _make_ctx(doc, cursor_li=0, base=13, content_width=200.0)
@@ -141,9 +187,28 @@ def test_backspace_unwrap_triggers_refocus():
     assert doc.lines[0].raw == "你" * 12
     # 行收拢（2 vline → 1 vline）→ focus_seq 递增（重聚焦，保持光标）
     assert ("set_focus_seq", 1) in calls, f"应触发重聚焦，calls={calls}"
-    # 不重建 TextField（_move_cursor_inline 路径不递增 nav_seq）
+    # 无活动会话时不重建 TextField（nav_seq 不递增）
     assert not any(name == "set_nav_seq" for name, *_ in calls), \
         f"Backspace 收拢不应递增 nav_seq，calls={calls}"
+
+
+def test_backspace_unwrap_active_session_rebuilds():
+    """Backspace 使行收拢（活动会话跨边界）→ 结束会话 + nav_seq 重建重聚焦。"""
+    doc = Document(lines=[_para_line("你" * 13)])
+    ctx, calls = _make_ctx(
+        doc, cursor_li=0, base=13, content_width=200.0,
+        session={"li": 0, "start_off": 0, "last_value": "你" * 13},
+    )
+    backspace_core = build_cursor(ctx)["backspace_core"]
+
+    backspace_core()
+
+    assert doc.lines[0].raw == "你" * 12
+    # 活动会话跨边界收拢 → 结束会话 + nav_seq 重建（光标重新定位）
+    assert ("set_nav_seq", 1) in calls, f"应重建重聚焦，calls={calls}"
+    assert ("set_cursor_field_value", "") in calls, f"应清空会话 value，calls={calls}"
+    assert ctx.input_session_ref.current == {"li": -1, "start_off": -1, "last_value": ""}
+
 
 
 def test_backspace_no_unwrap_no_refocus():

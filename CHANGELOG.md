@@ -4,6 +4,14 @@
 
 ## [未发布]
 
+### 2026-08-22 修复：软换行触发时光标丢失、继续编辑整行内容丢失
+
+- **软换行触发/收拢时光标丢失**：输入使行视觉行数/光标视觉行变化（换行/收拢）时，cursor TextField 的 top 从 0 跳变到 vline_idx*text_h，Flutter 属性更新移除焦点；且会话值跨视觉行时单行 TextField 无法正确布局（光标脱离文字约一个 value 宽度）。handle_char_input / backspace_core / delete_core 编辑前后对比视觉行签名（_vline_signature，与渲染层共用 _line_visual_layout），变化时结束会话 + nav_seq 重建 + 重聚焦（与块级前缀结构变化同一模式），光标直接定位到当前位置；无活动会话时仅递增 focus_seq 重聚焦（views/editor/_cursor.py）
+
+- **继续编辑整行丢失（IME 翻倍误判）**：_fix_ime_doubling 非 ASCII 分支把合法连续输入误判为 IME 翻倍折叠——逐字累积（"你你你你" ← "你你你"）与上屏后行内容形如 X+X（"你"*14 ← "你"*13+"i"）时吞掉已输入内容，且折叠值回推客户端触发 on_change 级联清空整行。新增与 ASCII 分支同型的"逐字累积"守卫（len(value)==len(last_value)+1 且 startswith），仅全 ASCII composing 转上屏或新会话空 last_value 时才折叠（views/_editor_helpers.py）
+
+- 测试：tests/test_cursor_wrap_refocus.py（10 用例：换行触发重建重聚焦 / 文档不丢 / 连续输入不误折叠 / IME 上屏不误折叠 / Backspace、Delete 收拢会话结束与不结束）+ tests/test_editor_helpers.py（3 用例）
+
 ### 2026-08-21 增强自动保存：关闭/切换/失焦即时触发
 
 - **关闭程序时**：窗口 close 事件与 websocket 断连钩子在写退出哨兵前，先同步把所有脏且有路径的标签写回原文件（`app/_backup_controller.py` `autosave_on_exit`，受 `auto_save` 主开关控制；未命名文档仍由备份 + 启动恢复面板兑底）

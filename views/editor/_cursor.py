@@ -25,7 +25,11 @@ handle_char_input / handle_paste / backspace_core / delete_core / on_submit
 - views.editor._helpers（_next_line_raw / _RE_O_PREFIX / _RE_FENCE_TRIGGER / _make_code_line）
 """
 
+import asyncio
+import contextlib
 import time
+
+import flet as ft
 
 import parser
 from models import BlockType
@@ -296,11 +300,34 @@ def build_cursor(ctx):
         → focus effect 不触发 → 光标丢失、组合态中断。递增 focus_seq 强制重聚焦；
         不递增 nav_seq（不重建 TextField）：IME 组合态保持，换行瞬间正在拼写的
         拼音/五笔编码不被打断、不上屏（可继续选择候选字）。
+
+        客户端在下一帧才应用 Stack children move + left/top 属性更新，移除焦点
+        发生在重建之后：立即 focus() 可能在其之前执行（已聚焦 → no-op）。延迟
+        一帧（0.1s）再聚焦一次，确保重建后焦点仍在该 TextField。同时确保光标
+        所在视觉行可见（换行使行变高，视口底部输入时光标可能被推出可视区）。
         光标跨视觉行定位由 _cursor_overlay 的 _value_linear_width 处理。
         """
         if old_vsig is None or old_vsig == new_vsig:
             return
         ctx.set_focus_seq(ctx.focus_seq + 1)
+        try:
+            page = ft.context.page
+        except Exception:
+            page = None
+        if page is not None:
+
+            async def _delayed_refocus():
+                await asyncio.sleep(0.1)
+                field = ctx.cursor_field_ref.current
+                if field is not None:
+                    with contextlib.suppress(Exception):
+                        await field.focus()
+
+            with contextlib.suppress(Exception):
+                page.run_task(_delayed_refocus)
+        if getattr(ctx, "ensure_visible", None) is not None and ctx.cursor_li is not None:
+            with contextlib.suppress(Exception):
+                ctx.ensure_visible(ctx.cursor_li)
 
     def handle_char_input(value: str):
         """字符输入：delta 计算同步文档（IME 友好，单分支模型）。

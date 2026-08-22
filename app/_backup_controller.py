@@ -14,13 +14,13 @@ open_backup_in_new_tab / delete_backup / cleanup_expired_backups
 - 定时器模型：start_backup_loop 启动三个独立循环——
   ① 自动保存循环：每 auto_save_interval 分钟扫描脏标签写回原文件
   ② 备份循环：每 backup_interval 分钟对所有打开标签生成完整备份
-  ③ 外部修改检测循环：基于 watchfiles 事件驱动，监控所有打开标签的文件路径，
+  ③ 外部修改检测循环：基于 watchdog 事件驱动，监控所有打开标签的文件路径，
     检测到外部修改时弹出重载确认对话框（实现「编辑期间监听原文件变动」需求）。
-    watchfiles 基于 OS 原生通知（inotify/ReadDirectoryChangesW/FSEvents），
-    零 CPU 轮询开销，文件变化即时响应。watchfiles 不可用时回退到 5 秒轮询。
+    watchdog 基于 OS 原生通知（inotify/ReadDirectoryChangesW/FSEvents），
+    零 CPU 轮询开销，文件变化即时响应。watchdog 不可用时回退到 5 秒轮询。
   三个循环独立运行，自动保存关闭时不影响备份和外部修改检测。
 - 自我写入过滤：save_doc 写入文件后立即更新 _last_known_mtime，利用 asyncio
-  单线程特性，watchfiles 事件在 save_doc 完成后才被处理，mtime 比较相等 → 忽略。
+  单线程特性，watchdog 事件在 save_doc 完成后才被处理，mtime 比较相等 → 忽略。
 - 大文件优化：单文档 >10MB 时降低备份频率至 15 分钟（关闭高频监听）。
 - 退出 / 崩溃钩子：on_disconnect / window_event 触发 exit_backup + 哨兵写入。
 - 启动扫描：scan_recoverable 读取上次会话哨兵，返回可恢复草稿列表。
@@ -29,7 +29,7 @@ open_backup_in_new_tab / delete_backup / cleanup_expired_backups
 
 依赖项：
 - asyncio / os / typing
-- watchfiles（awatch / Change：外部修改检测，可选，不可用时回退轮询）
+- watchdog（Observer / FileSystemEventHandler：外部修改检测，可选，不可用时回退轮询）
 - parser（恢复时解析备份正文为 Document）
 - app._tab_helpers（doc_has_text）
 - app.autosave（AutosaveContext / autosave_all_dirty）
@@ -39,6 +39,9 @@ open_backup_in_new_tab / delete_backup / cleanup_expired_backups
 """
 
 import asyncio
+import contextlib
+import enum
+import importlib.util
 import os
 from typing import Any
 
@@ -57,6 +60,14 @@ from services.recovery import (
     load_backup_content,
     write_last_session_sentinel,
 )
+
+
+class _FileChange(enum.IntEnum):
+    """文件变化事件类型（与 watchfiles.Change 同语义，去除 watchfiles 依赖）。"""
+
+    added = 1
+    modified = 2
+    deleted = 3
 
 
 def build_backup_controller(ctx):
@@ -188,26 +199,28 @@ def build_backup_controller(ctx):
                 continue
 
     async def _external_check_loop():
-        """基于 watchfiles 的外部修改检测循环。
+        """基于 watchdog 的外部修改检测循环。
 
         实现「编辑期间监听原文件变动」需求，采用操作系统原生文件通知
         （Linux inotify / Windows ReadDirectoryChangesW / macOS FSEvents），
-        零 CPU 轮询开销，文件变化即时响应。
+        零 CPU 轮询开销，文件变化即时响应。watchdog 不可用时回退到 5 秒轮询。
 
         工作流程：
         1. 收集所有打开标签的文件路径（普通编辑标签 + 对比标签两侧）
-        2. 启动 watchfiles.awatch 监控这些路径
+        2. 启动 watchdog Observer 监控这些路径所在目录（事件按目标文件过滤）
         3. 路径集合变化时（打开/关闭标签）自动重启 watcher
         4. 收到 modified/deleted 事件时弹出重载确认对话框
 
         自我写入过滤：save_doc 写入文件后立即更新 _last_known_mtime，
-        利用 asyncio 单线程特性（save_doc 无 await），watchfiles 事件
+        利用 asyncio 单线程特性（save_doc 无 await），watchdog 事件
         在 save_doc 完成后才被处理，此时 mtime 已更新 → 比较相等 → 忽略。
         """
         try:
-            from watchfiles import Change  # noqa: PLC0415
-        except ImportError:
-            # watchfiles 不可用 → 回退到 5 秒轮询
+            has_watchdog = importlib.util.find_spec("watchdog") is not None
+        except (ImportError, ValueError):
+            has_watchdog = False
+        if not has_watchdog:
+            # watchdog 不可用 → 回退到 5 秒轮询
             await _external_poll_loop()
             return
 
@@ -241,7 +254,7 @@ def build_backup_controller(ctx):
 
                     # 启动新 watcher 子任务
                     watch_task = asyncio.create_task(
-                        _run_watcher(new_paths, stop_event, Change)
+                        _run_watcher(new_paths, stop_event)
                     )
 
                 # 定期检查路径集合是否变化（打开/关闭标签）
@@ -258,7 +271,7 @@ def build_backup_controller(ctx):
                 continue
 
     async def _external_poll_loop():
-        """轮询回退方案（watchfiles 不可用时使用）。
+        """轮询回退方案（watchdog 不可用时使用）。
 
         每 5 秒检查激活标签的文件 mtime，逻辑与原实现一致。
         """
@@ -294,22 +307,95 @@ def build_backup_controller(ctx):
                 continue
 
     async def _run_watcher(
-        paths: frozenset[str], stop_event: asyncio.Event, Change
+        paths: frozenset[str], stop_event: asyncio.Event
     ):
-        """运行 watchfiles 监控器，将文件变化事件分发到处理函数。
+        """运行 watchdog 监控器，将文件变化事件分发到处理函数。
 
-        watchfiles.awatch 是异步生成器，stop_event 被设置时退出。
-        退出后由 _external_check_loop 的主循环重启（路径集合变化时）。
+        watchdog.Observer 在后台线程产生事件，经 asyncio.Queue 桥接回
+        事件循环处理（call_soon_threadsafe 线程安全投递）。stop_event 被
+        设置时在 0.5s 内退出；退出后由 _external_check_loop 的主循环重启
+        （路径集合变化时）。
+
+        监控粒度：以每个目标文件的「所在目录」为单位（去重）挂 Observer，
+        事件按目标文件绝对路径集合过滤——同目录下其他文件的变化不会误报。
         """
-        from watchfiles import awatch  # noqa: PLC0415
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
 
+        # 目标文件集合（大小写不敏感比较，Windows 兼容）
+        targets = {os.path.normcase(os.path.abspath(p)) for p in paths}
+        dirs = sorted(
+            {
+                os.path.dirname(p)
+                for p in paths
+                if os.path.isdir(os.path.dirname(p))
+            }
+        )
+
+        if not dirs:
+            # 目录全部不存在：无物可监控，仅等待退出信号
+            while not stop_event.is_set():
+                await asyncio.sleep(0.5)
+            return
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _match(p: str) -> bool:
+            try:
+                return os.path.normcase(os.path.abspath(p)) in targets
+            except OSError:
+                return False
+
+        def _emit(change_type: _FileChange, p: str) -> None:
+            """后台线程 → 事件循环安全投递。"""
+            with contextlib.suppress(Exception):
+                loop.call_soon_threadsafe(queue.put_nowait, (change_type, p))
+
+        class _Handler(FileSystemEventHandler):
+            def on_modified(self, event):
+                if not event.is_directory and _match(event.src_path):
+                    _emit(_FileChange.modified, event.src_path)
+
+            def on_created(self, event):
+                if not event.is_directory and _match(event.src_path):
+                    _emit(_FileChange.added, event.src_path)
+
+            def on_deleted(self, event):
+                if not event.is_directory and _match(event.src_path):
+                    _emit(_FileChange.deleted, event.src_path)
+
+            def on_moved(self, event):
+                # 移动 = 旧路径删除 + 新路径创建（与 watchfiles 同语义）
+                if event.is_directory:
+                    return
+                if _match(event.src_path):
+                    _emit(_FileChange.deleted, event.src_path)
+                if _match(event.dest_path):
+                    _emit(_FileChange.added, event.dest_path)
+
+        observer = Observer()
+        observer.daemon = True
+        for d in dirs:
+            with contextlib.suppress(Exception):
+                # 单个目录调度失败不影响其余目录
+                observer.schedule(_Handler(), d, recursive=False)
+        observer.start()
         try:
-            async for changes in awatch(*paths, stop_event=stop_event):
-                _process_file_changes(changes, Change)
+            while not stop_event.is_set():
+                try:
+                    change_type, path = await asyncio.wait_for(
+                        queue.get(), timeout=0.5
+                    )
+                except TimeoutError:
+                    continue
+                _process_file_changes([(change_type, path)], _FileChange)
         except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+            raise
+        finally:
+            observer.stop()
+            with contextlib.suppress(Exception):
+                observer.join(timeout=2.0)
 
     def _collect_watchable_paths() -> frozenset[str]:
         """收集所有需要监控的文件路径。
@@ -333,7 +419,7 @@ def build_backup_controller(ctx):
         return frozenset(paths)
 
     def _process_file_changes(changes, Change):
-        """处理 watchfiles 产生的文件变化事件。
+        """处理文件变化事件（watchfiles 同语义的事件元组，当前由 watchdog 产生）。
 
         - 仅处理 modified / deleted 事件（忽略 added 等无关事件）
         - 通过 mtime 比较过滤自己保存产生的事件（save_doc 已更新 mtime）

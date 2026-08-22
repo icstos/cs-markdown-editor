@@ -15,7 +15,7 @@ dependencies = [
     "uharfbuzz>=0.40.0",
     "flet-code-editor>=0.86.2",
     "flet-datatable2>=0.86.2",
-    "watchfiles>=1.0.0",
+    "watchdog>=4.0.0",
 ]
 
 [project.scripts]
@@ -68,7 +68,6 @@ exclude = [
     "*.md",
     "*.log",
 ]
-hide_window_on_start = true
 
 [tool.flet.compile]
 app = true

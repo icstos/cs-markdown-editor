@@ -11,7 +11,7 @@
   - Pillow ≥ 12.3.0（图片尺寸读取）
   - flet-code-editor ≥ 0.86.2（代码块语法高亮编辑岛屿）
   - flet-datatable2 ≥ 0.86.2（表格编辑岛屿）
-  - watchfiles ≥ 1.0.0
+  - watchdog ≥ 4.0.0（外部修改检测，原生文件通知）
 - **运行环境与前提**：Windows 优先的桌面应用；字体 `assets/fonts/AlibabaPuHuiTi-3-55-Regular.otf`（注册名 "Alibaba"）；用户设置持久化于项目根 `settings.json`（由 `config/settings.py` 深合并管理，非源码，禁止提交改动假设）；备份目录由 `services/backup.py` 管理。
 
 ## 2. 任务-目录-文档映射表

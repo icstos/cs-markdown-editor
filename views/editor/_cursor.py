@@ -310,6 +310,11 @@ def build_cursor(ctx):
         if old_vsig is None or old_vsig == new_vsig:
             return
         ctx.set_focus_seq(ctx.focus_seq + 1)
+        # 一次性选区折叠：换行边界变化时 IME 可能因失焦/重挂载提交并选中刚输入的文本
+        # （继续输入会覆盖选区）。递增 wrap_sel_seq → 渲染层给 TextField 传 collapsed
+        # 选区（caret 在 value 末尾），use_effect 随即复位（一次性，不干扰后续 IME）。
+        if getattr(ctx, "set_wrap_sel_seq", None) is not None:
+            ctx.set_wrap_sel_seq(getattr(ctx, "wrap_sel_seq", 0) + 1)
         try:
             page = ft.context.page
         except Exception:

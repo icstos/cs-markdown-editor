@@ -123,6 +123,7 @@ def build_line_controls(
                     cursor_off=cursor_off if is_act else None,
                     cursor_ref=cursor_ref if is_act else None,
                     nav_seq=nav_seq if is_act else 0,
+                    wrap_sel_seq=ctx.wrap_sel_seq if is_act else 0,
                     field_ref=cursor_field_ref if is_act else None,
                     input_session_ref=input_session_ref if is_act else None,
                     cursor_value=cursor_field_value if is_act else "",

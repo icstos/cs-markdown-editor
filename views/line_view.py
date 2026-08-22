@@ -272,6 +272,8 @@ def _cursor_overlay(
     precomputed_vlines: list | None = None,
     precomputed_wrap_width: float | None = None,
     pos_value: str | None = None,
+    wrap_sel_seq: int = 0,
+
 ) -> ft.TextField:
     """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off（2D 视觉行）。
 
@@ -353,6 +355,13 @@ def _cursor_overlay(
         if 0 < prefix_len < len(vline.offsets_x):
             cursor_px_x -= vline.offsets_x[prefix_len]
 
+    # 软换行一次性选区折叠：换行边界变化时 IME 可能因失焦/重挂载提交并选中刚输入
+    # 的文本（继续输入会覆盖选区）。wrap_sel_seq > 0 时给客户端传 collapsed 选区
+    # （caret 在 value 末尾），清掉该选区；仅此一次（use_effect 随即复位）。
+    selection = None
+    if wrap_sel_seq > 0 and _eff_value:
+        selection = ft.TextSelection(len(_eff_value), len(_eff_value))
+
     return cursor_text_field(
         li=li,
         cursor_px_x=cursor_px_x,
@@ -368,6 +377,7 @@ def _cursor_overlay(
         on_selection_change=on_selection_change,
         field_ref=field_ref,
         nav_seq=nav_seq,
+        selection=selection,
         content_width=wrap_width,  # vline 内剩余宽度（IME 友好）
     )
 
@@ -517,6 +527,7 @@ def LineView(
     cursor_off: int | None = None,
     cursor_ref: ft.Ref | None = None,
     nav_seq: int = 0,
+    wrap_sel_seq: int = 0,  # >0 时给 overlay 传 collapsed 选区（软换行一次性折叠）
     field_ref: ft.Ref | None = None,
     input_session_ref: ft.Ref | None = None,
     cursor_value: str = "",
@@ -802,6 +813,7 @@ def LineView(
             field_ref, cursor_value, on_cursor_change, on_cursor_submit, on_cursor_focus,
             on_cursor_blur, on_selection_change,
             precomputed_vlines=shared_vlayout[1] if shared_vlayout else None,
+            wrap_sel_seq=wrap_sel_seq,
             precomputed_wrap_width=shared_vlayout[0] if shared_vlayout else None,
             pos_value=pos_value,
         )

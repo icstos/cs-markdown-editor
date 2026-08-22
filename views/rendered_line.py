@@ -1076,13 +1076,18 @@ def _maybe_stack_multi(
             height=text_h,
         )
 
-    # 多视觉行或激活行：Stack 内逐行 Text
-    controls: list[ft.Control] = []
+    # 多视觉行或激活行：视觉行 Text 放入内层 Stack（top 定位），光标 overlay 作为
+    # 外层 Stack 的独立子项（index 稳定）。
+    # 关键：换行触发时（1→2 视觉行）内层 Stack 新增 Text 不影响 overlay 在外层
+    # Stack 的 index —— diff 不产生 move 操作，overlay 元素不移动/不重挂载，焦点
+    # 与 IME 组合态不受干扰（否则元素移动触发 Flutter 重挂载，Windows IME 会提交
+    # 并选中正在拼写的文本，继续输入会覆盖选区）。
+    text_controls: list[ft.Control] = []
     for vline in visual_lines:
         vline_spans = _slice_spans_for_visual_line(flat_spans, raw_to_flat, vline, style)
         # 每个视觉行 Text 宽度 = wrap_width：文本在此宽度内换行
         text_w = wrap_width if not is_inf else float("inf")
-        controls.append(ft.Text(
+        text_controls.append(ft.Text(
             spans=vline_spans,
             style=style,
             width=text_w,
@@ -1092,12 +1097,19 @@ def _maybe_stack_multi(
             left=0,
         ))
 
+    inner = ft.Stack(
+        controls=text_controls,
+        width=float("inf"),  # 撑满外层（外层 Stack 尺寸由本子项决定，与旧版一致）
+        height=stack_h,
+        clip_behavior=ft.ClipBehavior.NONE,
+    )
+    outer_controls: list[ft.Control] = [inner]
     if cursor_overlay is not None:
-        controls.append(cursor_overlay)
+        outer_controls.append(cursor_overlay)
 
     return ft.Container(
         content=ft.Stack(
-            controls=controls,
+            controls=outer_controls,
             height=stack_h,
             clip_behavior=ft.ClipBehavior.NONE,  # 不裁切光标层（IME 候选框）
         ),

@@ -64,6 +64,7 @@ def cursor_text_field(
     on_selection_change: Callable | None = None,
     field_ref: ft.Ref | None = None,
     nav_seq: int = 0,
+    selection: ft.TextSelection | None = None,
     content_width: float | None = None,
 ) -> ft.TextField:
     """构造透明光标 TextField（Stack 顶层绝对定位）。
@@ -120,6 +121,11 @@ def cursor_text_field(
         # （连续输入字符吞没根因）。_end_input_session 递增 nav_seq 重建控件
         # 清空 value（新控件 value="" 天然清空）。
         "value": value,
+        # selection：软换行触发一次性折叠选区（清掉 IME 提交并选中的文本）。
+        # 仅 wrap_sel_seq>0 时携带；平时 None 不发送（客户端不动控制器选区，
+        # 不干扰 IME 组合态）。
+        "selection": selection,
+
         # 不设 autofocus！autofocus 在每次重渲染时都会发送到 Flutter，导致
         # TextField 重新聚焦，IME 重新触发 on_change（双发问题的根因）。
         # 聚焦由 editor 端 use_effect([cursor_li]) 在切行时异步执行。

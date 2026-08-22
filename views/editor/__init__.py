@@ -130,6 +130,10 @@ def MarkdownEditor(
     # 光标重聚焦触发器:点击同一位置时 cursor_li/cursor_off 不变,use_effect 不触发,
     # 但点击已使 cursor TextField 失焦。递增此值强制 _focus_cursor_field 重新聚焦。
     focus_seq, set_focus_seq = ft.use_state(0)
+    # 软换行触发一次性选区折叠序号：_refocus_on_wrap_change 在换行边界变化时递增，
+    # 渲染层据此给 cursor TextField 传 collapsed 选区（清掉 IME 因失焦/重挂载提交并
+    # 选中的刚输入文本），use_effect 在下一次渲染前复位为 0（一次性）。
+    wrap_sel_seq, set_wrap_sel_seq = ft.use_state(0)
     cursor_line, set_cursor_line = ft.use_state(0)  # 最近交互行(供工具栏块级操作)
     cursor_field_ref = ft.use_ref(None)  # 透明 cursor TextField 引用
     # IME 输入会话:on_change 期间不清空 TextField value,用"增量式"编辑同步文档
@@ -291,6 +295,7 @@ def MarkdownEditor(
         cursor_off=cursor_off,
         nav_seq=nav_seq,
         focus_seq=focus_seq,
+        wrap_sel_seq=wrap_sel_seq,
         cursor_line=cursor_line,
         clear_value_seq=clear_value_seq,
         cursor_field_value=cursor_field_value,
@@ -308,6 +313,7 @@ def MarkdownEditor(
         set_cursor_off=set_cursor_off,
         set_nav_seq=set_nav_seq,
         set_focus_seq=set_focus_seq,
+        set_wrap_sel_seq=set_wrap_sel_seq,
         set_cursor_line=set_cursor_line,
         set_clear_value_seq=set_clear_value_seq,
         set_cursor_field_value=set_cursor_field_value,
@@ -561,6 +567,17 @@ def MarkdownEditor(
     _highlight_map = ft.use_memo(
         scroll_cbs["build_highlight_map"], [outward_sel, len(document.lines)]
     )
+
+    # ============ use_effect:软换行选区折叠序号复位（一次性）============
+    # 换行边界变化时 _refocus_on_wrap_change 递增 wrap_sel_seq，渲染层给 cursor
+    # TextField 传 collapsed 选区（清掉 IME 提交并选中的刚输入文本，防止继续输入
+    # 覆盖选区）；渲染提交后立刻复位为 0，后续渲染不再携带 selection prop
+    # （客户端 getTextSelection 返回 null → 不动控制器选区，不干扰 IME 组合态）。
+    def _reset_wrap_sel_seq():
+        if wrap_sel_seq > 0:
+            set_wrap_sel_seq(0)
+
+    ft.use_effect(_reset_wrap_sel_seq, [wrap_sel_seq])
 
     # ============ use_effect:聚焦 cursor TextField ============
     # 依赖 cursor_li + nav_seq + focus_seq + word_wrap + viewport_w:

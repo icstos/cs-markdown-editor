@@ -85,6 +85,7 @@ class EditorContext:
     cursor_off: int
     nav_seq: int
     focus_seq: int
+    wrap_sel_seq: int  # 软换行触发一次性的选区折叠序号（>0 时折叠 TextField 选区）
     cursor_line: int
     clear_value_seq: int
     cursor_field_value: str
@@ -105,6 +106,7 @@ class EditorContext:
     set_cursor_off: Callable[[int], None]
     set_nav_seq: Callable[[int], None]
     set_focus_seq: Callable[[int], None]
+    set_wrap_sel_seq: Callable[[int], None]
     set_cursor_line: Callable[[int], None]
     set_clear_value_seq: Callable[[int], None]
     set_cursor_field_value: Callable[[str], None]

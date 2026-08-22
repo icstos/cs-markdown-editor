@@ -39,6 +39,7 @@ from views.pixel_layout import (
     _compute_wrap_width,
     _find_vline_for_raw,
     _line_visual_layout,
+    _value_linear_width,
 )
 from views.rendered_line import RenderedLine
 
@@ -332,7 +333,18 @@ def _cursor_overlay(
             start_local = local_off - len(_eff_value)
             if 0 <= start_local < len(vline.offsets_x):
                 cursor_px_x = vline.offsets_x[start_local]
-            # start_local < 0：value 跨视觉行，保持当前 cursor_px_x（视觉行起点）
+            else:
+                # value 跨视觉行（起点在上一个视觉行，start_local < 0）：单行
+                # TextField 的 value 从 left 线性布局，caret 位于 left + textwidth。
+                # 若 left 保持 caret 位置，caret 会渲染在距文字约一个 value 宽度之外
+                # 且被字段裁切（Clip.hardEdge）→ 光标"丢失"。left = caret_x -
+                # textwidth（跨视觉行累加，与渲染层同源 offsets_x），caret 精确
+                # 落回光标像素位置，IME 候选框跟随正确位置弹出。
+                _w = _value_linear_width(
+                    visual_lines, cursor_off - len(_eff_value), vline, cursor_px_x,
+                )
+                if _w is not None:
+                    cursor_px_x = cursor_px_x - _w
 
     # 任务行前缀宽度扣除（仅 vline 0：前缀占宽度，需相对内容起点定位光标）
     if line.task and line.segments and vline is not None and vline.vline_idx == 0:

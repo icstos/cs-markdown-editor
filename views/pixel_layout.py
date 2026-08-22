@@ -509,3 +509,36 @@ def _find_vline_for_raw(visual_lines: list[VisualLine], raw_off: int) -> VisualL
     if v.vline_idx > 0 and v.start_raw == raw_off:
         return visual_lines[v.vline_idx - 1]
     return v
+
+
+def _value_linear_width(
+    visual_lines: list[VisualLine],
+    value_start_raw: int,
+    cursor_vline: VisualLine,
+    caret_x: float,
+) -> float | None:
+    """value（起点 value_start_raw → 光标）跨视觉行的线性文本宽度；同视觉行返回 None。
+
+    供 _cursor_overlay 定位跨视觉行会话的 TextField：单行 TextField 的 value 从
+    left 线性布局，caret 位于 left + textwidth(value)。要 caret 精确落在光标像素
+    位置（cursor_px_x），left = caret_x - textwidth。textwidth 按视觉行累加：
+    value 起点所在视觉行的尾部宽度 + 中间整行宽度 + 光标行 caret_x。
+
+    起点与光标在同一视觉行时返回 None（调用方走局部 offsets 分支）；起点越界
+    时钳制到行首（视觉行不足时返回 None 防御）。
+    """
+    if not visual_lines or cursor_vline is None:
+        return None
+    value_start_raw = max(0, value_start_raw)
+    vs = None
+    for _v in visual_lines:
+        if _v.start_raw <= value_start_raw <= _v.end_raw:
+            vs = _v
+            break
+    if vs is None or vs.vline_idx >= cursor_vline.vline_idx:
+        return None
+    vs_local = max(0, min(value_start_raw - vs.start_raw, len(vs.offsets_x) - 1))
+    width = vs.width - vs.offsets_x[vs_local]
+    for _v in visual_lines[vs.vline_idx + 1 : cursor_vline.vline_idx]:
+        width += _v.width
+    return width + caret_x

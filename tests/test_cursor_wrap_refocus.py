@@ -87,11 +87,10 @@ def _make_ctx(document: Document, cursor_li: int, base: int,
 
 
 def test_wrap_triggers_refocus():
-    """输入触发软换行（视觉行数变化）→ 结束会话 + nav_seq 重建重聚焦。
+    """输入触发软换行（视觉行数变化）→ 递增 focus_seq 重聚焦（不重建，保 IME 组合态）。
 
-    会话值跨视觉行时单行 TextField 无法正确布局（光标脱离文字），且 value
-    镜像跨边界会漂移 → 结束会话（cursor_field_value=""）+ nav_seq 重建，
-    光标直接定位到当前位置，后续输入从新会话开始。
+    五笔/拼音在满行末尾输入编码字母触发软换行时，组合态必须保持（不结束会话、
+    不重建 TextField），正在拼写的编码不被打断、不上屏，可继续选择候选字。
     """
     doc = Document(lines=[_para_line("")])
     ctx, calls = _make_ctx(doc, cursor_li=0, base=0, content_width=200.0)
@@ -101,12 +100,15 @@ def test_wrap_triggers_refocus():
     handle_char_input("你" * 19)
 
     assert doc.lines[0].raw == "你" * 19
-    # 触发软换行 → nav_seq 递增（重建 TextField + 重聚焦，保持光标）
-    assert ("set_nav_seq", 1) in calls, f"应重建重聚焦，calls={calls}"
-    # 会话已结束：value 镜像清空（跨视觉行会话不再保留）
-    assert ("set_cursor_field_value", "") in calls, f"应清空会话 value，calls={calls}"
-    assert ctx.input_session_ref.current == {"li": -1, "start_off": -1, "last_value": ""}, \
-        f"会话应被重置，calls={calls}"
+    # 触发软换行 → focus_seq 被递增（重聚焦，保持光标）
+    assert ("set_focus_seq", 1) in calls, f"应触发重聚焦，calls={calls}"
+    # 不重建 TextField（nav_seq 不递增）→ IME 组合态保持
+    assert not any(name == "set_nav_seq" for name, *_ in calls), \
+        f"软换行不应重建 TextField，calls={calls}"
+    # 会话保持（value 镜像不清空，继续拼写/上屏）
+    assert ctx.input_session_ref.current["last_value"] == "你" * 19, \
+        f"会话应保持，calls={calls}"
+    assert ("set_cursor_field_value", "") not in calls, f"不应清空会话 value，calls={calls}"
 
 
 def test_no_wrap_no_refocus():
@@ -134,9 +136,9 @@ def test_wrap_keeps_document_intact():
     handle_char_input("你" * 19)
     assert doc.lines[0].raw == "你" * 19
 
-    # 会话结束后继续输入：新会话逐字累积（每事件 +1 字符）跨边界增长，内容不被吞
+    # 会话保持，继续输入：value 逐字累积（每事件 +1 字符）跨边界增长，内容不被吞
     for n in range(20, 25):
-        handle_char_input("你" * (n - 19))
+        handle_char_input("你" * n)
         assert doc.lines[0].raw == "你" * n, f"继续输入不应丢字，n={n} raw={doc.lines[0].raw!r}"
 
 
@@ -192,8 +194,8 @@ def test_backspace_unwrap_triggers_refocus():
         f"Backspace 收拢不应递增 nav_seq，calls={calls}"
 
 
-def test_backspace_unwrap_active_session_rebuilds():
-    """Backspace 使行收拢（活动会话跨边界）→ 结束会话 + nav_seq 重建重聚焦。"""
+def test_backspace_unwrap_active_session_refocus():
+    """Backspace 使行收拢（活动会话跨边界）→ focus_seq 重聚焦，会话保持（IME 不断）。"""
     doc = Document(lines=[_para_line("你" * 13)])
     ctx, calls = _make_ctx(
         doc, cursor_li=0, base=13, content_width=200.0,
@@ -204,10 +206,13 @@ def test_backspace_unwrap_active_session_rebuilds():
     backspace_core()
 
     assert doc.lines[0].raw == "你" * 12
-    # 活动会话跨边界收拢 → 结束会话 + nav_seq 重建（光标重新定位）
-    assert ("set_nav_seq", 1) in calls, f"应重建重聚焦，calls={calls}"
-    assert ("set_cursor_field_value", "") in calls, f"应清空会话 value，calls={calls}"
-    assert ctx.input_session_ref.current == {"li": -1, "start_off": -1, "last_value": ""}
+    # 活动会话跨边界收拢 → focus_seq 重聚焦；会话保持（不重建、不结束）
+    assert ("set_focus_seq", 1) in calls, f"应重聚焦，calls={calls}"
+    assert not any(name == "set_nav_seq" for name, *_ in calls), \
+        f"不应重建 TextField，calls={calls}"
+    # 会话值被 _move_cursor_inline 缩短（末尾删 1 字，保持会话连续）
+    assert ctx.input_session_ref.current["last_value"] == "你" * 12, \
+        f"会话应保持并缩短，calls={calls}"
 
 
 

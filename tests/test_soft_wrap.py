@@ -26,6 +26,7 @@ from views.pixel_layout import (
     _find_vline_for_raw,
     _layout_last_raw_off,
     _line_visual_layout,
+    _value_linear_width,
     _wrap_offsets_into_visual_lines,
     _make_visual_line,
 )
@@ -577,6 +578,54 @@ def _dump_vlines(vlines: list[VisualLine], raw_text: str) -> str:
 
 # ============ 主入口 ============
 
+# ============ _value_linear_width（跨视觉行会话 value 线性宽度）============
+# 12 字/行（16px 字宽、200px 换行宽）：vline0=[0..12] 宽 192，vline1=[12..13] 宽 16
+_VLINES_2 = [
+    VisualLine(0, 0, 12, _make_offsets_x([16.0] * 12), 192.0),
+    VisualLine(1, 12, 13, _make_offsets_x([16.0]), 16.0),
+]
+# 3 视觉行：vline0=[0..12]、vline1=[12..24]、vline2=[24..27]
+_VLINES_3 = [
+    VisualLine(0, 0, 12, _make_offsets_x([16.0] * 12), 192.0),
+    VisualLine(1, 12, 24, _make_offsets_x([16.0] * 12), 192.0),
+    VisualLine(2, 24, 27, _make_offsets_x([16.0] * 3), 48.0),
+]
+
+
+def test_value_linear_width_span_two_vlines():
+    """value 从 vline0 起点跨到 vline1 光标：线性宽度 = 整行宽 + caret_x。"""
+    # value="你"*13（208px），光标在 vline1 第 2 字符（caret_x=16）
+    w = _value_linear_width(_VLINES_2, 0, _VLINES_2[1], 16.0)
+    assert w == 208.0, f"w={w}"
+
+
+def test_value_linear_width_mid_vline_start():
+    """value 起点在 vline0 中部：尾部宽度 + caret_x。"""
+    # value 从 raw 5 到 raw 13（8 字 = 128px）；vline0 尾部 = 192-80 = 112，+caret 16
+    w = _value_linear_width(_VLINES_2, 5, _VLINES_2[1], 16.0)
+    assert w == 128.0, f"w={w}"
+
+
+def test_value_linear_width_three_vlines():
+    """value 跨 3 个视觉行：首行尾部 + 中间整行 + caret_x。"""
+    w = _value_linear_width(_VLINES_3, 0, _VLINES_3[2], 48.0)
+    assert w == 192.0 + 192.0 + 48.0, f"w={w}"
+
+
+def test_value_linear_width_boundary_start():
+    """value 起点在视觉行边界（归属前一行）：宽度仍正确。"""
+    # raw 12 归属 vline0 末尾 → vline0 尾部 = 192-192 = 0，+caret 16 = 16（1 字）
+    w = _value_linear_width(_VLINES_2, 12, _VLINES_2[1], 16.0)
+    assert w == 16.0, f"w={w}"
+
+
+def test_value_linear_width_same_vline_returns_none():
+    """value 起点与光标同视觉行（含起点越界/空列表）→ None（调用方走局部分支）。"""
+    assert _value_linear_width([], 0, _VLINES_2[0], 0.0) is None
+    assert _value_linear_width(_VLINES_2, 999, _VLINES_2[1], 16.0) is None
+    assert _value_linear_width(_VLINES_2, 0, None, 16.0) is None
+
+
 def run_all():
     tests = [
         test_wrap_empty, test_wrap_single_char, test_wrap_no_overflow,
@@ -598,6 +647,11 @@ def run_all():
         test_slice_single_vline, test_slice_multi_vline,
         test_slice_preserves_style, test_slice_empty_range,
         test_slice_straddling_span,
+        test_value_linear_width_span_two_vlines,
+        test_value_linear_width_mid_vline_start,
+        test_value_linear_width_three_vlines,
+        test_value_linear_width_boundary_start,
+        test_value_linear_width_same_vline_returns_none,
     ]
     passed = 0
     failed = 0

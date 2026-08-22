@@ -463,6 +463,7 @@ def App():
     ctx.export_shortcuts = settings_cbs["export_shortcuts"]
     ctx.import_shortcuts = settings_cbs["import_shortcuts"]
     ctx.toggle_sidebar = settings_cbs["toggle_sidebar"]
+    ctx.toggle_outline = settings_cbs["toggle_outline"]
     ctx.toggle_word_wrap = settings_cbs["toggle_word_wrap"]
     ctx.zoom_in = settings_cbs["zoom_in"]
     ctx.zoom_out = settings_cbs["zoom_out"]

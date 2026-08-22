@@ -49,6 +49,7 @@ DEFAULT_SETTINGS: Settings = {
     "sidebar_open": False,
     "sidebar_panel": "files",
     "sidebar_width": 256,
+    "outline_open": True,
     "recent_files": [],
     # 工作区文件夹：显式「打开文件夹」后锚定文件树根目录；为 None 时回退到当前文件所在目录
     "workspace_folder": None,

@@ -229,6 +229,10 @@ def build_settings_controller(ctx):
     def toggle_sidebar():
         update_setting("sidebar_open", not ctx.settings.get("sidebar_open", False))
 
+    def toggle_outline():
+        """切换右侧大纲列开合（横向四列布局的第四列，一键收起/展开）。"""
+        update_setting("outline_open", not ctx.settings.get("outline_open", True))
+
     def toggle_word_wrap():
         """切换自动换行（VSCode 风格 Alt+Z）：开 = 软换行，关 = 长行不换行。"""
         update_setting("word_wrap", not ctx.settings.get("word_wrap", True))
@@ -271,6 +275,7 @@ def build_settings_controller(ctx):
         "export_shortcuts": export_shortcuts,
         "import_shortcuts": import_shortcuts,
         "toggle_sidebar": toggle_sidebar,
+        "toggle_outline": toggle_outline,
         "toggle_word_wrap": toggle_word_wrap,
         "zoom_in": zoom_in,
         "zoom_out": zoom_out,

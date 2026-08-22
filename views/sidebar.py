@@ -25,7 +25,7 @@ import flet as ft
 
 from models import BlockType, Document, SegType
 from services import shortcut
-from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors, only_border
+from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors
 
 _MD_EXTS = (".md", ".markdown")
 _MAX_DEPTH = 8  # 文件树扫描最大深度（VSCode 风格全类型扫描，8 层覆盖典型项目结构）
@@ -1911,7 +1911,6 @@ def Sidebar(
     theme_mode: ft.ThemeMode,
     settings: dict,
     active_panel: str,
-    on_change_panel: Callable[[str], None],
     on_open_file: Callable[[str], None],
     on_jump_to_line: Callable[[int, int | None], None],
     on_width_change: Callable[[int], None] | None = None,
@@ -1935,7 +1934,7 @@ def Sidebar(
     # Ctrl+F 聚焦搜索框：App 递增序号，此处 use_effect 聚焦搜索输入框
     search_focus_seq: int = 0,
 ):
-    """左侧侧边栏：文件 / 大纲 / 搜索三面板，顶部图标切换，右侧可拖拽调宽。
+    """左侧管理面板（横向四列布局第二列）：文件 / 搜索面板由功能栏（第一列）切换，右侧可拖拽调宽。
 
     文件面板根目录优先级：settings.workspace_folder（显式「打开文件夹」锚定的
     工作区）> 当前文件所在目录 > None（最近文件列表）。工作区模式下打开子目录
@@ -2013,18 +2012,8 @@ def Sidebar(
     # ---- 回调稳定化：供 use_memo 提取的静态控件读取最新回调（避免闭包过期）----
     _cb_ref = ft.use_ref({})
     _cb_ref.current = {
-        "on_change_panel": on_change_panel,
         "on_width_change": on_width_change,
     }
-
-    # ---- 大纲：use_memo 按标题行签名缓存（仅标题增删改才重算）----
-    # 签名为 tuple of (i, level, raw)，未编辑行 raw 引用稳定 → 比较近乎 O(1)。
-    _toc_sig = tuple(
-        (i, ln.level, ln.raw)
-        for i, ln in enumerate(document.lines)
-        if ln.block_type == BlockType.HEADING
-    ) if document is not None else ()
-    toc_entries = ft.use_memo(lambda: _compute_toc(document), [_toc_sig])
 
     # ---- 搜索选项：从 settings 读取（持久化），切换时调 on_update_setting ----
     _search_folder = settings.get("search_folder", False)
@@ -2553,41 +2542,6 @@ def Sidebar(
         [theme_mode],
     )
 
-    # ---- 顶部 Tab 切换：use_memo 提取（仅面板 / 主题变化重建）----
-    def _build_tabs():
-        def _panel_tab(key: str, icon: str, label: str) -> ft.Control:
-            active = active_panel == key
-            return ft.Container(
-                expand=True,
-                border_radius=Radius.MD,
-                bgcolor=ft.Colors.with_opacity(0.10, c.link) if active else None,
-                content=ft.IconButton(
-                    icon=icon,
-                    tooltip=label,
-                    icon_size=18,
-                    on_click=lambda e, k=key: _cb_ref.current["on_change_panel"](k),
-                    style=ft.ButtonStyle(
-                        color=c.link if active else c.muted,
-                        padding=Spacing.MD,
-                    ),
-                ),
-            )
-        return ft.Container(
-            bgcolor=c.toolbar_bg,
-            border=only_border(bottom=ft.BorderSide(1, c.border)),
-            padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.LG),
-            content=ft.Row(
-                controls=[
-                    _panel_tab("files", ft.Icons.FOLDER_OUTLINED, "文件"),
-                    _panel_tab("outline", ft.Icons.FORMAT_LIST_BULLETED, "大纲"),
-                    _panel_tab("search", ft.Icons.SEARCH, "搜索"),
-                ],
-                spacing=Spacing.XS,
-            ),
-        )
-
-    tabs = ft.use_memo(_build_tabs, [active_panel, theme_mode])
-
     # ---- 面板选择 ----
     # 文件面板右键回调：未提供时用 no-op 避免崩溃
     _file_ctx = on_file_context_action if on_file_context_action is not None else (lambda action, path: None)
@@ -2613,8 +2567,6 @@ def Sidebar(
             highlight_dir=drop_hover_dir,
             set_highlight_dir=set_drop_hover_dir,
         )
-    elif active_panel == "outline":
-        panel = _render_outline_panel(toc_entries, on_jump_to_line, c)
     else:  # search
         # 跨文件点击回调：未提供时用 no-op 避免崩溃
         _open_and_jump = on_open_file_and_jump if on_open_file_and_jump is not None else (
@@ -2663,7 +2615,7 @@ def Sidebar(
                     expand=True,
                     bgcolor=c.surface,
                     content=ft.Column(
-                        controls=[tabs, panel],
+                        controls=[panel],
                         spacing=0,
                         expand=True,
                     ),

@@ -44,11 +44,13 @@ import flet as ft
 import parser
 from app._tab_helpers import tab_display_name, tab_group
 from styles import get_colors
+from views.activity_bar import ActivityBar
 from views.diff_markers import DiffHeader
 from views.diff_view import compute_diff_for_editors
 from views.editor import MarkdownEditor
 from views.file_dialogs import FileActionDialog
 from views.global_menu import build_global_menu
+from views.outline_panel import OutlinePanel
 from views.recovery_dialog import RecoveryDialog
 from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
@@ -100,8 +102,13 @@ def build_render(ctx) -> ft.Control:
         on_pick_backup_dir=lambda: ctx.page_ref.current.run_task(ctx.pick_backup_dir),
     )
 
-    # ============ 侧边栏 ============
+    # ============ 侧边栏（第二列：管理面板）+ 功能栏（第一列）+ 大纲列（第四列）============
     sidebar_open = ctx.settings.get("sidebar_open", False)
+    outline_open = ctx.settings.get("outline_open", True)
+    # 面板归一化：旧版大纲面板已独立为第四列，sidebar_panel 仅文件/搜索有效
+    _active_panel = ctx.settings.get("sidebar_panel", "files")
+    if _active_panel not in ("files", "search"):
+        _active_panel = "files"
     # 侧边栏：始终渲染 Sidebar，内部统一控制宽度动画 0↔width + clip_behavior
     # + 拖拽调宽（dragging 时禁用动画即时跟随），实现 VSCode 式平滑开合。
     # 始终保持 Sidebar 挂载可保留内部状态（搜索词 / 文件过滤 / 滚动位置）。
@@ -117,8 +124,7 @@ def build_render(ctx) -> ft.Control:
         file_path=_sidebar_path,
         theme_mode=ctx.theme_mode,
         settings=ctx.settings,
-        active_panel=ctx.settings.get("sidebar_panel", "files"),
-        on_change_panel=ctx.change_sidebar_panel,
+        active_panel=_active_panel,
         on_open_file=ctx.open_file_by_path,
         on_jump_to_line=ctx.jump_to_line,
         on_width_change=ctx.change_sidebar_width,
@@ -186,13 +192,13 @@ def build_render(ctx) -> ft.Control:
         return ts[gi] if 0 <= gi < len(ts) else {}
 
     if ctx.is_diff_tab:
-        editor_area = _build_diff_area(ctx, sidebar_open, _pane_cursor_cb, _pane_content_cb)
+        editor_body = _build_diff_area(ctx, sidebar_open, _pane_cursor_cb, _pane_content_cb)
     elif ctx.split_editor:
-        editor_area = _build_split_area(
+        editor_body = _build_split_area(
             ctx, _editor_common, _group_tab, _pane_cursor_cb, _pane_content_cb
         )
     else:
-        editor_area = ft.Container(
+        editor_body = ft.Container(
             content=MarkdownEditor(
                 # key 用左组会话：与拆分时左视口同 key，切换拆分不重置左视口光标；
                 # 非拆分态激活标签=左组激活（不变式），session_left 随激活变化递增
@@ -211,53 +217,10 @@ def build_render(ctx) -> ft.Control:
             expand=True,
         )
 
-    body = ft.Row(
-        controls=[
-            sidebar,
-            editor_area,
-        ],
-        spacing=0,
-        expand=True,
-    )
-
-    # ============ 底部状态栏 ============
-    # 对比标签时反映当前焦点对比视口的文档/路径/光标；拆分时按 active_pane 选择。
-    if ctx.is_diff_tab:
-        _footer_doc = ctx.cur_tab["right_doc"] if ctx.diff_active_pane == 1 else ctx.cur_tab["left_doc"]
-        _footer_path = ctx.cur_tab["right_path"] if ctx.diff_active_pane == 1 else ctx.cur_tab["left_path"]
-        _footer_split = False
-        _footer_split_cb = None  # 对比标签下禁用拆分切换，避免模式冲突
-    else:
-        _footer_doc = ctx.document
-        _footer_path = ctx.file_path
-        _footer_split = ctx.split_editor
-        _footer_split_cb = ctx.toggle_split_editor
-    # .lnk 快捷方式打开时显示链接文件名（file_path 为目标路径）
-    _footer_display = ctx.cur_tab.get("display_name")
-    footer = (
-        StatusBar(
-            document=_footer_doc,
-            file_path=_footer_path,
-            display_name=_footer_display,
-            dirty=_footer_doc.dirty,
-            sidebar_open=ctx.settings.get("sidebar_open", False),
-            theme_mode=ctx.theme_mode,
-            on_toggle_sidebar=ctx.toggle_sidebar,
-            word_wrap=ctx.settings.get("word_wrap", True),
-            on_toggle_word_wrap=ctx.toggle_word_wrap,
-            split_editor=_footer_split,
-            on_toggle_split_editor=_footer_split_cb,
-            status_ref=ctx.status_ref,
-            status_message=ctx.status_message,
-            on_status_clear=lambda: ctx.set_status_message(None),
-        )
-        if ctx.settings.get("show_footer", True)
-        else ft.Container(height=0)
-    )
-
-    # ============ 顶部多文档标签栏 ============
-    # MarkText 风格：标签栏最左侧嵌入全局菜单栏（文件/编辑/段落/格式/视图/帮助），
-    # 替代原有顶部工具栏区域。所有功能通过 ctx 装配槽 + get_active_nav 路由。
+    # ============ 全局菜单（收纳进功能栏底部）+ 标签行（放入第三列）============
+    # MarkText 风格：≡ 菜单按钮收纳文件/编辑/段落/格式/视图/帮助六组（含「设置」，
+    # 文件→设置 / Ctrl+,），置于功能栏底部替代原设置按钮；标签行随编辑区进入
+    # 第三列，宽度与文档编辑区一致。所有功能通过 ctx 装配槽 + get_active_nav 路由。
     # 拆分模式（非对比标签）：标签行同步分左右——每组一个 TabBar，只显示该组
     # 标签（VSCode「向右拆分」直觉：标签行与编辑区同步分栏）。
     global_menu = build_global_menu(ctx, ctx.theme_mode)
@@ -311,11 +274,11 @@ def build_render(ctx) -> ft.Control:
         )
 
     if ctx.split_editor and not ctx.is_diff_tab:
-        # 拆分：双 TabBar 并排（全局菜单栏在左组，中缝分隔线与编辑区对齐）
+        # 拆分：双 TabBar 并排（中缝分隔线与编辑区对齐），宽度跟随编辑区
         _c_tb = get_colors(ctx.theme_mode)
         tab_bar = ft.Row(
             controls=[
-                ft.Container(content=_group_tab_bar(0, global_menu), expand=True),
+                ft.Container(content=_group_tab_bar(0, None), expand=True),
                 ft.VerticalDivider(width=1, color=_c_tb.border),
                 ft.Container(content=_group_tab_bar(1, None), expand=True),
             ],
@@ -332,12 +295,92 @@ def build_render(ctx) -> ft.Control:
             on_new=ctx.new_doc,
             on_context_action=ctx.on_tab_context_action,
             compare_source=ctx.compare_source,
-            leading=global_menu,
         )
+
+    # ============ 功能栏（第一列）+ 大纲列（第四列）============
+    # 功能栏点击：当前活动图标再点 = 一键收起第二列（VSCode 直觉）；
+    # 点其他图标 = 切换面板并展开（若已收起）。
+    def _activity_click(key: str):
+        if key == _active_panel and sidebar_open:
+            ctx.toggle_sidebar()
+        else:
+            ctx.change_sidebar_panel(key)
+            if not sidebar_open:
+                ctx.toggle_sidebar()
+
+    activity_bar = ActivityBar(
+        active_panel=_active_panel,
+        sidebar_open=sidebar_open,
+        on_click_panel=_activity_click,
+        menu=global_menu,
+        theme_mode=ctx.theme_mode,
+    )
+
+    # 大纲列：始终渲染（保留滚动位置），open 时内容宽 240，收起时仅剩竖条
+    outline_panel = OutlinePanel(
+        document=_sidebar_doc,
+        theme_mode=ctx.theme_mode,
+        open=outline_open,
+        on_toggle=ctx.toggle_outline,
+        on_jump_to_line=ctx.jump_to_line,
+    )
+
+    # 第三列：标签行 + 编辑区（标签行宽度与编辑区一致）
+    editor_area = ft.Column(
+        controls=[tab_bar, editor_body],
+        spacing=0,
+        expand=True,
+    )
+
+    body = ft.Row(
+        controls=[
+            activity_bar,
+            sidebar,
+            editor_area,
+            outline_panel,
+        ],
+        spacing=0,
+        expand=True,
+        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+    )
+
+    # ============ 底部状态栏 ============
+    # 对比标签时反映当前焦点对比视口的文档/路径/光标；拆分时按 active_pane 选择。
+    if ctx.is_diff_tab:
+        _footer_doc = ctx.cur_tab["right_doc"] if ctx.diff_active_pane == 1 else ctx.cur_tab["left_doc"]
+        _footer_path = ctx.cur_tab["right_path"] if ctx.diff_active_pane == 1 else ctx.cur_tab["left_path"]
+        _footer_split = False
+        _footer_split_cb = None  # 对比标签下禁用拆分切换，避免模式冲突
+    else:
+        _footer_doc = ctx.document
+        _footer_path = ctx.file_path
+        _footer_split = ctx.split_editor
+        _footer_split_cb = ctx.toggle_split_editor
+    # .lnk 快捷方式打开时显示链接文件名（file_path 为目标路径）
+    _footer_display = ctx.cur_tab.get("display_name")
+    footer = (
+        StatusBar(
+            document=_footer_doc,
+            file_path=_footer_path,
+            display_name=_footer_display,
+            dirty=_footer_doc.dirty,
+            sidebar_open=ctx.settings.get("sidebar_open", False),
+            theme_mode=ctx.theme_mode,
+            on_toggle_sidebar=ctx.toggle_sidebar,
+            word_wrap=ctx.settings.get("word_wrap", True),
+            on_toggle_word_wrap=ctx.toggle_word_wrap,
+            split_editor=_footer_split,
+            on_toggle_split_editor=_footer_split_cb,
+            status_ref=ctx.status_ref,
+            status_message=ctx.status_message,
+            on_status_clear=lambda: ctx.set_status_message(None),
+        )
+        if ctx.settings.get("show_footer", True)
+        else ft.Container(height=0)
+    )
 
     main_col = ft.Column(
         controls=[
-            tab_bar,
             body,
             footer,
         ],

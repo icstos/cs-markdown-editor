@@ -200,6 +200,7 @@ class AppContext:
     import_shortcuts: Callable = field(default=lambda: None)
     schedule_autosave: Callable = field(default=lambda: None)
     toggle_sidebar: Callable = field(default=lambda: None)
+    toggle_outline: Callable = field(default=lambda: None)
     toggle_word_wrap: Callable = field(default=lambda: None)
     zoom_in: Callable = field(default=lambda: None)
     zoom_out: Callable = field(default=lambda: None)

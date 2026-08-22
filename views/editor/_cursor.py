@@ -29,6 +29,7 @@ import time
 
 import parser
 from models import BlockType
+from styles import block_text_size
 from utils.segment_helpers import PREFIX_SEGTYPES
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
@@ -51,6 +52,53 @@ _reparse_atomic = parser.reparse_line_atomic
 _CURSOR_PULSE_INTERVAL = 0.25
 # 模块级别名：测试可 patch（views.editor._cursor._monotonic）控制节流时间
 _monotonic = time.monotonic
+
+
+def _vline_signature(ctx, line, off: int) -> tuple[int, int] | None:
+    """激活行视觉行签名 (num_vlines, cursor_vline_idx)；围栏块返回 None。
+
+    与渲染层/光标层共用 _line_visual_layout（换行点天然一致），用于检测编辑使
+    行的视觉行数或光标所在视觉行变化（软换行触发/收拢）——此时 cursor TextField
+    的 top 属性从 0 跳变到 vline_idx*text_h（或反向），Flutter 端属性更新短暂
+    移除焦点，而 cursor_li/nav_seq/focus_seq 均不变 → focus effect 不触发 →
+    光标丢失、无法继续编辑（与 word_wrap/viewport_w 切换同型问题）。
+
+    编辑前后签名不同 → 递增 focus_seq 强制重聚焦（不递增 nav_seq，不重建
+    TextField，保 IME 组合态）。word_wrap 关闭（content_width=inf）时恒为
+    单视觉行，签名不变化，调用方据 _wrap_on 跳过计算。
+    """
+    if _is_fence(line):
+        return None
+    from views.pixel_layout import (
+        _block_padding,
+        _compute_wrap_width,
+        _find_vline_for_raw,
+        _line_visual_layout,
+    )
+    base = block_text_size(line.block_type, line.level, getattr(ctx, "body_font_size", 16))
+    _, _, left_pad = _block_padding(line)
+    cw = getattr(ctx, "content_width", None)
+    if cw is None:
+        cw = float("inf")
+    wrap_width = _compute_wrap_width(cw, left_pad)
+    vlines = _line_visual_layout(
+        line, base, wrap_width, cursor_raw_offset=off,
+        line_height=getattr(ctx, "line_height", 1.6),
+    )
+    vline = _find_vline_for_raw(vlines, off)
+    return (len(vlines), vline.vline_idx if vline is not None else 0)
+
+
+def _wrap_on(ctx) -> bool:
+    """软换行是否生效：content_width 有限（word_wrap 开启）时才有换行检测意义。
+
+    与布局层同源：word_wrap=False 时 content_width=float("inf")，恒单视觉行。
+    ctx 无 content_width（旧测试 mock）时视为未开启，跳过检测保持原行为。
+    """
+    cw = getattr(ctx, "content_width", None)
+    if cw is None:
+        return False
+    return cw != float("inf") and cw > 0
 
 
 def _prefix_sig(line) -> tuple:
@@ -304,8 +352,11 @@ def build_cursor(ctx):
                 new_raw = raw[:sel_start] + value + raw[sel_end:]
                 new_off = sel_start + len(value)
                 ctx.push_line_edit(li, raw)
+                _old_vsig = _vline_signature(ctx, line, cs.base) if _wrap_on(ctx) else None
                 _reparse_atomic(line, new_raw)
                 ctx.mark_dirty()
+                if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, new_off):
+                    ctx.set_focus_seq(ctx.focus_seq + 1)
                 cs.reset(new_off, len(new_raw))
                 ctx.set_cursor_off(new_off)
                 ctx.set_cursor_field_value(value)
@@ -373,8 +424,17 @@ def build_cursor(ctx):
         # 避免双重渲染（render #1 用旧 value → IME 重复 on_change）。
         ctx.set_cursor_field_value(new_value)
         old_psig = _prefix_sig(line)
+        # 软换行检测：编辑前后视觉行签名变化（触发换行/收拢）→ 递增 focus_seq
+        # 强制重聚焦（不递增 nav_seq，不重建 TextField，保 IME 组合态）。
+        # 中文输入法在满行末尾输入首个拼音触发软换行时，cursor TextField 的
+        # top 属性从 0 跳变到 vline_idx*text_h，Flutter 属性更新短暂移除焦点，
+        # 而 cursor_li/nav_seq/focus_seq 均不变 → focus effect 不触发 → 光标
+        # 丢失、组合态中断、无法继续编辑。
+        _old_vsig = _vline_signature(ctx, line, doc_end) if _wrap_on(ctx) else None
         _reparse_atomic(line, new_raw)
         ctx.mark_dirty()
+        if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, new_off):
+            ctx.set_focus_seq(ctx.focus_seq + 1)
         # 多光标：同步 delta（removed_len, inserted）到所有副光标
         ctx.broadcast_char_input(len(removed), inserted)
         # 块级前缀结构变化（输入 ">" 创建引用 / "- " 创建列表 / "#" 创建
@@ -540,8 +600,13 @@ def build_cursor(ctx):
                 return
             ctx.push_line_edit(li, raw)
             new_raw = raw[: off - 1] + raw[off:]
+            # 软换行检测：删除使行收拢（视觉行数/光标视觉行变化）时重聚焦
+            # （不递增 nav_seq，避免 TextField 重建；与 handle_char_input 同型）
+            _old_vsig = _vline_signature(ctx, line, off) if _wrap_on(ctx) else None
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
+            if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, off - 1):
+                ctx.set_focus_seq(ctx.focus_seq + 1)
             # 轻量光标更新：不递增 nav_seq，避免 TextField 重建（性能优化）
             _move_cursor_inline(li, off - 1, len(new_raw))
             # 多光标：同步 Backspace 到所有副光标
@@ -612,8 +677,13 @@ def build_cursor(ctx):
         if off < len(raw):
             ctx.push_line_edit(li, raw)
             new_raw = raw[:off] + raw[off + 1 :]
+            # 软换行检测：删除使行收拢（视觉行数/光标视觉行变化）时重聚焦
+            # （不递增 nav_seq，避免 TextField 重建；与 handle_char_input 同型）
+            _old_vsig = _vline_signature(ctx, line, off) if _wrap_on(ctx) else None
             _reparse_atomic(line, new_raw)
             ctx.mark_dirty()
+            if _old_vsig is not None and _old_vsig != _vline_signature(ctx, line, off):
+                ctx.set_focus_seq(ctx.focus_seq + 1)
             # 光标位置不变，仅更新 cursor_ref 的 raw_len（不触发 _set_cursor 开销）
             ctx.cursor_ref.current.reset(off, len(new_raw))
             # 多光标：同步 Delete 到所有副光标

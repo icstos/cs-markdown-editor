@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import parser
 from app._file_dialogs import build_file_dialogs
 
 
@@ -70,3 +71,44 @@ def test_open_delete_dialog_has_instance():
     assert state["mode"] == "confirm"
     assert state["action"] == "delete"
     assert state["instance"] >= 1
+
+
+def test_reload_external_switches_to_tab(tmp_path):
+    """外部修改「重新加载」：文档刷新为磁盘最新内容、清脏，并切换到对应文件。"""
+    f = tmp_path / "a.md"
+    f.write_text("外部新内容\n第二行", encoding="utf-8")
+    tab = {
+        "type": "editor",
+        "file_path": str(f),
+        "document": None,
+        "dirty": True,
+        "_last_known_mtime": None,
+    }
+    ctx = SimpleNamespace(
+        file_dialog={
+            "mode": "confirm",
+            "action": "reload_external",
+            "target": str(f),
+            "target_tab_index": 0,
+        },
+        tabs_ref=SimpleNamespace(current=[tab]),
+        set_file_dialog=MagicMock(),
+        set_tabs=MagicMock(),
+        bump_tab_session=MagicMock(),
+        select_tab=MagicMock(),
+        show_snack=MagicMock(),
+        page_ref=SimpleNamespace(current=None),
+    )
+    cbs = build_file_dialogs(ctx)
+    cbs["on_file_dialog_confirm"]()
+
+    # 标签文档已刷新为磁盘内容并清脏
+    new_tab = ctx.tabs_ref.current[0]
+    assert new_tab["dirty"] is False
+    assert new_tab["file_path"] == str(f)
+    body = parser.serialize(new_tab["document"])
+    assert "外部新内容" in body
+    assert "第二行" in body
+    assert new_tab["_last_known_mtime"] == f.stat().st_mtime
+    # 重新加载后切换到对应文件
+    ctx.select_tab.assert_called_once_with(0)

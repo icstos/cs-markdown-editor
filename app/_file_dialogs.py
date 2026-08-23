@@ -200,6 +200,10 @@ def build_file_dialogs(ctx):
                     ctx.set_tabs(ts)
                     ctx.tabs_ref.current = ts
                     show_snack("已重新加载最新内容")
+                    # 切换到对应文件：外部修改来源标签可能非激活（后台检测弹窗
+                    # 时焦点在其他标签），重新加载后跳转到该文件（分组/焦点/
+                    # 会话由 activate_index 统一处理，已激活则 no-op）
+                    ctx.select_tab(tab_index)
             except Exception as e:
                 show_snack(f"重载失败：{e}")
             # 「保留本地版本」走 on_file_dialog_cancel（见下方）

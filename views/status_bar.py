@@ -177,7 +177,7 @@ def StatusBar(
         ft.Container(
             content=ft.Text(
                 value=status_msg_text,
-                size=12,
+                size=11,
                 color=status_msg_color,
                 font_family=FONT_MAIN,
                 max_lines=1,
@@ -195,17 +195,18 @@ def StatusBar(
     return ft.Container(
         bgcolor=ft.Colors.with_opacity(0.03, c.text),
         border=only_border(top=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+        # 紧凑高度：垂直内边距压到最小，文字/图标缩小，保持界面紧凑
+        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.XS),
         content=ft.Row(
             controls=[
                 ft.IconButton(
                     icon=ft.Icons.VIEW_SIDEBAR if not sidebar_open else ft.Icons.MENU_OPEN,
                     tooltip="切换侧边栏",
                     on_click=lambda e: on_toggle_sidebar(),
-                    icon_size=16,
+                    icon_size=14,
                     style=ft.ButtonStyle(
                         color=c.link if sidebar_open else c.muted,
-                        padding=Spacing.SM,
+                        padding=Spacing.XS,
                     ),
                 ),
                 ft.Icon(
@@ -215,7 +216,7 @@ def StatusBar(
                 ),
                 ft.Text(
                     value=fname,
-                    size=12,
+                    size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                     max_lines=1,
@@ -226,15 +227,15 @@ def StatusBar(
                 ft.Container(expand=True),
                 ft.Text(
                     value=f"行 {row}  列 {col}",
-                    size=12,
+                    size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.XXL),
+                ft.Container(width=Spacing.LG),
                 ft.Container(
                     content=ft.Text(
                         value="换行: 开" if word_wrap else "换行: 关",
-                        size=12,
+                        size=11,
                         color=c.link if word_wrap else c.muted,
                         font_family=FONT_MAIN,
                     ),
@@ -244,11 +245,11 @@ def StatusBar(
                     padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
                     border_radius=ft.BorderRadius.all(4),
                 ),
-                ft.Container(width=Spacing.XXL),
+                ft.Container(width=Spacing.LG),
                 ft.Container(
                     content=ft.Text(
                         value="拆分: 开" if split_editor else "拆分: 关",
-                        size=12,
+                        size=11,
                         color=c.link if split_editor else c.muted,
                         font_family=FONT_MAIN,
                     ),
@@ -258,31 +259,31 @@ def StatusBar(
                     padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
                     border_radius=ft.BorderRadius.all(4),
                 ),
-                ft.Container(width=Spacing.XXL),
+                ft.Container(width=Spacing.LG),
                 ft.Text(
                     value=f"{para_count} 段",
-                    size=12,
+                    size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.XXL),
+                ft.Container(width=Spacing.LG),
                 ft.Text(
                     value=f"{word_count} 词",
-                    size=12,
+                    size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.XL),
+                ft.Container(width=Spacing.MD),
                 ft.Text(
                     value=f"{char_count} 字符",
-                    size=12,
+                    size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.XL),
+                ft.Container(width=Spacing.MD),
                 ft.Text(
                     value=f"阅读 {reading_min} min" if reading_min > 0 else "阅读 0 min",
-                    size=12,
+                    size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),

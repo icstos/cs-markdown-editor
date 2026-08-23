@@ -332,9 +332,9 @@ def build_render(ctx) -> ft.Control:
         expand=True,
     )
 
+    # 第二~四列：管理面板 + 编辑区 + 大纲（状态栏仅存在于这三列下方）
     body = ft.Row(
         controls=[
-            activity_bar,
             sidebar,
             editor_area,
             outline_panel,
@@ -379,10 +379,23 @@ def build_render(ctx) -> ft.Control:
         else ft.Container(height=0)
     )
 
+    # 第一列功能栏独占整列高度（STRETCH 撑满到窗口底），状态栏只存在于
+    # 第二~四列（管理面板 + 编辑区 + 大纲）下方：VSCode 式整高活动栏。
     main_col = ft.Column(
         controls=[
-            body,
-            footer,
+            ft.Row(
+                controls=[
+                    activity_bar,
+                    ft.Column(
+                        controls=[body, footer],
+                        spacing=0,
+                        expand=True,
+                    ),
+                ],
+                spacing=0,
+                expand=True,
+                vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
         ],
         spacing=0,
         expand=True,

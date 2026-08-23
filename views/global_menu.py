@@ -320,5 +320,8 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
             bgcolor=c.toolbar_bg,
             shadow_color=ft.Colors.TRANSPARENT,
             elevation=0,
+            # 紧凑：去掉菜单栏默认边距与最小尺寸，使按钮内容贴合图标居中
+            padding=0,
+            visual_density=ft.VisualDensity.COMPACT,
         ),
     )

@@ -11,7 +11,7 @@ import flet as ft
 
 from styles import Radius, Spacing, _current_colors, only_border
 
-_BAR_W = 52  # 活动栏固定宽度
+_BAR_W = 60  # 活动栏固定宽度
 
 
 @ft.component
@@ -76,13 +76,16 @@ def ActivityBar(
                 # 弹性空隙：文件/搜索置顶，菜单沉底
                 ft.Container(expand=True),
                 ft.Container(
-                    width=_BAR_W - 10,
                     height=42,
                     border_radius=Radius.MD,
-                    alignment=ft.Alignment(0, 0),
                     tooltip="菜单",
-                    ink=True,
-                    content=menu,
+                    # 菜单按钮保持居中：容器随内容自适应，铺满 Row + CENTER
+                    # 对齐（MenuBar 自然宽度即使略大于图标也居中显示，不偏右）
+                    content=ft.Row(
+                        controls=[menu],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                 ),
             ],
             spacing=Spacing.SM,

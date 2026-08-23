@@ -41,6 +41,14 @@
   段间距 XXL(16)→LG/MD，整条高度约降低 40%，界面更紧凑（views/status_bar.py）
 - 测试：全量 1123 通过；ruff 无新增告警（status_bar 既有 4 项基线未动）。
 
+### 2026-08-24 界面重构（四）：大纲开合入口移入状态栏最右侧，去除大纲列内嵌按钮
+
+- 去除第四列大纲的「展开/收起」竖条与头部 chevron 按钮（views/outline_panel.py）：
+  收起/展开统一收敛到底部状态栏最右侧的新按钮（参考「切换侧边栏」交互，与左侧
+  侧边栏切换按钮对称；图标 FORMAT_LIST_BULLETED，展开时主题色高亮，tooltip 切换大纲）
+（views/status_bar.py 新增 outline_open / on_toggle_outline props；app/_render.py 装配）
+- 测试：全量 1123 通过；ruff 无新增告警（status_bar 既有 5 项基线未动）。
+
 ### 2026-08-22 修复：侧边栏文件树拖拽精确落到文件夹所在行，消除抖动误移
 
 - **根因**：文件行没有行级 DragTarget，Flutter 拖拽命中取「最深同组目标」——指针在文件行（或行间空隙）上时命中穿透到包裹整个 ListView 的根目录 DragTarget，松手即把文件移入工作区根目录；拖拽过程中高亮在「悬停文件夹行」与「根目录行」间来回切换，表现为抖动异常移动。

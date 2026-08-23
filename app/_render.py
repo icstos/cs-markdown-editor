@@ -321,7 +321,6 @@ def build_render(ctx) -> ft.Control:
         document=_sidebar_doc,
         theme_mode=ctx.theme_mode,
         open=outline_open,
-        on_toggle=ctx.toggle_outline,
         on_jump_to_line=ctx.jump_to_line,
     )
 
@@ -371,6 +370,9 @@ def build_render(ctx) -> ft.Control:
             on_toggle_word_wrap=ctx.toggle_word_wrap,
             split_editor=_footer_split,
             on_toggle_split_editor=_footer_split_cb,
+            # 大纲开合入口：状态栏最右侧（与左侧侧边栏切换对称）
+            outline_open=outline_open,
+            on_toggle_outline=ctx.toggle_outline,
             status_ref=ctx.status_ref,
             status_message=ctx.status_message,
             on_status_clear=lambda: ctx.set_status_message(None),

@@ -76,6 +76,8 @@ def StatusBar(
     on_toggle_word_wrap: Callable[[], None] | None = None,
     split_editor: bool = False,
     on_toggle_split_editor: Callable[[], None] | None = None,
+    outline_open: bool = True,
+    on_toggle_outline: Callable[[], None] | None = None,
     status_ref: ft.Ref | None = None,
     status_message: tuple[str, str] | None = None,
     on_status_clear: Callable[[], None] | None = None,
@@ -286,6 +288,19 @@ def StatusBar(
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
+                ),
+                ft.Container(width=Spacing.LG),
+                # 大纲开合入口（最右侧，与左侧「切换侧边栏」对称）：
+                # 参考侧边栏切换的交互直觉，收起/展开第四列大纲
+                ft.IconButton(
+                    icon=ft.Icons.FORMAT_LIST_BULLETED,
+                    tooltip="切换大纲",
+                    on_click=lambda e: on_toggle_outline() if on_toggle_outline else None,
+                    icon_size=14,
+                    style=ft.ButtonStyle(
+                        color=c.link if outline_open else c.muted,
+                        padding=Spacing.XS,
+                    ),
                 ),
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,

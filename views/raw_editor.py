@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 import flet as ft
 
-from styles import FONT_MONO, get_colors
+from styles import FONT_MONO, Spacing, get_colors
 
 
 @ft.memo
@@ -39,7 +39,9 @@ def RawEditor(
         expand=True,
         alignment=ft.Alignment.TOP_LEFT,
         bgcolor=c.bg,
-        padding=ft.Padding.symmetric(horizontal=content_padding, vertical=content_padding_top),
+        # 垂直留白固定不随内容滚动；水平内边距移入 TextField（content_padding），
+        # 使滚动条贴紧列最右缘，与所见即所得模式一致
+        padding=ft.Padding.symmetric(vertical=content_padding_top),
         content=ft.TextField(
             value=raw_draft,
             multiline=True,
@@ -48,6 +50,9 @@ def RawEditor(
             text_size=body_font_size,
             text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
             on_change=lambda e: on_change(e.control.value),
+            content_padding=ft.Padding.symmetric(
+                horizontal=content_padding, vertical=Spacing.SM
+            ),
             expand=True,
         ),
     )

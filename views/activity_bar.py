@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 import flet as ft
 
-from styles import Radius, Spacing, _current_colors, only_border
+from styles import Spacing, _current_colors, only_border
 
 _BAR_W = 60  # 活动栏固定宽度
 
@@ -37,18 +37,35 @@ def ActivityBar(
         active: bool,
         on_click,
     ) -> ft.Control:
+        # VSCode 风格：激活项仅左侧 3px 主题色强调条 + 主题色图标，
+        # 不再用整块半透明圆角底色（观感更清爽、与冷灰底色更协调）
         return ft.Container(
-            width=_BAR_W - 10,
-            height=42,
-            border_radius=Radius.MD,
-            bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
+            height=44,
             on_click=on_click,
             tooltip=tooltip,
             ink=True,
-            content=ft.Icon(
-                icon,
-                size=20,
-                color=c.link if active else c.muted,
+            content=ft.Row(
+                controls=[
+                    ft.Container(
+                        width=3,
+                        height=24,
+                        border_radius=ft.BorderRadius.all(2),
+                        bgcolor=c.link,
+                        visible=active,
+                    ),
+                    ft.Container(
+                        expand=True,
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Icon(
+                            icon,
+                            size=20,
+                            color=c.link if active else c.muted,
+                        ),
+                    ),
+                    # 右侧对称占位：图标在剩余空间内严格居中
+                    ft.Container(width=3),
+                ],
+                spacing=0,
             ),
         )
 
@@ -76,8 +93,7 @@ def ActivityBar(
                 # 弹性空隙：文件/搜索置顶，菜单沉底
                 ft.Container(expand=True),
                 ft.Container(
-                    height=42,
-                    border_radius=Radius.MD,
+                    height=44,
                     tooltip="菜单",
                     # 菜单按钮保持居中：容器随内容自适应，铺满 Row + CENTER
                     # 对齐（MenuBar 自然宽度即使略大于图标也居中显示，不偏右）

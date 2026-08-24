@@ -814,20 +814,21 @@ def MarkdownEditor(
                             controls=line_controls,
                             expand=True,
                             spacing=0,
+                            # 水平内边距移入 ListView 自身：滚动条贴紧列最右缘，
+                            # 不再浮在内容区内（VSCode/Typora 直觉）；
+                            # 垂直留白仍由外层 Container 提供（顶部不随内容滚动）
+                            padding=ft.Padding.symmetric(horizontal=content_padding),
                             # ListView 虚拟化(build_controls_on_demand=True 默认):
                             # 仅构建视口内可见行,数千行文档不卡顿。maxScrollExtent
                             # 由首项高度估算,_scroll.py 的两步滚动逻辑已为此设计
                             # (视口外行无实测高度 → 先估算滚动触发构建再精确贴顶)。
-                            # padding 保留在外层 Container:顶部 content_padding_top
-                            # 作为固定留白不随内容滚动。
                             on_scroll=scroll_cbs["on_scroll"],
                         ),
                         expand=True,
                         alignment=ft.Alignment.TOP_LEFT,
                         bgcolor=c.bg,
-                        padding=ft.Padding.symmetric(
-                            horizontal=content_padding, vertical=content_padding_top
-                        ),
+                        # 垂直留白固定不随内容滚动（顶部呼吸空间 + 底部结束留白）
+                        padding=ft.Padding.symmetric(vertical=content_padding_top),
                         on_size_change=scroll_cbs["on_content_resize"],
                     ),
                 ),

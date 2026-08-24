@@ -26,7 +26,7 @@ import flet as ft
 
 from models import BlockType, Document
 import parser
-from styles import FONT_MAIN, Spacing, get_colors, only_border
+from styles import FONT_MAIN, Radius, Spacing, get_colors, only_border
 
 # 中英文词数统计正则：英文连续字母数字下划线算一词，中文每字算一词
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -194,6 +194,20 @@ def StatusBar(
         else ft.Container(width=0, height=0)
     )
 
+    def _compact_icon_btn(icon: str, tooltip: str, on_click, color: str) -> ft.Control:
+        """紧凑图标按钮：固定 22px 触控区，替代 IconButton（默认 48px 最小尺寸
+        会把状态栏撑高到 ~46px）。ink 水波反馈 + tooltip，桌面状态栏直觉。"""
+        return ft.Container(
+            width=22,
+            height=22,
+            border_radius=Radius.SM,
+            alignment=ft.Alignment.CENTER,
+            ink=True,
+            tooltip=tooltip,
+            on_click=lambda e: on_click() if on_click else None,
+            content=ft.Icon(icon, size=14, color=color),
+        )
+
     return ft.Container(
         bgcolor=ft.Colors.with_opacity(0.03, c.text),
         border=only_border(top=ft.BorderSide(1, c.border)),
@@ -201,15 +215,11 @@ def StatusBar(
         padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.XS),
         content=ft.Row(
             controls=[
-                ft.IconButton(
-                    icon=ft.Icons.VIEW_SIDEBAR if not sidebar_open else ft.Icons.MENU_OPEN,
-                    tooltip="切换侧边栏",
-                    on_click=lambda e: on_toggle_sidebar(),
-                    icon_size=14,
-                    style=ft.ButtonStyle(
-                        color=c.link if sidebar_open else c.muted,
-                        padding=Spacing.XS,
-                    ),
+                _compact_icon_btn(
+                    ft.Icons.VIEW_SIDEBAR if not sidebar_open else ft.Icons.MENU_OPEN,
+                    "切换侧边栏",
+                    on_toggle_sidebar,
+                    c.link if sidebar_open else c.muted,
                 ),
                 ft.Icon(
                     icon=ft.Icons.CIRCLE,
@@ -292,15 +302,11 @@ def StatusBar(
                 ft.Container(width=Spacing.LG),
                 # 大纲开合入口（最右侧，与左侧「切换侧边栏」对称）：
                 # 参考侧边栏切换的交互直觉，收起/展开第四列大纲
-                ft.IconButton(
-                    icon=ft.Icons.FORMAT_LIST_BULLETED,
-                    tooltip="切换大纲",
-                    on_click=lambda e: on_toggle_outline() if on_toggle_outline else None,
-                    icon_size=14,
-                    style=ft.ButtonStyle(
-                        color=c.link if outline_open else c.muted,
-                        padding=Spacing.XS,
-                    ),
+                _compact_icon_btn(
+                    ft.Icons.FORMAT_LIST_BULLETED,
+                    "切换大纲",
+                    on_toggle_outline,
+                    c.link if outline_open else c.muted,
                 ),
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,

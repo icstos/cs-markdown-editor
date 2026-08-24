@@ -80,5 +80,7 @@ def OutlinePanel(
         animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
         bgcolor=c.surface,
+        # 与侧边栏右缘对称：左侧 1px 细分割线，列边界清晰
+        border=only_border(left=ft.BorderSide(1, c.border)),
         content=panel_body,
     )

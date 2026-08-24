@@ -13,9 +13,40 @@
 - 段级编辑、Typora 式实时渲染由 views/editor 负责
 """
 
+import ctypes
+import os
+
 import flet as ft
 
 from app import App
+
+
+# Flet 0.86 桌面客户端在 Windows 高分屏（DPI > 100%）下的已知问题：
+# window_manager 以物理像素创建窗口，而 Flutter 视口按设备像素比(DPR)换算逻辑
+# 尺寸 —— 若按逻辑像素设窗口大小，实际逻辑布局会被压缩到 物理宽度/DPR，
+# 导致界面整体被放大、右侧大纲/底部状态栏/滚动条偏离窗口边缘。
+# 修复：按系统 DPI 缩放系数放大窗口尺寸，使 物理尺寸 / DPR = 期望逻辑尺寸。
+# 100% 缩放下系数为 1.0，行为不变。
+def _dpi_scale() -> float:
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Control Panel\Desktop\WindowMetrics",
+            ) as key:
+                dpi, _ = winreg.QueryValueEx(key, "AppliedDPI")
+                if isinstance(dpi, int) and dpi > 0:
+                    return dpi / 96.0
+        except Exception:
+            pass
+        try:
+            dpi = ctypes.windll.user32.GetDpiForSystem()
+            if dpi > 0:
+                return dpi / 96.0
+        except Exception:
+            pass
+    return 1.0
 
 
 async def main(page: ft.Page):
@@ -42,11 +73,14 @@ async def main(page: ft.Page):
         ),
     )
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.window.width = 1200
-    page.window.height = 720
-    page.window.min_width = 720
-    page.window.min_height = 480
-    await page.window.center()
+    _dpr = _dpi_scale()
+    page.window.width = round(1200 * _dpr)
+    page.window.height = round(720 * _dpr)
+    page.window.min_width = round(720 * _dpr)
+    page.window.min_height = round(480 * _dpr)
+    # Web 模式下无原生窗口，跳过居中（避免 invoke_method 超时）
+    if not getattr(page, "web", False):
+        await page.window.center()
     page.render(App)
 
 

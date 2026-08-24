@@ -4,6 +4,39 @@
 
 ## [未发布]
 
+## [未发布]
+
+### 2026-08-24 修复：程序无法运行 + 高分屏 DPI 布局错乱（功能不增不减）
+
+- **修复启动即退出**：中断的 let build windows（复制阶段 PermissionError）删除了
+  uild\windows\data\app.so（Flutter AOT 客户端），导致 exe 无法启动、python main.py
+  静默退出（exit 0 无输出）。完整重建后恢复；另需 --clear-cache 强制重编内嵌 Python
+  字节码（否则复用 build\flutter\build\build_python_3.14.6 的旧 pyc）
+- **修复高分屏 DPI 布局错乱**：exe 为 PerMonitorV2 DPI 感知，但窗口按物理像素创建导致
+  逻辑布局被压缩到 物理宽/DPR；main.py 读取系统 DPI（注册表 AppliedDPI）按比例放大
+  窗口尺寸，使 物理尺寸/DPR = 期望逻辑尺寸（100% 缩放下行为不变）
+- 已知限制（flet 0.86.5 桌面客户端组件渲染 bug，非本项目代码问题）：Row/Column/Stack 中
+  expand 子控件之后的兄弟控件、以及右侧/底部 padding/margin/定位在桌面端不渲染
+  （Web 端正常）——右侧大纲列、底部状态栏、活动栏底部菜单、标签栏 + 按钮、对话框
+  在桌面端不可见；最小复现已确认，建议向 flet-dev/flet 反馈
+- 测试：全量 1123 通过
+
+## [未发布]
+
+### 2026-08-24 界面重构（四）：滚动条贴列最右缘，状态栏/活动栏精修（功能不增不减）
+
+- **文档编辑区滚动条贴紧列最右缘**：WYSIWYG 编辑器水平内边距从外层 Container 移入
+  ListView 自身（views/editor/__init__.py），原文模式移入 TextField content_padding
+  （views/raw_editor.py）——滚动条不再浮在内容区内 36px 留白处，与 VSCode / Typora
+  直觉一致；文本起始位置与换行宽度保持不变（仍为 content_padding 缩进）
+- **状态栏紧凑化**：IconButton（默认 48px 最小触控区）替换为 22px 紧凑 ink 图标按钮，
+  状态栏高度由 ~46px 降至 ~26px（views/status_bar.py），信息密度不变
+- **活动栏激活态改为 VSCode 风格**：去除整块半透明圆角底色，改为左侧 3px 主题色
+  强调条 + 主题色图标（views/activity_bar.py），与冷灰底色更协调
+- **大纲列左侧 1px 分割线**：与侧边栏右缘对称，列边界清晰（views/outline_panel.py）
+- Web 模式跳过 window.center()（无原生窗口，避免 invoke_method 超时，main.py）
+- 测试：全量 1123 通过，ruff 无新增告警
+
 ### 2026-08-23 界面重构：VSCode / Obsidian 风格横向四列布局（功能不增不减）
 
 - **第一列 功能栏**（新增 views/activity_bar.py ActivityBar）：图标式大功能选项，顶部 文件 / 搜索，底部 设置；选中项主题色高亮。点击当前活动图标 = 一键收起第二列（VSCode 直觉），点击其他图标 = 切换面板并展开（若已收起）；设置按钮打开设置对话框。

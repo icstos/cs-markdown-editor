@@ -150,6 +150,7 @@ def build_line_controls(
                     on_change_code=stable_cbs["on_change_code"],
                     on_code_focus=stable_cbs["on_code_focus"],
                     on_code_blur=stable_cbs["on_code_blur"],
+                    on_code_selection=stable_cbs["on_code_selection"],
                     on_change_lang=stable_cbs["on_change_lang"],
                     # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态 TextField
                     is_math_editing=(math_focus_li == i),

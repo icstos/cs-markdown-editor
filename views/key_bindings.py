@@ -406,6 +406,19 @@ class KeyDispatcher:
             ):
                 if actions.handle_code_backspace(actions.code_focus_ref.current):
                     return
+            # 代码块边界方向键跳出（Typora 式）：光标在代码块第一行按 ↑ / 行首按
+            # ← / 最后一行按 ↓ / 行尾按 → 时跳出到相邻行（无相邻行则创建新行）。
+            # handle_code_exit 内部按 code_focus_ref + 实时光标位置判定边界并执行
+            # 跳出；返回 True 消费按键，False（非边界 / 有选区 / 表格 / 公式聚焦）
+            # 继续放行原生导航。修饰键组合（Ctrl/Alt/Shift+方向）不拦截，交原生。
+            if (
+                norm in ("arrowup", "arrowleft", "arrowdown", "arrowright")
+                and not (e.ctrl or e.meta or e.alt)
+                and not e.shift
+                and getattr(actions, "handle_code_exit", None) is not None
+                and actions.handle_code_exit(norm)
+            ):
+                return
             if not (e.ctrl or e.meta or e.alt):
                 if norm in self._NATIVE_NAV_KEYS:
                     return

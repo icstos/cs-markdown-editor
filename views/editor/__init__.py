@@ -40,10 +40,10 @@ from views.editor._blocks import build_blocks
 from views.editor._clipboard import build_clipboard
 from views.editor._context import EditorContext
 from views.editor._cursor import build_cursor
-from views.editor._fence import build_fence                                       
-from views.editor._focus import build_focus                                       
-from views.editor._format import build_format                                     
-from views.editor._helpers import _make_stable_cb, _noop                          
+from views.editor._fence import build_fence
+from views.editor._focus import build_focus
+from views.editor._format import build_format
+from views.editor._helpers import _make_stable_cb, _noop
 from views.editor._history import build_history
 from views.editor._image import build_image
 from views.editor._indent import build_indent
@@ -188,6 +188,9 @@ def MarkdownEditor(
     code_focus_ref = ft.use_ref(None)
     code_edit_snapshot = ft.use_ref(None)
     code_edit_changed = ft.use_ref(False)
+    # CodeEditor 光标/选区跟踪：on_code_selection 写入 (value, base, extent)，
+    # 供 KeyDispatcher 代码块边界方向键跳出（↑/←/↓/→）判定边界
+    code_caret_ref = ft.use_ref(None)
     table_focus_ref = ft.use_ref(None)
     table_nav_ref = ft.use_ref(None)
     # 表格聚焦 state(修复 table_focus_ref 从未赋值 Bug)
@@ -351,6 +354,7 @@ def MarkdownEditor(
         code_focus_ref=code_focus_ref,
         code_edit_snapshot=code_edit_snapshot,
         code_edit_changed=code_edit_changed,
+        code_caret_ref=code_caret_ref,
         table_focus_ref=table_focus_ref,
         table_nav_ref=table_nav_ref,
         math_focus_ref=math_focus_ref,
@@ -485,7 +489,9 @@ def MarkdownEditor(
     ctx.on_change_code = fence_cbs["on_change_code"]
     ctx.on_code_focus = fence_cbs["on_code_focus"]
     ctx.on_code_blur = fence_cbs["on_code_blur"]
+    ctx.on_code_selection = fence_cbs["on_code_selection"]
     ctx.handle_code_backspace = fence_cbs["handle_code_backspace"]
+    ctx.handle_code_exit = fence_cbs["handle_code_exit"]
     ctx.on_change_math = fence_cbs["on_change_math"]
     ctx.on_math_focus = fence_cbs["on_math_focus"]
     ctx.on_math_blur = fence_cbs["on_math_blur"]
@@ -686,6 +692,7 @@ def MarkdownEditor(
         "on_change_code": fence_cbs["on_change_code"],
         "on_code_focus": fence_cbs["on_code_focus"],
         "on_code_blur": fence_cbs["on_code_blur"],
+        "on_code_selection": fence_cbs["on_code_selection"],
         "on_change_lang": blocks_cbs["change_lang"],
         "on_change_math": fence_cbs["on_change_math"],
         "on_math_focus": fence_cbs["on_math_focus"],
@@ -701,7 +708,8 @@ def MarkdownEditor(
     }
     _STABLE_CB_KEYS = (
         "on_tap", "on_pan_start", "on_pan_update", "on_toggle_task",
-        "on_change_code", "on_code_focus", "on_code_blur", "on_change_lang",
+        "on_change_code", "on_code_focus", "on_code_blur", "on_code_selection",
+        "on_change_lang",
         "on_change_math", "on_math_focus", "on_math_blur", "on_jump_to",
         "on_line_size_change", "on_extend_outward", "on_clear_outward",
         "on_hit_test_x", "on_hit_test_xy", "on_double_tap", "on_image_action",

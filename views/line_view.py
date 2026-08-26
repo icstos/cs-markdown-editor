@@ -563,6 +563,7 @@ def LineView(
     on_change_code: Callable[[int, str], None] | None = None,
     on_code_focus: Callable[[int], None] | None = None,
     on_code_blur: Callable[[int], None] | None = None,
+    on_code_selection: Callable[..., None] | None = None,
     code_field_ref: ft.Ref | None = None,
     on_change_lang: Callable[[int, str], None] | None = None,
     # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，编辑态 TextField 编辑源码
@@ -634,8 +635,8 @@ def LineView(
         return _render_code_block(
             line, line_idx, base, content_width, clipboard_ref,
             on_change_code, on_code_focus, on_code_blur, on_change_lang,
-            code_field_ref, is_current_line, is_flash, on_line_size_change,
-            diff_mark=diff_mark,
+            on_code_selection, code_field_ref, is_current_line, is_flash,
+            on_line_size_change, diff_mark=diff_mark,
         )
 
     # ============ YAML 前置元数据（Obsidian 风格属性卡片）============
@@ -1658,6 +1659,7 @@ def _render_code_block(
     on_code_focus: Callable[[int], None] | None,
     on_code_blur: Callable[[int], None] | None,
     on_change_lang: Callable[[int, str], None] | None,
+    on_code_selection: Callable[..., None] | None,
     code_field_ref: ft.Ref | None,
     is_current_line: bool,
     is_flash: bool = False,
@@ -1767,6 +1769,11 @@ def _render_code_block(
         ),
         on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
         on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
+        # 光标/选区跟踪：写入 (value, base, extent)，供代码块边界方向键跳出判定
+        on_selection_change=(
+            lambda e: on_code_selection(line_idx, e)
+            if on_code_selection is not None else None
+        ),
     )
     if code_field_ref is not None:
         editor.ref = code_field_ref

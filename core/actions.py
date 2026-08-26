@@ -101,6 +101,11 @@ class EditorActions:
     # 空代码块聚焦时 Backspace → 删除整个代码块（Typora 式）。
     # 返回 True 已处理（消费按键），False 未处理（继续原生 CodeEditor 删除）。
     handle_code_backspace: Callable[[int], bool]
+    # 代码块边界方向键跳出（Typora 式）：↑/← 从第一行跳出、↓/→ 从最后一行跳出，
+    # 无相邻行时创建新行。code_caret_ref 为 CodeEditor 光标跟踪
+    # (value, base_offset, extent_offset)；handle_code_exit(norm) 返回 True 已消费。
+    code_caret_ref: ft.Ref
+    handle_code_exit: Callable[[str], bool]
 
     # ---- 表格（始终可编辑 DataTable2 独立岛屿）----
     table_focus_ref: ft.Ref

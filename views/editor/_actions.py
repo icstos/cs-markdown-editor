@@ -80,6 +80,8 @@ def build_actions(ctx) -> EditorActions | None:
         # ---- 代码块 ----
         code_focus_ref=ctx.code_focus_ref,
         handle_code_backspace=ctx.handle_code_backspace,
+        code_caret_ref=ctx.code_caret_ref,
+        handle_code_exit=ctx.handle_code_exit,
         # ---- 表格 ----
         table_focus_ref=ctx.table_focus_ref,
         # ---- 状态栏 ----

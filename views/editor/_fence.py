@@ -1,6 +1,7 @@
 """围栏岛屿（CODE/MATH/TABLE）编辑处理器工厂（从 views/editor.py 闭包抽取）。
 
-闭包组：on_change_code / on_code_focus / on_code_blur / handle_code_backspace /
+闭包组：on_change_code / on_code_focus / on_code_blur / on_code_selection /
+handle_code_backspace / handle_code_exit /
 on_change_math / on_math_focus / on_math_blur /
 on_change_cell / on_table_op / on_table_focus / on_table_blur
 
@@ -24,7 +25,6 @@ on_change_cell / on_table_op / on_table_focus / on_table_blur
 
 import parser
 from models import BlockType, Line, Segment, SegType
-from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from utils.table_helpers import ALIGN_RE
 from views._editor_helpers import _table_cells
@@ -33,12 +33,29 @@ from views.table_view import _align_marker, _join_row
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
+# 非文本编辑行的岛屿块类型：代码块边界跳出时，相邻行若为岛屿块（无行内
+# 文本光标可落），视为"无行"处理——在代码块前/后创建新空段落行承接光标。
+# HR 走普通文本路径（激活态显示 --- 源码 + 光标），可正常承载光标，不在此列。
+_ISLAND_BLOCK_TYPES: tuple[BlockType, ...] = (
+    BlockType.CODE,
+    BlockType.MATH,
+    BlockType.TOC,
+    BlockType.TABLE,
+    BlockType.FRONTMATTER,
+)
+
+
+def _is_island_line(line: Line) -> bool:
+    """是否岛屿块行（无行内文本光标可落，需跳过/新建行承接）。"""
+    return line.block_type in _ISLAND_BLOCK_TYPES
+
 
 def build_fence(ctx):
     """构造围栏岛屿（CODE/MATH/TABLE）编辑处理器闭包组。
 
     返回 dict[str, Callable]：
-    on_change_code / on_code_focus / on_code_blur / handle_code_backspace /
+    on_change_code / on_code_focus / on_code_blur / on_code_selection /
+    handle_code_backspace / handle_code_exit /
     on_change_math / on_math_focus / on_math_blur /
     on_change_cell / on_table_op / on_table_focus / on_table_blur
     """
@@ -89,6 +106,9 @@ def build_fence(ctx):
         # 保存聚焦时的快照，用于失焦时与修改前比较
         ctx.code_edit_snapshot.current = ctx.make_snapshot()
         ctx.code_edit_changed.current = False
+        # 重置光标/选区跟踪（首次聚焦尚无 on_selection_change 事件）
+        if getattr(ctx, "code_caret_ref", None) is not None:
+            ctx.code_caret_ref.current = None
 
     def on_code_blur(li: int) -> None:
         if ctx.code_focus_ref.current == li:
@@ -97,6 +117,135 @@ def build_fence(ctx):
         # 注意：快照已在第一次修改时推入历史，此处不再重复推入
         ctx.code_edit_snapshot.current = None
         ctx.code_edit_changed.current = False
+        if getattr(ctx, "code_caret_ref", None) is not None:
+            ctx.code_caret_ref.current = None
+
+    def on_code_selection(li: int, e) -> None:
+        """CodeEditor 光标/选区变化：记录 (value, base, extent) 供边界跳出检测。
+
+        value 取 CodeEditor 内部全文（与 selection 偏移同一坐标系，含折叠区）；
+        base/extent 为选区两端偏移（折叠光标时二者相等）。记录到
+        ctx.code_caret_ref，KeyDispatcher 收到方向键时据此判定是否在代码块
+        边界（第一行 / 首行行首 / 最后一行 / 末行行尾）。
+        """
+        if ctx.code_focus_ref.current != li:
+            return
+        try:
+            control = getattr(e, "control", None)
+            value = getattr(control, "value", None)
+            if value is None:
+                value = ""
+            sel = getattr(e, "selection", None)
+            base = getattr(sel, "base_offset", 0)
+            extent = getattr(sel, "extent_offset", 0)
+        except Exception:
+            return
+        if getattr(ctx, "code_caret_ref", None) is not None:
+            ctx.code_caret_ref.current = (value, base, extent)
+
+    def handle_code_exit(norm: str) -> bool:
+        """代码块边界方向键：光标跳出代码块（Typora 式）。
+
+        触发场景（CodeEditor 聚焦时 KeyDispatcher 检测到方向键）：
+        - ↑：光标在第一行 → 跳出到代码块上一行行尾
+        - ←：光标在第一行行首 → 跳出到上一行行尾（换行回绕）
+        - ↓：光标在最后一行 → 跳出到下一行行首
+        - →：光标在最后一行行尾 → 跳出到下一行行首（换行回绕）
+        若代码块前/后无行（或相邻行同为岛屿块），则创建新空段落行承接光标。
+
+        返回 True 已处理（消费按键），False 未处理（非边界 / 有选区 / 表格 / 公式聚焦，
+        继续放行原生 CodeEditor 导航）。
+        """
+        if norm not in ("arrowup", "arrowleft", "arrowdown", "arrowright"):
+            return False
+        li = ctx.code_focus_ref.current
+        if li is None or getattr(ctx, "code_caret_ref", None) is None:
+            return False
+        if not (0 <= li < len(ctx.document.lines)):
+            return False
+        line = ctx.document.lines[li]
+        if line.block_type not in (BlockType.CODE, BlockType.FRONTMATTER):
+            return False
+        caret = ctx.code_caret_ref.current
+        if not caret:
+            return False
+        value, base, extent = caret
+        if value is None:
+            value = ""
+        # 有选区（Shift+方向键扩展中）：交给原生控件处理，不拦截
+        if base != extent:
+            return False
+        pos = max(0, min(int(base), len(value)))
+        code_lines = value.split("\n")
+        # 定位光标所在行 / 列（offset → (line_idx, col)）
+        line_idx = 0
+        col = pos
+        acc = 0
+        for i, ln in enumerate(code_lines):
+            if pos <= acc + len(ln):
+                line_idx = i
+                col = pos - acc
+                break
+            acc += len(ln) + 1
+        else:
+            line_idx = len(code_lines) - 1
+            col = len(code_lines[line_idx]) if code_lines else 0
+        last_idx = len(code_lines) - 1
+        last_len = len(code_lines[last_idx]) if code_lines else 0
+
+        # 边界判定
+        if norm == "arrowup":
+            if line_idx != 0:
+                return False
+        elif norm == "arrowleft":
+            if line_idx != 0 or col != 0:
+                return False
+        elif norm == "arrowdown":
+            if line_idx != last_idx:
+                return False
+        else:  # arrowright
+            if line_idx != last_idx or col != last_len:
+                return False
+
+        # 执行跳出：上一行行尾 / 下一行行首；无可用相邻行则创建新空段落行
+        doc_lines = ctx.document.lines
+        if norm in ("arrowup", "arrowleft"):
+            target = li - 1
+            if target >= 0 and not _is_island_line(doc_lines[target]):
+                target_li, target_off = target, len(_line_raw(doc_lines[target]))
+            else:
+                ctx.push_history()
+                ctx.undo_push_pending.current = True
+                new_line = Line(block_type=BlockType.PARAGRAPH, raw="")
+                new_line.segments = [Segment(SegType.TEXT, "", "")]
+                doc_lines.insert(li, new_line)
+                ctx.document.notify()
+                ctx.mark_dirty()
+                target_li, target_off = li, 0
+        else:
+            target = li + 1
+            if target < len(doc_lines) and not _is_island_line(doc_lines[target]):
+                target_li, target_off = target, 0
+            else:
+                ctx.push_history()
+                ctx.undo_push_pending.current = True
+                new_line = Line(block_type=BlockType.PARAGRAPH, raw="")
+                new_line.segments = [Segment(SegType.TEXT, "", "")]
+                doc_lines.insert(li + 1, new_line)
+                ctx.document.notify()
+                ctx.mark_dirty()
+                target_li, target_off = li + 1, 0
+
+        # 清理代码块聚焦态（防 CodeEditor 失焦时序竞争 + 后续按键路由误判），
+        # 模拟 on_code_blur 的清理，与 handle_code_backspace 一致
+        ctx.code_focus_ref.current = None
+        ctx.code_edit_snapshot.current = None
+        ctx.code_edit_changed.current = False
+        if getattr(ctx, "code_caret_ref", None) is not None:
+            ctx.code_caret_ref.current = None
+        ctx.suppress_blur.current = True
+        ctx.set_cursor(target_li, target_off)
+        return True
 
     def handle_code_backspace(li: int) -> bool:
         """空代码块/空 frontmatter Backspace 删除：替换为空白段落行（Typora 式）。
@@ -129,6 +278,8 @@ def build_fence(ctx):
         ctx.code_focus_ref.current = None
         ctx.code_edit_snapshot.current = None
         ctx.code_edit_changed.current = False
+        if getattr(ctx, "code_caret_ref", None) is not None:
+            ctx.code_caret_ref.current = None
         # 进入段落编辑态（光标定位到行首）；suppress_blur 防 CodeEditor 卸载
         # 级联 blur 干扰新聚焦的 cursor TextField
         ctx.suppress_blur.current = True
@@ -312,7 +463,9 @@ def build_fence(ctx):
         "on_change_code": on_change_code,
         "on_code_focus": on_code_focus,
         "on_code_blur": on_code_blur,
+        "on_code_selection": on_code_selection,
         "handle_code_backspace": handle_code_backspace,
+        "handle_code_exit": handle_code_exit,
         "on_change_math": on_change_math,
         "on_math_focus": on_math_focus,
         "on_math_blur": on_math_blur,

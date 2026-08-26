@@ -43,6 +43,7 @@ def make_actions(
     outward_sel: tuple | None = None,
     native_focused: bool = False,
     code_backspace_ret: bool | None = None,
+    code_exit_ret: bool | None = None,
 ) -> EditorActions:
     """构造带记录桩的 EditorActions。每个动作 append 自己的名字到 calls。"""
     def rec(name):
@@ -74,6 +75,21 @@ def make_actions(
             return code_backspace_ret
     else:
         def _code_backspace(li):
+            return False
+
+    # 代码块边界方向键跳出桩：code_exit_ret 非 None 时模拟聚焦代码块（code_ref
+    # 持有行号 0）并返回给定布尔值；否则返回 False 不拦截（保持现有测试行为）。
+    # 与生产实现一致：code_focus_ref 为 None（表格/公式聚焦）时直接返回 False。
+    if code_exit_ret is not None:
+        code_ref = FakeRef(0)
+
+        def _code_exit(norm):
+            if actions.code_focus_ref.current is None:
+                return False
+            calls.append(("handle_code_exit", norm))
+            return code_exit_ret
+    else:
+        def _code_exit(norm):
             return False
 
     actions = EditorActions(
@@ -118,6 +134,8 @@ def make_actions(
         format_document=rec("format_document"),
         code_focus_ref=code_ref,
         handle_code_backspace=_code_backspace,
+        code_caret_ref=FakeRef(("abc", 0, 0)),
+        handle_code_exit=_code_exit,
         table_focus_ref=table_ref,
         get_cursor_row_col=lambda: (1, 1),
         outward_sel=outward_sel,
@@ -852,6 +870,79 @@ def test_table_focused_backspace_not_intercepted():
     d.handle(evt("backspace"))
     # 表格聚焦走原生放行，不调用代码块删除
     assert not any(c == "handle_code_backspace" or isinstance(c, tuple) for c in calls)
+
+
+# ---------------- 代码块边界方向键跳出（Typora 式）----------------
+def test_code_boundary_arrow_routes_to_exit():
+    """代码块聚焦 + ↑ → handle_code_exit("arrowup") 消费按键，不路由 move_up。"""
+    calls: list = []
+    actions = make_actions(calls, code_exit_ret=True)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("arrowup"))
+    assert ("handle_code_exit", "arrowup") in calls
+    assert "move_up" not in calls
+
+
+def test_code_boundary_arrow_exit_consumed_all_directions():
+    """四个方向键在代码块边界均路由到 handle_code_exit（返回 True 时消费）。"""
+    for key in ("arrowup", "arrowleft", "arrowdown", "arrowright"):
+        calls: list = []
+        actions = make_actions(calls, code_exit_ret=True)
+        d, _, _ = make_dispatcher(actions, [])
+        d.handle(evt(key))
+        assert ("handle_code_exit", key) in calls
+
+
+def test_code_boundary_arrow_exit_false_passthrough():
+    """handle_code_exit 返回 False（非边界）→ 放行原生导航，不路由文档光标。"""
+    calls: list = []
+    actions = make_actions(calls, code_exit_ret=False)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("arrowdown"))
+    assert ("handle_code_exit", "arrowdown") in calls
+    assert "move_down" not in calls
+
+
+def test_code_boundary_shift_arrow_not_intercepted():
+    """Shift+方向键（选区扩展）→ 不拦截，交原生 CodeEditor。"""
+    calls: list = []
+    actions = make_actions(calls, code_exit_ret=True)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("arrowup", shift=True))
+    assert not any(isinstance(c, tuple) for c in calls)
+
+
+def test_code_boundary_ctrl_arrow_not_intercepted():
+    """Ctrl+方向键 → 不拦截（修饰键组合交原生）。"""
+    calls: list = []
+    actions = make_actions(calls, code_exit_ret=True)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("arrowup", ctrl=True))
+    assert not any(isinstance(c, tuple) for c in calls)
+
+
+def test_code_boundary_arrow_without_exit_handler_passthrough():
+    """handle_code_exit 未装配（None）→ 方向键正常放行原生，不崩溃。"""
+    calls: list = []
+    actions = make_actions(calls, native_focused=True)
+    # 显式置 None 模拟未装配场景
+    actions.handle_code_exit = None
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("arrowleft"))
+    assert "move_left" not in calls  # 原生聚焦守卫放行
+    assert not any(isinstance(c, tuple) for c in calls)
+
+
+def test_table_focused_arrow_not_routed_to_code_exit():
+    """表格聚焦（code_focus_ref 为 None）+ 方向键 → 不触发 handle_code_exit。"""
+    calls: list = []
+    actions = make_actions(calls, native_focused=True, code_exit_ret=True)
+    # 表格聚焦时 code_ref 应为 None：重置 code_ref 模拟表格聚焦
+    actions.code_focus_ref = FakeRef(None)
+    actions.table_focus_ref = FakeRef(0)
+    d, _, _ = make_dispatcher(actions, [])
+    d.handle(evt("arrowup"))
+    assert not any(isinstance(c, tuple) for c in calls)
 
 
 if __name__ == "__main__":

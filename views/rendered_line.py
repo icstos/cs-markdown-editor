@@ -484,7 +484,11 @@ def RenderedLine(
             margin=ft.Margin(0, 0, 0, 0),
         )
         # 布局：Checkbox 容器 + GestureDetector(expand) 占据剩余空间。
-        # 容器高度锁定到 text_h 占满行高，Checkbox 居中对齐，避免行高跳变。
+        # 容器高度锁定到 text_h 占满单行高，Checkbox 在容器内居中对齐，避免行高跳变。
+        # 垂直对齐用 START（顶对齐，Typora 式）：开启软换行、内容折为多视觉行时，
+        # Row 高度 = N * text_h，若 CENTER 会把单行高的 Checkbox 容器上下居中到整块
+        # 多行内容中部，复选框脱离第一行；START 让复选框始终停留在第一行，与首行
+        # 文字对齐，符合桌面端任务列表直觉。
         # wrap=False 强制同一行（text_area 的 width=inf 由 expand 约束，
         # 文本软换行由 _maybe_stack_multi 内部多视觉行处理），
         # 避免 text_area 因 width=inf 被换到下一行导致框与文本分离。
@@ -492,7 +496,7 @@ def RenderedLine(
             controls=[
                 ft.Container(
                     content=checkbox,
-                    height=text_h,  # 容器占满行高，Checkbox 居中对齐
+                    height=text_h,  # 容器占满单行高，Checkbox 在首行内居中对齐
                     alignment=ft.Alignment.CENTER,
                     margin=ft.Margin(0, 0, 0, 0),
                     padding=0,
@@ -505,7 +509,7 @@ def RenderedLine(
                 ),
             ],
             wrap=False, spacing=Spacing.SM, run_spacing=0,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.START,  # 复选框固定在第一行（Typora 式）
             width=float("inf"),  # 可滚动 Column 中占满全宽
         )
 

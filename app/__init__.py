@@ -442,7 +442,12 @@ def App():
             doc_search_active_ref.current = 0
 
     def _ds_close() -> None:
-        """关闭浮层：清高亮并把焦点交还编辑器编辑区。"""
+        """关闭浮层：清高亮并把焦点交还编辑器编辑区。
+
+        焦点函数是 async（Flet 需 await 才真正执行）：把整个 async 可调用对象
+        交给 page.run_task 调度（项目约定：run_task 接收 async 函数而非协程
+        实例），绝不自行调用生成悬空协程。
+        """
         set_doc_search_open(False)
         set_doc_search_active(-1)
         doc_search_active_ref.current = -1
@@ -450,14 +455,10 @@ def App():
         if nav is not None and nav.current is not None:
             fn = getattr(nav.current, "focus_document", None)
             if fn is not None:
-                try:
-                    _r = fn()
-                    if asyncio.iscoroutine(_r):
-                        _page = ctx.page_ref.current
-                        if _page is not None:
-                            _page.run_task(_r)
-                except Exception:
-                    pass
+                page = ctx.page_ref.current
+                if page is not None:
+                    with contextlib.suppress(Exception):
+                        page.run_task(fn)
 
     def _ds_next() -> None:
         m = doc_search_matches_ref.current

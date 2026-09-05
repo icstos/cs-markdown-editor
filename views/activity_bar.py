@@ -11,7 +11,9 @@ import flet as ft
 
 from styles import Spacing, _current_colors, only_border
 
-_BAR_W = 60  # 活动栏固定宽度
+_BAR_W = 44  # 活动栏固定宽度：VSCode / Obsidian 风格紧凑带宽（20px 图标 + 两侧 12px 呼吸）
+# 桌面端交互直觉：活动栏仅承载图标级导航，宽度只需容纳图标与悬停/激活反馈；
+# 44px 较原 60px 更贴近列内容，消除大面积留白，把横向空间让给编辑区（紧凑、专业）。
 
 
 @ft.component
@@ -76,35 +78,42 @@ def ActivityBar(
         padding=ft.Padding.symmetric(vertical=Spacing.LG),
         content=ft.Column(
             controls=[
-                _btn(
-                    "files",
-                    ft.Icons.FOLDER_OUTLINED,
-                    "文件",
-                    active_panel == "files" and sidebar_open,
-                    lambda e: on_click_panel("files"),
+                # 顶部按钮组（文件 / 搜索）：独立子列保持 SM 间距，整体置顶
+                ft.Column(
+                    controls=[
+                        _btn(
+                            "files",
+                            ft.Icons.FOLDER_OUTLINED,
+                            "文件",
+                            active_panel == "files" and sidebar_open,
+                            lambda e: on_click_panel("files"),
+                        ),
+                        _btn(
+                            "search",
+                            ft.Icons.SEARCH,
+                            "搜索",
+                            active_panel == "search" and sidebar_open,
+                            lambda e: on_click_panel("search"),
+                        ),
+                    ],
+                    spacing=Spacing.SM,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                _btn(
-                    "search",
-                    ft.Icons.SEARCH,
-                    "搜索",
-                    active_panel == "search" and sidebar_open,
-                    lambda e: on_click_panel("search"),
-                ),
-                # 弹性空隙：文件/搜索置顶，菜单沉底
-                ft.Container(expand=True),
-                ft.Container(
+                # 底部 ≡ 菜单按钮：整列不出现任何 expand/flex 子控件（沉底交给
+                # SPACE_BETWEEN），规避桌面客户端「expand 之后的兄弟控件」布局
+                # 异常（不居中 / 出现多余滚动条）。按钮行固定整宽整高
+                # （_BAR_W × 44），由 Row 自身把 MenuBar 在列内严格居中（横竖
+                # 双向 CENTER），不依赖外层任何对齐。
+                ft.Row(
+                    controls=[menu],
+                    width=_BAR_W,
                     height=44,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     tooltip="菜单",
-                    # 菜单按钮保持居中：容器随内容自适应，铺满 Row + CENTER
-                    # 对齐（MenuBar 自然宽度即使略大于图标也居中显示，不偏右）
-                    content=ft.Row(
-                        controls=[menu],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
                 ),
             ],
-            spacing=Spacing.SM,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )

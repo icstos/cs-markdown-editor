@@ -28,6 +28,12 @@ _MENU_FONT = 13
 _MENU_SHORTCUT_FONT = 11
 _MENU_ITEM_HEIGHT = 36
 _MENU_ICON_SIZE = 18  # 顶层菜单图标字号（与标签栏图标一致）
+# ≡ 触发按钮显式定宽 = 活动栏列宽（与 views/activity_bar._BAR_W=44 保持一致的
+# 窄列常量）：MenuBar/SubmenuButton 若不显式定宽，会按 Material 最小交互宽度
+# 展开（默认 ≥48px，宽于 44px 活动栏）——按钮比列宽 → 内容视觉偏右、右侧
+# 溢出/被截断。显式定宽后 MenuBar 恰好等于列宽，再靠内容 alignment=CENTER
+# 让 ≡ 图标在按钮内严格居中。
+_MENU_TRIGGER_W = 44
 
 
 def _menu_item(
@@ -292,6 +298,7 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
     return ft.MenuBar(
         controls=[
             ft.SubmenuButton(
+                width=_MENU_TRIGGER_W,
                 content=ft.Icon(
                     ft.Icons.MENU,
                     size=_MENU_ICON_SIZE,
@@ -305,9 +312,11 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
                     _submenu("视图", view_controls, c),
                     _submenu("帮助", help_controls, c),
                 ],
-                # 紧凑图标按钮：减小内边距，圆角与标签栏一致
+                # 紧凑图标按钮：减小内边距，圆角与标签栏一致；内容 alignment 强制
+                # CENTER——即使客户端把按钮撑到整宽，≡ 图标也在按钮内严格居中
                 style=ft.ButtonStyle(
                     padding=Spacing.XS,
+                    alignment=ft.Alignment.CENTER,
                     shape=ft.RoundedRectangleBorder(radius=Radius.SM),
                     bgcolor={
                         ft.ControlState.HOVERED: c.hover,

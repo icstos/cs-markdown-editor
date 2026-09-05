@@ -73,6 +73,12 @@ async def main(page: ft.Page):
         ),
     )
     page.theme_mode = ft.ThemeMode.LIGHT
+    # 去四周边缘留白：Flet 根视图默认 padding/spacing 各 10px，会在窗口四周留下
+    # 空白带——最左活动栏不贴左、顶栏与窗口框架之间有空隙、大纲列右侧与窗口
+    # 边缘分离、状态栏下方悬空。置 0 后四列布局与窗口四边严格贴合（VSCode /
+    # Obsidian 式整窗布局，紧凑、专业）。
+    page.padding = 0
+    page.spacing = 0
     _dpr = _dpi_scale()
     page.window.width = round(1200 * _dpr)
     page.window.height = round(720 * _dpr)

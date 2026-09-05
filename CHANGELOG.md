@@ -4,6 +4,38 @@
 
 ## [未发布]
 
+### 2026-09-05 搜索体验升级：文档内搜索浮层（Ctrl+F）+ 侧边栏全局文件夹搜索（Ctrl+Shift+F）
+
+- **Ctrl+Shift+F**：激活侧边栏搜索面板、自动开启「文件夹范围」并聚焦搜索输入框
+  （与 Ctrl+F 严格分流；KeyDispatcher 正常域/外来域四处路由重排，未装配新动作
+  时回退旧行为，兼容用户改键）
+- **Ctrl+F → 文档内搜索浮层**（新增 views/floating_search.py）：悬浮于编辑区
+  右上角的小尺寸浅灰半透明圆角搜索条，包含搜索框（唤起即聚焦、可直接打字）、
+  大小写 Aa、正则 .*、上一个/下一个按钮、实时计数「第 N / 共 M 个匹配」、
+  无匹配「0/0 未找到结果」、关闭按钮；Enter=下一个、Shift+Enter=上一个、
+  Esc=关闭并交还焦点给编辑器；输入框经 native_focus_hooks 接入外来输入焦点域
+  （Ctrl+A/C/V 等只作用输入框，不再波及编辑器文档）
+- **匹配高亮（纯装饰层）**：全量匹配在编辑器文档内以浅黄背景高亮（亮色
+  #FFE082 / 暗色 #5D4E1A），当前选中匹配以橙黄更深高亮（新增 search_active_bg
+  亮 #FFB300 / 暗 #A67B12）；文字颜色不变、不改文档数据；注入点在
+  rendered_line 的 TextSpan.bgcolor（flat 区间切分，跨软换行由既有切片管线保留
+  style），HarfBuzz 测量/换行/光标像素对齐零影响（红线内）
+- **行级数据流**：App 层状态（open/query/case/regex/active/焦点序号）→
+  use_memo 行级命中图（含版本号）→ MarkdownEditor props → LineView/RenderedLine；
+  @ft.memo 浅比较友好（命中行数据变化才重建），搜索作用文档按焦点视口选择，
+  仅身份一致的编辑器获得高亮数据（拆分/对比安全）
+- **跳转定位**：EditorActions 新增 jump_to_line_center（视口中部平滑滚动：
+  估算→构建→实测精修 150/250ms 两步）与 focus_document（关闭浮层后焦点交还）；
+  actions.py 仅追加可选字段，向后兼容
+- 已知限制：代码块/表格/公式块等独立岛屿与 >3000 行大文档/RawEditor 模式无
+  行内 spans 可注入，仅提供计数与跳转定位（不绘制字符级高亮）
+- 测试：tests/test_key_bindings.py 新增 16 项（浮层 Enter/Shift+Enter/Esc、
+  关闭态放行、Ctrl+F 浮层分流、Ctrl+Shift+F 全局分流、外来域隔离回归）；
+  pytest 987 通过（另 182 项为沙箱 PermissionError 环境限制，与基线一致）；
+  ruff 无新增告警
+
+## [未发布]
+
 ### 2026-09-05 界面紧凑化：去除窗口四周边缘空白带（功能不增不减）
 
 - **根因**：Flet 根视图默认 `padding=10` / `spacing=10`（page.padding 代理根视图

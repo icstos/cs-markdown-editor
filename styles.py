@@ -59,6 +59,8 @@ class Colors:
     # 搜索匹配段高亮（区别于 ==高亮== 语法，独立 token 便于单独调色）
     search_match_bg: str = "#FFE082"  # 搜索匹配段背景（亮黄）
     search_match_fg: str = "#1F2329"  # 搜索匹配段文字
+    # 文档内搜索浮层：当前跳转定位的激活匹配背景（橙黄，比普通匹配更深/更饱和）
+    search_active_bg: str = "#FFB300"  # 搜索当前激活匹配背景（橙黄）
     heading_colors: dict[int, str] = field(default_factory=dict)
     # diff 对比配色（GitHub 风格绿增红删）
     diff_add_bg: str = "#e6ffed"  # 新增行背景
@@ -93,6 +95,7 @@ _LIGHT = Colors(
     active_bg="#FFFBEA",     # 淡黄激活态
     toolbar_bg="#F1F3F7",    # 工具栏底，与 bg 明显分层
     border="#E5E8ED",        # 偏冷边框灰
+    search_active_bg="#FFB300",  # 激活匹配：饱和橙黄（普通匹配 #FFE082 之上更醒目）
     heading_colors={
         1: "#1A4480",  # 深海军蓝 - 最高层级，权威
         2: "#2C7BE5",  # 亮蓝 - 主结构
@@ -130,6 +133,7 @@ _DARK = Colors(
     active_bg="#3A2F1A",     # 暗琥珀激活态
     toolbar_bg="#1A1D22",    # 工具栏底
     border="#2F353D",        # 偏暖边框
+    search_active_bg="#A67B12",  # 激活匹配：暗底上的琥珀橙黄（比普通匹配 #5D4E1A 醒目）
     highlight_bg="#5D4E1A",  # 暗琥珀高亮（Typora 式，与 search_match_bg 一致更鲜明）
     search_match_bg="#5D4E1A",  # 暗琥珀搜索匹配
     search_match_fg="#E6EDF3",

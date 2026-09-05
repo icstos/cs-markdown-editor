@@ -144,6 +144,9 @@ class KeyDispatcher:
         # current 非 None（token）表示键盘焦点在外部输入框：文档编辑/选区/导航/
         # 剪贴板快捷键一律不消费（交原生输入框），仅放行全局窗口级快捷键。
         native_input_ref: ft.Ref | None = None,
+        # 文档内搜索浮层打开标志 ref（current=True 时由浮层输入框消费 Enter /
+        # Shift+Enter / Esc，见 handle() 顶部浮层分支）
+        doc_search_open_ref: ft.Ref | None = None,
     ):
         self._shortcut_mgr = shortcut_mgr
         self._actions_ref = actions_ref
@@ -158,6 +161,7 @@ class KeyDispatcher:
         self._on_cancel_capture = on_cancel_capture
         self._arrow_repeat_ref = arrow_repeat_ref
         self._native_input_ref = native_input_ref
+        self._doc_search_open_ref = doc_search_open_ref
 
     # ---- 上/下键长按自驱动重复 ----
     _REPEAT_DELAY = 0.35
@@ -339,6 +343,24 @@ class KeyDispatcher:
         # 分发 Alt+Click / Alt+Shift+Click 多光标操作。
         if actions is not None and getattr(actions, "alt_pressed_ref", None) is not None:
             actions.alt_pressed_ref.current = bool(e.alt)
+
+        # 文档内搜索浮层键盘：浮层打开且其输入框聚焦时，Enter=下一个匹配、
+        # Shift+Enter=上一个匹配、Esc=关闭浮层（都不落入文档/其他快捷键）。
+        # 浮层输入框经 native_focus_hooks 接入外来输入域，这里前置消费避免
+        # 原生 TextField 与全局分发竞态；其余按键仍走下方外来域门控。
+        _ds_ref = self._doc_search_open_ref
+        if _ds_ref is not None and bool(_ds_ref.current) and self._foreign_input_focused():
+            _cb = self._app_callbacks
+            if norm == "escape" and not (e.ctrl or e.meta or e.alt):
+                fn = _cb.get("doc_search_close")
+                if fn is not None:
+                    fn()
+                return
+            if norm == "enter" and not (e.ctrl or e.meta or e.alt):
+                fn = _cb.get("doc_search_prev" if e.shift else "doc_search_next")
+                if fn is not None:
+                    fn()
+                return
 
         # 多光标：Escape 清空所有副光标（优先于 toggle_sidebar / clear_outward_sel）
         # KeyDispatcher 早于 editor 的 KeyboardListener 执行，此处拦截避免
@@ -644,8 +666,14 @@ class KeyDispatcher:
             return
 
         # Ctrl+F：聚焦搜索面板（两层均生效，VSCode 风格）
+        # Ctrl+F：文档内搜索浮层（两态均生效）。装配了 doc_search_open 时唤起
+        # 浮层（聚焦输入框）；否则回退旧行为（侧边栏搜索面板聚焦）。
         if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
-            cb["focus_search"]()
+            _fn = cb.get("doc_search_open")
+            if _fn is not None:
+                _fn()
+            else:
+                cb["focus_search"]()
             return
 
         # Ctrl+H：展开/收起替换栏（两层均生效，VSCode 风格）
@@ -771,11 +799,21 @@ class KeyDispatcher:
             _run("toggle_theme")
             return
         # —— 搜索 / 替换面板（焦点域输入框自身的面板级操作）——
+        # Ctrl+F：外来输入域下仍唤起文档内浮层搜索（若装配）；否则聚焦侧边栏。
         if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
-            _run("focus_search")
+            _fn = cb.get("doc_search_open")
+            if _fn is not None:
+                _fn()
+            else:
+                _run("focus_search")
             return
+        # Ctrl+Shift+F：侧边栏文件夹全局搜索（global_search 装配时自动开启 folder）
         if matches(combo, browse_sc.get("global_find", "ctrl+shift+f")):
-            _run("focus_search")
+            _fn = cb.get("global_search")
+            if _fn is not None:
+                _fn()
+            else:
+                _run("focus_search")
             return
         if matches(combo, browse_sc.get("toggle_replace_bar", "ctrl+h")):
             _run("toggle_replace_bar")
@@ -946,9 +984,14 @@ class KeyDispatcher:
             if actions is not None and not self._native_field_focused(actions):
                 actions.set_block(BlockType.HR)
             return
-        # Ctrl+Shift+F：全局查找（切到侧边栏搜索面板）。
+        # Ctrl+Shift+F：侧边栏文件夹全局搜索（global_search 装配时自动开启
+        # folder 并聚焦输入框；否则回退旧 focus_search 行为）。
         if matches(combo, shortcuts.get("global_find", "ctrl+shift+f")):
-            cb["focus_search"]()
+            _fn = cb.get("global_search")
+            if _fn is not None:
+                _fn()
+            else:
+                cb["focus_search"]()
             return
         # Alt+C：切换当前任务列表项勾选状态，浏览/编辑两态均生效。
         # 非任务行静默忽略（toggle_task_at_cursor 内部守卫），无副作用。

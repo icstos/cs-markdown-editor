@@ -32,6 +32,7 @@
 """
 
 import asyncio
+import contextlib
 
 import flet as ft
 
@@ -54,6 +55,7 @@ from services import file_ops
 from services.shortcuts import ShortcutManager
 from styles import get_colors
 from views.diff_view import compute_diff_for_editors
+from views.doc_search import compute_doc_matches
 from views.status_bar import _compute_counts
 
 
@@ -88,6 +90,23 @@ def App():
     # ref 记录最新值供稳定闭包读取；use_state 触发 Sidebar 渲染侧 effect。
     search_focus_seq_ref = ft.use_ref(0)
     search_focus_seq, set_search_focus_seq = ft.use_state(0)
+    # ============ 文档内搜索浮层状态（Ctrl+F；独立于侧边栏搜索面板）============
+    # open/query/case/regex/active 全部提升到 App：查询结果要驱动编辑器行级
+    # 高亮装饰与匹配导航。active = 当前匹配在扁平匹配列表中的索引（-1=无）。
+    doc_search_open, set_doc_search_open = ft.use_state(False)
+    doc_search_open_ref = ft.use_ref(False)
+    doc_search_open_ref.current = doc_search_open
+    doc_search_query, set_doc_search_query = ft.use_state("")
+    doc_search_case, set_doc_search_case = ft.use_state(False)
+    doc_search_regex, set_doc_search_regex = ft.use_state(False)
+    doc_search_active, set_doc_search_active = ft.use_state(-1)
+    doc_search_active_ref = ft.use_ref(-1)
+    doc_search_active_ref.current = doc_search_active
+    # Ctrl+F 每次唤起递增 focus_seq：FloatingSearch use_effect 聚焦其输入框
+    doc_search_focus_seq_ref = ft.use_ref(0)
+    doc_search_focus_seq, set_doc_search_focus_seq = ft.use_state(0)
+    # 匹配列表 ref 镜像（稳定闭包读取最新，避免捕获过期渲染快照）
+    doc_search_matches_ref = ft.use_ref([])
     # 文件操作对话框状态：{"mode":"input"|"confirm", "action":..., "target":...} | None
     # 由右键菜单触发（新建文件/文件夹/重命名/删除），确认后执行对应文件操作
     file_dialog, set_file_dialog = ft.use_state(None)
@@ -262,6 +281,47 @@ def App():
 
     _diff_result = ft.use_memo(_compute_diff_result, [_diff_sig])
 
+    # ============ 文档内搜索（浮层）派生 ============
+    # 作用文档 = 当前焦点编辑视口的文档（diff 按焦点侧、拆分按焦点组、否则激活标签）
+    if is_diff_tab:
+        _search_doc = cur_tab.get("right_doc") if diff_active_pane == 1 else cur_tab.get("left_doc")
+    elif split_editor and active_pane == 1:
+        _gi = active_index_right if 0 <= active_index_right < len(tabs) else active_index_left
+        _search_doc = tabs[_gi].get("document") if tabs else None
+    else:
+        _search_doc = document
+    _search_sig = (
+        tuple(ln.raw for ln in _search_doc.lines) if _search_doc is not None else ()
+    )
+    doc_search_matches = ft.use_memo(
+        lambda: (
+            compute_doc_matches(
+                _search_doc, doc_search_query, doc_search_case, doc_search_regex
+            )
+            if doc_search_open and _search_doc is not None
+            else []
+        ),
+        [doc_search_query, doc_search_case, doc_search_regex,
+         doc_search_open, id(_search_doc), _search_sig],
+    )
+    doc_search_matches_ref.current = doc_search_matches
+    _ds_total = len(doc_search_matches)
+    _ds_active = doc_search_active if 0 <= doc_search_active < _ds_total else -1
+
+    # {li: [(s, e, is_current)]}：行级高亮装饰输入（identity 稳定化，避免无关
+    # 渲染击穿 LineView memo；数据不变时列表对象复用）
+    def _build_ds_map():
+        if not doc_search_matches or _search_doc is None:
+            return {}
+        out: dict[int, list[tuple[int, int, bool]]] = {}
+        for i, (li, s, e) in enumerate(doc_search_matches):
+            out.setdefault(li, []).append((s, e, i == _ds_active))
+        return out
+
+    doc_search_map = ft.use_memo(_build_ds_map, [doc_search_matches, _ds_active])
+    # 版本号：查询结果数 + 当前匹配索引复合（数据变化时必变，供行级 memo 兜底）
+    doc_search_map_version = _ds_total * 100003 + (_ds_active + 1)
+
     # ============ 构造 AppContext ============
     ctx = AppContext(
         # State 值
@@ -349,6 +409,110 @@ def App():
         set_recovery_list=set_recovery_list,
         status_message=status_message,
     )
+
+    # ============ 文档内搜索（浮层）控制器与装配槽 ============
+    # 在控制器装配前把状态/回调挂到 ctx（build_keyboard 的 app_callbacks 与
+    # build_render 立即读取）。事件回调运行时经 ref/attr 读取最新状态。
+    def _ds_jump_to(li: int, off: int) -> None:
+        """路由到焦点视口的编辑动作：优先视口中部平滑滚动，缺省退化为常规跳转。"""
+        nav = ctx.get_active_nav()
+        if nav is not None and nav.current is not None:
+            act = nav.current
+            fn = getattr(act, "jump_to_line_center", None) or act.jump_to_line
+            with contextlib.suppress(Exception):
+                fn(li, off)
+
+    def _ds_goto(idx: int) -> None:
+        m = doc_search_matches_ref.current
+        if not m:
+            return
+        idx = idx % len(m)
+        set_doc_search_active(idx)
+        doc_search_active_ref.current = idx
+        li, s, _e = m[idx]
+        _ds_jump_to(li, s)
+
+    def _ds_open() -> None:
+        """Ctrl+F：唤起浮层文档内搜索并聚焦输入框（不触碰侧边栏）。"""
+        set_doc_search_open(True)
+        doc_search_focus_seq_ref.current += 1
+        set_doc_search_focus_seq(doc_search_focus_seq_ref.current)
+        if doc_search_active == -1 and doc_search_matches_ref.current:
+            set_doc_search_active(0)
+            doc_search_active_ref.current = 0
+
+    def _ds_close() -> None:
+        """关闭浮层：清高亮并把焦点交还编辑器编辑区。"""
+        set_doc_search_open(False)
+        set_doc_search_active(-1)
+        doc_search_active_ref.current = -1
+        nav = ctx.get_active_nav()
+        if nav is not None and nav.current is not None:
+            fn = getattr(nav.current, "focus_document", None)
+            if fn is not None:
+                try:
+                    _r = fn()
+                    if asyncio.iscoroutine(_r):
+                        _page = ctx.page_ref.current
+                        if _page is not None:
+                            _page.run_task(_r)
+                except Exception:
+                    pass
+
+    def _ds_next() -> None:
+        m = doc_search_matches_ref.current
+        if not m:
+            return
+        cur = doc_search_active_ref.current
+        _ds_goto((cur + 1) if 0 <= cur < len(m) else 0)
+
+    def _ds_prev() -> None:
+        m = doc_search_matches_ref.current
+        if not m:
+            return
+        cur = doc_search_active_ref.current
+        _ds_goto((cur - 1) if 0 <= cur < len(m) else len(m) - 1)
+
+    def _ds_global_search() -> None:
+        """Ctrl+Shift+F：激活侧边栏「文件夹全局搜索」并聚焦输入框。
+
+        打开侧边栏 → 切到 search 面板 → 打开 search_folder（跨文件/文件夹范围）
+        选项 → 递增 focus_seq 驱动 Sidebar 聚焦输入框。与 Ctrl+F（文档内浮层）
+        严格分流。
+        """
+        us = update_setting_ref.current
+        if us is None:
+            return
+        s = settings_ref.current or {}
+        if not s.get("sidebar_open", False):
+            us("sidebar_open", True)
+        us("sidebar_panel", "search")
+        us("search_folder", True)
+        search_focus_seq_ref.current += 1
+        set_search_focus_seq(search_focus_seq_ref.current)
+
+    ctx.doc_search_open = doc_search_open
+    ctx.doc_search_open_ref = doc_search_open_ref
+    ctx.doc_search_focus_seq = doc_search_focus_seq
+    ctx.doc_search_query = doc_search_query
+    ctx.set_doc_search_query = set_doc_search_query
+    ctx.doc_search_case = doc_search_case
+    ctx.set_doc_search_case = set_doc_search_case
+    ctx.doc_search_regex = doc_search_regex
+    ctx.set_doc_search_regex = set_doc_search_regex
+    ctx.doc_search_total = _ds_total
+    ctx.doc_search_active = doc_search_active
+    ctx.doc_search_doc = _search_doc
+    ctx.doc_search_map = doc_search_map
+    ctx.doc_search_map_version = doc_search_map_version
+    ctx.doc_search_matches_ref = doc_search_matches_ref
+    ctx.doc_search_active_ref = doc_search_active_ref
+    ctx.open_doc_search = _ds_open
+    ctx.close_doc_search = _ds_close
+    ctx.doc_search_next = _ds_next
+    ctx.doc_search_prev = _ds_prev
+    ctx.global_search = _ds_global_search
+    ctx.native_input_ref = native_input_ref
 
     # ============ 控制器装配（拓扑序）============
     # 装配顺序：tab_management → file_io_ops → file_dialogs → diff_controller
@@ -642,6 +806,22 @@ def App():
     ft.use_effect(settings_cbs["mount_picker"], [])
     ft.use_effect(settings_cbs["apply_theme"], [theme_mode])
     ft.use_effect(keyboard_cbs["bind_keyboard"], [])
+
+    # 文档搜索当前匹配索引归一化：匹配数变化后自动落到首/末合法值（-1=无匹配）
+    def _normalize_doc_search_active():
+        if not doc_search_open:
+            return
+        total = len(doc_search_matches_ref.current)
+        cur = doc_search_active_ref.current
+        if total == 0:
+            if cur != -1:
+                set_doc_search_active(-1)
+                doc_search_active_ref.current = -1
+        elif not (0 <= cur < total):
+            set_doc_search_active(0)
+            doc_search_active_ref.current = 0
+
+    ft.use_effect(_normalize_doc_search_active, [doc_search_open, _ds_total])
 
     # 跨文件"打开后跳转"：消费 pending_jump_ref。
     # 触发条件：session 变化（切换/打开 tab 重建编辑器）或 pending_jump_sig 变化

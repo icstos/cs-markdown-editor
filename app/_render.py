@@ -49,6 +49,7 @@ from views.diff_markers import DiffHeader
 from views.diff_view import compute_diff_for_editors
 from views.editor import MarkdownEditor
 from views.file_dialogs import FileActionDialog
+from views.floating_search import FloatingSearch
 from views.global_menu import build_global_menu
 from views.outline_panel import OutlinePanel
 from views.recovery_dialog import RecoveryDialog
@@ -56,6 +57,59 @@ from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
 from views.status_bar import StatusBar
 from views.tab_bar import ConfirmCloseDialog, TabBar
+
+
+def _editor_search_props(ctx, doc):
+    """返回某编辑器的文档内搜索高亮 props：(hits_map, version)。
+
+    仅当编辑器绑定文档与「搜索作用文档」为同一对象时下发命中数据（按行索引
+    定位），避免把另一份文档的行号错配到本编辑器。
+    """
+    if doc is not None and ctx.doc_search_doc is doc:
+        return ctx.doc_search_map, ctx.doc_search_map_version
+    return {}, 0
+
+
+def _attach_doc_search_overlay(content: ft.Control, ctx) -> ft.Control:
+    """把文档内搜索浮层叠到 editor_body 上：Stack 顶层右上角，不随内容滚动。
+
+    浮层只在自身矩形内可命中（visible=False 时零尺寸），其余区域点击/滚动
+    全部穿透到编辑器。
+    """
+    total = ctx.doc_search_total
+    if total > 0:
+        cur = ctx.doc_search_active
+        cur_idx = cur if 0 <= cur < total else 0
+    else:
+        cur_idx = -1
+    overlay = FloatingSearch(
+        open=ctx.doc_search_open,
+        query=ctx.doc_search_query,
+        set_query=ctx.set_doc_search_query,
+        case_on=ctx.doc_search_case,
+        on_toggle_case=ctx.set_doc_search_case,
+        regex_on=ctx.doc_search_regex,
+        on_toggle_regex=ctx.set_doc_search_regex,
+        current_idx=cur_idx,
+        total=total,
+        on_prev=ctx.doc_search_prev,
+        on_next=ctx.doc_search_next,
+        on_close=ctx.close_doc_search,
+        focus_seq=ctx.doc_search_focus_seq,
+        native_input_ref=ctx.native_input_ref,
+        theme_mode=ctx.theme_mode,
+    )
+    return ft.Stack(
+        controls=[
+            content,
+            ft.Container(
+                content=overlay,
+                right=14,
+                top=8,
+            ),
+        ],
+        expand=True,
+    )
 
 
 def build_render(ctx) -> ft.Control:
@@ -200,6 +254,7 @@ def build_render(ctx) -> ft.Control:
             ctx, _editor_common, _group_tab, _pane_cursor_cb, _pane_content_cb
         )
     else:
+        _ed_sp, _ed_ver = _editor_search_props(ctx, ctx.document)
         editor_body = ft.Container(
             content=MarkdownEditor(
                 # key 用左组会话：与拆分时左视口同 key，切换拆分不重置左视口光标；
@@ -214,6 +269,8 @@ def build_render(ctx) -> ft.Control:
                 on_content_change=ctx.schedule_status_count_update,
                 # 光标离开编辑器 → 即时自动保存（auto_save_on_blur 开关）
                 on_editor_blur=ctx.trigger_autosave_now,
+                search_hits=_ed_sp,
+                search_hits_version=_ed_ver,
                 **_editor_common,
             ),
             expand=True,
@@ -326,9 +383,10 @@ def build_render(ctx) -> ft.Control:
         on_jump_to_line=ctx.jump_to_line,
     )
 
-    # 第三列：标签行 + 编辑区（标签行宽度与编辑区一致）
+    # 第三列：标签行 + 编辑区（标签行宽度与编辑区一致）；
+    # 编辑区顶部叠文档内搜索浮层（右上角悬浮，仅自身矩形可命中）
     editor_area = ft.Column(
-        controls=[tab_bar, editor_body],
+        controls=[tab_bar, _attach_doc_search_overlay(editor_body, ctx)],
         spacing=0,
         expand=True,
     )
@@ -501,6 +559,9 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
     _rdoc = ctx.cur_tab["right_doc"]
     _lpath = ctx.cur_tab["left_path"]
     _rpath = ctx.cur_tab["right_path"]
+    # 文档内搜索浮层 props：仅与搜索作用文档身份一致的编辑器获得行级高亮数据
+    _lsp, _lver = _editor_search_props(ctx, _ldoc)
+    _rsp, _rver = _editor_search_props(ctx, _rdoc)
     # diff 标记 / 间隙 / 统计由 App use_memo 预计算（按左右文档行内容签名缓存），
     # 避免每次 App 重渲染（主题/面板/滚动）重复 serialize+difflib。
     _dr = ctx.diff_result
@@ -574,6 +635,8 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
                             on_scroll_change=ctx.diff_sync.on_left_scroll,
                             on_cursor_move=pane_cursor_cb(ctx.diff_active_pane == 0),
                             on_content_change=pane_content_cb(ctx.diff_active_pane == 0),
+                            search_hits=_lsp,
+                            search_hits_version=_lver,
                             **_diff_common,
                         ),
                         expand=True,
@@ -596,6 +659,8 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
                             keyboard_autofocus=False,
                             on_cursor_move=pane_cursor_cb(ctx.diff_active_pane == 1),
                             on_content_change=pane_content_cb(ctx.diff_active_pane == 1),
+                            search_hits=_rsp,
+                            search_hits_version=_rver,
                             **_diff_common,
                         ),
                         expand=True,
@@ -625,6 +690,8 @@ def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pa
     """
     left_tab = group_tab_fn(0)
     right_tab = group_tab_fn(1)
+    _lsp2, _lver2 = _editor_search_props(ctx, left_tab.get("document"))
+    _rsp2, _rver2 = _editor_search_props(ctx, right_tab.get("document"))
     return ft.Row(
         controls=[
             ft.Container(
@@ -638,6 +705,8 @@ def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pa
                     on_dirty_change=lambda d: ctx.on_dirty_change_pane(0, d),
                     on_cursor_move=pane_cursor_cb(ctx.active_pane == 0),
                     on_content_change=pane_content_cb(ctx.active_pane == 0),
+                    search_hits=_lsp2,
+                    search_hits_version=_lver2,
                     **editor_common,
                 ),
                 expand=True,
@@ -656,6 +725,8 @@ def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pa
                     on_dirty_change=lambda d: ctx.on_dirty_change_pane(1, d),
                     on_cursor_move=pane_cursor_cb(ctx.active_pane == 1),
                     on_content_change=pane_content_cb(ctx.active_pane == 1),
+                    search_hits=_rsp2,
+                    search_hits_version=_rver2,
                     **editor_common,
                 ),
                 expand=True,

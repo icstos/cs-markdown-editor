@@ -104,9 +104,15 @@ def MarkdownEditor(
     # on_content_change():文档内容变化(mark_dirty)时触发,App 防抖重算字数。
     on_cursor_move: Callable[[int, int], Awaitable[None] | None] | None = None,
     on_content_change: Callable[[], None] | None = None,
+    # 文档内搜索（浮层）：search_hits = {li: [(s, e, is_current), ...]}（raw 偏移，
+    # is_current 标识当前选中匹配）；search_hits_version 数据变化时递增（行级
+    # @ft.memo 失效兜底）。缺省/空 dict = 不渲染搜索高亮（纯装饰、不改文档）。
+    search_hits: dict[int, list] | None = None,
+    search_hits_version: int = 0,
 ):
     # ============ 派生设置 ============
     c = _current_colors()
+    search_hits = search_hits or {}
     settings = settings or {}
     content_max_width = settings.get("content_max_width", 920)
     content_padding = settings.get("content_padding", 36)
@@ -311,6 +317,9 @@ def MarkdownEditor(
         math_focus_li=math_focus_li,
         secondary_cursors=secondary_cursors,
         secondary_cursors_version=secondary_cursors_version,
+        # 文档内搜索（浮层）：{li: [(s, e, is_current)]} + 数据版本号
+        search_hits=search_hits,
+        search_hits_version=search_hits_version,
         # Setters
         set_cursor_li=set_cursor_li,
         set_cursor_off=set_cursor_off,
@@ -429,6 +438,7 @@ def MarkdownEditor(
     ctx.get_cursor_row_col = scroll_cbs["get_cursor_row_col"]
     ctx.build_highlight_map = scroll_cbs["build_highlight_map"]
     ctx.jump_to = scroll_cbs["jump_to"]
+    ctx.reveal_match = scroll_cbs["reveal_match"]
     # navigation 组
     ctx.move_left = nav_cbs["move_left"]
     ctx.move_right = nav_cbs["move_right"]

@@ -1081,6 +1081,118 @@ def test_foreign_clear_restores_editor_scope():
     assert "select_all" in calls  # 焦点回到编辑器域，Ctrl+A 全选文档恢复
 
 
+# ---------------- 文档内搜索浮层（Ctrl+F）----------------
+def _overlay_dispatcher(app_calls: list):
+    """构造装配了浮层动作的 dispatcher（浮层打开 + 输入框聚焦 + 复选回调）。"""
+    actions = make_actions([], cursor_li=None)
+    native_ref = FakeRef(object())  # 浮层输入框聚焦（外来输入域）
+    open_ref = FakeRef(True)  # 浮层打开
+
+    def rec(name):
+        def fn():
+            app_calls.append(name)
+        return fn
+
+    cb = {
+        "doc_search_open": rec("doc_search_open"),
+        "doc_search_close": rec("doc_search_close"),
+        "doc_search_next": rec("doc_search_next"),
+        "doc_search_prev": rec("doc_search_prev"),
+        "focus_search": rec("focus_search"),
+        "global_search": rec("global_search"),
+        "new": rec("new"),
+        "save": rec("save"),
+        "open": rec("open"),
+        "toggle_sidebar": rec("toggle_sidebar"),
+        "toggle_theme": rec("toggle_theme"),
+        "open_settings": rec("open_settings"),
+        "close_tab": rec("close_tab"),
+        "next_tab": rec("next_tab"),
+        "prev_tab": rec("prev_tab"),
+        "toggle_word_wrap": rec("toggle_word_wrap"),
+        "toggle_split_editor": rec("toggle_split_editor"),
+        "toggle_replace_bar": rec("toggle_replace_bar"),
+        "replace_current": rec("replace_current"),
+        "replace_all": rec("replace_all"),
+    }
+    d = KeyDispatcher(
+        shortcut_mgr=ShortcutManager({}, lambda k, v: None),
+        actions_ref=FakeRef(actions),
+        clipboard_ref=FakeRef(None),
+        page_ref=FakeRef(FakePage()),
+        paste_old_draft=FakeRef(""),
+        app_callbacks=cb,
+        native_input_ref=native_ref,
+        doc_search_open_ref=open_ref,
+    )
+    return d, app_calls, cb
+
+
+def test_doc_search_enter_next():
+    """浮层打开且输入框聚焦：Enter → 下一条（不落到编辑器）。"""
+    app_calls: list = []
+    d, app_calls, _ = _overlay_dispatcher(app_calls)
+    d.handle(evt("enter"))
+    assert "doc_search_next" in app_calls
+
+
+def test_doc_search_shift_enter_prev():
+    app_calls: list = []
+    d, app_calls, _ = _overlay_dispatcher(app_calls)
+    d.handle(evt("enter", shift=True))
+    assert "doc_search_prev" in app_calls
+
+
+def test_doc_search_escape_closes():
+    app_calls: list = []
+    d, app_calls, _ = _overlay_dispatcher(app_calls)
+    d.handle(evt("escape"))
+    assert "doc_search_close" in app_calls
+
+
+def test_doc_search_closed_enter_ignored():
+    """浮层未打开：Enter 不被浮层拦截（无 next/prev，也没有文档动作）。"""
+    actions = make_actions([], cursor_li=None)
+    native_ref = FakeRef(None)
+    open_ref = FakeRef(False)
+    app_calls: list = []
+    cb = {
+        "doc_search_next": lambda: app_calls.append("next"),
+        "doc_search_prev": lambda: app_calls.append("prev"),
+        "doc_search_close": lambda: app_calls.append("close"),
+    }
+    d = KeyDispatcher(
+        shortcut_mgr=ShortcutManager({}, lambda k, v: None),
+        actions_ref=FakeRef(actions),
+        clipboard_ref=FakeRef(None),
+        page_ref=FakeRef(FakePage()),
+        paste_old_draft=FakeRef(""),
+        app_callbacks=cb,
+        native_input_ref=native_ref,
+        doc_search_open_ref=open_ref,
+    )
+    d.handle(evt("enter"))
+    assert app_calls == []
+
+
+def test_ctrl_f_routes_doc_search_when_available():
+    """Ctrl+F：装配 doc_search_open 时唤起浮层（不切侧边栏）。"""
+    app_calls: list = []
+    d, app_calls, _ = _overlay_dispatcher(app_calls)
+    d.handle(evt("f", ctrl=True))
+    assert "doc_search_open" in app_calls
+    assert "focus_search" not in app_calls
+
+
+def test_ctrl_shift_f_routes_global_search_when_available():
+    """Ctrl+Shift+F：装配 global_search 时走侧边栏文件夹全局搜索。"""
+    app_calls: list = []
+    d, app_calls, _ = _overlay_dispatcher(app_calls)
+    d.handle(evt("f", ctrl=True, shift=True))
+    assert "global_search" in app_calls
+    assert "focus_search" not in app_calls
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

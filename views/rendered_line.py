@@ -35,6 +35,7 @@
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import flet as ft
 
@@ -169,6 +170,9 @@ def RenderedLine(
     # 文档路径：用于解析相对路径图片（assets/xxx.png → 文档目录/assets/xxx.png）。
     # None 时相对路径保持原样（向后兼容，但本地图片可能无法显示）
     file_path: str | None = None,
+    # 文档内搜索（浮层）：本行命中 [(s, e, is_current)]（raw 偏移）。仅做装饰
+    # bgcolor（不改变文字/宽度/测量）；outward_range 有值时跳过避免覆盖选区高亮。
+    search_hits: list[tuple[int, int, bool]] | None = None,
 ) -> ft.Control:
     """渲染层行组件（Stack 底层）。
 
@@ -451,6 +455,10 @@ def RenderedLine(
                 spans = [ft.TextSpan(" ", style=style)]
         ww, vlines = _get_vlayout()
         r2f = _build_raw_to_flat_map(line, cursor_off, outward_range, skip_prefix=True)
+        if search_hits and outward_range is None:
+            spans = _decorate_search_hits(
+                spans, r2f, search_hits, c.search_match_bg, c.search_active_bg
+            )
         text_area = _maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
                                        base, line_height, ww, style)
         # 主题感知 Checkbox：颜色随亮/暗主题、圆角 4px、focus overlay 透明
@@ -714,6 +722,11 @@ def RenderedLine(
     spans = _spans_with_highlight(line, base, cursor_off, heading_level, outward_range)
     ww, vlines = _get_vlayout()
     r2f = _build_raw_to_flat_map(line, cursor_off, outward_range)
+    # 文档内搜索装饰：仅无向外选区冲突时做字符级 bgcolor（纯装饰不改排版/测量）
+    if search_hits and outward_range is None:
+        spans = _decorate_search_hits(
+            spans, r2f, search_hits, c.search_match_bg, c.search_active_bg
+        )
     content = _maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
                                  base, line_height, ww, style)
     return ft.GestureDetector(
@@ -979,6 +992,74 @@ def _build_raw_to_flat_map(
     if len(raw_to_flat) - 1 != len(line.raw):
         raw_to_flat = list(range(len(line.raw) + 1))
     return raw_to_flat
+
+
+def _decorate_search_hits(
+    flat_spans: list[ft.TextSpan],
+    raw_to_flat: list[int],
+    hits: list[tuple[int, int, bool]],
+    bg_normal: str,
+    bg_active: str,
+) -> list[ft.TextSpan]:
+    """把文档内搜索命中的 raw 区间转成 flat 区间，逐 span 切分并注入 bgcolor。
+
+    纯装饰层：只改写 TextSpan.style.bgcolor，不改文字内容与排版宽度，因此
+    HarfBuzz 测量 / 换行 / 光标像素对齐完全不受影响。命中区间在 raw→flat 折叠
+    中退化为零宽（如命中被折叠的 URL 子段）时跳过，不产生脏 span。
+    """
+    if not hits:
+        return list(flat_spans)
+    intervals: list[tuple[int, int, str]] = []
+    n = len(raw_to_flat)
+    for s, e, is_cur in hits:
+        if 0 <= s < n and 0 <= e < n:
+            fs, fe = raw_to_flat[s], raw_to_flat[e]
+            if fe > fs:
+                intervals.append((fs, fe, bg_active if is_cur else bg_normal))
+    if not intervals:
+        return list(flat_spans)
+    intervals.sort(key=lambda t: t[0])
+
+    def _copy_span(span: ft.TextSpan, text: str, bgcolor: str | None) -> ft.TextSpan:
+        style = span.style
+        if bgcolor is not None:
+            style = replace(style, bgcolor=bgcolor)
+        kwargs: dict = {"text": text, "style": style}
+        on_click = getattr(span, "on_click", None)
+        if on_click is not None:
+            kwargs["on_click"] = on_click
+        tooltip = getattr(span, "tooltip", None)
+        if tooltip is not None:
+            kwargs["tooltip"] = tooltip
+        return ft.TextSpan(**kwargs)
+
+    result: list[ft.TextSpan] = []
+    pos = 0
+    for span in flat_spans:
+        text = span.text or ""
+        start, end = pos, pos + len(text)
+        pos = end
+        if end <= start:
+            result.append(span)
+            continue
+        # 本 span 与命中区间的相交段（单调递增，hits 已按行内升序）
+        segs: list[tuple[int, int, str]] = []
+        for fs, fe, color in intervals:
+            a, b = max(start, fs), min(end, fe)
+            if a < b:
+                segs.append((a, b, color))
+        if not segs:
+            result.append(span)
+            continue
+        prev = start
+        for a, b, color in segs:
+            if a > prev:
+                result.append(_copy_span(span, text[prev - start:a - start], None))
+            result.append(_copy_span(span, text[a - start:b - start], color))
+            prev = b
+        if prev < end:
+            result.append(_copy_span(span, text[prev - start:end - start], None))
+    return result
 
 
 def _slice_spans_for_visual_line(

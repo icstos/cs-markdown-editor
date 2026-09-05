@@ -68,6 +68,9 @@ def build_actions(ctx) -> EditorActions | None:
         undo=ctx.undo,
         redo=ctx.redo,
         jump_to_line=ctx.jump_to,
+        # 搜索浮层：跳转（视口中部）+ 焦点交还（可选装配；ctx 缺槽时回退 None）
+        jump_to_line_center=getattr(ctx, "reveal_match", None),
+        focus_document=getattr(ctx, "focus_cursor_field", None),
         toggle_raw=ctx.toggle_raw,
         toggle_focus_mode=ctx.toggle_focus_mode,
         set_block=ctx.set_block,

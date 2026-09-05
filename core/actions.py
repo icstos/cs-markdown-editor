@@ -182,3 +182,9 @@ class EditorActions:
     # 由 _do_paste_check 走 handle_paste 统一处理（避免单行 TextField 把多行文本
     # 拼接成一行触发 on_change 与 handle_paste 重复插入）。
     paste_in_progress_ref: ft.Ref | None = None
+
+    # ---- 文档内搜索（浮层）扩展动作（可选装配，无则 None）----
+    # 跳转到指定行并把该行滚动到视口中部（搜索上一个/下一个，平滑 200ms+）。
+    jump_to_line_center: Callable[[int, int | None], None] | None = None
+    # 把键盘焦点交还编辑器编辑区（浮层关闭后调用）。
+    focus_document: Callable[[], None] | None = None

@@ -76,6 +76,12 @@ def build_keyboard(ctx):
             "toggle_replace_bar": ctx.toggle_replace_bar,
             "replace_current": ctx.replace_current,
             "replace_all": ctx.replace_all,
+            # 文档内搜索浮层（Ctrl+F）与侧边栏全局文件夹搜索（Ctrl+Shift+F）
+            "doc_search_open": ctx.open_doc_search,
+            "doc_search_close": ctx.close_doc_search,
+            "doc_search_next": ctx.doc_search_next,
+            "doc_search_prev": ctx.doc_search_prev,
+            "global_search": ctx.global_search,
         },
         capturing=ctx.capturing,
         on_capture=ctx.on_capture,
@@ -84,6 +90,8 @@ def build_keyboard(ctx):
         # 非编辑器原生输入框焦点域：current 非 None 时只放行全局窗口级快捷键，
         # 文档编辑/选区/导航/剪贴板键交原生输入框（搜索框 Ctrl+A 等不再误触编辑器）
         native_input_ref=ctx.native_input_ref,
+        # 文档内搜索浮层打开标志（current=True 且输入框聚焦时拦截 Enter/Esc 等）
+        doc_search_open_ref=ctx.doc_search_open_ref,
     )
 
     def bind_keyboard():

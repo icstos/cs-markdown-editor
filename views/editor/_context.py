@@ -356,3 +356,12 @@ class EditorContext:
     cut_multi_cursor_selection: Callable[[], Awaitable[None]] = field(default=lambda: None)
     paste_to_multi_cursors: Callable[[str], None] = field(default=lambda *a: None)
     paste_to_multi_cursors_plain: Callable[[str], None] = field(default=lambda *a: None)
+
+    # ============ 文档内搜索（浮层）============
+    # Props：search_hits = {li: [(s, e, is_current)]}（raw 偏移；is_current 单行至多一个），
+    # 命中行进入行级渲染装饰（仅 bgcolor，不改排版/测量）；search_hits_version 在
+    # 搜索数据变化时递增，兜底 LineView @ft.memo 失效。
+    search_hits: dict[int, list] = field(default_factory=dict)
+    search_hits_version: int = 0
+    # scroll 组装配槽：搜索跳转（视口中部平滑滚动）
+    reveal_match: Callable[[int, int | None], None] = field(default=lambda *a: None)

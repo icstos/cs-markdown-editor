@@ -594,6 +594,11 @@ def LineView(
     file_path: str | None = None,
     # diff 对比：行级背景着色标记（"added"|"removed"|"modified"|None）
     diff_mark: str | None = None,
+    # 文档内搜索（浮层）：本行命中 [(s, e, is_current)] raw 区间 | None。
+    # 纯装饰（bgcolor），不改文档/排版/测量；is_current 行内至多一个。
+    search_hits: list[tuple[int, int, bool]] | None = None,
+    # 搜索数据版本号：查询/匹配/当前项变化时递增，兜底 @ft.memo 失效
+    search_hits_version: int = 0,
     # 多光标：本行的副光标列表 [(li, base, extent)]，用于渲染副光标标记 + 选区高亮
     secondary_cursors: list[tuple[int, int, int]] | None = None,
     # 多光标版本号：secondary_cursors 内容变化时递增，强制 ft.memo 失效重渲染
@@ -844,6 +849,7 @@ def LineView(
         on_double_tap=on_double_tap,
         on_image_action=on_image_action,
         file_path=file_path,
+        search_hits=search_hits,
     )
 
     # ============ 多光标：副光标标记 + 选区高亮 ============

@@ -180,6 +180,9 @@ def build_line_controls(
                     on_image_action=stable_cbs["on_image_action"],
                     file_path=ctx.file_path,
                     diff_mark=_diff_mark,
+                    # 文档内搜索（浮层）：本行命中 [(s, e, is_current)]（无则 None）
+                    search_hits=ctx.search_hits.get(i),
+                    search_hits_version=ctx.search_hits_version,
                 )
             )
         i += 1

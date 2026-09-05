@@ -421,6 +421,52 @@ def build_scroll(ctx):
 
         _run_task_safe(page, _clear_flash)
 
+    async def _scroll_line_centered(li: int):
+        """把第 li 行平滑滚动到视口中部（搜索匹配跳转专用）。
+
+        目标 scroll = est_y - (viewport - line_h) / 2。缓存未命中时先估算滚动
+        触发构建，sleep 后用实测高度精修（参考 _safe_scroll_to 的两步骨架）。
+        """
+        lv = ctx.list_view_ref.current
+        if lv is None:
+            return
+        try:
+            viewport = ctx.viewport_h_ref.current or 600
+            cache = ctx.line_heights_ref.current
+            built = cache.get(li, 0.0) > 0
+            est_y = _estimate_line_offset(li)
+            est_h = _estimate_line_height(li) or ctx.body_font_size * ctx.line_height
+            target = max(0.0, est_y - (viewport - est_h) / 2.0)
+            if built:
+                await lv.scroll_to(target, duration=250)
+                return
+            await lv.scroll_to(target, duration=150)
+            await asyncio.sleep(0.15)
+            precise_y = _estimate_line_offset(li)
+            precise_h = _estimate_line_height(li) or ctx.body_font_size * ctx.line_height
+            precise = max(0.0, precise_y - (viewport - precise_h) / 2.0)
+            if abs(precise - target) > 4:
+                await lv.scroll_to(precise, duration=250)
+        except Exception:
+            pass
+
+    def reveal_match(li: int, off: int | None = None):
+        """文档内搜索跳转：把匹配行滚动到视口中部（平滑），并置光标于 raw 偏移。
+
+        区别于 jump_to（贴顶 + 淡蓝脉冲）：不抢当前匹配的橙黄高亮，只做
+        光标定位 + 视口中部滚动。围栏块（无行内 offset 语义）退化为行级浏览态。
+        """
+        if not (0 <= li < len(ctx.document.lines)):
+            return
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            ctx.set_cursor_line(li)
+            ctx.set_cursor_li(None)
+        else:
+            ctx.set_cursor(li, off if off is not None else 0)
+        page = ft.context.page
+        _run_task_safe(page, _scroll_line_centered, li)
+
     def _get_cursor_row_col() -> tuple[int, int]:
         if ctx.cursor_li is not None and 0 <= ctx.cursor_li < len(ctx.document.lines):
             return (ctx.cursor_li + 1, ctx.cursor_off + 1)
@@ -446,6 +492,7 @@ def build_scroll(ctx):
         "safe_scroll_to": _safe_scroll_to,
         "ensure_visible": _ensure_visible,
         "jump_to": jump_to,
+        "reveal_match": reveal_match,
         "hit_test_line_x": _hit_test_line_x,
         "get_layout_cache": _get_layout_cache,
         "hit_test_xy": _hit_test_xy,

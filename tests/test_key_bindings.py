@@ -174,11 +174,14 @@ def make_dispatcher(
     on_capture=None,
     on_cancel_capture=None,
     shortcuts: dict | None = None,
+    foreign: bool = False,
 ) -> tuple[KeyDispatcher, list, FakePage]:
     """构造 KeyDispatcher + 配套 refs。返回 (dispatcher, app_calls记录列表, fake_page)。
 
     shortcuts：可选的 shortcuts 配置覆盖（{layer: {action_id: combo}}），
     用于让特定快捷键以规范化形式（如 ctrl+,）命中 matches。
+    foreign：模拟「非编辑器原生输入框（搜索/替换/过滤/对话框输入）聚焦」，
+    使 dispatcher 进入外部输入焦点域（文档编辑快捷键不消费、仅放行窗口级键）。
     """
     settings: dict = {}
     if shortcuts is not None:
@@ -189,6 +192,8 @@ def make_dispatcher(
     fake_page = FakePage()
     page_ref = FakeRef(fake_page)
     paste_old_draft = FakeRef("")
+    # 外部输入焦点域 ref：foreign=True 时置 token（非 None）
+    native_input_ref = FakeRef(object() if foreign else None)
 
     def make_cb(name):
         def fn():
@@ -222,6 +227,7 @@ def make_dispatcher(
         capturing=capturing,
         on_capture=on_capture,
         on_cancel_capture=on_cancel_capture,
+        native_input_ref=native_input_ref,
     )
     return d, app_calls, fake_page
 
@@ -945,5 +951,136 @@ def test_table_focused_arrow_not_routed_to_code_exit():
     assert not any(isinstance(c, tuple) for c in calls)
 
 
+# ---------------- 外部输入焦点域（搜索/替换/过滤/对话框输入聚焦时）----------------
+def test_foreign_ctrl_a_not_select_all():
+    """搜索框聚焦时 Ctrl+A 不再全选编辑器文档（应只作用于输入框自身）。"""
+    calls: list = []
+    actions = make_actions(calls, cursor_li=None)
+    d, _, _ = make_dispatcher(actions, [], foreign=True)
+    d.handle(evt("a", ctrl=True))
+    assert "select_all" not in calls
+
+
+def test_foreign_ctrl_a_edit_mode_not_select_all():
+    calls: list = []
+    actions = make_actions(calls, cursor_li=0)
+    d, _, _ = make_dispatcher(actions, [], foreign=True)
+    d.handle(evt("a", ctrl=True))
+    assert "select_all" not in calls
+
+
+def test_foreign_clipboard_combos_not_scheduled():
+    """外部输入框聚焦时 Ctrl+C/X/V/Z 不调度文档剪贴板/撤销动作（交原生输入框）。"""
+    for key in ("c", "x", "v", "z"):
+        calls: list = []
+        actions = make_actions(calls, cursor_li=0)
+        d, _, fake_page = make_dispatcher(actions, [], foreign=True)
+        d.handle(evt(key, ctrl=True))
+        assert not fake_page.tasks
+        assert "undo" not in calls
+
+
+def test_foreign_navigation_keys_passthrough():
+    """外部输入框聚焦时方向键/Home/End/Backspace/Delete 不作用到文档光标。"""
+    for key in ("arrowleft", "arrowright", "arrowup", "arrowdown", "home", "end",
+                "backspace", "delete"):
+        calls: list = []
+        actions = make_actions(calls, cursor_li=0)
+        d, _, _ = make_dispatcher(actions, [], foreign=True)
+        d.handle(evt(key))
+        assert not calls, f"{key} 不应调用任何文档动作: {calls}"
+
+
+def test_foreign_typing_does_not_touch_outward_selection():
+    """外部输入框聚焦时打字不触发「替换编辑器 outward 选区」。"""
+    calls: list = []
+    actions = make_actions(calls, outward_sel=(0, 0, 1, 0))
+    d, _, _ = make_dispatcher(actions, [], foreign=True)
+    d.handle(evt("x"))
+    assert "handle_outward_type_char" not in calls
+    assert not calls
+
+
+def test_foreign_pageup_pagedown_do_not_scroll_editor():
+    calls: list = []
+    actions = make_actions(calls)
+    d, _, _ = make_dispatcher(actions, [], foreign=True)
+    d.handle(evt("pageup"))
+    d.handle(evt("pagedown"))
+    assert not calls
+
+
+def test_foreign_global_save_still_works():
+    """外部输入框聚焦时 Ctrl+S（全局窗口级）仍生效。"""
+    app_calls: list = []
+    d, app_calls, fake_page = make_dispatcher(None, app_calls, foreign=True)
+    d.handle(evt("s", ctrl=True))
+    assert any(fn == d._app_callbacks["save"] for fn, _ in fake_page.tasks)
+
+
+def test_foreign_global_chrome_still_works():
+    """外部输入框聚焦时窗口级快捷键（新标签/切标签/侧边栏）仍生效。"""
+    for key, ctrl, shift, cb_name in (
+        ("n", True, False, "new"),
+        ("w", True, False, "close_tab"),
+        ("tab", True, False, "next_tab"),
+        ("b", True, True, "toggle_sidebar"),
+    ):
+        app_calls: list = []
+        d, app_calls, _ = make_dispatcher(None, app_calls, foreign=True)
+        d.handle(evt(key, ctrl=ctrl, shift=shift))
+        assert cb_name in app_calls, f"Ctrl+Shift+{key} 应触发 {cb_name}"
+
+
+def test_foreign_ctrl_comma_still_opens_settings():
+    """外部输入框聚焦时 Ctrl+, 打开设置（配置以规范化形式 ctrl+, 命中）。"""
+    app_calls: list = []
+    sc = {**DEFAULT_SHORTCUTS["browse"], "open_settings": "ctrl+,"}
+    d, app_calls, _ = make_dispatcher(
+        None, app_calls, foreign=True, shortcuts={"browse": sc}
+    )
+    d.handle(evt("comma", ctrl=True))
+    assert "open_settings" in app_calls
+
+
+def test_foreign_clear_restores_editor_scope():
+    """外部输入焦点域清除（输入框失焦）后文档快捷键恢复正常。"""
+    # foreign=True 的 dispatcher 使用独立 ref，此处手工构造验证 ref 置空即恢复
+    calls: list = []
+    actions = make_actions(calls, cursor_li=None)
+    ref = FakeRef(object())  # 外部输入聚焦
+    d = KeyDispatcher(
+        shortcut_mgr=ShortcutManager({}, lambda k, v: None),
+        actions_ref=FakeRef(actions),
+        clipboard_ref=FakeRef(None),
+        page_ref=FakeRef(FakePage()),
+        paste_old_draft=FakeRef(""),
+        app_callbacks={
+            "save": lambda: None,
+            "new": lambda: None,
+            "open": lambda: None,
+            "toggle_sidebar": lambda: None,
+            "toggle_theme": lambda: None,
+            "open_settings": lambda: None,
+            "close_tab": lambda: None,
+            "next_tab": lambda: None,
+            "prev_tab": lambda: None,
+            "toggle_word_wrap": lambda: None,
+            "toggle_split_editor": lambda: None,
+            "focus_search": lambda: None,
+            "toggle_replace_bar": lambda: None,
+            "replace_current": lambda: None,
+            "replace_all": lambda: None,
+        },
+        native_input_ref=ref,
+    )
+    d.handle(evt("a", ctrl=True))
+    assert "select_all" not in calls  # 聚焦期间不作用于文档
+    ref.current = None  # 模拟输入框失焦（blur 清空 token）
+    d.handle(evt("a", ctrl=True))
+    assert "select_all" in calls  # 焦点回到编辑器域，Ctrl+A 全选文档恢复
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

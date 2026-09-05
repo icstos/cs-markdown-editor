@@ -161,6 +161,10 @@ def App():
     # 修复 use_effect(_bind_keyboard, []) 空依赖导致 _handler 闭包捕获首次渲染
     # dispatcher 的过期问题——改快捷键后新键位才能立即生效（无需重启）。
     dispatcher_ref = ft.use_ref(None)
+    # 非编辑器原生输入框焦点域 ref：各输入框 on_focus/on_blur 写入 token
+    # （views.native_scope.native_focus_hooks）。KeyDispatcher 据此把「焦点在
+    # 外部输入框时的按键」与编辑器隔离（如搜索框内 Ctrl+A 只全选搜索框文本）。
+    native_input_ref = ft.use_ref(None)
     # close_tab_ref：渲染期同步赋值最新 close_tab（控制器装配产物，每次渲染新建但
     # 行为一致——仅读稳定 ref/setter）。供稳定化的 close_current_tab 读取最新实例，
     # 打破「lambda 捕获 ctx.close_tab 导致 DiffHeader on_close 身份不稳定」问题。
@@ -333,6 +337,7 @@ def App():
         active_index_ref=active_index_ref,
         settings_ref=settings_ref,
         dispatcher_ref=dispatcher_ref,
+        native_input_ref=native_input_ref,
         paste_old_draft=paste_old_draft,
         arrow_repeat_ref=arrow_repeat_ref,
         status_ref=status_ref,

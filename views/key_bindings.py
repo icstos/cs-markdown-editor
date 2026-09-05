@@ -140,6 +140,10 @@ class KeyDispatcher:
         on_capture: Callable[[str, str, str], None] | None = None,
         on_cancel_capture: Callable[[], None] | None = None,
         arrow_repeat_ref: ft.Ref | None = None,
+        # 非编辑器原生输入框（侧边栏搜索/替换/过滤、文件对话框输入等）焦点域 ref。
+        # current 非 None（token）表示键盘焦点在外部输入框：文档编辑/选区/导航/
+        # 剪贴板快捷键一律不消费（交原生输入框），仅放行全局窗口级快捷键。
+        native_input_ref: ft.Ref | None = None,
     ):
         self._shortcut_mgr = shortcut_mgr
         self._actions_ref = actions_ref
@@ -153,6 +157,7 @@ class KeyDispatcher:
         self._on_capture = on_capture
         self._on_cancel_capture = on_cancel_capture
         self._arrow_repeat_ref = arrow_repeat_ref
+        self._native_input_ref = native_input_ref
 
     # ---- 上/下键长按自驱动重复 ----
     _REPEAT_DELAY = 0.35
@@ -239,6 +244,16 @@ class KeyDispatcher:
         if math_ref is not None and math_ref.current is not None:
             return True
         return False
+
+    def _foreign_input_focused(self) -> bool:
+        """非编辑器原生输入框（侧边栏搜索/替换/过滤、文件对话框输入等）是否聚焦。
+
+        由各输入框 on_focus/on_blur 经 views.native_scope.native_focus_hooks 写入
+        native_input_ref（current=token 即聚焦）。聚焦时按键应作用在输入框自身
+        （Ctrl+A 全选输入框文本等），不得再波及编辑器文档/光标/选区。
+        """
+        ref = self._native_input_ref
+        return ref is not None and ref.current is not None
 
     @staticmethod
     def _begin_paste(actions: EditorActions | None) -> None:
@@ -335,6 +350,15 @@ class KeyDispatcher:
             and actions.has_secondary_cursors()
         ):
             actions.clear_secondary_cursors()
+            return
+
+        # 焦点域门控：键盘焦点在非编辑器原生输入框（搜索/替换/过滤、文件对话框
+        # 输入等）时，文档编辑/选区/导航/剪贴板快捷键一律不消费（return，交由
+        # 原生输入框处理，例如搜索框内 Ctrl+A 只全选搜索框文本），仅放行不触碰
+        # 文档内容的全局窗口级快捷键（保存/新建/开标签/切换侧边栏/主题等）。
+        # 严格绑定「焦点在哪个区域，快捷键就作用在哪个区域」。
+        if self._foreign_input_focused():
+            self._handle_foreign_only(combo, self._app_callbacks)
             return
 
         # 多光标剪贴板：Ctrl+C/X/V 在多光标模式 + 有选区时同步操作所有光标选区
@@ -665,6 +689,104 @@ class KeyDispatcher:
         if page is None:
             return
         self._handle_shortcuts(page, actions, combo, shortcuts, layer)
+
+    # ---- 外部输入焦点域：仅放行全局窗口级快捷键（不触碰文档文本/光标/选区）----
+    def _handle_foreign_only(self, combo: str, cb: dict) -> None:
+        """键盘焦点在非编辑器原生输入框时只放行全局窗口级快捷键。
+
+        其余按键（含 Ctrl+A/C/V/X/Z、Ctrl+Z/Y、方向键/Home/End/Backspace/
+        Delete、打字、Ctrl+0~6、行内格式等）一律不处理并 return——由聚焦的
+        原生输入框自己消费（搜索框内 Ctrl+A 只全选搜索框文本；Ctrl+Z 只撤销
+        输入框内编辑；方向键只移动输入框光标），不再误作用于编辑器文档。
+
+        保留的窗口级快捷键与代码块/表格原生聚焦时的语义一致（全局文件/
+        视图/导航不依赖文档选区）：新建/打开/保存/另存为/设置、切标签、
+        软换行/缩放/拆分/侧边栏/主题、聚焦搜索、替换栏与替换动作。
+        """
+        page = self._page_ref.current
+        browse_sc = self._shortcut_mgr.get("browse")
+
+        def _run(name: str):
+            """调用 app 回调（若装配了），组合已匹配则必然存在。"""
+            fn = cb.get(name)
+            if fn is not None:
+                fn()
+
+        def _run_async(name: str):
+            if page is None:
+                return
+            fn = cb.get(name)
+            if fn is not None:
+                page.run_task(fn)
+
+        # —— 标签切换 / 关闭 ——
+        if matches(combo, browse_sc.get("close_tab", "ctrl+w")):
+            _run("close_tab")
+            return
+        if matches(combo, browse_sc.get("next_tab", "ctrl+tab")):
+            _run("next_tab")
+            return
+        if matches(combo, browse_sc.get("prev_tab", "ctrl+shift+tab")):
+            _run("prev_tab")
+            return
+        # —— 文件级操作 ——
+        if matches(combo, browse_sc.get("open", "ctrl+o")):
+            _run_async("open")
+            return
+        if matches(combo, browse_sc.get("open_folder", "ctrl+shift+o")):
+            _run_async("open_folder")
+            return
+        if matches(combo, browse_sc.get("save", "ctrl+s")):
+            _run_async("save")
+            return
+        if matches(combo, browse_sc.get("save_as", "ctrl+shift+s")):
+            _run_async("save_as")
+            return
+        if matches(combo, browse_sc.get("new", "ctrl+n")):
+            _run("new")
+            return
+        if matches(combo, browse_sc.get("open_settings", "ctrl+comma")):
+            _run("open_settings")
+            return
+        # —— 视图级开关（不触碰文档文本）——
+        if matches(combo, browse_sc.get("toggle_word_wrap", "ctrl+shift+r")):
+            _run("toggle_word_wrap")
+            return
+        if matches(combo, browse_sc.get("zoom_in", "ctrl+shift+=")):
+            _run("zoom_in")
+            return
+        if matches(combo, browse_sc.get("zoom_out", "ctrl+shift+-")):
+            _run("zoom_out")
+            return
+        if matches(combo, browse_sc.get("zoom_reset", "ctrl+shift+0")):
+            _run("zoom_reset")
+            return
+        if matches(combo, browse_sc.get("toggle_split_editor", "ctrl+\\")):
+            _run("toggle_split_editor")
+            return
+        if matches(combo, browse_sc.get("toggle_sidebar", "ctrl+shift+b")):
+            _run("toggle_sidebar")
+            return
+        if matches(combo, browse_sc.get("toggle_theme", "alt+t")):
+            _run("toggle_theme")
+            return
+        # —— 搜索 / 替换面板（焦点域输入框自身的面板级操作）——
+        if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
+            _run("focus_search")
+            return
+        if matches(combo, browse_sc.get("global_find", "ctrl+shift+f")):
+            _run("focus_search")
+            return
+        if matches(combo, browse_sc.get("toggle_replace_bar", "ctrl+h")):
+            _run("toggle_replace_bar")
+            return
+        if matches(combo, browse_sc.get("replace_current", "alt+enter")):
+            _run("replace_current")
+            return
+        if matches(combo, browse_sc.get("replace_all", "ctrl+alt+enter")):
+            _run("replace_all")
+            return
+        # 其余按键全部交原生输入框处理（此处不消费、不作用编辑器）
 
     # ---- 编辑态光标导航（home/end/up/down/backspace/delete/tab/越界 arrow）----
     def _handle_edit_nav(self, actions: EditorActions, e, norm: str) -> bool:

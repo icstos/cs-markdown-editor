@@ -140,6 +140,8 @@ def build_render(ctx) -> ft.Control:
         sidebar_open=sidebar_open,
         # Ctrl+F：切换搜索面板后聚焦搜索输入框（序号递增驱动 Sidebar effect）
         search_focus_seq=ctx.search_focus_seq,
+        # 外部输入焦点域：搜索/替换/过滤输入框聚焦时置 token（快捷键与编辑器隔离）
+        native_input_ref=ctx.native_input_ref,
         # 替换功能：当前文档内存替换 + 跨文件写盘 + 快捷键桥接 ref
         on_replace_match_in_doc=_call_replace,
         on_replace_all_in_doc=_call_replace_all,
@@ -446,6 +448,7 @@ def build_render(ctx) -> ft.Control:
             message=_fd.get("message", ""),
             danger=_fd.get("danger", False),
             icon=_fd.get("icon", ft.Icons.HELP_OUTLINE),
+            native_input_ref=ctx.native_input_ref,
         )
     else:
         file_dialog_view = FileActionDialog(
@@ -457,6 +460,7 @@ def build_render(ctx) -> ft.Control:
             confirm_label="确定",
             on_confirm=lambda value="": None,
             on_cancel=lambda: None,
+            native_input_ref=ctx.native_input_ref,
         )
 
     # 文件对比已重构为双 MarkdownEditor 原生编辑模式（见 _build_diff_area），

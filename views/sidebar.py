@@ -26,6 +26,7 @@ import flet as ft
 from models import BlockType, Document, SegType
 from services import shortcut
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors
+from views.native_scope import native_focus_hooks
 
 _MD_EXTS = (".md", ".markdown")
 _MAX_DEPTH = 8  # 文件树扫描最大深度（VSCode 风格全类型扫描，8 层覆盖典型项目结构）
@@ -973,11 +974,15 @@ def _search_box(
     placeholder: str,
     c,
     ref: ft.Ref | None = None,
+    native_ref: ft.Ref | None = None,
 ) -> ft.Control:
     """侧边栏搜索/过滤输入框（下划线边框，紧凑）。
 
     ref：外部持有输入框控件引用，供 Ctrl+F 聚焦（App → Sidebar 桥接）。
+    native_ref：外部输入焦点域 ref（非 None 时挂 on_focus/on_blur 跟踪，
+    让 KeyDispatcher 把焦点在本输入框期间的按键与编辑器隔离）。
     """
+    focus_h, blur_h = native_focus_hooks(native_ref)
     return ft.TextField(
         value=value,
         hint_text=placeholder,
@@ -987,6 +992,8 @@ def _search_box(
         text_size=12,
         content_padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         on_change=lambda e: on_change(e.control.value or ""),
+        on_focus=focus_h,
+        on_blur=blur_h,
         ref=ref,
     )
 
@@ -1089,6 +1096,8 @@ def _render_files_panel(
     # 拖拽悬停高亮（状态驱动）：当前悬停目标文件夹路径 + setter
     highlight_dir: str | None = None,
     set_highlight_dir: Callable[[str | None], None] | None = None,
+    # 外部输入焦点域 ref：文件过滤输入框挂 on_focus/on_blur 跟踪
+    native_ref: ft.Ref | None = None,
 ) -> ft.Control:
     """文件面板：有根目录显示文件树+过滤；否则显示最近文件列表。
 
@@ -1450,7 +1459,9 @@ def _render_files_panel(
             *header_controls,
             ft.Container(
                 padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-                content=_search_box(file_filter, set_file_filter, "过滤文件…", c),
+                content=_search_box(
+                    file_filter, set_file_filter, "过滤文件…", c, native_ref=native_ref
+                ),
             ),
             body,
             # 空白菜单零尺寸载体（不占布局、不可命中），供手动 open() 显示
@@ -1621,14 +1632,17 @@ def _render_replace_bar(
     on_replace_all: Callable[[], None],
     has_query: bool,
     c,
+    native_ref: ft.Ref | None = None,
 ) -> ft.Control:
     """替换栏：折叠时 height=0；展开时替换输入 + 替换/全部替换按钮。
 
     VSCode 风格：替换栏在搜索框下方、选项工具栏上方，折叠时完全隐藏。
     has_query=False 时按钮禁用（无搜索词时无法替换）。
+    native_ref：外部输入焦点域 ref（非 None 时挂 on_focus/on_blur 跟踪）。
     """
     if not replace_expanded:
         return ft.Container(height=0)
+    focus_h, blur_h = native_focus_hooks(native_ref)
     return ft.Container(
         padding=ft.Padding.only(
             left=Spacing.XL + 28,  # 对齐搜索框（减去 chevron 宽度）
@@ -1648,6 +1662,8 @@ def _render_replace_bar(
                         horizontal=Spacing.SM, vertical=Spacing.LG
                     ),
                     on_change=lambda e: set_replace_text(e.control.value or ""),
+                    on_focus=focus_h,
+                    on_blur=blur_h,
                     expand=True,
                 ),
                 ft.IconButton(
@@ -1702,6 +1718,7 @@ def _render_search_panel(
     on_prev_match: Callable[[], None] | None = None,
     on_next_match: Callable[[], None] | None = None,
     search_field_ref: ft.Ref | None = None,
+    native_ref: ft.Ref | None = None,
 ) -> ft.Control:
     """搜索面板：搜索框（+折叠按钮）+ 替换栏 + 选项工具栏 + 结果列表。
 
@@ -1711,6 +1728,7 @@ def _render_search_panel(
     - regex_invalid：正则编译失败时显示错误提示
     - replace_expanded：替换栏展开状态（VSCode 风格 Ctrl+H 切换）
     - current_match_idx/total_matches：当前匹配索引/总数（"X / Y" 显示）
+    - native_ref：外部输入焦点域 ref（搜索/替换输入框挂 on_focus/on_blur 跟踪）
     """
     placeholder = "在文件夹中查找…" if search_opts["folder"] else "在当前文档中查找…"
     has_query = bool(search_query.strip())
@@ -1727,7 +1745,10 @@ def _render_search_panel(
                 on_click=lambda e: _on_toggle_replace(not replace_expanded),
                 style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
             ),
-            _search_box(search_query, set_search_query, placeholder, c, ref=search_field_ref),
+            _search_box(
+                search_query, set_search_query, placeholder, c,
+                ref=search_field_ref, native_ref=native_ref,
+            ),
         ],
         spacing=Spacing.XS,
     )
@@ -1746,6 +1767,7 @@ def _render_search_panel(
             on_replace_all or (lambda: None),
             has_query,
             c,
+            native_ref=native_ref,
         ),
         _render_search_toolbar(search_opts, on_toggle_opt, "", c),
     ]
@@ -1933,6 +1955,9 @@ def Sidebar(
     on_file_drop: Callable[[str, str], None] | None = None,
     # Ctrl+F 聚焦搜索框：App 递增序号，此处 use_effect 聚焦搜索输入框
     search_focus_seq: int = 0,
+    # 外部输入焦点域 ref：搜索/替换/过滤输入框聚焦时置 token，KeyDispatcher
+    # 据此不再把文档编辑快捷键（Ctrl+A 等）误作用到编辑器
+    native_input_ref: ft.Ref | None = None,
 ):
     """左侧管理面板（横向四列布局第二列）：文件 / 搜索面板由功能栏（第一列）切换，右侧可拖拽调宽。
 
@@ -2566,6 +2591,7 @@ def Sidebar(
             on_file_drop=on_file_drop,
             highlight_dir=drop_hover_dir,
             set_highlight_dir=set_drop_hover_dir,
+            native_ref=native_input_ref,
         )
     else:  # search
         # 跨文件点击回调：未提供时用 no-op 避免崩溃
@@ -2598,6 +2624,7 @@ def Sidebar(
             on_prev_match=_on_prev_match if not _search_folder else None,
             on_next_match=_on_next_match if not _search_folder else None,
             search_field_ref=search_field_ref,
+            native_ref=native_input_ref,
         )
 
     # 外层 Container 统一控制宽度 / 动画 / 裁剪（原 sidebar_container 逻辑内移）：

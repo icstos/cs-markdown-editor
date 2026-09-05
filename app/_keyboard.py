@@ -81,6 +81,9 @@ def build_keyboard(ctx):
         on_capture=ctx.on_capture,
         on_cancel_capture=ctx.on_cancel_capture,
         arrow_repeat_ref=ctx.arrow_repeat_ref,
+        # 非编辑器原生输入框焦点域：current 非 None 时只放行全局窗口级快捷键，
+        # 文档编辑/选区/导航/剪贴板键交原生输入框（搜索框 Ctrl+A 等不再误触编辑器）
+        native_input_ref=ctx.native_input_ref,
     )
 
     def bind_keyboard():

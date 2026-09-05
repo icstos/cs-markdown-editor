@@ -227,6 +227,11 @@ def build_settings_controller(ctx):
         ctx.show_snack("快捷键方案已导入")
 
     def toggle_sidebar():
+        # 侧边栏收起/面板切换时清空输入框焦点域标志：输入框可能随面板隐藏或
+        # 失焦，防 token 残留导致后续文档快捷键被误隔离（外部输入域已不存在）
+        _ref = ctx.native_input_ref
+        if _ref is not None:
+            _ref.current = None
         update_setting("sidebar_open", not ctx.settings.get("sidebar_open", False))
 
     def toggle_outline():
@@ -252,6 +257,10 @@ def build_settings_controller(ctx):
         update_setting("zoom", 100)
 
     def change_sidebar_panel(panel: str):
+        # 清空外部输入焦点域标志（切换面板可能卸载当前聚焦的输入框，见 toggle_sidebar）
+        _ref = ctx.native_input_ref
+        if _ref is not None:
+            _ref.current = None
         update_setting("sidebar_panel", panel)
 
     def change_sidebar_width(width: int):

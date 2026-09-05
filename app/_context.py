@@ -116,6 +116,11 @@ class AppContext:
     dispatcher_ref: ft.Ref  # KeyDispatcher 实例
     paste_old_draft: ft.Ref  # 粘贴前 draft 快照（供 handle_paste 做 diff 定位）
     arrow_repeat_ref: ft.Ref  # 上/下键自驱动重复标志（KeyDispatcher 与 editor _on_key_up 共享）
+    # 非编辑器原生输入框（侧边栏搜索/替换/过滤、文件对话框输入等）焦点域 ref。
+    # current 非 None（token）＝键盘焦点在外部输入框 → KeyDispatcher 只放行
+    # 全局窗口级快捷键，文档编辑/选区/导航/剪贴板键交原生输入框处理。
+    # 由各输入框 on_focus/on_blur 经 views.native_scope.native_focus_hooks 写入。
+    native_input_ref: ft.Ref = field(default=None)
     status_ref: ft.Ref  # 状态栏命令式更新器（update_cursor / update_counts）
 
     # ============ 装配槽（跨控制器调用，控制器装配后写入）============

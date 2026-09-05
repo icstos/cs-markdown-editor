@@ -19,8 +19,8 @@ from styles import (
     Spacing,
     card_shadow,
     get_colors,
-    only_border,
 )
+from views.native_scope import native_focus_hooks
 
 # 危险操作（删除）的确认按钮红色
 _DANGER_COLOR = "#E5484D"
@@ -45,6 +45,9 @@ def FileActionDialog(
     message: str = "",
     danger: bool = False,
     icon: str = ft.Icons.HELP_OUTLINE,
+    # 外部输入焦点域 ref：输入框聚焦时置 token，KeyDispatcher 据此不再把
+    # 文档编辑快捷键（Ctrl+A 等）误作用到编辑器
+    native_input_ref: ft.Ref | None = None,
 ):
     """文件操作统一对话框。
 
@@ -93,6 +96,7 @@ def FileActionDialog(
     )
 
     # ---- 内容区 ----
+    focus_h, blur_h = native_focus_hooks(native_input_ref)
     if mode == "input":
         content_body = ft.Column(
             controls=[
@@ -117,6 +121,8 @@ def FileActionDialog(
                     text_style=ft.TextStyle(font_family=FONT_MAIN),
                     autofocus=True,
                     on_change=lambda e: set_text_value(e.control.value or ""),
+                    on_focus=focus_h,
+                    on_blur=blur_h,
                     on_submit=_on_submit,
                 ),
             ],

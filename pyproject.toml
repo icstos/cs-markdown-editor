@@ -9,12 +9,12 @@ authors = [{ name = "CSTOS" }]
 keywords = ["markdown", "editor", "flet", "wysiwyg", "typora"]
 
 dependencies = [
-    "flet>=0.86.2",
+    "flet==0.86.5",
     "mistune>=3.3.4",
     "pillow>=12.3.0",
     "uharfbuzz>=0.40.0",
-    "flet-code-editor>=0.86.2",
-    "flet-datatable2>=0.86.2",
+    "flet-code-editor==0.86.5",
+    "flet-datatable2==0.86.5",
     "watchdog>=4.0.0",
 ]
 
@@ -50,7 +50,7 @@ company = "ShawnChen"
 org = "com.mycompany"
 copyright = "Copyright © 2026 ShawnChen. All rights reserved."
 build_number = 1
-
+extra_pip_indexes = ["https://pypi.org/simple"]
 
 [tool.flet.app]
 exclude = [

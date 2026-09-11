@@ -12,11 +12,12 @@
 
 import parser
 from services.markdown_format import format_markdown as _format_markdown
+from views.editor._contracts import FormatEnv
 
 _reparse = parser.parse_markdown
 
 
-def build_format(ctx):
+def build_format(ctx: FormatEnv):
     """构造全文格式化闭包组。
 
     返回 dict[str, Callable]：format_document

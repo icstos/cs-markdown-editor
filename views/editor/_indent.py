@@ -19,7 +19,7 @@
 """
 
 import parser
-from models import BlockType
+from models.document import BlockType
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import (
     _rebuild_list_prefix,
@@ -34,12 +34,13 @@ from views.editor._helpers import (
     _inline_content,
     _next_line_raw,
 )
+from views.editor._contracts import IndentEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知，替代 reparse_line 的 2-7 次）
 _reparse_atomic = parser.reparse_line_atomic
 
 
-def build_indent(ctx):
+def build_indent(ctx: IndentEnv):
     """构造缩进闭包组。
 
     返回 dict[str, Callable]：

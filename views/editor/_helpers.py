@@ -20,7 +20,7 @@ import re
 import flet as ft
 
 import parser
-from models import BlockType, Line, SegType
+from models.document import BlockType, Line, SegType
 
 
 def _make_stable_cb(ref: ft.Ref, key: str):

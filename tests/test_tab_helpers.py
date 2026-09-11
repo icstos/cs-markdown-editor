@@ -20,7 +20,7 @@ from app._tab_helpers import (
     tab_is_dirty,
     tab_paths,
 )
-from models import BlockType, Document, Line
+from models.document import BlockType, Document, Line
 
 
 def _make_doc(*raws: str) -> Document:

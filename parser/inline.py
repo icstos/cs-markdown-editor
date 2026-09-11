@@ -14,7 +14,7 @@
 - _node_raw_text 递归重建嵌套包裹器语法，保证 "".join(segments raw) 还原行源码。
 """
 
-from models import SegType, Segment
+from models.document import SegType, Segment
 
 from parser._engine import _INLINE_WRAPPERS, _RE_INLINE_MATH, _get_md
 

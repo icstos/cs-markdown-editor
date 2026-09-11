@@ -24,7 +24,7 @@ from typing import Any
 
 import flet as ft
 
-from models import Document
+from models.document import Document
 
 
 async def _noop_awaitable() -> bool:
@@ -167,6 +167,11 @@ class EditorContext:
     code_caret_ref: ft.Ref = field(default=None)
 
     # ============ 装配槽（跨工厂调用，工厂装配后写入）============
+    # 以下字段全部由 build_xxx 工厂返回的 {槽位名: 回调} 自动装配（见 __init__.py
+    # 「工厂输出装配」区块）；契约由 tests/test_editor_wiring.py 静态守护。
+    # 之前的 Props / 派生设置 / State 快照 / Setters / Refs 属于「构造期传入」，
+    # 不参与同名自动装配。
+
     # 共享闭包
     mark_dirty: Callable[[], None] = field(default=lambda: None)
     set_outward_sel: Callable[[Any], None] = field(default=lambda v: None)
@@ -244,6 +249,7 @@ class EditorContext:
     on_pan_start_outward: Callable[..., None] = field(default=lambda *a: None)
     delete_raw_range: Callable[..., None] = field(default=lambda *a: None)
     handle_outward_delete: Callable[[], None] = field(default=lambda: None)
+    handle_outward_enter: Callable[[], None] = field(default=lambda: None)
     handle_outward_cut: Any = field(default=None)
     handle_outward_copy: Any = field(default=None)
     select_all: Callable[[], None] = field(default=lambda: None)
@@ -311,6 +317,7 @@ class EditorContext:
     # key 组
     on_key_down: Callable[[Any], None] = field(default=lambda *a: None)
     on_key_up: Callable[[Any], None] = field(default=lambda *a: None)
+    on_key_repeat: Callable[[Any], None] = field(default=lambda *a: None)
 
     # replace 组（搜索面板触发，作用于当前文档；new_text 已完成反向引用展开）
     replace_match_in_doc: Callable = field(default=lambda *a: None)
@@ -365,3 +372,77 @@ class EditorContext:
     search_hits_version: int = 0
     # scroll 组装配槽：搜索跳转（视口中部平滑滚动）
     reveal_match: Callable[[int, int | None], None] = field(default=lambda *a: None)
+
+    @classmethod
+    def wiring_slots(cls) -> frozenset[str]:
+        """返回「同名自动装配」契约字段名集合（工厂返回 key 必须落在此集合内）。
+
+        显式声明而非推导，是为了让契约可读、可被测试静态比对：新增槽位必须同时
+        在这里登记并由某个 build_xxx 提供，否则 tests/test_editor_wiring.py 失败。
+        """
+        return _WIRING_SLOTS
+
+
+# 装配槽契约：与上方「装配槽」区块字段一一对应（新增槽位必须同时登记到此处）。
+_WIRING_SLOTS: frozenset[str] = frozenset({
+    "mark_dirty", "set_outward_sel",
+    # cursor 组
+    "cursor_base", "set_cursor", "end_input_session", "on_tap_line",
+    "handle_char_input", "handle_paste", "handle_paste_plain",
+    "backspace_core", "delete_core", "on_submit",
+    # history 组
+    "make_snapshot", "push_history", "push_line_edit", "maybe_push_history", "undo", "redo",
+    # navigation 组
+    "move_left", "move_right", "move_home", "move_end", "move_doc_start", "move_doc_end",
+    "move_up", "move_down", "move_vline", "page_up", "page_down", "jump_to",
+    "cursor_vline_info", "get_line_visual_lines", "link_tab_jump",
+    # scroll 组
+    "on_scroll", "get_scroll_state", "scroll_to_offset", "on_content_resize",
+    "on_line_size_change", "ensure_visible", "safe_scroll_to", "estimate_line_height",
+    "estimate_line_offset", "hit_test_line_x", "get_layout_cache", "hit_test_xy",
+    "page_vlines", "scroll_by_page", "reset_line_heights", "get_cursor_row_col",
+    "build_highlight_map", "reveal_match",
+    # outward 组
+    "step_left", "step_right", "step_up", "step_down", "step_home", "step_end",
+    "start_outward_from_point", "extend_outward", "extend_outward_step", "select_word_at",
+    "on_extend_outward", "on_pan_start_outward", "delete_raw_range",
+    "handle_outward_delete", "handle_outward_cut", "handle_outward_copy", "handle_outward_enter",
+    "select_all", "clear_outward_sel",
+    # indent 组
+    "indent_or_outdent", "new_line_after",
+    # blocks 组
+    "set_block", "toggle_task", "toggle_task_at_cursor", "format_task", "format_table",
+    "format_document", "change_lang", "insert_text",
+    # inline_format 组
+    "apply_inline_format", "insert_inline_at", "apply_outward_wrap", "handle_outward_type_char",
+    # clipboard 组
+    "compute_markdown_from_text", "handle_delete_selection", "handle_cut", "cut_current_line",
+    "apply_inline_format_to_selection", "on_selection_area_change",
+    # fence 组
+    "on_change_code", "on_code_focus", "on_code_blur", "on_code_selection",
+    "handle_code_backspace", "handle_code_exit",
+    "on_change_math", "on_math_focus", "on_math_blur",
+    "on_change_cell", "on_table_op", "on_table_focus", "on_table_blur",
+    # raw_mode 组
+    "toggle_raw", "toggle_focus_mode", "on_blur", "on_cursor_focus",
+    "suppress_blur_for_click", "on_raw_change",
+    # focus 组
+    "focus_cursor_field", "clear_cursor_value", "focus_math_field",
+    # key 组
+    "on_key_down", "on_key_up", "on_key_repeat",
+    # replace 组
+    "replace_match_in_doc", "replace_all_in_doc",
+    # image 组
+    "on_image_action", "paste_image_from_clipboard",
+    # multi_cursor 组
+    "add_secondary_cursor", "add_column_cursors", "clear_secondary_cursors",
+    "broadcast_char_input", "broadcast_backspace", "broadcast_delete",
+    "broadcast_move_left", "broadcast_move_right",
+    "broadcast_extend_left", "broadcast_extend_right", "broadcast_submit",
+    "has_secondary_cursors",
+    "extend_selection_left", "extend_selection_right",
+    "extend_selection_home", "extend_selection_end",
+    "has_multi_cursor_selection", "collect_multi_cursor_text",
+    "copy_multi_cursor_selection", "cut_multi_cursor_selection",
+    "paste_to_multi_cursors", "paste_to_multi_cursors_plain",
+})

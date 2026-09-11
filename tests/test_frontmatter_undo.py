@@ -22,9 +22,9 @@ import pytest
 
 import parser
 from core.history import EditHistory, EditorSnapshot
-from models import BlockType, Document, Line, Segment, SegType
+from models.document import BlockType, Document, Line, Segment, SegType
 from views.editor._fence import build_fence
-from views.line_view import _pairs_to_yaml, _parse_yaml_pairs
+from views._frontmatter import pairs_to_yaml, parse_yaml_pairs
 
 
 class FakeRef:
@@ -78,27 +78,27 @@ def _make_ctx(document: Document) -> tuple[object, list, EditHistory]:
 
 def test_pairs_to_yaml_basic():
     """基本序列化：key: value 逐行拼接。"""
-    assert _pairs_to_yaml([["title", "我的文档"], ["tags", "note"]]) == (
+    assert pairs_to_yaml([["title", "我的文档"], ["tags", "note"]]) == (
         "title: 我的文档\ntags: note"
     )
 
 
 def test_pairs_to_yaml_skips_empty_key_rows():
     """键为空的行跳过（含待定新增行），全部为空则返回空串。"""
-    assert _pairs_to_yaml([["", "无键值"], ["title", "x"]]) == "title: x"
-    assert _pairs_to_yaml([["", "无键值"]]) == ""
-    assert _pairs_to_yaml([]) == ""
+    assert pairs_to_yaml([["", "无键值"], ["title", "x"]]) == "title: x"
+    assert pairs_to_yaml([["", "无键值"]]) == ""
+    assert pairs_to_yaml([]) == ""
 
 
 def test_pairs_to_yaml_strips_whitespace():
     """键/值两侧空白剥离（与解析端 _parse_yaml_pairs 对称）。"""
-    assert _pairs_to_yaml([["  title ", "  我的文档  "]]) == "title: 我的文档"
+    assert pairs_to_yaml([["  title ", "  我的文档  "]]) == "title: 我的文档"
 
 
 def test_pairs_to_yaml_roundtrip_with_parser():
     """序列化 → 解析 可还原（与 _parse_yaml_pairs 配对）。"""
     pairs = [("title", "我的文档"), ("tags", "a, b")]
-    assert _parse_yaml_pairs(_pairs_to_yaml(pairs)) == pairs
+    assert parse_yaml_pairs(pairs_to_yaml(pairs)) == pairs
 
 
 # ---------------- on_change_code 撤销历史 ----------------

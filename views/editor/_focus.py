@@ -30,8 +30,10 @@ ListView 懒构建下的聚焦策略：
 import asyncio
 import contextlib
 
+from views.editor._contracts import FocusEnv
 
-def build_focus(ctx):
+
+def build_focus(ctx: FocusEnv):
     """构造聚焦闭包组。
 
     返回 dict[str, Callable]：

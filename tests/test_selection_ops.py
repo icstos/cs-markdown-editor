@@ -19,7 +19,6 @@ from parser import (  # noqa: E402
     delete_selections,
     match_text_to_selections,
     parse_markdown,
-    serialize,
 )
 from utils.segment_helpers import display_text  # noqa: E402
 

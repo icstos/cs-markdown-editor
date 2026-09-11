@@ -522,27 +522,12 @@ def App():
     # app_callbacks 立即求值 ctx.save_doc 等，故 file_io_ops 必须先于 keyboard。
     tab_cbs = build_tab_management(ctx)
     ctx.cur_tab_fn = tab_cbs["cur_tab"]
-    ctx.update_active = tab_cbs["update_active"]
-    ctx.update_tab = tab_cbs["update_tab"]
-    ctx.select_tab = tab_cbs["select_tab"]
-    ctx.cycle_tab = tab_cbs["cycle_tab"]
-    ctx.do_close_many = tab_cbs["do_close_many"]
-    ctx.request_close = tab_cbs["request_close"]
-    ctx.close_tab = tab_cbs["close_tab"]
     # 统一激活入口 + 新标签入口 + 会话计数（拆分组感知，file_io/diff/backup 共用）
-    ctx.activate_index = tab_cbs["activate_index"]
-    ctx.append_and_activate = tab_cbs["append_and_activate"]
-    ctx.bump_tab_session = tab_cbs["bump_tab_session"]
     # 渲染期同步：close_tab 每次渲染新建但行为一致（仅读稳定 ref/setter），
     # 写入 ref 供稳定化的 close_current_tab 读取最新实例。
     close_tab_ref.current = tab_cbs["close_tab"]
-    ctx.save_and_close_pending = tab_cbs["save_and_close_pending"]
-    ctx.close_without_save = tab_cbs["close_without_save"]
-    ctx.cancel_close = tab_cbs["cancel_close"]
 
     file_cbs = build_file_io_ops(ctx)
-    ctx.push_recent_file = file_cbs["push_recent_file"]
-    ctx.open_file_by_path = file_cbs["open_file_by_path"]
 
     # 跨文件"打开后跳转"：供侧边栏跨文件搜索结果点击调用。
     # 内部转调 open_file_by_path(path, jump_to=(li, off))，由 pending_jump 机制处理时序。
@@ -551,27 +536,8 @@ def App():
 
     ctx.open_file_and_jump = _open_file_and_jump
 
-    ctx.new_doc = file_cbs["new_doc"]
-    ctx.open_doc = file_cbs["open_doc"]
-    ctx.open_folder = file_cbs["open_folder"]
-    ctx.save_doc = file_cbs["save_doc"]
-    ctx.save_doc_sync = file_cbs["save_doc_sync"]
-    ctx.force_save_doc = file_cbs["force_save_doc"]
-    ctx.save_as_doc = file_cbs["save_as_doc"]
-    ctx.export_doc = file_cbs["export_doc"]
 
     dialog_cbs = build_file_dialogs(ctx)
-    ctx.show_snack = dialog_cbs["show_snack"]
-    ctx.copy_path = dialog_cbs["copy_path"]
-    ctx.on_file_dialog_confirm = dialog_cbs["on_file_dialog_confirm"]
-    ctx.on_file_dialog_cancel = dialog_cbs["on_file_dialog_cancel"]
-    ctx.open_input_dialog = dialog_cbs["open_input_dialog"]
-    ctx.open_delete_dialog = dialog_cbs["open_delete_dialog"]
-    ctx.update_tab_for_renamed_file = dialog_cbs["update_tab_for_renamed_file"]
-    ctx.close_tabs_for_path = dialog_cbs["close_tabs_for_path"]
-    ctx.on_tab_context_action = dialog_cbs["on_tab_context_action"]
-    ctx.on_sidebar_context_action = dialog_cbs["on_sidebar_context_action"]
-    ctx.move_fs_item = dialog_cbs["move_fs_item"]
 
     # 非 md 文件用系统默认程序打开（资源管理器双击直觉）：try/except 捕获后 SnackBar 提示
     def _open_external(path: str):
@@ -582,11 +548,21 @@ def App():
 
     ctx.open_external = _open_external
 
+    # 聚焦模式：路由到当前焦点编辑器的动作（不触碰文档，属视图范畴）。
+    # 之所以要在 app 层提供，是因为 KeyDispatcher 的「外来输入域」路径拿不到
+    # EditorActions：焦点在搜索框时 Ctrl+Shift+K 原本会静默失效。
+    def _toggle_focus_mode():
+        nav = ctx.get_active_nav()
+        if nav is None or nav.current is None:
+            return
+        fn = getattr(nav.current, "toggle_focus_mode", None)
+        if fn is not None:
+            with contextlib.suppress(Exception):
+                fn()
+
+    ctx.focus_mode = _toggle_focus_mode
+
     diff_cbs = build_diff_controller(ctx)
-    ctx.get_text_for_compare = diff_cbs["get_text_for_compare"]
-    ctx.select_for_compare = diff_cbs["select_for_compare"]
-    ctx.compare_with_selected = diff_cbs["compare_with_selected"]
-    ctx.on_diff_dirty_change = diff_cbs["on_diff_dirty_change"]
 
     # ============ 状态栏消息推送桥接 ============
     # set_status_message(msg, kind) → 写入 status_message state（tuple），
@@ -605,57 +581,46 @@ def App():
     # 在 settings_controller 之前装配：settings_controller 的 open_recovery_panel
     # 闭包在调用时读取 ctx.scan_recent_backups，需此槽位已填充。
     backup_cbs = build_backup_controller(ctx)
-    ctx.start_backup_loop = backup_cbs["start_backup_loop"]
-    ctx.trigger_autosave_now = backup_cbs["trigger_autosave_now"]
     # 程序退出前同步自动保存所有脏标签到原文件（auto_save 开启时）
-    ctx.autosave_on_exit = backup_cbs["autosave_on_exit"]
-    ctx.trigger_backup_now = backup_cbs["trigger_backup_now"]
-    ctx.write_exit_sentinel = backup_cbs["write_exit_sentinel"]
-    ctx.scan_recoverable = backup_cbs["scan_recoverable"]
-    ctx.scan_recent_backups = backup_cbs["scan_recent_backups"]
-    ctx.open_backup_in_new_tab = backup_cbs["open_backup_in_new_tab"]
-    ctx.delete_backup = backup_cbs["delete_backup"]
-    ctx.cleanup_expired_backups = backup_cbs["cleanup_expired_backups"]
 
     settings_cbs = build_settings_controller(ctx)
-    ctx.apply_theme = settings_cbs["apply_theme"]
-    ctx.mount_picker = settings_cbs["mount_picker"]
-    ctx.toggle_theme = settings_cbs["toggle_theme"]
-    ctx.open_settings = settings_cbs["open_settings"]
-    ctx.close_settings = settings_cbs["close_settings"]
-    ctx.select_settings_tab = settings_cbs["select_settings_tab"]
-    ctx.update_setting = settings_cbs["update_setting"]
-    ctx.on_capture = settings_cbs["on_capture"]
-    ctx.on_cancel_capture = settings_cbs["on_cancel_capture"]
-    ctx.schedule_autosave = settings_cbs["schedule_autosave"]
-    ctx.reset_settings = settings_cbs["reset_settings"]
-    ctx.reset_shortcuts = settings_cbs["reset_shortcuts"]
-    ctx.export_shortcuts = settings_cbs["export_shortcuts"]
-    ctx.import_shortcuts = settings_cbs["import_shortcuts"]
-    ctx.toggle_sidebar = settings_cbs["toggle_sidebar"]
-    ctx.toggle_outline = settings_cbs["toggle_outline"]
-    ctx.toggle_word_wrap = settings_cbs["toggle_word_wrap"]
-    ctx.zoom_in = settings_cbs["zoom_in"]
-    ctx.zoom_out = settings_cbs["zoom_out"]
-    ctx.zoom_reset = settings_cbs["zoom_reset"]
-    ctx.change_sidebar_panel = settings_cbs["change_sidebar_panel"]
-    ctx.change_sidebar_width = settings_cbs["change_sidebar_width"]
-    ctx.open_recovery_panel = settings_cbs["open_recovery_panel"]
-    ctx.pick_backup_dir = settings_cbs["pick_backup_dir"]
 
     split_cbs = build_split_editor(ctx)
-    ctx.toggle_split_editor = split_cbs["toggle_split_editor"]
-    ctx.set_active_pane = split_cbs["set_active_pane"]
-    ctx.set_diff_active_pane = split_cbs["set_diff_active_pane"]
 
     focus_cbs = build_focus_router(ctx)
-    ctx.get_active_nav = focus_cbs["get_active_nav"]
-    ctx.apply_content_layout = focus_cbs["apply_content_layout"]
-    ctx.jump_to_line = focus_cbs["jump_to_line"]
-    ctx.on_dirty_change = focus_cbs["on_dirty_change"]
-    ctx.on_dirty_change_pane = focus_cbs["on_dirty_change_pane"]
+
+
+    # ============ 控制器输出装配 ============
+    # 控制器返回 {槽位名: 回调}，槽位名与 AppContext 字段同名，故统一循环装配，
+    # 不再逐槽手写 80 行 ctx.x = cbs["y"]。同名映射由 tests/test_app_wiring.py
+    # 断言守护：改名漏改立即测试失败，而不是运行时静默退化成默认 no-op。
+    #
+    # 关键时序：KeyDispatcher 在构造期就把 ctx 回调立即求值进 app_callbacks，
+    # 因此装配必须早于 build_keyboard，否则 dispatcher 捕获到默认 no-op。
+    #
+    # 三类例外：
+    #   _RENAMED   —— 控制器 key 与 AppContext 既有字段同名（cur_tab 是派生字典），
+    #                 不可覆盖，改走专用槽位 cur_tab_fn。
+    #   _UNSTORED  —— 控制器输出由 __init__ 另行接收（dispatcher / bind_keyboard /
+    #                 autosave_on_exit），不落 ctx。
+    #   _HAND_WIRED—— 由本文件在别处注入真实实现的槽位（doc_search / 稳定 use_memo /
+    #                 只读槽位），循环跳过以免覆盖。
+    _RENAMED = ['cur_tab']
+    _UNSTORED = ['autosave_on_exit', 'bind_keyboard', 'dispatcher']
+    _HAND_WIRED = ('active_index', 'bump_fs_version', 'close_current_tab', 'close_doc_search', 'doc_search_active', 'doc_search_active_ref', 'doc_search_case', 'doc_search_doc', 'doc_search_focus_seq', 'doc_search_map', 'doc_search_map_version', 'doc_search_matches_ref', 'doc_search_next', 'doc_search_open', 'doc_search_open_ref', 'doc_search_prev', 'doc_search_query', 'doc_search_regex', 'doc_search_total', 'focus_search', 'global_search', 'native_input_ref', 'open_doc_search', 'open_external', 'open_file_and_jump', 'page_ref', 'push_cursor_to_status', 'replace_all', 'replace_current', 'schedule_status_count_update', 'set_doc_search_case', 'set_doc_search_query', 'set_doc_search_regex', 'set_status_message', 'toggle_replace_bar')
+    for _group in (tab_cbs, file_cbs, dialog_cbs, diff_cbs, backup_cbs,
+                   settings_cbs, split_cbs, focus_cbs):
+        for _slot, _fn in _group.items():
+            if _slot in _RENAMED or _slot in _UNSTORED or _slot in _HAND_WIRED:
+                continue
+            setattr(ctx, _slot, _fn)
 
     keyboard_cbs = build_keyboard(ctx)
+    # keyboard 组输出（dispatcher 由渲染期写入 dispatcher_ref，不落 ctx）
+    for _slot, _fn in keyboard_cbs.items():
+        if _slot in _UNSTORED:
+            continue
+        setattr(ctx, _slot, _fn)
     # 打破前向引用循环：update_setting 装配后写入 ref，shortcut_mgr 的 lambda 即可调用
     update_setting_ref.current = settings_cbs["update_setting"]
     # 渲染期同步：每次重渲染把最新 dispatcher 写入 ref，_handler 即可读到最新值

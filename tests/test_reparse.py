@@ -12,7 +12,6 @@
 不依赖 UI 层。
 """
 
-import copy
 import os
 import sys
 
@@ -120,7 +119,7 @@ def test_hr_segments_preserve_original_raw():
 
 def test_hr_not_fence():
     """HR 不再是围栏块（走普通文本路径，可承载光标）。"""
-    from models import BlockType
+    from models.document import BlockType
     from utils.segment_helpers import FENCE_BLOCK_TYPES, is_fence
 
     doc = parse_markdown("---")

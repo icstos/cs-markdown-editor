@@ -1,6 +1,6 @@
 """views/key_bindings 单元测试。
 
-覆盖 _combo / _extract_printable_char 纯函数 + KeyDispatcher.handle 路由决策
+覆盖 combo / extract_printable_char 纯函数 + KeyDispatcher.handle 路由决策
 （捕获模式、原生控件聚焦守卫、outward_sel 路由、全局标签快捷键、行内格式、
 Ctrl+0~6 标题、编辑态导航、浏览/编辑层快捷键分发）。
 不启动 Flet 页面，用 mock actions_ref / page_ref / shortcut_mgr。
@@ -15,9 +15,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest  # noqa: E402
 
 from core.actions import EditorActions  # noqa: E402
-from models import BlockType, Line  # noqa: E402
+from models.document import BlockType, Line  # noqa: E402
 from services.shortcuts import DEFAULT_SHORTCUTS, ShortcutManager  # noqa: E402
-from views.key_bindings import KeyDispatcher, _combo, _extract_printable_char  # noqa: E402
+from views._combo import combo, extract_printable_char
+from views.key_bindings import KeyDispatcher  # noqa: E402
 
 
 # ---------------- 测试助手 ----------------
@@ -212,6 +213,7 @@ def make_dispatcher(
         "prev_tab": make_cb("prev_tab"),
         "toggle_word_wrap": make_cb("toggle_word_wrap"),
         "toggle_split_editor": make_cb("toggle_split_editor"),
+        "focus_mode": make_cb("focus_mode"),
         "focus_search": make_cb("focus_search"),
         "toggle_replace_bar": make_cb("toggle_replace_bar"),
         "replace_current": make_cb("replace_current"),
@@ -232,85 +234,85 @@ def make_dispatcher(
     return d, app_calls, fake_page
 
 
-# ---------------- _combo ----------------
+# ---------------- combo ----------------
 def test_combo_plain_letter():
-    assert _combo(evt("a")) == "a"
+    assert combo(evt("a")) == "a"
 
 
 def test_combo_ctrl_s():
-    assert _combo(evt("s", ctrl=True)) == "ctrl+s"
+    assert combo(evt("s", ctrl=True)) == "ctrl+s"
 
 
 def test_combo_ctrl_shift_z():
-    assert _combo(evt("z", ctrl=True, shift=True)) == "ctrl+shift+z"
+    assert combo(evt("z", ctrl=True, shift=True)) == "ctrl+shift+z"
 
 
 def test_combo_alt_z():
-    assert _combo(evt("z", alt=True)) == "alt+z"
+    assert combo(evt("z", alt=True)) == "alt+z"
 
 
 def test_combo_arrow_keys_mapped():
-    assert _combo(evt("arrowleft")) == "left"
-    assert _combo(evt("arrowright")) == "right"
-    assert _combo(evt("arrowup")) == "up"
-    assert _combo(evt("arrowdown")) == "down"
+    assert combo(evt("arrowleft")) == "left"
+    assert combo(evt("arrowright")) == "right"
+    assert combo(evt("arrowup")) == "up"
+    assert combo(evt("arrowdown")) == "down"
 
 
 def test_combo_comma_mapped():
-    assert _combo(evt("comma", ctrl=True)) == "ctrl+,"
+    assert combo(evt("comma", ctrl=True)) == "ctrl+,"
 
 
 def test_combo_space_mapped():
     # Flet 空格键 KeyboardEvent.key 为 "Space"（首字母大写），非字面空格。
-    assert _combo(evt("Space")) == "space"
+    assert combo(evt("Space")) == "space"
 
 
 def test_combo_escape_mapped():
-    assert _combo(evt("escape")) == "esc"
+    assert combo(evt("escape")) == "esc"
 
 
 def test_combo_pure_modifier_returns_empty():
-    assert _combo(evt("control")) == ""
-    assert _combo(evt("shift")) == ""
-    assert _combo(evt("alt")) == ""
+    assert combo(evt("control")) == ""
+    assert combo(evt("shift")) == ""
+    assert combo(evt("alt")) == ""
 
 
 def test_combo_meta_treated_as_ctrl():
-    assert _combo(evt("s", meta=True)) == "ctrl+s"
+    assert combo(evt("s", meta=True)) == "ctrl+s"
 
 
-# ---------------- _extract_printable_char ----------------
+# ---------------- extract_printable_char ----------------
 def test_extract_plain_letter():
-    assert _extract_printable_char(evt("a")) == "a"
+    assert extract_printable_char(evt("a")) == "a"
 
 
 def test_extract_letter_uppercase_with_shift():
-    assert _extract_printable_char(evt("A", shift=True)) == "A"
+    assert extract_printable_char(evt("A", shift=True)) == "A"
 
 
 def test_extract_ctrl_blocks():
-    assert _extract_printable_char(evt("a", ctrl=True)) is None
+    assert extract_printable_char(evt("a", ctrl=True)) is None
 
 
 def test_extract_alt_blocks():
-    assert _extract_printable_char(evt("a", alt=True)) is None
+    assert extract_printable_char(evt("a", alt=True)) is None
 
 
 def test_extract_function_key_blocks():
-    assert _extract_printable_char(evt("f5")) is None
+    assert extract_printable_char(evt("f5")) is None
 
 
 def test_extract_navigation_blocks():
-    assert _extract_printable_char(evt("home")) is None
-    assert _extract_printable_char(evt("arrowleft")) is None
+    assert extract_printable_char(evt("home")) is None
+    assert extract_printable_char(evt("arrowleft")) is None
 
 
 def test_extract_space():
-    assert _extract_printable_char(evt("space")) == " "
+    assert extract_printable_char(evt("space")) == " "
 
 
 def test_extract_punct():
-    assert _extract_printable_char(evt("/")) == "/"
+    assert extract_printable_char(evt("/")) == "/"
 
 
 # ---------------- KeyDispatcher.handle：捕获模式 ----------------

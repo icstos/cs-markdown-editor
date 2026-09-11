@@ -17,18 +17,17 @@ on_change_cell / on_table_op / on_table_focus / on_table_blur
 依赖项：
 - models（BlockType / Line / Segment / SegType）
 - utils.segment_helpers（is_fence / line_raw）
-- utils.table_helpers（ALIGN_RE）
+- utils.table_helpers（ALIGN_RE / align_marker / join_row / split_row）
 - views._editor_helpers（_table_cells）
-- views.table_view（_align_marker / _join_row）
 """
 
 
 import parser
-from models import BlockType, Line, Segment, SegType
+from models.document import BlockType, Line, Segment, SegType
 from utils.segment_helpers import line_raw as _line_raw
-from utils.table_helpers import ALIGN_RE
+from utils.table_helpers import ALIGN_RE, align_marker, join_row
 from views._editor_helpers import _table_cells
-from views.table_view import _align_marker, _join_row
+from views.editor._contracts import FenceEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -50,7 +49,7 @@ def _is_island_line(line: Line) -> bool:
     return line.block_type in _ISLAND_BLOCK_TYPES
 
 
-def build_fence(ctx):
+def build_fence(ctx: FenceEnv):
     """构造围栏岛屿（CODE/MATH/TABLE）编辑处理器闭包组。
 
     返回 dict[str, Callable]：
@@ -342,7 +341,7 @@ def build_fence(ctx):
             if cells[cell_idx] == value:
                 return
             cells[cell_idx] = value
-        new_raw = _join_row(cells)
+        new_raw = join_row(cells)
         line.raw = new_raw
         if line.segments:
             line.segments[0].text = new_raw
@@ -409,7 +408,7 @@ def build_fence(ctx):
             li = params["li"]
             if 0 <= li < len(lines):
                 cells = _table_cells(lines[li])
-                _rebuild_table_line(li, _join_row([""] * len(cells)))
+                _rebuild_table_line(li, join_row([""] * len(cells)))
                 ctx.document.lines = lines
                 ctx.mark_dirty()
         elif op == "add_col":
@@ -422,7 +421,7 @@ def build_fence(ctx):
                     cells.insert(col_idx, "---")
                 else:
                     cells.insert(col_idx, "")
-                _rebuild_table_line(i, _join_row(cells))
+                _rebuild_table_line(i, join_row(cells))
             ctx.document.lines = lines
             ctx.mark_dirty()
         elif op == "delete_col":
@@ -432,7 +431,7 @@ def build_fence(ctx):
                 cells = _table_cells(lines[i])
                 if 0 <= col_idx < len(cells):
                     del cells[col_idx]
-                _rebuild_table_line(i, _join_row(cells))
+                _rebuild_table_line(i, join_row(cells))
             ctx.document.lines = lines
             ctx.mark_dirty()
         elif op == "set_align":
@@ -446,8 +445,8 @@ def build_fence(ctx):
                 # 对齐标记（"---"/":---:"/"---:"）写入分隔行。直接写 "center"
                 # 不匹配 _ALIGN_RE，下次解析该行会被当作数据行，导致"在下方单元格
                 # 写入了 center 字符"且对齐失效。
-                cells[col_idx] = _align_marker(align)
-            _rebuild_table_line(sep_li, _join_row(cells))
+                cells[col_idx] = align_marker(align)
+            _rebuild_table_line(sep_li, join_row(cells))
             ctx.document.lines = lines
             ctx.mark_dirty()
 

@@ -19,9 +19,10 @@ suppress_blur_for_click / _on_raw_change
 import flet as ft
 
 import parser
+from views.editor._contracts import RawModeEnv
 
 
-def build_raw_mode(ctx):
+def build_raw_mode(ctx: RawModeEnv):
     """构造原文模式闭包组。
 
     返回 dict[str, Callable]：

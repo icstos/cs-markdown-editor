@@ -20,7 +20,7 @@ import os
 
 import flet as ft
 
-from models import BlockType
+from models.document import BlockType
 from styles import FONT_MAIN, Radius, Spacing, get_colors
 
 # 菜单字号（紧凑，与标签栏一致）

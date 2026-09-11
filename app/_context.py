@@ -247,6 +247,38 @@ class AppContext:
     focus_search: Callable = field(default=lambda: None)
     sidebar_replace_ref: Any = field(default=None)  # ft.Ref[dict]
 
+    # 文档内搜索浮层（Ctrl+F）与跨文件搜索（Ctrl+Shift+F）：
+    # 由 app/__init__.py 装配（非控制器产物），KeyDispatcher 经这些槽位路由。
+    doc_search_open: bool = field(default=False)
+    doc_search_open_ref: Any = field(default=None)  # ft.Ref[bool]
+    doc_search_query: str = field(default="")
+    doc_search_case: bool = field(default=False)
+    doc_search_regex: bool = field(default=False)
+    doc_search_total: int = field(default=0)
+    doc_search_active: int = field(default=-1)
+    doc_search_doc: Any = field(default=None)  # Document | None
+    doc_search_map: dict = field(default_factory=dict)
+    doc_search_map_version: int = field(default=0)
+    doc_search_matches_ref: Any = field(default=None)  # ft.Ref[list]
+    doc_search_active_ref: Any = field(default=None)  # ft.Ref[int]
+    doc_search_focus_seq: int = field(default=0)
+    set_doc_search_query: Callable = field(default=lambda *a: None)
+    set_doc_search_case: Callable = field(default=lambda *a: None)
+    set_doc_search_regex: Callable = field(default=lambda *a: None)
+    open_doc_search: Callable = field(default=lambda: None)
+    close_doc_search: Callable = field(default=lambda: None)
+    doc_search_next: Callable = field(default=lambda: None)
+    doc_search_prev: Callable = field(default=lambda: None)
+    global_search: Callable = field(default=lambda: None)
+
+    # 非 md 文件用系统默认程序打开（资源管理器双击直觉）
+    open_external: Callable = field(default=lambda *a: None)
+
+    # 聚焦模式开关：桥接到当前焦点编辑器的 EditorActions.toggle_focus_mode。
+    # 需要 app 层槽位是因为该动作属「视图」范畴（不触碰文档），必须能在焦点位于
+    # 搜索框 / 对话框等原生输入框时也生效；编辑器侧动作在那种焦点下拿不到。
+    focus_mode: Callable = field(default=lambda: None)
+
     # ============ backup_controller 组（自动备份 / 崩溃恢复 / 启动扫描）============
     # 定时备份/自动保存循环：use_effect 启动，return cleanup 停止
     start_backup_loop: Callable = field(default=lambda: None)

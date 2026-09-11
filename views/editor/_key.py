@@ -18,11 +18,13 @@
 - 无模块级 helper
 """
 
+from views.editor._contracts import KeyEnv
+
 # 长按重复导航的方向键
 _REPEAT_NAV_KEYS = ("arrowleft", "arrowright", "arrowup", "arrowdown")
 
 
-def build_key(ctx):
+def build_key(ctx: KeyEnv):
     """构造键盘事件闭包组。
 
     返回 dict[str, Callable]：on_key_down / on_key_up / on_key_repeat

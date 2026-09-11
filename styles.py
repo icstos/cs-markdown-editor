@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 import flet as ft
 
-from models import (
+from models.document import (
     BlockType,
     SegType,
     Segment,

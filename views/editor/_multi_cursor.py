@@ -30,12 +30,13 @@ import parser
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from views.editor._helpers import _next_line_raw
+from views.editor._contracts import MultiCursorEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
 
-def build_multi_cursor(ctx):
+def build_multi_cursor(ctx: MultiCursorEnv):
     """构造多光标闭包组。
 
     返回 dict[str, Callable]：
@@ -382,7 +383,6 @@ def build_multi_cursor(ctx):
             return
         if _is_fence(ctx.document.lines[li]):
             return
-        raw_len = len(_line_raw(ctx.document.lines[li]))
         base = ctx.cursor_ref.current.base if ctx.cursor_ref.current else ctx.cursor_off
         if base > 0:
             new_base = base - 1

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 
 from core.history import EditHistory
-from models import BlockType, Document, Line, Segment, SegType
+from models.document import BlockType, Document, Line, Segment, SegType
 from views.editor._format import build_format
 
 

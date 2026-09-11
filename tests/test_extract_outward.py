@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import BlockType, Line
+from models.document import BlockType, Line
 from parser.selection import extract_outward_text
 
 

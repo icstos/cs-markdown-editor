@@ -13,7 +13,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import flet as ft
 
 # 浏览态 / 编辑态两层快捷键默认值（原 main.py _DEFAULT_SETTINGS["shortcuts"]）
 DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
@@ -214,6 +213,9 @@ ACTION_REGISTRY: list[ActionDef] = [
               "按规范格式化整篇 Markdown：行尾空格/末尾换行、行内代码、任务列表、引用、中英文混排空格。",
               {"browse": "shift+alt+f", "edit": "shift+alt+f"}),
     # MarkText 风格扩展快捷键
+    ActionDef("paste_plain", "纯文本粘贴", "both", "编辑",
+              "粘贴剪贴板内容并剥离 Markdown 语法（Ctrl+Shift+V）。",
+              {"browse": "ctrl+shift+v", "edit": "ctrl+shift+v"}),
     ActionDef("delete_line", "删除行", "both", "编辑", "删除光标所在行。",
               {"browse": "ctrl+shift+d", "edit": "ctrl+shift+d"}),
     ActionDef("copy_rich", "复制为富文本", "both", "编辑", "将选区内容转为 HTML 富文本复制到剪贴板。",

@@ -17,7 +17,6 @@
 依赖项：html.parser（标准库）。
 """
 
-import html
 import re
 from html.parser import HTMLParser
 

@@ -25,7 +25,6 @@ import os
 import platform
 import struct
 import subprocess
-import sys
 
 _MD_EXTS = (".md", ".markdown")
 _MAX_CHAIN = 5  # .lnk → .lnk → … → .md 链式展开上限（防循环/恶意深链）

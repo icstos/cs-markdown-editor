@@ -19,10 +19,11 @@
 """
 
 import parser
-from models import Line, SegType
+from models.document import Line, SegType
 from utils.segment_helpers import WRAP_SYNTAX
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
+from views.editor._contracts import InlineFormatEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -61,7 +62,7 @@ def _compute_wrap_toggle(
     """
     raw = _line_raw(line)
     selected = raw[a_off:b_off]
-    ol, cl = len(wrap_open), len(wrap_close)
+    ol = len(wrap_open)
     a_li = 0  # 调用方在闭包内重写为真实 a_li；此处仅占位保持元组形状
 
     seg_idx, seg_start, seg_end = _find_seg_for_range(line, a_off, b_off)
@@ -107,7 +108,7 @@ def _compute_wrap_toggle(
     return new_raw, (a_li, a_off + ol, a_li, a_off + ol + len(selected))
 
 
-def build_inline_format(ctx):
+def build_inline_format(ctx: InlineFormatEnv):
     """构造行内格式闭包组。
 
     返回 dict[str, Callable]：

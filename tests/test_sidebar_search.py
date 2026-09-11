@@ -14,31 +14,31 @@ jump_to 测试 mock ft.context.page 避免无 Flet 上下文报错。
 """
 
 import os
-import re
 import sys
 import types
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from views.sidebar import (
-    _build_preview_spans,
-    _build_query_regex,
-    _collect_md_paths,
-    _match_lines,
-    _search_in_file,
+from services.file_tree import collect_md_paths
+from services.search import (
+    MAX_FILE_SIZE,
+    MAX_PER_FILE,
+    build_query_regex,
+    match_lines,
+    search_in_file,
 )
 from views.editor._scroll import build_scroll
+from views.sidebar import _build_preview_spans
 
 
-# ---- _build_query_regex：4 选项组合 ----
+# ---- build_query_regex：4 选项组合 ----
 
 
 def test_build_regex_plain_substring():
     """普通子串：re.escape 生效，'a.b' 不被当模式。"""
-    p = _build_query_regex("a.b", False, False, False)
+    p = build_query_regex("a.b", False, False, False)
     assert p is not None
     assert p.search("xa.by") is not None  # 字面量匹配
     assert p.search("aXb") is None         # '.' 不当通配符
@@ -46,20 +46,20 @@ def test_build_regex_plain_substring():
 
 def test_build_regex_case_insensitive_default():
     """默认大小写不敏感：'foo' 匹配 'FOO'。"""
-    p = _build_query_regex("foo", False, False, False)
+    p = build_query_regex("foo", False, False, False)
     assert p.search("FOO bar") is not None
 
 
 def test_build_regex_case_sensitive():
     """区分大小写：'Foo' 不匹配 'foo'。"""
-    p = _build_query_regex("Foo", True, False, False)
+    p = build_query_regex("Foo", True, False, False)
     assert p.search("Foo bar") is not None
     assert p.search("foo bar") is None
 
 
 def test_build_regex_whole_word():
     """整词匹配：'cat' 不匹配 'category'。"""
-    p = _build_query_regex("cat", False, True, False)
+    p = build_query_regex("cat", False, True, False)
     assert p.search("a cat here") is not None
     assert p.search("category") is None
     assert p.search("concat") is None
@@ -67,14 +67,14 @@ def test_build_regex_whole_word():
 
 def test_build_regex_regex_mode():
     """正则模式：'\\d+' 匹配数字。"""
-    p = _build_query_regex(r"\d+", False, False, True)
+    p = build_query_regex(r"\d+", False, False, True)
     assert p.search("abc 123 xyz") is not None
     assert p.search("abc xyz") is None
 
 
 def test_build_regex_regex_with_whole_word():
     """正则 + 整词：模式被 \\b 包裹。"""
-    p = _build_query_regex(r"cat|dog", False, True, True)
+    p = build_query_regex(r"cat|dog", False, True, True)
     assert p.search("I have a cat") is not None
     assert p.search("I have a dog") is not None
     # 'category' 不应匹配 'cat'（整词边界）
@@ -83,18 +83,18 @@ def test_build_regex_regex_with_whole_word():
 
 def test_build_regex_invalid_regex_returns_none():
     """无效正则返回 None（调用方提示）。"""
-    assert _build_query_regex("[", False, False, True) is None
-    assert _build_query_regex("*", False, False, True) is None
-    assert _build_query_regex("(?P<", False, False, True) is None
+    assert build_query_regex("[", False, False, True) is None
+    assert build_query_regex("*", False, False, True) is None
+    assert build_query_regex("(?P<", False, False, True) is None
 
 
 def test_build_regex_empty_query_returns_none():
     """空查询返回 None。"""
-    assert _build_query_regex("", False, False, False) is None
-    assert _build_query_regex("   ", False, False, False) is None
+    assert build_query_regex("", False, False, False) is None
+    assert build_query_regex("   ", False, False, False) is None
 
 
-# ---- _match_lines：行级匹配 ----
+# ---- match_lines：行级匹配 ----
 
 
 def _make_doc(lines_raw):
@@ -107,8 +107,8 @@ def _make_doc(lines_raw):
 def test_match_lines_returns_offset_and_length():
     """返回结构携带 offset+长度（供高亮与跳转）。"""
     doc = _make_doc(["hello world hello", "no match", "hello again"])
-    p = _build_query_regex("hello", False, False, False)
-    results = _match_lines(doc, p)
+    p = build_query_regex("hello", False, False, False)
+    results = match_lines(doc, p)
     # 行 0 和行 2 有匹配
     assert len(results) == 2
     li0, matches0 = results[0]
@@ -123,63 +123,61 @@ def test_match_lines_returns_offset_and_length():
 def test_match_lines_pattern_none_returns_empty():
     """pattern 为 None 时返回 []。"""
     doc = _make_doc(["hello"])
-    assert _match_lines(doc, None) == []
+    assert match_lines(doc, None) == []
 
 
 def test_match_lines_document_none_returns_empty():
     """document 为 None 时返回 []。"""
-    p = _build_query_regex("foo", False, False, False)
-    assert _match_lines(None, p) == []
+    p = build_query_regex("foo", False, False, False)
+    assert match_lines(None, p) == []
 
 
 def test_match_lines_respects_limit():
     """limit 截断结果数。"""
     doc = _make_doc([f"line {i} match" for i in range(100)])
-    p = _build_query_regex("match", False, False, False)
-    results = _match_lines(doc, p, limit=5)
+    p = build_query_regex("match", False, False, False)
+    results = match_lines(doc, p, limit=5)
     assert len(results) == 5
 
 
-# ---- _search_in_file：单文件搜索边界 ----
+# ---- search_in_file：单文件搜索边界 ----
 
 
 def test_search_in_file_basic(tmp_path):
     """正常文件按行匹配。"""
     f = tmp_path / "note.md"
     f.write_text("hello world\nno match\nhello again", encoding="utf-8")
-    p = _build_query_regex("hello", False, False, False)
-    results = _search_in_file(str(f), p)
+    p = build_query_regex("hello", False, False, False)
+    results = search_in_file(str(f), p)
     assert len(results) == 2
     assert results[0][0] == 0  # 行 0
     assert results[1][0] == 2  # 行 2
 
 
 def test_search_in_file_skips_oversized(tmp_path):
-    """超大文件（> _MAX_FILE_SIZE）跳过，返回 []。"""
-    from views.sidebar import _MAX_FILE_SIZE
+    """超大文件（> MAX_FILE_SIZE）跳过，返回 []。"""
     f = tmp_path / "big.md"
-    f.write_text("x" * (_MAX_FILE_SIZE + 100), encoding="utf-8")
-    p = _build_query_regex("x", False, False, False)
-    assert _search_in_file(str(f), p) == []
+    f.write_text("x" * (MAX_FILE_SIZE + 100), encoding="utf-8")
+    p = build_query_regex("x", False, False, False)
+    assert search_in_file(str(f), p) == []
 
 
 def test_search_in_file_read_failure_returns_empty(tmp_path):
     """读取失败（文件不存在）返回 []，不抛异常。"""
-    p = _build_query_regex("foo", False, False, False)
-    assert _search_in_file(str(tmp_path / "nonexistent.md"), p) == []
+    p = build_query_regex("foo", False, False, False)
+    assert search_in_file(str(tmp_path / "nonexistent.md"), p) == []
 
 
 def test_search_in_file_respects_max_per_file(tmp_path):
     """每文件结果上限。"""
-    from views.sidebar import _MAX_PER_FILE
     f = tmp_path / "many.md"
-    f.write_text("\n".join(f"match {i}" for i in range(_MAX_PER_FILE + 10)), encoding="utf-8")
-    p = _build_query_regex("match", False, False, False)
-    results = _search_in_file(str(f), p)
-    assert len(results) == _MAX_PER_FILE
+    f.write_text("\n".join(f"match {i}" for i in range(MAX_PER_FILE + 10)), encoding="utf-8")
+    p = build_query_regex("match", False, False, False)
+    results = search_in_file(str(f), p)
+    assert len(results) == MAX_PER_FILE
 
 
-# ---- _collect_md_paths：嵌套树扁平化 ----
+# ---- collect_md_paths：嵌套树扁平化 ----
 
 
 def test_collect_md_paths_flattens_tree():
@@ -193,12 +191,12 @@ def test_collect_md_paths_flattens_tree():
         ]),
         ("file", "c.md", "/abs/c.md"),
     ]
-    paths = _collect_md_paths(tree)
+    paths = collect_md_paths(tree)
     assert paths == ["/abs/docs/a.md", "/abs/docs/sub/b.md", "/abs/c.md"]
 
 
 def test_collect_md_paths_filters_non_md():
-    """扫描改为全类型后，_collect_md_paths 必须按 .md/.markdown 过滤非 md 节点。"""
+    """扫描改为全类型后，collect_md_paths 必须按 .md/.markdown 过滤非 md 节点。"""
     tree = [
         ("dir", "docs", [
             ("file", "a.md", "/abs/docs/a.md"),
@@ -208,13 +206,13 @@ def test_collect_md_paths_filters_non_md():
         ("file", "d.md", "/abs/d.md"),
         ("file", "e.json", "/abs/e.json"),
     ]
-    paths = _collect_md_paths(tree)
+    paths = collect_md_paths(tree)
     assert paths == ["/abs/docs/a.md", "/abs/d.md"]
 
 
 def test_collect_md_paths_empty_tree():
     """空树返回 []。"""
-    assert _collect_md_paths([]) == []
+    assert collect_md_paths([]) == []
 
 
 # ---- _build_preview_spans：高亮预览 ----
@@ -279,7 +277,7 @@ def test_build_preview_spans_empty_raw():
 @patch("views.editor._scroll.ft")
 def test_jump_to_off_none_uses_zero(mock_ft):
     """off=None 退化为 off=0（向后兼容大纲等仅传 li 的调用方）。"""
-    from models import BlockType
+    from models.document import BlockType
     ctx = MagicMock()
     line = MagicMock()
     line.block_type = BlockType.PARAGRAPH  # 非围栏块
@@ -292,7 +290,7 @@ def test_jump_to_off_none_uses_zero(mock_ft):
 @patch("views.editor._scroll.ft")
 def test_jump_to_with_off_uses_provided_offset(mock_ft):
     """off=int 时跳到精确 raw 偏移。"""
-    from models import BlockType
+    from models.document import BlockType
     ctx = MagicMock()
     line = MagicMock()
     line.block_type = BlockType.PARAGRAPH
@@ -305,7 +303,7 @@ def test_jump_to_with_off_uses_provided_offset(mock_ft):
 @patch("views.editor._scroll.ft")
 def test_jump_to_fence_falls_back_to_browse_mode(mock_ft):
     """围栏块 fallback 到浏览态（set_cursor_line + set_cursor_li(None)）。"""
-    from models import BlockType
+    from models.document import BlockType
     ctx = MagicMock()
     line = MagicMock()
     line.block_type = BlockType.CODE  # 围栏块

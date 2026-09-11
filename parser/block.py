@@ -17,7 +17,7 @@
 - 代码块 / 数学块围栏 / 表格作为编辑单元合并，保留分隔行（对齐信息持久化）。
 """
 
-from models import BlockType, Document, Line, SegType, Segment
+from models.document import BlockType, Document, Line, SegType, Segment
 from utils.table_helpers import is_table_separator
 
 from parser._engine import (

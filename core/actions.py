@@ -31,7 +31,7 @@ from typing import Any
 
 import flet as ft
 
-from models import BlockType, Line
+from models.document import BlockType, Line
 
 # PEP 695 类型别名：向外选区与滚动状态，替代裸 tuple 注解
 type OutwardSel = tuple[int, int, int, int] | None  # (anchor_li, anchor_off, active_li, active_off)

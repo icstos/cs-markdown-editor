@@ -38,9 +38,6 @@ _TASK_RE = re.compile(
 )
 
 
-def _normalize_inline_code(line: str) -> str:
-    """统一行内代码：反引号紧贴内容；内容含反引号时升级分隔符。"""
-
 def _leading_backticks(s: str) -> int:
     """字符串开头的连续反引号数。"""
     return len(s) - len(s.lstrip("`"))

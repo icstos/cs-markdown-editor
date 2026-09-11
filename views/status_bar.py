@@ -20,11 +20,11 @@
 import asyncio
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 
 import flet as ft
 
-from models import BlockType, Document
+from models.document import BlockType, Document
 import parser
 from styles import FONT_MAIN, Radius, Spacing, get_colors, only_border
 

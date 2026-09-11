@@ -19,7 +19,7 @@
   并对围栏块（CODE/MATH/TABLE/TOC/HR）做特殊处理。
 """
 
-from models import BlockType, Document, SegType
+from models.document import BlockType, Document, SegType
 
 from parser._engine import _get_html_md
 from parser.block import parse_markdown

@@ -30,7 +30,7 @@
 import re
 
 from core.history import EditorSnapshot
-from models import BlockType, Line
+from models.document import BlockType, Line
 from utils.segment_helpers import is_fence, line_raw
 from views.pixel_layout import hit_test_line_x_raw
 

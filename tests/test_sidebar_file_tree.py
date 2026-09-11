@@ -8,7 +8,7 @@
 - views.sidebar._collect_md_paths：混入非 md 节点只返回 md / 深度优先字母序 / 空树
 - views.sidebar._file_icon：.md 返回 DESCRIPTION+link 色 / 已知扩展名映射 /
   未知兜底 / 大小写不敏感 / 非 md 用 muted 色
-- views.sidebar._file_row_icon_data：.md 委托 _file_icon / .lnk 一律 SHORTCUT /
+- views.sidebar._file_row_icon_data：.md 委托 file_icon / .lnk 一律 SHORTCUT /
   指向 .md 的快捷方式用 link 色 + 目标 tooltip / 其余 .lnk 用 muted 色
 - services.file_ops.open_external：mock platform.system 验证 Windows/macOS/Linux
   分流 / 文件不存在抛错
@@ -30,21 +30,20 @@ import flet as ft
 
 from services import shortcut
 from services.file_ops import open_external
-from views.sidebar import (
-    _collect_md_paths,
-    _drop_allowed,
-    _file_icon,
-    _file_row_icon_data,
-    _flatten_tree,
-    _scan_files,
-    _wrap_drop_target,
+from services.file_tree import (
+    collect_md_paths,
+    file_icon,
+    file_row_icon_data,
+    flatten_tree,
+    scan_files,
 )
+from views._widgets import _drop_allowed, _wrap_drop_target
 
 # ---- 辅助 ----
 
 
 def _make_colors():
-    """简易 Colors mock（覆盖 _file_icon 用到的 link / muted 字段）。"""
+    """简易 Colors mock（覆盖 file_icon 用到的 link / muted 字段）。"""
     return types.SimpleNamespace(
         text="#1F2329",
         muted="#8A919E",
@@ -62,7 +61,7 @@ def _flat_names(flat):
     return [n for _, n, _, _ in flat]
 
 
-# ---- _scan_files：全类型收录 ----
+# ---- scan_files：全类型收录 ----
 
 
 def test_scan_files_collects_all_types(tmp_path):
@@ -71,7 +70,7 @@ def test_scan_files_collects_all_types(tmp_path):
     (tmp_path / "pic.png").write_bytes(b"")
     (tmp_path / "script.py").write_text("")
     (tmp_path / "config.json").write_text("")
-    tree = _scan_files(str(tmp_path))
+    tree = scan_files(str(tmp_path))
     names = _tree_names(tree)
     assert "note.md" in names
     assert "pic.png" in names
@@ -79,7 +78,7 @@ def test_scan_files_collects_all_types(tmp_path):
     assert "config.json" in names
 
 
-# ---- _scan_files：跳过隐藏与忽略目录 ----
+# ---- scan_files：跳过隐藏与忽略目录 ----
 
 
 def test_scan_files_skips_hidden_and_ignored(tmp_path):
@@ -91,7 +90,7 @@ def test_scan_files_skips_hidden_and_ignored(tmp_path):
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "config").write_text("")
     (tmp_path / "visible.md").write_text("")
-    tree = _scan_files(str(tmp_path))
+    tree = scan_files(str(tmp_path))
     names = _tree_names(tree)
     assert "visible.md" in names
     assert ".hidden" not in names
@@ -99,18 +98,18 @@ def test_scan_files_skips_hidden_and_ignored(tmp_path):
     assert ".git" not in names
 
 
-# ---- _scan_files：保留空目录 ----
+# ---- scan_files：保留空目录 ----
 
 
 def test_scan_files_keeps_empty_dirs(tmp_path):
     """保留空目录（VSCode 显示空目录，移除旧 if children 过滤）。"""
     (tmp_path / "empty").mkdir()
-    tree = _scan_files(str(tmp_path))
+    tree = scan_files(str(tmp_path))
     dirs = [n for t, n, _ in tree if t == "dir"]
     assert "empty" in dirs
 
 
-# ---- _scan_files：目录在前、字母序 ----
+# ---- scan_files：目录在前、字母序 ----
 
 
 def test_scan_files_dirs_first_alpha_order(tmp_path):
@@ -119,7 +118,7 @@ def test_scan_files_dirs_first_alpha_order(tmp_path):
     (tmp_path / "adir").mkdir()
     (tmp_path / "bdir").mkdir()
     (tmp_path / "afile.md").write_text("")
-    tree = _scan_files(str(tmp_path))
+    tree = scan_files(str(tmp_path))
     types_names = [(t, n) for t, n, _ in tree]
     # 目录在前
     assert types_names[0] == ("dir", "adir")
@@ -129,7 +128,7 @@ def test_scan_files_dirs_first_alpha_order(tmp_path):
     assert types_names[3] == ("file", "zfile.md")
 
 
-# ---- _scan_files：深度上限 ----
+# ---- scan_files：深度上限 ----
 
 
 def test_scan_files_depth_limit(tmp_path):
@@ -139,7 +138,7 @@ def test_scan_files_depth_limit(tmp_path):
         deep = deep / f"d{i}"
         deep.mkdir()
     (deep / "deep.md").write_text("")
-    tree = _scan_files(str(tmp_path), max_depth=2)
+    tree = scan_files(str(tmp_path), max_depth=2)
     # depth 0: root → d0, depth 1: d0 → d1, depth 2: d1 → d2, depth 3: d2 截断
     assert tree[0][0] == "dir"
     assert tree[0][1] == "d0"
@@ -151,39 +150,39 @@ def test_scan_files_depth_limit(tmp_path):
     assert d1_children[0][2] == []  # d2 子项被深度限制截断
 
 
-# ---- _scan_files：文件数上限 ----
+# ---- scan_files：文件数上限 ----
 
 
 def test_scan_files_max_files_limit(tmp_path):
     """文件数上限：超限停止追加。"""
     for i in range(10):
         (tmp_path / f"f{i}.md").write_text("")
-    tree = _scan_files(str(tmp_path), max_files=3)
+    tree = scan_files(str(tmp_path), max_files=3)
     files = [n for t, n, _ in tree if t == "file"]
     assert len(files) == 3
 
 
-# ---- _scan_files：无效根 ----
+# ---- scan_files：无效根 ----
 
 
 def test_scan_files_invalid_root_returns_empty():
     """无效根目录（空串 / 不存在）返回 []。"""
-    assert _scan_files("") == []
-    assert _scan_files("/nonexistent/path/xyz/abc") == []
+    assert scan_files("") == []
+    assert scan_files("/nonexistent/path/xyz/abc") == []
 
 
-# ---- _scan_files：OSError 静默 ----
+# ---- scan_files：OSError 静默 ----
 
 
 def test_scan_files_oserror_silent(tmp_path):
     """os.scandir 抛 OSError 时静默返回空（无读权限目录不崩溃）。"""
     (tmp_path / "ok.md").write_text("")
     with patch("views.sidebar.os.scandir", side_effect=OSError("denied")):
-        tree = _scan_files(str(tmp_path))
+        tree = scan_files(str(tmp_path))
     assert tree == []
 
 
-# ---- _flatten_tree：expanded 控制递归 ----
+# ---- flatten_tree：expanded 控制递归 ----
 
 
 def test_flatten_tree_collapsed_excludes_children():
@@ -194,7 +193,7 @@ def test_flatten_tree_collapsed_excludes_children():
         ]),
         ("file", "b.md", "/root/b.md"),
     ]
-    flat = _flatten_tree(tree, root_dir="/root", expanded=frozenset())
+    flat = flatten_tree(tree, root_dir="/root", expanded=frozenset())
     assert ("dir", "sub", os.path.join("/root", "sub"), 0) in flat
     assert ("file", "a.md", "/root/sub/a.md", 1) not in flat
     assert ("file", "b.md", "/root/b.md", 0) in flat
@@ -207,14 +206,14 @@ def test_flatten_tree_expanded_includes_children():
             ("file", "a.md", "/root/sub/a.md"),
         ]),
     ]
-    flat = _flatten_tree(
+    flat = flatten_tree(
         tree, root_dir="/root", expanded=frozenset({os.path.join("/root", "sub")}),
     )
     assert ("dir", "sub", os.path.join("/root", "sub"), 0) in flat
     assert ("file", "a.md", "/root/sub/a.md", 1) in flat
 
 
-# ---- _flatten_tree：force_expand ----
+# ---- flatten_tree：force_expand ----
 
 
 def test_flatten_tree_force_expand():
@@ -224,13 +223,13 @@ def test_flatten_tree_force_expand():
             ("file", "a.md", "/root/sub/a.md"),
         ]),
     ]
-    flat = _flatten_tree(
+    flat = flatten_tree(
         tree, root_dir="/root", expanded=frozenset(), force_expand=True,
     )
     assert ("file", "a.md", "/root/sub/a.md", 1) in flat
 
 
-# ---- _flatten_tree：expanded=None 兼容 ----
+# ---- flatten_tree：expanded=None 兼容 ----
 
 
 def test_flatten_tree_expanded_none_compat():
@@ -240,11 +239,11 @@ def test_flatten_tree_expanded_none_compat():
             ("file", "a.md", "/root/sub/a.md"),
         ]),
     ]
-    flat = _flatten_tree(tree, root_dir="/root", expanded=None)
+    flat = flatten_tree(tree, root_dir="/root", expanded=None)
     assert ("file", "a.md", "/root/sub/a.md", 1) in flat
 
 
-# ---- _flatten_tree：depth 正确 ----
+# ---- flatten_tree：depth 正确 ----
 
 
 def test_flatten_tree_depth_correct():
@@ -256,14 +255,14 @@ def test_flatten_tree_depth_correct():
             ]),
         ]),
     ]
-    flat = _flatten_tree(tree, root_dir="/root", expanded=None)
+    flat = flatten_tree(tree, root_dir="/root", expanded=None)
     depths = {name: depth for _, name, _, depth in flat}
     assert depths["d1"] == 0
     assert depths["d2"] == 1
     assert depths["f.md"] == 2
 
 
-# ---- _flatten_tree：dir_path 拼接 ----
+# ---- flatten_tree：dir_path 拼接 ----
 
 
 def test_flatten_tree_dir_path_join():
@@ -275,13 +274,13 @@ def test_flatten_tree_dir_path_join():
             ]),
         ]),
     ]
-    flat = _flatten_tree(tree, root_dir="/root", expanded=None)
+    flat = flatten_tree(tree, root_dir="/root", expanded=None)
     paths = {name: path for kind, name, path, _ in flat if kind == "dir"}
     assert paths["sub"] == os.path.join("/root", "sub")
     assert paths["deep"] == os.path.join("/root", "sub", "deep")
 
 
-# ---- _collect_md_paths：混入非 md 过滤 ----
+# ---- collect_md_paths：混入非 md 过滤 ----
 
 
 def test_collect_md_paths_filters_non_md():
@@ -295,7 +294,7 @@ def test_collect_md_paths_filters_non_md():
         ("file", "d.md", "/abs/d.md"),
         ("file", "e.json", "/abs/e.json"),
     ]
-    paths = _collect_md_paths(tree)
+    paths = collect_md_paths(tree)
     assert paths == ["/abs/docs/a.md", "/abs/d.md"]
 
 
@@ -305,17 +304,17 @@ def test_collect_md_paths_markdown_extension():
         ("file", "a.markdown", "/abs/a.markdown"),
         ("file", "b.txt", "/abs/b.txt"),
     ]
-    paths = _collect_md_paths(tree)
+    paths = collect_md_paths(tree)
     assert paths == ["/abs/a.markdown"]
 
 
-# ---- _file_icon ----
+# ---- file_icon ----
 
 
 def test_file_icon_md_returns_description_and_link():
     """.md 返回 DESCRIPTION 图标 + link 主题色。"""
     c = _make_colors()
-    icon, color = _file_icon("note.md", c)
+    icon, color = file_icon("note.md", c)
     assert icon == ft.Icons.DESCRIPTION
     assert color == c.link
 
@@ -323,7 +322,7 @@ def test_file_icon_md_returns_description_and_link():
 def test_file_icon_markdown_extension():
     """.markdown 同样返回 DESCRIPTION + link 色。"""
     c = _make_colors()
-    icon, color = _file_icon("note.markdown", c)
+    icon, color = file_icon("note.markdown", c)
     assert icon == ft.Icons.DESCRIPTION
     assert color == c.link
 
@@ -331,48 +330,48 @@ def test_file_icon_markdown_extension():
 def test_file_icon_known_extensions():
     """已知扩展名映射到对应图标。"""
     c = _make_colors()
-    assert _file_icon("pic.png", c)[0] == ft.Icons.IMAGE
-    assert _file_icon("script.py", c)[0] == ft.Icons.CODE
-    assert _file_icon("page.html", c)[0] == ft.Icons.HTML
-    assert _file_icon("style.css", c)[0] == ft.Icons.CSS
-    assert _file_icon("archive.zip", c)[0] == ft.Icons.FOLDER_ZIP
-    assert _file_icon("doc.pdf", c)[0] == ft.Icons.PICTURE_AS_PDF
-    assert _file_icon("song.mp3", c)[0] == ft.Icons.MUSIC_NOTE
-    assert _file_icon("video.mp4", c)[0] == ft.Icons.MOVIE
+    assert file_icon("pic.png", c)[0] == ft.Icons.IMAGE
+    assert file_icon("script.py", c)[0] == ft.Icons.CODE
+    assert file_icon("page.html", c)[0] == ft.Icons.HTML
+    assert file_icon("style.css", c)[0] == ft.Icons.CSS
+    assert file_icon("archive.zip", c)[0] == ft.Icons.FOLDER_ZIP
+    assert file_icon("doc.pdf", c)[0] == ft.Icons.PICTURE_AS_PDF
+    assert file_icon("song.mp3", c)[0] == ft.Icons.MUSIC_NOTE
+    assert file_icon("video.mp4", c)[0] == ft.Icons.MOVIE
 
 
 def test_file_icon_unknown_fallback():
     """未知扩展名兜底 INSERT_DRIVE_FILE_OUTLINED。"""
     c = _make_colors()
-    icon, _ = _file_icon("data.xyzunknown", c)
+    icon, _ = file_icon("data.xyzunknown", c)
     assert icon == ft.Icons.INSERT_DRIVE_FILE_OUTLINED
 
 
 def test_file_icon_no_extension_fallback():
     """无扩展名兜底。"""
     c = _make_colors()
-    icon, _ = _file_icon("Makefile", c)
+    icon, _ = file_icon("Makefile", c)
     assert icon == ft.Icons.INSERT_DRIVE_FILE_OUTLINED
 
 
 def test_file_icon_case_insensitive():
     """扩展名大小写不敏感。"""
     c = _make_colors()
-    assert _file_icon("PIC.PNG", c)[0] == ft.Icons.IMAGE
-    assert _file_icon("Note.MD", c)[0] == ft.Icons.DESCRIPTION
-    assert _file_icon("Script.PY", c)[0] == ft.Icons.CODE
+    assert file_icon("PIC.PNG", c)[0] == ft.Icons.IMAGE
+    assert file_icon("Note.MD", c)[0] == ft.Icons.DESCRIPTION
+    assert file_icon("Script.PY", c)[0] == ft.Icons.CODE
 
 
 def test_file_icon_non_md_uses_muted_color():
     """非 md 文件用 c.muted 色（避免色彩过载）。"""
     c = _make_colors()
-    _, color = _file_icon("pic.png", c)
+    _, color = file_icon("pic.png", c)
     assert color == c.muted
-    _, color = _file_icon("script.py", c)
+    _, color = file_icon("script.py", c)
     assert color == c.muted
 
 
-# ---- _file_row_icon_data ----
+# ---- file_row_icon_data ----
 
 _LNK_CLSID = bytes.fromhex("0114020000000000C000000000000046")
 
@@ -407,9 +406,9 @@ def _write_lnk(path: str, target: str):
 
 
 def test_file_row_icon_data_md():
-    """.md 委托 _file_icon：DESCRIPTION + link 色，无 tooltip。"""
+    """.md 委托 file_icon：DESCRIPTION + link 色，无 tooltip。"""
     c = _make_colors()
-    icon, color, tooltip = _file_row_icon_data("note.md", r"C:\x\note.md", c)
+    icon, color, tooltip = file_row_icon_data("note.md", r"C:\x\note.md", c)
     assert icon == ft.Icons.DESCRIPTION
     assert color == c.link
     assert tooltip is None
@@ -422,7 +421,7 @@ def test_file_row_icon_data_lnk_to_md(tmp_path):
     md.write_text("# t", encoding="utf-8")
     lnk = tmp_path / "shortcut.lnk"
     _write_lnk(str(lnk), str(md))
-    icon, color, tooltip = _file_row_icon_data("shortcut.lnk", str(lnk), c)
+    icon, color, tooltip = file_row_icon_data("shortcut.lnk", str(lnk), c)
     assert icon == ft.Icons.SHORTCUT
     assert color == c.link
     assert tooltip == f"→ {md}"
@@ -433,16 +432,16 @@ def test_file_row_icon_data_lnk_other(tmp_path):
     c = _make_colors()
     lnk = tmp_path / "app.lnk"
     _write_lnk(str(lnk), str(tmp_path / "app.exe"))
-    icon, color, tooltip = _file_row_icon_data("app.lnk", str(lnk), c)
+    icon, color, tooltip = file_row_icon_data("app.lnk", str(lnk), c)
     assert icon == ft.Icons.SHORTCUT
     assert color == c.muted
     assert tooltip is None
 
 
 def test_file_row_icon_data_other_extension():
-    """其他扩展名走 _file_icon 映射。"""
+    """其他扩展名走 file_icon 映射。"""
     c = _make_colors()
-    icon, color, tooltip = _file_row_icon_data("pic.png", r"C:\x\pic.png", c)
+    icon, color, tooltip = file_row_icon_data("pic.png", r"C:\x\pic.png", c)
     assert icon == ft.Icons.IMAGE
     assert color == c.muted
     assert tooltip is None

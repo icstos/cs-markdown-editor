@@ -1,12 +1,12 @@
 """侧边栏替换纯函数测试。
 
 覆盖：
-- _flatten_matches：当前文档搜索结果扁平化
-- _flatten_cross_matches：跨文件搜索结果扁平化
-- _expand_replacement：regex 反向引用展开 + 非 regex 字面量
-- _replace_in_string：行内右→左多匹配替换保偏移
-- _replace_in_file_text：跨文件切行替换 + regex 反向引用
-- _find_match_at：按 (start, end) 精确定位 Match 对象
+- flatten_matches：当前文档搜索结果扁平化
+- flatten_cross_matches：跨文件搜索结果扁平化
+- expand_replacement：regex 反向引用展开 + 非 regex 字面量
+- replace_in_string：行内右→左多匹配替换保偏移
+- replace_in_file_text：跨文件切行替换 + regex 反向引用
+- find_match_at：按 (start, end) 精确定位 Match 对象
 
 不依赖 UI 渲染，纯函数直接调用验证返回结构。
 """
@@ -16,41 +16,40 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pytest  # noqa: E402
 
-from views.sidebar import (  # noqa: E402
-    _expand_replacement,
-    _find_match_at,
-    _flatten_cross_matches,
-    _flatten_matches,
-    _replace_in_file_text,
-    _replace_in_string,
+from services.search import (
+    expand_replacement,
+    find_match_at,
+    flatten_cross_matches,
+    flatten_matches,
+    replace_in_file_text,
+    replace_in_string,
 )
 
 
-# ---- _flatten_matches ----
+# ---- flatten_matches ----
 
 
 def test_flatten_matches_single_per_line():
     """每行单匹配：扁平化为 [(li, s, e), ...]。"""
     results = [(0, [(3, 6)]), (2, [(0, 4)])]
-    flat = _flatten_matches(results)
+    flat = flatten_matches(results)
     assert flat == [(0, 3, 6), (2, 0, 4)]
 
 
 def test_flatten_matches_multi_per_line():
     """一行多匹配：保持行内顺序展开。"""
     results = [(1, [(0, 3), (5, 8), (10, 13)])]
-    flat = _flatten_matches(results)
+    flat = flatten_matches(results)
     assert flat == [(1, 0, 3), (1, 5, 8), (1, 10, 13)]
 
 
 def test_flatten_matches_empty():
     """空结果返回空列表。"""
-    assert _flatten_matches([]) == []
+    assert flatten_matches([]) == []
 
 
-# ---- _flatten_cross_matches ----
+# ---- flatten_cross_matches ----
 
 
 def test_flatten_cross_matches_basic():
@@ -59,7 +58,7 @@ def test_flatten_cross_matches_basic():
         ("/a.md", "a.md", [(0, [(2, 5)]), (3, [(0, 4), (6, 9)])]),
         ("/b.md", "b.md", [(1, [(1, 3)])]),
     ]
-    flat = _flatten_cross_matches(cross)
+    flat = flatten_cross_matches(cross)
     assert flat == [
         ("/a.md", 0, 2, 5),
         ("/a.md", 3, 0, 4),
@@ -69,10 +68,10 @@ def test_flatten_cross_matches_basic():
 
 
 def test_flatten_cross_matches_empty():
-    assert _flatten_cross_matches([]) == []
+    assert flatten_cross_matches([]) == []
 
 
-# ---- _expand_replacement ----
+# ---- expand_replacement ----
 
 
 def test_expand_replacement_regex_backref_dollar():
@@ -80,7 +79,7 @@ def test_expand_replacement_regex_backref_dollar():
     p = __import__("re").compile(r"(\w+)@(\w+)")
     m = p.search("user@host")
     assert m is not None
-    result = _expand_replacement(m, r"$2/$1", True)
+    result = expand_replacement(m, r"$2/$1", True)
     assert result == "host/user"
 
 
@@ -89,7 +88,7 @@ def test_expand_replacement_regex_backref_backslash():
     p = __import__("re").compile(r"(\w+)@(\w+)")
     m = p.search("user@host")
     assert m is not None
-    result = _expand_replacement(m, r"\2/\1", True)
+    result = expand_replacement(m, r"\2/\1", True)
     assert result == "host/user"
 
 
@@ -98,7 +97,7 @@ def test_expand_replacement_regex_backref_named_group():
     p = __import__("re").compile(r"(\w+)@(\w+)")
     m = p.search("user@host")
     assert m is not None
-    result = _expand_replacement(m, r"\g<2>/\g<1>", True)
+    result = expand_replacement(m, r"\g<2>/\g<1>", True)
     assert result == "host/user"
 
 
@@ -107,7 +106,7 @@ def test_expand_replacement_regex_dollar_dollar_literal():
     p = __import__("re").compile(r"price")
     m = p.search("price is 100")
     assert m is not None
-    result = _expand_replacement(m, "$$100", True)
+    result = expand_replacement(m, "$$100", True)
     assert result == "$100"
 
 
@@ -116,7 +115,7 @@ def test_expand_replacement_regex_dollar_nondigit_literal():
     p = __import__("re").compile(r"var")
     m = p.search("var here")
     assert m is not None
-    result = _expand_replacement(m, "$abc", True)
+    result = expand_replacement(m, "$abc", True)
     assert result == "$abc"
 
 
@@ -125,7 +124,7 @@ def test_expand_replacement_non_regex_literal():
     p = __import__("re").compile(r"foo")
     m = p.search("foobar")
     assert m is not None
-    result = _expand_replacement(m, r"\1bar", False)
+    result = expand_replacement(m, r"\1bar", False)
     assert result == r"\1bar"
 
 
@@ -134,7 +133,7 @@ def test_expand_replacement_non_regex_dollar_literal():
     p = __import__("re").compile(r"price")
     m = p.search("price is 100")
     assert m is not None
-    result = _expand_replacement(m, "$100", False)
+    result = expand_replacement(m, "$100", False)
     assert result == "$100"
 
 
@@ -143,11 +142,11 @@ def test_expand_replacement_non_regex_backslash_literal():
     p = __import__("re").compile(r"text")
     m = p.search("text here")
     assert m is not None
-    result = _expand_replacement(m, r"\n", False)
+    result = expand_replacement(m, r"\n", False)
     assert result == r"\n"
 
 
-# ---- _replace_in_string ----
+# ---- replace_in_string ----
 
 
 def test_replace_in_string_single_match():
@@ -155,7 +154,7 @@ def test_replace_in_string_single_match():
     import re
     p = re.compile(r"foo")
     raw = "hello foo world"
-    new_raw, count = _replace_in_string(raw, p, [(6, 9)], "bar", False)
+    new_raw, count = replace_in_string(raw, p, [(6, 9)], "bar", False)
     assert new_raw == "hello bar world"
     assert count == 1
 
@@ -167,7 +166,7 @@ def test_replace_in_string_multi_match_right_to_left():
     raw = "aa bb aa cc aa"
     # 三个匹配：(0,2), (6,8), (12,14)
     spans = [(0, 2), (6, 8), (12, 14)]
-    new_raw, count = _replace_in_string(raw, p, spans, "XX", False)
+    new_raw, count = replace_in_string(raw, p, spans, "XX", False)
     assert new_raw == "XX bb XX cc XX"
     assert count == 3
 
@@ -178,7 +177,7 @@ def test_replace_in_string_regex_backref():
     p = re.compile(r"(\w+)=(\w+)")
     raw = "key=value foo=bar"
     spans = [(m.start(), m.end()) for m in p.finditer(raw)]
-    new_raw, count = _replace_in_string(raw, p, spans, r"$2:$1", True)
+    new_raw, count = replace_in_string(raw, p, spans, r"$2:$1", True)
     assert new_raw == "value:key bar:foo"
     assert count == 2
 
@@ -187,7 +186,7 @@ def test_replace_in_string_empty_spans():
     """空 spans 返回原文本。"""
     import re
     p = re.compile(r"foo")
-    new_raw, count = _replace_in_string("hello", p, [], "bar", False)
+    new_raw, count = replace_in_string("hello", p, [], "bar", False)
     assert new_raw == "hello"
     assert count == 0
 
@@ -198,7 +197,7 @@ def test_replace_in_string_replacement_longer():
     p = re.compile(r"x")
     raw = "x x x"
     spans = [(0, 1), (2, 3), (4, 5)]
-    new_raw, count = _replace_in_string(raw, p, spans, "ABC", False)
+    new_raw, count = replace_in_string(raw, p, spans, "ABC", False)
     assert new_raw == "ABC ABC ABC"
     assert count == 3
 
@@ -209,12 +208,12 @@ def test_replace_in_string_replacement_shorter():
     p = re.compile(r"ABC")
     raw = "ABC ABC ABC"
     spans = [(0, 3), (4, 7), (8, 11)]
-    new_raw, count = _replace_in_string(raw, p, spans, "x", False)
+    new_raw, count = replace_in_string(raw, p, spans, "x", False)
     assert new_raw == "x x x"
     assert count == 3
 
 
-# ---- _replace_in_file_text ----
+# ---- replace_in_file_text ----
 
 
 def test_replace_in_file_text_basic():
@@ -222,7 +221,7 @@ def test_replace_in_file_text_basic():
     import re
     p = re.compile(r"foo")
     text = "foo bar\nbaz foo\nqux"
-    new_text, count = _replace_in_file_text(text, p, "XXX", False)
+    new_text, count = replace_in_file_text(text, p, "XXX", False)
     assert new_text == "XXX bar\nbaz XXX\nqux"
     assert count == 2
 
@@ -232,7 +231,7 @@ def test_replace_in_file_text_regex_backref():
     import re
     p = re.compile(r"(\w+)@(\w+)")
     text = "user@host\nadmin@server"
-    new_text, count = _replace_in_file_text(text, p, r"$2/$1", True)
+    new_text, count = replace_in_file_text(text, p, r"$2/$1", True)
     assert new_text == "host/user\nserver/admin"
     assert count == 2
 
@@ -242,7 +241,7 @@ def test_replace_in_file_text_no_match():
     import re
     p = re.compile(r"xyz")
     text = "foo bar\nbaz"
-    new_text, count = _replace_in_file_text(text, p, "QQQ", False)
+    new_text, count = replace_in_file_text(text, p, "QQQ", False)
     assert new_text == "foo bar\nbaz"
     assert count == 0
 
@@ -252,12 +251,12 @@ def test_replace_in_file_text_multi_per_line():
     import re
     p = re.compile(r"a")
     text = "banana"
-    new_text, count = _replace_in_file_text(text, p, "X", False)
+    new_text, count = replace_in_file_text(text, p, "X", False)
     assert new_text == "bXnXnX"
     assert count == 3
 
 
-# ---- _find_match_at ----
+# ---- find_match_at ----
 
 
 def test_find_match_at_exact():
@@ -265,7 +264,7 @@ def test_find_match_at_exact():
     import re
     p = re.compile(r"(\w+)")
     raw = "hello world"
-    m = _find_match_at(p, raw, 6, 11)
+    m = find_match_at(p, raw, 6, 11)
     assert m is not None
     assert m.group(1) == "world"
 
@@ -275,9 +274,9 @@ def test_find_match_at_not_found():
     import re
     p = re.compile(r"(\w+)")
     raw = "hello world"
-    m = _find_match_at(p, raw, 0, 5)
+    m = find_match_at(p, raw, 0, 5)
     assert m is not None
     assert m.group(1) == "hello"
     # 不存在的区间
-    m = _find_match_at(p, raw, 3, 7)
+    m = find_match_at(p, raw, 3, 7)
     assert m is None

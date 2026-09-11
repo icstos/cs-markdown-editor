@@ -1,18 +1,18 @@
 """大纲列（横向四列布局第四列）：VSCode / Obsidian 风格右侧大纲面板。
 
-复用 views.sidebar 的 _compute_toc（标题派生）与 _render_outline_panel
-（标题树渲染），标题点击跳转到对应行。收起/展开不再内嵌按钮，改为在
-底部状态栏最右侧提供切换入口（参考「切换侧边栏」按钮，VSCode 直觉）；
-收起时内容宽度为 0（HARD_EDGE 裁剪 + 200ms 动画）。
+标题派生用 utils.toc.compute_toc，标题树渲染用 views.toc.render_outline_panel。
+收起/展开不内嵌按钮，改由底部状态栏最右侧提供切换入口（与「切换侧边栏」
+同款交互）；收起时内容宽度为 0（HARD_EDGE 裁剪 + 200ms 动画）。
 """
 
 from collections.abc import Callable
 
 import flet as ft
 
-from models import BlockType, Document
+from models.document import BlockType, Document
 from styles import FONT_MAIN, Spacing, _current_colors, only_border
-from views.sidebar import _compute_toc, _render_outline_panel
+from utils.toc import compute_toc
+from views.toc import render_outline_panel
 
 _OUTLINE_W = 240  # 大纲列固定宽度（可折叠）
 
@@ -24,20 +24,20 @@ def OutlinePanel(
     open: bool,
     on_jump_to_line: Callable[[int], None],
 ) -> ft.Control:
-    """右侧大纲列：标题树，开合由底部状态栏最右侧按钮控制。
-
-    open=False 时内容宽度为 0（HARD_EDGE 裁剪 + 200ms 动画），
-    展开/收起按钮位于状态栏最右侧（与侧边栏切换同款交互）。
-    """
+    """右侧大纲列：标题树，开合由底部状态栏最右侧按钮控制。"""
     c = _current_colors()
 
     # 大纲条目：按标题行签名 use_memo 缓存（仅标题增删改才重算）
-    _toc_sig = tuple(
-        (i, ln.level, ln.raw)
-        for i, ln in enumerate(document.lines)
-        if ln.block_type == BlockType.HEADING
-    ) if document is not None else ()
-    toc_entries = ft.use_memo(lambda: _compute_toc(document), [_toc_sig])
+    _toc_sig = (
+        tuple(
+            (i, ln.level, ln.raw)
+            for i, ln in enumerate(document.lines)
+            if ln.block_type == BlockType.HEADING
+        )
+        if document is not None
+        else ()
+    )
+    toc_entries = ft.use_memo(lambda: compute_toc(document), [_toc_sig])
 
     panel_body = ft.Column(
         controls=[
@@ -46,7 +46,8 @@ def OutlinePanel(
                 bgcolor=c.toolbar_bg,
                 border=only_border(bottom=ft.BorderSide(1, c.border)),
                 padding=ft.Padding.symmetric(
-                    horizontal=Spacing.LG, vertical=Spacing.LG,
+                    horizontal=Spacing.LG,
+                    vertical=Spacing.LG,
                 ),
                 content=ft.Row(
                     controls=[
@@ -68,7 +69,7 @@ def OutlinePanel(
             ),
             ft.Container(
                 expand=True,
-                content=_render_outline_panel(toc_entries, on_jump_to_line, c),
+                content=render_outline_panel(toc_entries, on_jump_to_line, c),
             ),
         ],
         spacing=0,

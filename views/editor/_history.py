@@ -18,12 +18,13 @@ import parser
 from core.history import EditorSnapshot, LineEditSnapshot
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import _make_snapshot as _make_snapshot_impl
+from views.editor._contracts import HistoryEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
 
-def build_history(ctx):
+def build_history(ctx: HistoryEnv):
     """构造历史/撤销/重做闭包组。
 
     返回 dict[str, Callable]：
@@ -144,12 +145,12 @@ def build_history(ctx):
             _push_history()
             ctx.undo_push_pending.current = False
 
+    # 仅返回需要装配到 EditorContext 的槽位；_current_for_undo_redo / _restore_snapshot
+    # 是 undo/redo 的内部实现细节，不属于跨工厂调用契约。
     return {
         "make_snapshot": _make_snapshot,
         "push_history": _push_history,
         "push_line_edit": _push_line_edit,
-        "current_for_undo_redo": _current_for_undo_redo,
-        "restore_snapshot": _restore_snapshot,
         "undo": undo,
         "redo": redo,
         "maybe_push_history": _maybe_push_history,

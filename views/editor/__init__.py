@@ -33,7 +33,7 @@ import flet as ft
 import parser
 from core.cursor import CursorState
 from core.history import EditHistory
-from models import BlockType, Document, SegType
+from models.document import BlockType, Document, SegType
 from styles import _current_colors
 from views.editor._actions import build_actions
 from views.editor._blocks import build_blocks
@@ -392,171 +392,46 @@ def MarkdownEditor(
     key_cbs = build_key(ctx)
     image_cbs = build_image(ctx)
     multi_cursor_cbs = build_multi_cursor(ctx)
+    replace_cbs = build_replace(ctx)
 
     # ============ 装配槽填充(跨工厂调用通过 ctx 属性)============
     # 共享
     ctx.mark_dirty = mark_dirty
+    # ============ 工厂输出装配 ============
+    # 每个工厂返回 {槽位名: 回调}，槽位名与 EditorContext 字段同名，故统一循环装配，
+    # 不再逐槽手写 139 行 ctx.x = cbs["y"]。同名映射由 tests/test_editor_wiring.py
+    # 断言守护：改名漏改会立即测试失败，而不是运行时静默退化成默认 no-op。
+    # 列表顺序即装配顺序（依赖拓扑序），后装配者覆盖前者，与原有语义一致。
+    # replace_cbs 定义于下方「替换闭包组」，此处引用在循环执行时已绑定。
+    _handlers: list[dict[str, object]] = [
+        cursor_cbs,
+        history_cbs,
+        format_cbs,
+        scroll_cbs,
+        nav_cbs,
+        outward_cbs,
+        indent_cbs,
+        blocks_cbs,
+        inline_fmt_cbs,
+        clipboard_cbs,
+        fence_cbs,
+        raw_mode_cbs,
+        focus_cbs,
+        key_cbs,
+        image_cbs,
+        multi_cursor_cbs,
+        replace_cbs,
+    ]
+    # 共享闭包（非工厂产物）
+    ctx.mark_dirty = mark_dirty
     ctx.set_outward_sel = _set_outward_sel
-    # cursor 组
-    ctx.cursor_base = cursor_cbs["cursor_base"]
-    ctx.set_cursor = cursor_cbs["set_cursor"]
-    ctx.end_input_session = cursor_cbs["end_input_session"]
-    ctx.on_tap_line = cursor_cbs["on_tap_line"]
-    ctx.handle_char_input = cursor_cbs["handle_char_input"]
-    ctx.handle_paste = cursor_cbs["handle_paste"]
-    ctx.handle_paste_plain = cursor_cbs["handle_paste_plain"]
-    ctx.backspace_core = cursor_cbs["backspace_core"]
-    ctx.delete_core = cursor_cbs["delete_core"]
-    ctx.on_submit = cursor_cbs["on_submit"]
-    # history 组
-    ctx.make_snapshot = history_cbs["make_snapshot"]
-    ctx.push_history = history_cbs["push_history"]
-    ctx.push_line_edit = history_cbs["push_line_edit"]
-    ctx.maybe_push_history = history_cbs["maybe_push_history"]
-    ctx.undo = history_cbs["undo"]
-    ctx.redo = history_cbs["redo"]
-    # format 组
-    ctx.format_document = format_cbs["format_document"]
-    # scroll 组
-    ctx.on_scroll = scroll_cbs["on_scroll"]
-    ctx.get_scroll_state = scroll_cbs["get_scroll_state"]
-    ctx.scroll_to_offset = scroll_cbs["scroll_to_offset"]
-    ctx.on_content_resize = scroll_cbs["on_content_resize"]
-    ctx.on_line_size_change = scroll_cbs["on_line_size_change"]
-    ctx.ensure_visible = scroll_cbs["ensure_visible"]
-    ctx.safe_scroll_to = scroll_cbs["safe_scroll_to"]
-    ctx.estimate_line_height = scroll_cbs["estimate_line_height"]
-    ctx.estimate_line_offset = scroll_cbs["estimate_line_offset"]
-    ctx.hit_test_line_x = scroll_cbs["hit_test_line_x"]
-    ctx.get_layout_cache = scroll_cbs["get_layout_cache"]
-    ctx.hit_test_xy = scroll_cbs["hit_test_xy"]
-    ctx.page_vlines = scroll_cbs["page_vlines"]
-    ctx.page_up = scroll_cbs["page_up"]
-    ctx.page_down = scroll_cbs["page_down"]
-    ctx.scroll_by_page = scroll_cbs["scroll_by_page"]
-    ctx.reset_line_heights = scroll_cbs["reset_line_heights"]
-    ctx.get_cursor_row_col = scroll_cbs["get_cursor_row_col"]
-    ctx.build_highlight_map = scroll_cbs["build_highlight_map"]
-    ctx.jump_to = scroll_cbs["jump_to"]
-    ctx.reveal_match = scroll_cbs["reveal_match"]
-    # navigation 组
-    ctx.move_left = nav_cbs["move_left"]
-    ctx.move_right = nav_cbs["move_right"]
-    ctx.move_home = nav_cbs["move_home"]
-    ctx.move_end = nav_cbs["move_end"]
-    ctx.move_doc_start = nav_cbs["move_doc_start"]
-    ctx.move_doc_end = nav_cbs["move_doc_end"]
-    ctx.move_up = nav_cbs["move_up"]
-    ctx.move_down = nav_cbs["move_down"]
-    ctx.move_vline = nav_cbs["move_vline"]
-    ctx.cursor_vline_info = nav_cbs["cursor_vline_info"]
-    ctx.get_line_visual_lines = nav_cbs["get_line_visual_lines"]
-    ctx.link_tab_jump = nav_cbs["link_tab_jump"]
-    # outward 组
-    ctx.step_left = outward_cbs["step_left"]
-    ctx.step_right = outward_cbs["step_right"]
-    ctx.step_up = outward_cbs["step_up"]
-    ctx.step_down = outward_cbs["step_down"]
-    ctx.step_home = outward_cbs["step_home"]
-    ctx.step_end = outward_cbs["step_end"]
-    ctx.start_outward_from_point = outward_cbs["start_outward_from_point"]
-    ctx.extend_outward = outward_cbs["extend_outward"]
-    ctx.extend_outward_step = outward_cbs["extend_outward_step"]
-    ctx.select_word_at = outward_cbs["select_word_at"]
-    ctx.on_extend_outward = outward_cbs["on_extend_outward"]
-    ctx.on_pan_start_outward = outward_cbs["on_pan_start_outward"]
-    ctx.delete_raw_range = outward_cbs["delete_raw_range"]
-    ctx.handle_outward_delete = outward_cbs["handle_outward_delete"]
-    ctx.handle_outward_enter = outward_cbs["handle_outward_enter"]
-    ctx.handle_outward_cut = outward_cbs["handle_outward_cut"]
-    ctx.handle_outward_copy = outward_cbs["handle_outward_copy"]
-    ctx.select_all = outward_cbs["select_all"]
-    ctx.clear_outward_sel = outward_cbs["clear_outward_sel"]
-    # indent 组
-    ctx.indent_or_outdent = indent_cbs["indent_or_outdent"]
-    ctx.new_line_after = indent_cbs["new_line_after"]
-    # blocks 组
-    ctx.set_block = blocks_cbs["set_block"]
-    ctx.toggle_task = blocks_cbs["toggle_task"]
-    ctx.toggle_task_at_cursor = blocks_cbs["toggle_task_at_cursor"]
-    ctx.format_task = blocks_cbs["format_task"]
-    ctx.format_table = blocks_cbs["format_table"]
-    ctx.change_lang = blocks_cbs["change_lang"]
-    ctx.insert_text = clipboard_cbs["insert_text"]
-    # inline_format 组
-    ctx.apply_inline_format = inline_fmt_cbs["apply_inline_format"]
-    ctx.insert_inline_at = inline_fmt_cbs["insert_inline_at"]
-    ctx.apply_outward_wrap = inline_fmt_cbs["apply_outward_wrap"]
-    ctx.handle_outward_type_char = inline_fmt_cbs["handle_outward_type_char"]
-    # clipboard 组
-    ctx.compute_markdown_from_text = clipboard_cbs["compute_markdown_from_text"]
-    ctx.handle_delete_selection = clipboard_cbs["handle_delete_selection"]
-    ctx.handle_cut = clipboard_cbs["handle_cut"]
-    ctx.cut_current_line = clipboard_cbs["cut_current_line"]
-    ctx.apply_inline_format_to_selection = clipboard_cbs["apply_inline_format_to_selection"]
-    ctx.on_selection_area_change = clipboard_cbs["on_selection_area_change"]
-    # fence 组
-    ctx.on_change_code = fence_cbs["on_change_code"]
-    ctx.on_code_focus = fence_cbs["on_code_focus"]
-    ctx.on_code_blur = fence_cbs["on_code_blur"]
-    ctx.on_code_selection = fence_cbs["on_code_selection"]
-    ctx.handle_code_backspace = fence_cbs["handle_code_backspace"]
-    ctx.handle_code_exit = fence_cbs["handle_code_exit"]
-    ctx.on_change_math = fence_cbs["on_change_math"]
-    ctx.on_math_focus = fence_cbs["on_math_focus"]
-    ctx.on_math_blur = fence_cbs["on_math_blur"]
-    ctx.on_change_cell = fence_cbs["on_change_cell"]
-    ctx.on_table_op = fence_cbs["on_table_op"]
-    ctx.on_table_focus = fence_cbs["on_table_focus"]
-    ctx.on_table_blur = fence_cbs["on_table_blur"]
-    # raw_mode 组
-    ctx.toggle_raw = raw_mode_cbs["toggle_raw"]
-    ctx.toggle_focus_mode = raw_mode_cbs["toggle_focus_mode"]
-    ctx.on_blur = raw_mode_cbs["on_blur"]
-    ctx.on_cursor_focus = raw_mode_cbs["on_cursor_focus"]
-    ctx.suppress_blur_for_click = raw_mode_cbs["suppress_blur_for_click"]
-    ctx.on_raw_change = raw_mode_cbs["on_raw_change"]
-    # focus 组
-    ctx.focus_cursor_field = focus_cbs["focus_cursor_field"]
-    ctx.clear_cursor_value = focus_cbs["clear_cursor_value"]
-    ctx.focus_math_field = focus_cbs["focus_math_field"]
-    # key 组
-    ctx.on_key_down = key_cbs["on_key_down"]
-    ctx.on_key_up = key_cbs["on_key_up"]
-    # image 组
-    ctx.on_image_action = image_cbs["on_image_action"]
-    ctx.paste_image_from_clipboard = image_cbs["paste_image_from_clipboard"]
-    # 多光标组
-    ctx.add_secondary_cursor = multi_cursor_cbs["add_secondary_cursor"]
-    ctx.add_column_cursors = multi_cursor_cbs["add_column_cursors"]
-    ctx.clear_secondary_cursors = multi_cursor_cbs["clear_secondary_cursors"]
-    ctx.broadcast_char_input = multi_cursor_cbs["broadcast_char_input"]
-    ctx.broadcast_backspace = multi_cursor_cbs["broadcast_backspace"]
-    ctx.broadcast_delete = multi_cursor_cbs["broadcast_delete"]
-    ctx.broadcast_move_left = multi_cursor_cbs["broadcast_move_left"]
-    ctx.broadcast_move_right = multi_cursor_cbs["broadcast_move_right"]
-    ctx.broadcast_extend_left = multi_cursor_cbs["broadcast_extend_left"]
-    ctx.broadcast_extend_right = multi_cursor_cbs["broadcast_extend_right"]
-    ctx.broadcast_submit = multi_cursor_cbs["broadcast_submit"]
-    ctx.has_secondary_cursors = multi_cursor_cbs["has_secondary_cursors"]
-    ctx.extend_selection_left = multi_cursor_cbs["extend_selection_left"]
-    ctx.extend_selection_right = multi_cursor_cbs["extend_selection_right"]
-    ctx.extend_selection_home = multi_cursor_cbs["extend_selection_home"]
-    ctx.extend_selection_end = multi_cursor_cbs["extend_selection_end"]
-    ctx.has_multi_cursor_selection = multi_cursor_cbs["has_multi_cursor_selection"]
-    ctx.collect_multi_cursor_text = multi_cursor_cbs["collect_multi_cursor_text"]
-    ctx.copy_multi_cursor_selection = multi_cursor_cbs["copy_multi_cursor_selection"]
-    ctx.cut_multi_cursor_selection = multi_cursor_cbs["cut_multi_cursor_selection"]
-    ctx.paste_to_multi_cursors = multi_cursor_cbs["paste_to_multi_cursors"]
-    ctx.paste_to_multi_cursors_plain = multi_cursor_cbs["paste_to_multi_cursors_plain"]
+    for _group in _handlers:
+        for _slot, _fn in _group.items():
+            setattr(ctx, _slot, _fn)
 
     # ============ 替换闭包组(搜索面板触发)============
     # 必须装配到 ctx 替换默认 lambda,build_actions 才能将真实闭包写入
     # EditorActions.replace_match_in_doc / replace_all_in_doc,供 sidebar
-    # 通过 nav.current.replace_match_in_doc 调用(否则按钮调用默认空操作失效)。
-    replace_cbs = build_replace(ctx)
-    ctx.replace_match_in_doc = replace_cbs["replace_match_in_doc"]
-    ctx.replace_all_in_doc = replace_cbs["replace_all_in_doc"]
 
     # ============ 大文件保护:自动切换源码模式 ============
     # 超过 _LARGE_DOC_LINES 行时跳过 build_line_controls(为每行构造 LineView

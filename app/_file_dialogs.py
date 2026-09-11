@@ -38,6 +38,8 @@ from services import file_ops, shortcut
 from services.file_io import read_text
 from services.ui_feedback import show_snack as _show_snack_impl
 
+from app._contracts import FileDialogsEnv
+
 # 对话框实例计数器：每次弹窗递增。作为 FileActionDialog 的 key 触发重挂载，
 # 使输入框 use_state 重新以 input_value 初始化（新建文件/文件夹不再保留上次
 # 输入内容），并重新 autofocus 聚焦编辑。
@@ -50,7 +52,7 @@ def _next_dialog_seq() -> int:
     return _dialog_seq
 
 
-def build_file_dialogs(ctx):
+def build_file_dialogs(ctx: FileDialogsEnv):
     """构造文件对话框与右键菜单控制器闭包组。
 
     返回 dict[str, Callable]：

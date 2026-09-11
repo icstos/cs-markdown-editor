@@ -3,7 +3,7 @@
 parse_markdown 既有行为：分隔行不创建为独立 Line（被跳过），但 set_block(TABLE)
 直接切片替换 document.lines（保留分隔行），table_view.py 从 document.lines 读取
 时分隔行存在、对齐信息不丢。本测试验证：
-1. _join_row 生成的 header/sep/data raw 格式正确（首尾为 |、单元格数匹配）
+1. join_row 生成的 header/sep/data raw 格式正确（首尾为 |、单元格数匹配）
 2. 分隔行 raw 被 is_table_separator 识别
 3. header 含原文本内容
 4. parse_markdown 对表格的既有行为（header + data，分隔行跳过）
@@ -18,12 +18,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from parser import parse_markdown  # noqa: E402
-from utils.table_helpers import join_row, is_table_separator, split_row  # noqa: E402
-from views.table_view import _align_marker  # noqa: E402
+from utils.table_helpers import align_marker, is_table_separator, join_row, split_row
 
 
 def test_join_row_format():
-    """_join_row 生成的 raw 格式：首尾为 |，单元格数匹配。"""
+    """join_row 生成的 raw 格式：首尾为 |，单元格数匹配。"""
     header = join_row(["表头1", ""])
     assert header.startswith("| ") and header.endswith(" |"), f"bad format: {header!r}"
     cells = split_row(header)
@@ -129,11 +128,11 @@ def test_set_align_writes_marker_not_semantic_string():
     数据行，表现为"在下方单元格写入了 center 字符"且对齐失效。
     正确行为：语义 'left'/'center'/'right' 应转为 '---'/':---:'/'---:'。
     """
-    assert _align_marker("left") == "---"
-    assert _align_marker("center") == ":---:"
-    assert _align_marker("right") == "---:"
+    assert align_marker("left") == "---"
+    assert align_marker("center") == ":---:"
+    assert align_marker("right") == "---:"
     # 写入分隔行后仍能被识别为分隔行（含对齐变体）
-    sep = join_row([_align_marker("center"), _align_marker("right")])
+    sep = join_row([align_marker("center"), align_marker("right")])
     assert is_table_separator(sep), f"sep not recognized: {sep!r}"
     # 反例：直接写语义字符串（BUG 现象），不应被识别为分隔行
     bad_sep = join_row(["center", "right"])

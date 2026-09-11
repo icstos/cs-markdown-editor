@@ -15,9 +15,8 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pytest  # noqa: E402
 
-from models import BlockType, Document, Line, Segment, SegType  # noqa: E402
+from models.document import BlockType, Document, Line, Segment, SegType  # noqa: E402
 from views.editor._replace import build_replace  # noqa: E402
 
 

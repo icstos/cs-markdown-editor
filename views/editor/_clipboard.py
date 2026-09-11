@@ -21,12 +21,13 @@ import contextlib
 import parser
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
+from views.editor._contracts import ClipboardEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
 
-def build_clipboard(ctx):
+def build_clipboard(ctx: ClipboardEnv):
     """构造剪贴板 / SelectionArea 选区闭包组。
 
     返回 dict[str, Callable]：
@@ -68,8 +69,9 @@ def build_clipboard(ctx):
             try:
                 md = parser.compute_markdown_from_text(ctx.document.lines, plain_text)
                 await clipboard.set(md or plain_text)
-            except Exception:
-                pass
+            except RuntimeError:
+                # 剪贴板服务未就绪 / 会话已销毁：退回原始文本继续流程；其余异常照常抛出
+                await clipboard.set(plain_text)
         handle_delete_selection(plain_text)
 
     async def cut_current_line():

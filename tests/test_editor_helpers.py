@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import BlockType, Line
+from models.document import BlockType, Line
 from views._editor_helpers import (
     _build_highlight_map,
     _build_offset_prefix,

@@ -18,9 +18,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pytest  # noqa: E402
 
-from models import SegType  # noqa: E402
+from models.document import SegType  # noqa: E402
 from parser import parse_markdown  # noqa: E402
 from utils.segment_helpers import WRAP_SYNTAX  # noqa: E402
 from views.editor._inline_format import _compute_wrap_toggle  # noqa: E402

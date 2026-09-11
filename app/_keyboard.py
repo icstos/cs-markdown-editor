@@ -32,8 +32,10 @@ import flet as ft
 
 from views.key_bindings import KeyDispatcher
 
+from app._contracts import KeyboardEnv
 
-def build_keyboard(ctx):
+
+def build_keyboard(ctx: KeyboardEnv):
     """构造键盘分发控制器。
 
     返回 dict[str, Any]：
@@ -105,14 +107,13 @@ def build_keyboard(ctx):
             return lambda: None
 
         def _handler(e):
-            # 通过 ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例
+            # 通过 ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例。
+            # 刻意不吞异常：静默 except 会让「快捷键失效」这类回归无处可查；
+            # 分发器自身的异常由 Flet 事件循环上报（tests/test_boot_smoke.py 兜底）。
             d = ctx.dispatcher_ref.current
             if d is None:
                 return
-            try:
-                d.handle(e)
-            except Exception:
-                return
+            d.handle(e)
 
         page.on_keyboard_event = _handler
 

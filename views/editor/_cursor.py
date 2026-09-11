@@ -32,7 +32,7 @@ import time
 import flet as ft
 
 import parser
-from models import BlockType
+from models.document import BlockType
 from styles import block_text_size
 from utils.segment_helpers import PREFIX_SEGTYPES
 from utils.segment_helpers import is_fence as _is_fence
@@ -46,6 +46,7 @@ from views.editor._helpers import (
     _make_code_line,
     _next_line_raw,
 )
+from views.editor._contracts import CursorEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -121,7 +122,7 @@ def _prefix_sig(line) -> tuple:
     return (None, None, line.level, line.task)
 
 
-def build_cursor(ctx):
+def build_cursor(ctx: CursorEnv):
     """构造光标核心闭包组（IME 核心组，紧耦合不拆散）。
 
     返回 dict[str, Callable]：

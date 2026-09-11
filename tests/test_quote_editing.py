@@ -18,7 +18,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import BlockType, Document, Line, Segment, SegType
+from models.document import BlockType, Document, Line, Segment, SegType
 from parser.block import parse_markdown
 from views.editor._cursor import build_cursor
 from views.pixel_layout import (

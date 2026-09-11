@@ -13,13 +13,12 @@
 
 import os
 import sys
-import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from models import BlockType, Document, Line, Segment, SegType  # noqa: E402
+from models.document import Segment, SegType  # noqa: E402
 from parser import parse_markdown, serialize, to_html  # noqa: E402
 from services.shortcuts import ShortcutManager  # noqa: E402
 from styles import _LIGHT, _DARK, segment_style  # noqa: E402

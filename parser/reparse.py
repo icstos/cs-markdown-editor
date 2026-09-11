@@ -22,7 +22,7 @@
 
 import copy
 
-from models import BlockType, Line, SegType, Segment
+from models.document import BlockType, Line, SegType, Segment
 
 from parser._engine import _RE_CODE_FENCE, _RE_FRONTMATTER_FENCE, _RE_HR, _RE_MATH_BLOCK
 from parser.block import _build_line

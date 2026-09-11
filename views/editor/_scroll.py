@@ -37,7 +37,7 @@ import contextlib
 
 import flet as ft
 
-from models import BlockType
+from models.document import BlockType
 from styles import FONT_MAIN, block_text_size
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
@@ -45,6 +45,7 @@ from views._editor_helpers import (
     _build_highlight_map as _build_highlight_map_impl,
 )
 from views._editor_helpers import _build_offset_prefix
+from views.editor._contracts import ScrollEnv
 
 
 def _run_task_safe(page, coro_fn, *args, **kwargs) -> None:
@@ -67,7 +68,7 @@ def _run_task_safe(page, coro_fn, *args, **kwargs) -> None:
         pass
 
 
-def build_scroll(ctx):
+def build_scroll(ctx: ScrollEnv):
     """构造滚动 / 导航 / 布局命中闭包组。
 
     返回 dict[str, Callable]：
@@ -92,8 +93,8 @@ def build_scroll(ctx):
                     ctx.max_scroll_ref.current,
                     ctx.viewport_h_ref.current,
                 )
-        except Exception:
-            pass
+        except (AttributeError, RuntimeError):
+            pass  # 滚动上报回调失败不应影响滚动本身；其余异常照常抛出以便定位
 
     def _get_scroll_state() -> tuple[float, float, float]:
         """返回当前滚动状态 (offset, max_scroll_extent, viewport_height)。"""
@@ -141,8 +142,8 @@ def build_scroll(ctx):
                 if getattr(page, "sidebar_dragging", False):
                     return
                 ctx.set_viewport_w(new_w)
-        except Exception:
-            pass
+        except (AttributeError, RuntimeError):
+            pass  # 视口尺寸更新在控件未挂载 / 会话销毁时可能失败；其余异常照常抛出
 
     def on_line_size_change(li: int, height: float):
         """LineView on_size_change 回调：缓存行实际渲染高度。
@@ -283,8 +284,8 @@ def build_scroll(ctx):
                     await ctx.list_view_ref.current.scroll_to(
                         max(0, cursor_abs_y + text_h - viewport + 40), duration=100
                     )
-        except Exception:
-            pass
+        except (AttributeError, RuntimeError):
+            pass  # 控件未挂载时 scroll_to 不可用；其余异常照常抛出
 
     def _ensure_visible(li: int, only_when_offscreen: bool = False):
         """确保光标所在视觉行可见（vline 级精确滚动）。
@@ -391,8 +392,8 @@ def build_scroll(ctx):
             await ctx.list_view_ref.current.scroll_to(
                 ctx.scroll_offset_ref.current + delta, duration=100
             )
-        except Exception:
-            pass
+        except (AttributeError, RuntimeError):
+            pass  # 翻页滚动依赖已挂载的 ListView；其余异常照常抛出
 
     def jump_to(li: int, off: int | None = None):
         """跳转到指定行（可选精确 offset）。
@@ -447,8 +448,8 @@ def build_scroll(ctx):
             precise = max(0.0, precise_y - (viewport - precise_h) / 2.0)
             if abs(precise - target) > 4:
                 await lv.scroll_to(precise, duration=250)
-        except Exception:
-            pass
+        except (AttributeError, RuntimeError):
+            pass  # 平滑滚动在控件未挂载时可能失败；其余异常照常抛出
 
     def reveal_match(li: int, off: int | None = None):
         """文档内搜索跳转：把匹配行滚动到视口中部（平滑），并置光标于 raw 偏移。

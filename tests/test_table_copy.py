@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import BlockType, Line  # noqa: E402
+from models.document import BlockType, Line  # noqa: E402
 
 
 def _table_line(raw: str) -> Line:

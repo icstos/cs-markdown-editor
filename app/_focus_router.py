@@ -19,8 +19,10 @@ on_dirty_change / on_dirty_change_pane
 - 无外部依赖（仅读写 ctx 装配槽）
 """
 
+from app._contracts import FocusRouterEnv
 
-def build_focus_router(ctx):
+
+def build_focus_router(ctx: FocusRouterEnv):
     """构造焦点路由与脏状态上报控制器闭包组。
 
     返回 dict[str, Callable]：

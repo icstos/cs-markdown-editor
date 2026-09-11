@@ -17,23 +17,19 @@ import os
 # 确保项目根目录在 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import BlockType, Line, SegType, Segment
+from models.document import BlockType, Line, SegType, Segment
 from views.pixel_layout import (
-    LineLayout,
     LineLayoutCache,
     VisualLine,
     _compute_wrap_width,
     _find_vline_for_raw,
     _layout_last_raw_off,
-    _line_visual_layout,
     _value_linear_width,
     _wrap_offsets_into_visual_lines,
     _make_visual_line,
 )
-from views.rendered_line import (
-    _build_raw_to_flat_map,
-    _slice_spans_for_visual_line,
-)
+from views._spans import build_raw_to_flat_map, slice_spans_for_visual_line
+
 
 
 # ============ 辅助构造 ============
@@ -377,12 +373,12 @@ def test_cache_quote_indent():
     print("  ✓ test_cache_quote_indent")
 
 
-# ============ _build_raw_to_flat_map ============
+# ============ build_raw_to_flat_map ============
 
 def test_raw_to_flat_plain_text():
     """纯文本：raw 偏移与 flat 位置 1:1 对应。"""
     line = _make_line("hello")
-    r2f = _build_raw_to_flat_map(line, cursor_off=None)
+    r2f = build_raw_to_flat_map(line, cursor_off=None)
     assert len(r2f) == 6, f"len 应 6，实际 {len(r2f)}"
     assert r2f == [0, 1, 2, 3, 4, 5], f"纯文本 1:1，实际 {r2f}"
     print("  ✓ test_raw_to_flat_plain_text")
@@ -396,7 +392,7 @@ def test_raw_to_flat_bold_browse():
     """
     seg = Segment(SegType.STRONG, "**bold**", "bold")
     line = Line(block_type=BlockType.PARAGRAPH, raw="**bold**", segments=[seg])
-    r2f = _build_raw_to_flat_map(line, cursor_off=None)
+    r2f = build_raw_to_flat_map(line, cursor_off=None)
     assert len(r2f) == 9
     assert r2f[0] == 0 and r2f[1] == 0 and r2f[2] == 0  # 前 "**" 折叠 → flat 0
     assert r2f[3] == 1  # 'b' 之后
@@ -409,7 +405,7 @@ def test_raw_to_flat_bold_active():
     """激活态粗体（光标在段内）：标记可见，flat = raw 1:1。"""
     seg = Segment(SegType.STRONG, "**bold**", "bold")
     line = Line(block_type=BlockType.PARAGRAPH, raw="**bold**", segments=[seg])
-    r2f = _build_raw_to_flat_map(line, cursor_off=3)  # 光标在 'b' 处
+    r2f = build_raw_to_flat_map(line, cursor_off=3)  # 光标在 'b' 处
     # 光标在段内 → 全字符可见 → flat = raw 逐字符
     assert len(r2f) == 9
     assert r2f == [0, 1, 2, 3, 4, 5, 6, 7, 8], f"激活态 1:1，实际 {r2f}"
@@ -427,13 +423,13 @@ def test_raw_to_flat_heading_prefix():
     line = Line(block_type=BlockType.HEADING, raw="# 标题", segments=[prefix, content], level=1)
 
     # 浏览态：前缀 display="" → flat 不前进，内容 flat 逐字符
-    r2f = _build_raw_to_flat_map(line, cursor_off=None)
+    r2f = build_raw_to_flat_map(line, cursor_off=None)
     assert r2f[0] == 0 and r2f[1] == 0 and r2f[2] == 0  # "# " 折叠 → flat 0
     assert r2f[3] == 1  # '标' 之后
     assert r2f[4] == 2  # '题' 之后
 
     # 光标在本行（非前缀段）：前缀可见（灰色），flat = raw 逐字符
-    r2f2 = _build_raw_to_flat_map(line, cursor_off=3)  # 光标在 "标" 处
+    r2f2 = build_raw_to_flat_map(line, cursor_off=3)  # 光标在 "标" 处
     assert r2f2[0] == 0  # 偏移 0（'#' 之前）
     assert r2f2[1] == 1 and r2f2[2] == 2  # "# " 可见
     assert r2f2[3] == 3 and r2f2[4] == 4  # "标题" 可见
@@ -450,7 +446,7 @@ def test_raw_to_flat_list_prefix():
     prefix = Segment(SegType.LIST_PREFIX, "- ", "", level=0)
     content = Segment(SegType.TEXT, "item", "item")
     line = Line(block_type=BlockType.LIST_UO, raw="- item", segments=[prefix, content], level=0)
-    r2f = _build_raw_to_flat_map(line, cursor_off=None)
+    r2f = build_raw_to_flat_map(line, cursor_off=None)
     assert r2f[0] == 0 and r2f[1] == 0  # "- " 内部 → flat 0
     assert r2f[2] == 3  # 前缀末尾 → flat 3（= len("•  ")）
     assert r2f[3] == 4  # 'i' 之后
@@ -463,7 +459,7 @@ def test_raw_to_flat_skip_prefix():
     prefix = Segment(SegType.LIST_PREFIX, "- ", "", level=0)
     content = Segment(SegType.TEXT, "item", "item")
     line = Line(block_type=BlockType.LIST_UO, raw="- item", segments=[prefix, content], level=0)
-    r2f = _build_raw_to_flat_map(line, cursor_off=None, skip_prefix=True)
+    r2f = build_raw_to_flat_map(line, cursor_off=None, skip_prefix=True)
     # 前缀段跳过：raw 0,1 → flat 0；内容从 flat 0 开始
     assert r2f[0] == 0 and r2f[1] == 0  # "- " 跳过
     assert r2f[2] == 0  # 'i' 在 flat 0
@@ -471,7 +467,7 @@ def test_raw_to_flat_skip_prefix():
     print("  ✓ test_raw_to_flat_skip_prefix")
 
 
-# ============ _slice_spans_for_visual_line ============
+# ============ slice_spans_for_visual_line ============
 
 def test_slice_single_vline():
     """单视觉行：切片后 spans 拼接 == 原 flat 文本。"""
@@ -480,7 +476,7 @@ def test_slice_single_vline():
     flat_spans = [ft.TextSpan("hello world", style=style)]
     r2f = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     vline = VisualLine(0, 0, 11, list(range(12)), 110.0)
-    sliced = _slice_spans_for_visual_line(flat_spans, r2f, vline, style)
+    sliced = slice_spans_for_visual_line(flat_spans, r2f, vline, style)
     text = "".join(s.text for s in sliced)
     assert text == "hello world", f"单行切片应完整，实际 '{text}'"
     print("  ✓ test_slice_single_vline")
@@ -497,8 +493,8 @@ def test_slice_multi_vline():
         VisualLine(0, 0, 5, [0.0, 10, 20, 30, 40, 50], 50.0),
         VisualLine(1, 5, 11, [0.0, 10, 20, 30, 40, 50, 60], 60.0),
     ]
-    text0 = "".join(s.text for s in _slice_spans_for_visual_line(flat_spans, r2f, vlines[0], style))
-    text1 = "".join(s.text for s in _slice_spans_for_visual_line(flat_spans, r2f, vlines[1], style))
+    text0 = "".join(s.text for s in slice_spans_for_visual_line(flat_spans, r2f, vlines[0], style))
+    text1 = "".join(s.text for s in slice_spans_for_visual_line(flat_spans, r2f, vlines[1], style))
     assert text0 == "hello", f"vline0 应 'hello'，实际 '{text0}'"
     assert text1 == " world", f"vline1 应 ' world'，实际 '{text1}'"
     assert text0 + text1 == "hello world"
@@ -516,7 +512,7 @@ def test_slice_preserves_style():
     ]
     r2f = [0, 1, 2, 3, 4, 5, 6, 7]
     vline = VisualLine(0, 0, 7, list(range(8)), 70.0)
-    sliced = _slice_spans_for_visual_line(flat_spans, r2f, vline, style_a)
+    sliced = slice_spans_for_visual_line(flat_spans, r2f, vline, style_a)
     assert len(sliced) == 2
     assert sliced[0].style.color == ft.Colors.RED
     assert sliced[1].style.color == ft.Colors.BLUE
@@ -530,7 +526,7 @@ def test_slice_empty_range():
     flat_spans = [ft.TextSpan("hello", style=style)]
     r2f = [0, 0, 0, 0, 0, 0]  # 全折叠（如纯标记段）
     vline = VisualLine(0, 0, 5, [0.0, 0, 0, 0, 0, 0], 0.0)
-    sliced = _slice_spans_for_visual_line(flat_spans, r2f, vline, style)
+    sliced = slice_spans_for_visual_line(flat_spans, r2f, vline, style)
     assert len(sliced) == 1
     assert sliced[0].text == " "
     print("  ✓ test_slice_empty_range")
@@ -545,8 +541,8 @@ def test_slice_straddling_span():
     r2f = [0, 1, 2, 3, 4, 5, 6]
     vline0 = VisualLine(0, 0, 3, [0.0, 10, 20, 30], 30.0)
     vline1 = VisualLine(1, 3, 6, [0.0, 10, 20, 30], 30.0)
-    s0 = _slice_spans_for_visual_line(flat_spans, r2f, vline0, style)
-    s1 = _slice_spans_for_visual_line(flat_spans, r2f, vline1, style)
+    s0 = slice_spans_for_visual_line(flat_spans, r2f, vline0, style)
+    s1 = slice_spans_for_visual_line(flat_spans, r2f, vline1, style)
     assert "".join(s.text for s in s0) == "ABC"
     assert "".join(s.text for s in s1) == "DEF"
     print("  ✓ test_slice_straddling_span")

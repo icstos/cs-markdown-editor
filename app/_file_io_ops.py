@@ -40,17 +40,19 @@ import parser
 from app._tab_helpers import is_blank_untitled, tab_group
 from config.settings import save_settings
 from services import shortcut
-from services.backup import is_large_content, write_backup
+from services.backup import write_backup
 from services.export import export_to_docx, export_to_html, export_to_pdf
 from services.file_io import read_text, write_text, write_text_atomic
 from utils.file_helpers import file_name
+
+from app._contracts import FileIoEnv
 
 # 内存绝对保护上限：异步加载已避免 UI 卡死，但仍需防止极端大文件
 # （如误选 GB 级二进制文件）导致内存爆炸。超过此值拒绝打开。
 _MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
-def build_file_io_ops(ctx):
+def build_file_io_ops(ctx: FileIoEnv):
     """构造文件 IO 控制器闭包组。
 
     返回 dict[str, Callable]：

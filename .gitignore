@@ -41,3 +41,12 @@ wheels/
 .scrapy
 # --- END: template .gitignore  ---
 settings.json
+
+# pytest 临时基目录与缓存（受限环境下需把 --basetemp 指向工作区内）
+.pytest-*/
+.ptmp-*/
+pytest-cache-files-*/
+.pytest_cache/
+tests/.tmp*/
+tests/.boot-sandbox/
+tests/.scratch-*/

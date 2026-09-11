@@ -22,7 +22,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from models import BlockType
+from models.document import BlockType
 from views.editor._helpers import _build_diff_gap
 from views.line_view import LineView
 from views.table_view import TableView

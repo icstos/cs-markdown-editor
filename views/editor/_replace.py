@@ -20,12 +20,13 @@
 
 import parser
 from utils.segment_helpers import line_raw as _line_raw
+from views.editor._contracts import ReplaceEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
 
-def build_replace(ctx):
+def build_replace(ctx: ReplaceEnv):
     """构造替换闭包组。
 
     返回 dict[str, Callable]：replace_match_in_doc / replace_all_in_doc

@@ -43,8 +43,10 @@ from config.settings import DEFAULT_SETTINGS, save_settings
 from services.file_io import read_text, write_text
 from styles import get_colors
 
+from app._contracts import SettingsEnv
 
-def build_settings_controller(ctx):
+
+def build_settings_controller(ctx: SettingsEnv):
     """构造设置与主题控制器闭包组。
 
     返回 dict[str, Callable]：

@@ -25,8 +25,10 @@ r"""拆分编辑器与对比焦点视口控制器（从 main.py 闭包抽取）�
 import parser
 from app._tab_helpers import is_blank_untitled, tab_group
 
+from app._contracts import SplitEnv
 
-def build_split_editor(ctx):
+
+def build_split_editor(ctx: SplitEnv):
     """构造拆分编辑器与对比焦点视口控制器闭包组。
 
     返回 dict[str, Callable]：

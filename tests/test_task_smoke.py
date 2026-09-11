@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from parser import parse_markdown  # noqa: E402
-from models import SegType  # noqa: E402
+from models.document import SegType  # noqa: E402
 
 
 def _first_task_line(text: str):

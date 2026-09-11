@@ -29,8 +29,10 @@ import parser
 from app._tab_helpers import is_blank_untitled, tab_paths
 from services.file_io import read_text
 
+from app._contracts import DiffEnv
 
-def build_diff_controller(ctx):
+
+def build_diff_controller(ctx: DiffEnv):
     """构造对比标签控制器闭包组。
 
     返回 dict[str, Callable]：

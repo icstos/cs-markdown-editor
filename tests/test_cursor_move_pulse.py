@@ -28,7 +28,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import BlockType, Document, Line, Segment, SegType
+from models.document import BlockType, Document, Line, Segment, SegType
 from views.editor._cursor import build_cursor
 
 

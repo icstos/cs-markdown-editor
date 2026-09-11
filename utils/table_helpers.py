@@ -5,11 +5,11 @@
 - ALIGN_RE：re.Pattern，对齐分隔单元格正则（:?-{3,}:?）
 - split_row(raw: str) -> list[str]：拆表格行单元格
 - join_row(cells: list[str]) -> str：拼表格行源码
+- align_marker(align: str) -> str：对齐方式 → 分隔行标记（"---" / ":---:" / "---:"）
 - is_table_separator(raw: str) -> bool：是否为对齐分隔行
 
-消除重复：原先 _split_row / _join_row / _ALIGN_RE / _ALIGN_RE_TABLE /
-_is_table_separator 在 parser.py、editor.py、table_view.py 各有一份，
-此处统一为单一来源。
+单一来源：split_row / join_row / align_marker / is_table_separator 原先在
+parser、table_view 等处各有一份，此处统一；视图层与编辑器不得再自带副本。
 """
 
 import re
@@ -32,6 +32,11 @@ def join_row(cells: list[str]) -> str:
     例：["a", "b"] → "| a | b |"
     """
     return "| " + " | ".join(cells) + " |"
+
+
+def align_marker(align: str) -> str:
+    """对齐方式 → 表格分隔行标记；未知对齐退化为左对齐。"""
+    return {"left": "---", "center": ":---:", "right": "---:"}.get(align, "---")
 
 
 def is_table_separator(raw: str) -> bool:

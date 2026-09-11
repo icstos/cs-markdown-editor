@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from models import BlockType, Document, Line, Segment, SegType
+from models.document import BlockType, Document, Line, Segment, SegType
 from views.editor._fence import build_fence
 
 

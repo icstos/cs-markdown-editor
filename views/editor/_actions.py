@@ -14,9 +14,10 @@
 """
 
 from core.actions import EditorActions
+from views.editor._contracts import ActionsEnv
 
 
-def build_actions(ctx) -> EditorActions | None:
+def build_actions(ctx: ActionsEnv) -> EditorActions | None:
     """构造 EditorActions 并写入 nav_ref.current。
 
     nav_ref 为 None 时（如右侧拆分编辑器无全局快捷键需求）跳过写入，返回 None。

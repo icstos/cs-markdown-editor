@@ -20,7 +20,7 @@ line_raw / is_fence 从 editor.py 模块级函数迁入，供 parser/selection�
 views/_editor_helpers 等无循环依赖复用（editor.py 反向导入）。
 """
 
-from models import BlockType, Line, Segment, SegType
+from models.document import BlockType, Line, Segment, SegType
 
 # 围栏岛屿块类型：自管理独立岛屿，不参与光标导航/合并/软换行
 # （CODE/MATH 走原生控件，TOC/TABLE 为占位单 vline；HR 走普通文本路径，可承载

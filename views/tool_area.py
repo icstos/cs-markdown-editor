@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 import flet as ft
 
-from models import BlockType
+from models.document import BlockType
 from styles import Spacing, get_colors, only_border
 from views.toolbar import Toolbar, _btn, _divider as _tb_divider
 

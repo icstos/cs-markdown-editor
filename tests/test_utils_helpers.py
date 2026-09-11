@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from models import SegType, Segment  # noqa: E402
+from models.document import SegType, Segment  # noqa: E402
 from utils.file_helpers import file_name  # noqa: E402
 from utils.segment_helpers import (  # noqa: E402
     MONO_SEGTYPES,

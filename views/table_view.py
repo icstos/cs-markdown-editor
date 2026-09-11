@@ -19,8 +19,9 @@ try:
 except Exception:  # pragma: no cover
     DataTable2 = ft.DataTable
 
-from models import BlockType, Line
 import parser
+from models.document import BlockType, Line
+from services.clipboard import copy_code_to_clipboard
 from styles import (
     FONT_MAIN,
     FONT_MONO,
@@ -30,8 +31,7 @@ from styles import (
     _current_colors,
     card_shadow,
 )
-from utils.table_helpers import ALIGN_RE
-from views.line_view import _copy_code_to_clipboard
+from utils.table_helpers import ALIGN_RE, split_row
 from views.segment_view import segment_to_span
 
 
@@ -71,14 +71,6 @@ def _parse_table_lines(
             rows.append(cells)
         i += 1
     return header_idx, sep_idx, row_indices, rows, aligns
-
-
-def _split_row(raw: str) -> list[str]:
-    return [c.strip() for c in raw.strip().strip("|").split("|")]
-
-
-def _join_row(cells: list[str]) -> str:
-    return "| " + " | ".join(cells) + " |"
 
 
 def _normalize_rows(rows: list[list[str]]) -> list[list[str]]:
@@ -141,10 +133,6 @@ def _align_container(align: str) -> ft.Alignment:
         "center": ft.Alignment.CENTER,
         "right": ft.Alignment.CENTER_RIGHT,
     }.get(align, ft.Alignment.CENTER_LEFT)
-
-
-def _align_marker(align: str) -> str:
-    return {"left": "---", "center": ":---:", "right": "---:"}.get(align, "---")
 
 
 def _align_icon(align: str) -> str:
@@ -233,7 +221,7 @@ def TableView(
     # ---- 辅助方法 ----
     def _cell_value(li: int, ci: int) -> str:
         if 0 <= li < len(lines):
-            cells = _split_row(lines[li].raw)
+            cells = split_row(lines[li].raw)
             if ci < len(cells):
                 return cells[ci]
         return ""
@@ -726,7 +714,7 @@ def TableView(
 
     # ---- 复制按钮（参考代码块复制按钮样式）----
     # 复制整张表格的 markdown 源码（连续 TABLE 行的 raw 拼接），粘贴到其他
-    # markdown 编辑器可保持表格格式。复用 line_view._copy_code_to_clipboard
+    # markdown 编辑器可保持表格格式。复用 services.clipboard.copy_code_to_clipboard
     # 的剪贴板写入 + 图标反馈逻辑（✓ 1.2s 后复位）。
     table_end = line_idx
     while table_end < len(lines) and lines[table_end].block_type == BlockType.TABLE:
@@ -742,7 +730,7 @@ def TableView(
             color=ft.Colors.GREEN if copied else c.muted,
         ),
         on_click=lambda e: (
-            page.run_task(_copy_code_to_clipboard, clipboard_ref, table_md, set_copied)
+            page.run_task(copy_code_to_clipboard, clipboard_ref, table_md, set_copied)
             if page is not None and not copied and clipboard_ref is not None
             else None
         ),

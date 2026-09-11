@@ -17,21 +17,22 @@ format_task / format_table / change_lang
 - parser（reparse_line_atomic）
 - models（BlockType / Line / Segment / SegType）
 - utils.segment_helpers（line_raw）
+- utils.table_helpers（join_row）
 - views.editor._helpers（_inline_content / _RE_UO_MARKER / _make_code_line）
-- views.table_view（_join_row）
 """
 
 import parser
-from models import BlockType, Line, Segment, SegType
+from models.document import BlockType, Line, Segment, SegType
 from utils.segment_helpers import line_raw as _line_raw
+from utils.table_helpers import join_row
 from views.editor._helpers import _RE_UO_MARKER, _inline_content, _make_code_line
-from views.table_view import _join_row
+from views.editor._contracts import BlocksEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
 
-def build_blocks(ctx):
+def build_blocks(ctx: BlocksEnv):
     """构造块级格式闭包组。
 
     返回 dict[str, Callable]：
@@ -100,9 +101,9 @@ def build_blocks(ctx):
             # 当前行已是 TABLE 时静默返回（避免重复创建）。
             if line.block_type == BlockType.TABLE:
                 return
-            header_raw = _join_row([content, ""])
-            sep_raw = _join_row(["---", "---"])
-            data_raw = _join_row(["", ""])
+            header_raw = join_row([content, ""])
+            sep_raw = join_row(["---", "---"])
+            data_raw = join_row(["", ""])
 
             def _mk_table_line(raw: str) -> Line:
                 nl = Line(block_type=BlockType.TABLE, raw=raw)

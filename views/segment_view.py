@@ -23,7 +23,7 @@ from collections.abc import Callable
 
 import flet as ft
 
-from models import BlockType, Line, SegType, Segment
+from models.document import BlockType, Line, SegType, Segment
 from styles import (
     _current_colors,
     block_weight,

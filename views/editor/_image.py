@@ -43,6 +43,7 @@ from services.ui_feedback import show_snack as _show_snack
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from utils.text_layout import resolve_image_src as _resolve_image_src
+from views.editor._contracts import ImageEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -153,7 +154,7 @@ def _rel_url(assets_rel: str, abs_path: str) -> str:
     return f"{assets_rel}/{os.path.basename(abs_path)}"
 
 
-def build_image(ctx):
+def build_image(ctx: ImageEnv):
     """构造图片操作闭包组。
 
     返回 dict[str, Callable]：

@@ -400,9 +400,6 @@ def DiffView(
         ),
     ) if truncated else ft.Container(height=0)
 
-    # 中间分隔线
-    divider = ft.VerticalDivider(width=1, color=c.border)
-
     # diff 内容：左右列头 + 滚动行列表
     # 列头
     col_header = ft.Container(

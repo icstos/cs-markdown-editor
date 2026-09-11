@@ -23,92 +23,52 @@ from datetime import datetime
 import flet as ft
 
 from core.actions import EditorActions
-from models import BlockType
+from models.document import BlockType
 from services.clipboard_html import get_clipboard_html_async
 from services.html_to_markdown import html_to_markdown
 from services.shortcuts import ShortcutManager, matches
-
-
-def _combo(e) -> str:
-    """把 KeyboardEvent 规范化为 "ctrl+shift+key" 形式的小写字符串。
-
-    与 services.shortcuts.normalize 配套：ctrl+comma 在 normalize 中转为 ctrl+,，
-    此处也把 "comma" 映射为 ","，保证 matches() 比对一致。
-
-    Flet 的 KeyboardEvent.key 对部分标点返回键名而非字符（逗号→"comma"、
-    句号→"period"），此处统一映射为字符，使 combo 输出与 settings 中的
-    字符形式（"ctrl+," / "ctrl+."）可比较。其他标点（/ \\ ` ; 等）Flet
-    直接返回字符，无需映射。
-    """
-    parts: list[str] = []
-    if getattr(e, "ctrl", False) or getattr(e, "meta", False):
-        parts.append("ctrl")
-    if getattr(e, "shift", False):
-        parts.append("shift")
-    if getattr(e, "alt", False):
-        parts.append("alt")
-    key = (e.key or "").replace(" ", "").lower()
-    if key in ("control", "meta", "shift", "alt"):
-        return ""
-    mapping = {
-        "arrowleft": "left",
-        "arrowright": "right",
-        "arrowup": "up",
-        "arrowdown": "down",
-        " ": "space",
-        "comma": ",",
-        "period": ".",
-        "escape": "esc",
-        "enter": "enter",
-        ":": ";",  # Shift+; 产生 ":"（US 键盘），归一化为 ";" 保证 Ctrl+Shift+; 匹配
-        "+": "=",  # Shift+= 产生 "+"（US 键盘），映射为 "=" 保证 Ctrl+Shift+= 匹配
-        ")": "0",  # Shift+0 产生 ")"（US 键盘），映射为 "0" 保证 Ctrl+Shift+0 匹配
-    }
-    key = mapping.get(key, key)
-    return "+".join(parts + [key])
+from views._combo import extract_printable_char
+from views._combo import combo as key_combo
 
 
 # 不应触发"打字替换 outward 选区"的按键（修饰/导航/功能键等）
-_NON_PRINTABLE_KEYS = frozenset({
-    "shift", "control", "alt", "meta",
-    "tab", "enter", "escape",
-    "backspace", "delete", "insert", "printscreen", "pause", "menu",
-    "home", "end", "pageup", "pagedown",
-    "arrowleft", "arrowright", "arrowup", "arrowdown",
-    "capslock", "numlock", "scrolllock",
-    "controlleft", "controlright", "shiftleft", "shiftright",
-    "altleft", "altright", "metaleft", "metaright",
-})
 
 
-def _extract_printable_char(e) -> str | None:
-    """从 KeyboardEvent 提取可打印字符，用于"打字替换 outward 选区"。
-
-    排除：Ctrl/Meta/Alt 组合键、功能键 F1-F12、修饰键本身、导航键、空格键特殊处理。
-    单字符可打印 → 返回（字母按 shift 决定大小写）；space → 返回 " "；其余 None。
-
-    注意：IME 组合态首字符不触发 KeyDownEvent（走 TextField.on_change），
-    故中文输入法首字符无法触发替换——这是已知限制，URL 几乎均为 ASCII 可接受。
-    """
-    if getattr(e, "ctrl", False) or getattr(e, "meta", False) or getattr(e, "alt", False):
-        return None
-    key = (getattr(e, "key", "") or "")
-    if not key:
-        return None
-    kl = key.lower()
-    if kl in _NON_PRINTABLE_KEYS:
-        return None
-    # F1-F12
-    if len(kl) >= 2 and kl[0] == "f" and kl[1:].isdigit():
-        return None
-    if kl == "space":
-        return " "
-    if len(key) == 1 and key.isprintable():
-        # 字母：未按 shift → 小写（Flet key 默认大写）；按 shift 已是大写
-        if key.isalpha() and not getattr(e, "shift", False):
-            return key.lower()
-        return key
-    return None
+# 全局窗口级动作表：(ShortcutManager 动作 id, 默认键, 调用方式)
+#   "cb"   —— app 回调为同步函数，直接调用
+#   "task" —— app 回调为协程函数，交给 page.run_task 调度
+#   "raw"  —— 作用于编辑器自身（Ctrl+/ 切换原文模式），回调名为 None
+#
+# 两条路径共用本表，避免「同一动作在正常输入域与外部输入域行为不一致」：
+# - `_handle_global_shortcuts`：焦点在编辑器内时执行全部项
+# - `_handle_foreign_only`：焦点在搜索框/对话框等原生输入框时只执行本表
+#   （其余按键交原生输入框，见 tests/test_key_bindings.py）
+# 新增全局动作只需在这里加一行；漏加会让该键在某一焦点域静默失效。
+_GLOBAL_ACTIONS: tuple[tuple[str, str, str], ...] = (
+    ("close_tab", "ctrl+w", "cb"),
+    ("next_tab", "ctrl+tab", "cb"),
+    ("prev_tab", "ctrl+shift+tab", "cb"),
+    ("open", "ctrl+o", "task"),
+    ("open_folder", "ctrl+shift+o", "task"),
+    ("save", "ctrl+s", "task"),
+    ("save_as", "ctrl+shift+s", "task"),
+    ("new", "ctrl+n", "cb"),
+    ("open_settings", "ctrl+comma", "cb"),
+    ("toggle_word_wrap", "ctrl+shift+r", "cb"),
+    ("zoom_in", "ctrl+shift+=", "cb"),
+    ("zoom_out", "ctrl+shift+-", "cb"),
+    ("zoom_reset", "ctrl+shift+0", "cb"),
+    ("toggle_split_editor", "ctrl+\\", "cb"),
+    ("toggle_sidebar", "ctrl+shift+b", "cb"),
+    ("toggle_theme", "alt+t", "cb"),
+    ("focus_mode", "ctrl+shift+k", "cb"),
+    ("toggle_raw", "ctrl+/", "raw"),
+    ("focus_search", "ctrl+f", "cb"),
+    ("toggle_replace_bar", "ctrl+h", "cb"),
+    ("replace_current", "alt+enter", "cb"),
+    ("replace_all", "ctrl+alt+enter", "cb"),
+    ("global_find", "ctrl+shift+f", "cb"),
+)
 
 
 class KeyDispatcher:
@@ -294,8 +254,166 @@ class KeyDispatcher:
             ref.current = False
 
     # ---- 主入口 ----
+    def _run_global_action(self, name: str, style: str, cb: dict, actions) -> None:
+        """执行一个全局窗口级动作（见 `_GLOBAL_ACTIONS`）。
+
+        style 决定调用方式：
+        - ``"cb"``：app 回调为同步函数，直接调用（未装配则忽略）
+        - ``"task"``：app 回调为协程函数，交 ``page.run_task`` 调度
+        - ``"raw"``：作用于编辑器本身（``Ctrl+/`` 切换原文模式）
+        """
+        if style == "raw":
+            if actions is not None:
+                actions.toggle_raw()
+            return
+        fn = cb.get(name)
+        if fn is None:
+            return
+        if style == "task":
+            page = self._page_ref.current
+            if page is not None:
+                page.run_task(fn)
+        else:
+            fn()
+
+    def _handle_multi_cursor_clipboard(self, combo: str, actions) -> bool:
+        """多光标模式下的剪贴板快捷键：Ctrl+C/X/V 同步操作所有光标选区。
+
+        副光标没有对应的原生 TextField，无法走原生剪贴板，因此必须在
+        outward_sel / 原生控件路由之前拦截。
+
+        Returns:
+            ``True`` 表示已消费该按键（调用方直接返回）。
+        """
+        browse_sc = self._shortcut_mgr.get("browse")
+        # Ctrl+C：有选区时复制所有选区文本
+        if matches(combo, browse_sc.get("copy", "ctrl+c")):
+            if (
+                getattr(actions, "has_multi_cursor_selection", None) is not None
+                and actions.has_multi_cursor_selection()
+                and actions.copy_multi_cursor_selection is not None
+            ):
+                page = self._page_ref.current
+                if page is not None:
+                    page.run_task(actions.copy_multi_cursor_selection)
+                return True
+        # Ctrl+X：有选区时剪切所有选区，无选区时剪切各光标所在行（回退原生）
+        if matches(combo, browse_sc.get("cut", "ctrl+x")):
+            if (
+                getattr(actions, "has_multi_cursor_selection", None) is not None
+                and actions.has_multi_cursor_selection()
+                and actions.cut_multi_cursor_selection is not None
+            ):
+                page = self._page_ref.current
+                if page is not None:
+                    page.run_task(actions.cut_multi_cursor_selection)
+                return True
+        # Ctrl+V：读取剪贴板后智能粘贴到所有光标
+        if matches(combo, browse_sc.get("paste", "ctrl+v")):
+            if actions.paste_to_multi_cursors is not None:
+                self._paste_old_draft.current = ""
+                self._begin_paste(actions)
+                page = self._page_ref.current
+                if page is not None:
+                    page.run_task(self._do_multi_cursor_paste)
+                return True
+        # Ctrl+Shift+V：纯文本粘贴到所有光标（剥离 Markdown 语法）
+        if matches(combo, browse_sc.get("paste_plain", "ctrl+shift+v")):
+            if actions.paste_to_multi_cursors_plain is not None:
+                self._paste_old_draft.current = ""
+                self._begin_paste(actions)
+                page = self._page_ref.current
+                if page is not None:
+                    page.run_task(self._do_multi_cursor_paste_plain)
+                return True
+        return False
+
+    def _handle_global_shortcuts(self, combo: str, norm: str, actions, cb) -> bool:
+        """两层均生效的全局快捷键链（文件 / 标签 / 视图 / 行内格式 / 搜索替换）。
+
+        置于 layer 判定之前，确保浏览态与编辑态行为一致；行内格式一项必须早于
+        浏览态全局键，否则鼠标选中文本后按 Ctrl+B 会被侧边栏切换等抢先消费。
+
+        Returns:
+            ``True`` 表示该按键已被消费（调用方直接返回）。
+        """
+        browse_sc = self._shortcut_mgr.get("browse")
+        # 行内格式必须早于全局键：否则鼠标选中文本后按 Ctrl+B 会被侧边栏切换等抢先消费。
+        inline_map = self._shortcut_mgr.inline_format_combos()
+        if combo in inline_map:
+            if actions is not None and not self._native_field_focused(actions):
+                selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
+                if actions.cursor_li is None and selection_fmt is not None:
+                    selection_fmt(inline_map[combo], combo)
+                else:
+                    actions.apply_inline_format(inline_map[combo])
+            return True
+
+        # PageUp / PageDown：两层均生效（编辑态光标翻页跟随，浏览态纯滚动）；
+        # 置于 layer 判定之前，确保浏览态也能响应。
+        if norm in ("pageup", "pagedown") and actions is not None:
+            (actions.page_up if norm == "pageup" else actions.page_down)()
+            return True
+
+        # Ctrl+A 全选（原生控件聚焦时放行交由原生处理）
+        if matches(combo, browse_sc.get("select_all", "ctrl+a")):
+            if actions is not None and not self._native_field_focused(actions):
+                if actions.select_all is not None:
+                    actions.select_all()
+            return True
+
+        # Ctrl+F：装配了文档内搜索浮层时唤起浮层（聚焦其输入框），否则回退侧边栏搜索面板。
+        # 该优先级必须在动作表之前判定，否则会被表内 focus_search 抢先命中。
+        if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
+            fn = cb.get("doc_search_open") or cb.get("focus_search")
+            if fn is not None:
+                fn()
+            return True
+
+        # Ctrl+Shift+F：装配了跨文件搜索时走它，否则回退侧边栏搜索面板
+        if matches(combo, browse_sc.get("global_find", "ctrl+shift+f")):
+            fn = cb.get("global_search") or cb.get("global_find")
+            if fn is not None:
+                fn()
+            return True
+
+        # Shift+Alt+F 全文格式化（两层均生效，代码块/表格聚焦时也作用于整篇文档）
+        if matches(combo, browse_sc.get("format_markdown", "shift+alt+f")):
+            if actions is not None:
+                actions.format_document()
+            return True
+
+        # 其余全局窗口级动作：单一动作表驱动，与外部输入域路径共用（避免两处不一致）
+        for name, default, style in _GLOBAL_ACTIONS:
+            if matches(combo, browse_sc.get(name, default)):
+                self._run_global_action(name, style, cb, actions)
+                return True
+        return False
+
+    def _sync_modifier_keys(self, e, actions) -> None:
+        """把页面级事件的修饰键状态同步到 editor 的 *_pressed_ref。
+
+        editor 的 ``KeyboardListener`` 事件不可靠：``KeyDownEvent`` 没有 ctrl 字段，
+        且 Shift/Alt 的 ``key`` 可能是 "Shift Left" / "Alt Right" 之类带后缀的名字，
+        导致 ``key == "shift"`` 判定失败。页面级 ``KeyboardEvent`` 的
+        ``e.shift`` / ``e.ctrl`` / ``e.alt`` 是 Flet 直接读 Flutter 修饰键状态，
+        始终可靠，因此以它为准。
+
+        ``alt_pressed_ref`` 供 ``RenderedLine._on_tap`` 分发 Alt+Click /
+        Alt+Shift+Click 多光标操作；``ctrl_pressed_ref`` 供 ``on_key_down`` 的
+        tab 分支判断 Ctrl+Tab（避免代码块/表格缩进与标签切换冲突）。
+        """
+        if actions is None:
+            return
+        if actions.shift_pressed_ref is not None:
+            actions.shift_pressed_ref.current = bool(e.shift)
+        if getattr(actions, "ctrl_pressed_ref", None) is not None:
+            actions.ctrl_pressed_ref.current = bool(e.ctrl)
+        if getattr(actions, "alt_pressed_ref", None) is not None:
+            actions.alt_pressed_ref.current = bool(e.alt)
+
     def handle(self, e) -> None:
-        combo = _combo(e)
+        combo = key_combo(e)
         key = e.key or ""
         norm = key.replace(" ", "").lower()
 
@@ -325,24 +443,7 @@ class KeyDispatcher:
         if norm not in ("arrowup", "arrowdown") and self._arrow_repeat_ref is not None:
             self._stop_arrow_repeat()
 
-        # 用 KeyboardEvent.shift 可靠同步 Shift 状态到 shift_pressed_ref。
-        # KeyboardListener 的 KeyDownEvent.key 对 Shift 可能返回 "Shift Left" /
-        # "Shift Right"（而非 "shift"），导致 _on_key_down 的 key == "shift" 匹配
-        # 失败；此处 e.shift 是 Flet 从 Flutter 修饰键状态直接读取，始终可靠。
-        if actions is not None and actions.shift_pressed_ref is not None:
-            actions.shift_pressed_ref.current = bool(e.shift)
-        # 同步 Ctrl 状态到 editor 的 ctrl_pressed_ref（KeyboardEvent.ctrl 可靠）。
-        # editor 的 KeyboardListener KeyDownEvent 无 ctrl 字段，需此处同步，供
-        # _on_key_down 的 tab 分支判断 Ctrl+Tab（避免代码块/表格缩进与标签切换冲突）。
-        if actions is not None and getattr(actions, "ctrl_pressed_ref", None) is not None:
-            actions.ctrl_pressed_ref.current = bool(e.ctrl)
-        # 同步 Alt 状态到 editor 的 alt_pressed_ref（KeyboardEvent.alt 可靠）。
-        # editor 的 KeyboardListener KeyDownEvent.key 对 Alt 可能返回 "Alt Left" /
-        # "Alt Right"，导致 _on_key_down 的 key == "alt" 匹配失败；此处 e.alt 是
-        # Flet 从 Flutter 修饰键状态直接读取，始终可靠。供 RenderedLine._on_tap
-        # 分发 Alt+Click / Alt+Shift+Click 多光标操作。
-        if actions is not None and getattr(actions, "alt_pressed_ref", None) is not None:
-            actions.alt_pressed_ref.current = bool(e.alt)
+        self._sync_modifier_keys(e, actions)
 
         # 文档内搜索浮层键盘：浮层打开且其输入框聚焦时，Enter=下一个匹配、
         # Shift+Enter=上一个匹配、Esc=关闭浮层（都不落入文档/其他快捷键）。
@@ -385,53 +486,16 @@ class KeyDispatcher:
 
         # 多光标剪贴板：Ctrl+C/X/V 在多光标模式 + 有选区时同步操作所有光标选区
         # （优先于原生 TextField 和 outward_sel 路由，副光标无 TextField 无法走原生）
+        # 多光标剪贴板：Ctrl+C/X/V 在多光标模式 + 有选区时同步操作所有光标选区
+        # （优先于原生 TextField 和 outward_sel 路由，副光标无 TextField 无法走原生）
         if (
             actions is not None
             and not (e.alt or e.meta)
             and getattr(actions, "has_secondary_cursors", None) is not None
             and actions.has_secondary_cursors()
+            and self._handle_multi_cursor_clipboard(combo, actions)
         ):
-            browse_sc = self._shortcut_mgr.get("browse")
-            # Ctrl+C：有选区时复制所有选区文本
-            if matches(combo, browse_sc.get("copy", "ctrl+c")):
-                if (
-                    getattr(actions, "has_multi_cursor_selection", None) is not None
-                    and actions.has_multi_cursor_selection()
-                    and actions.copy_multi_cursor_selection is not None
-                ):
-                    page = self._page_ref.current
-                    if page is not None:
-                        page.run_task(actions.copy_multi_cursor_selection)
-                    return
-            # Ctrl+X：有选区时剪切所有选区，无选区时剪切各光标所在行（回退原生）
-            if matches(combo, browse_sc.get("cut", "ctrl+x")):
-                if (
-                    getattr(actions, "has_multi_cursor_selection", None) is not None
-                    and actions.has_multi_cursor_selection()
-                    and actions.cut_multi_cursor_selection is not None
-                ):
-                    page = self._page_ref.current
-                    if page is not None:
-                        page.run_task(actions.cut_multi_cursor_selection)
-                    return
-            # Ctrl+V：读取剪贴板后智能粘贴到所有光标
-            if matches(combo, browse_sc.get("paste", "ctrl+v")):
-                if actions.paste_to_multi_cursors is not None:
-                    self._paste_old_draft.current = ""
-                    self._begin_paste(actions)
-                    page = self._page_ref.current
-                    if page is not None:
-                        page.run_task(self._do_multi_cursor_paste)
-                    return
-            # Ctrl+Shift+V：纯文本粘贴到所有光标（剥离 Markdown 语法）
-            if matches(combo, browse_sc.get("paste_plain", "ctrl+shift+v")):
-                if actions.paste_to_multi_cursors_plain is not None:
-                    self._paste_old_draft.current = ""
-                    self._begin_paste(actions)
-                    page = self._page_ref.current
-                    if page is not None:
-                        page.run_task(self._do_multi_cursor_paste_plain)
-                    return
+            return
 
         # 代码块 CodeEditor / 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板
         # 组合交由原生控件处理（Tab 缩进、方向键移动、Backspace、Ctrl+C 复制等），
@@ -550,7 +614,7 @@ class KeyDispatcher:
                 actions.handle_outward_enter()
                 return
             # 可打印字符：打字替换 outward 选区（通用基础编辑行为，桌面端直觉）
-            char = _extract_printable_char(e)
+            char = extract_printable_char(e)
             if char is not None and actions.handle_outward_type_char is not None:
                 actions.handle_outward_type_char(char)
                 return
@@ -558,137 +622,7 @@ class KeyDispatcher:
         # 全局标签快捷键：Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab 在两层均生效，
         # 置于 layer 判定之前拦截，避免被 edit 层 tab 缩进逻辑吃掉。
         cb = self._app_callbacks
-        browse_sc = self._shortcut_mgr.get("browse")
-        if matches(combo, browse_sc.get("close_tab", "ctrl+w")):
-            cb["close_tab"]()
-            return
-        if matches(combo, browse_sc.get("next_tab", "ctrl+tab")):
-            cb["next_tab"]()
-            return
-        if matches(combo, browse_sc.get("prev_tab", "ctrl+shift+tab")):
-            cb["prev_tab"]()
-            return
-
-        # Ctrl+O / Ctrl+Shift+O：打开文件 / 打开文件夹（两层均生效）。
-        # 属于全局文件操作，与编辑状态无关，置于 layer 判定之前确保编辑态也能触发。
-        if matches(combo, browse_sc.get("open", "ctrl+o")):
-            page = self._page_ref.current
-            if page is not None:
-                page.run_task(cb["open"])
-            return
-        if matches(combo, browse_sc.get("open_folder", "ctrl+shift+o")):
-            page = self._page_ref.current
-            if page is not None:
-                page.run_task(cb["open_folder"])
-            return
-
-        # Ctrl+Shift+R 切换自动换行：两层均生效（VSCode 风格），置于 layer 判定之前。
-        if matches(combo, browse_sc.get("toggle_word_wrap", "ctrl+shift+r")):
-            cb["toggle_word_wrap"]()
-            return
-
-        # Typora 式缩放：Ctrl+Shift+= 放大 / Ctrl+Shift+- 缩小 / Ctrl+Shift+0 实际大小
-        # 两层均生效，置于 layer 判定之前确保编辑态也能触发。
-        if matches(combo, browse_sc.get("zoom_in", "ctrl+shift+=")):
-            _fn = cb.get("zoom_in")
-            if _fn is not None:
-                _fn()
-            return
-        if matches(combo, browse_sc.get("zoom_out", "ctrl+shift+-")):
-            _fn = cb.get("zoom_out")
-            if _fn is not None:
-                _fn()
-            return
-        if matches(combo, browse_sc.get("zoom_reset", "ctrl+shift+0")):
-            _fn = cb.get("zoom_reset")
-            if _fn is not None:
-                _fn()
-            return
-
-        # Ctrl+\ 向右拆分编辑器：两层均生效（VSCode 风格），多视口查看同一文档。
-        if matches(combo, browse_sc.get("toggle_split_editor", "ctrl+\\")):
-            cb["toggle_split_editor"]()
-            return
-
-        # 视图菜单快捷键：两层均生效（与菜单项标签一致）。
-        # 编辑态 toggle_raw=Ctrl+Enter 在 _handle_shortcuts edit 分支处理；
-        # toggle_sidebar 两层统一用 Ctrl+Shift+B（Esc 不再切换侧边栏），
-        # 在此处处理，与 edit 分支互不冲突。
-        # Ctrl+Shift+B 切换侧边栏
-        if matches(combo, browse_sc.get("toggle_sidebar", "ctrl+shift+b")):
-            cb["toggle_sidebar"]()
-            return
-        # Alt+T 切换主题
-        if matches(combo, browse_sc.get("toggle_theme", "alt+t")):
-            cb["toggle_theme"]()
-            return
-        # Ctrl+/ 源码模式
-        if matches(combo, browse_sc.get("toggle_raw", "ctrl+/")):
-            if actions is not None:
-                actions.toggle_raw()
-            return
-        # Shift+Alt+F 全文 Markdown 格式化：两层均生效（与 toggle_raw 同级，
-        # 代码块/表格聚焦时也格式化整篇文档）。
-        if matches(combo, browse_sc.get("format_markdown", "shift+alt+f")):
-            if actions is not None and getattr(actions, "format_document", None) is not None:
-                actions.format_document()
-            return
-
-        # PageUp / PageDown：两层均生效（编辑态光标翻页跟随，浏览态纯滚动）。
-        # 置于 layer 判定之前，确保浏览态也能响应。outward_sel 激活时顶部拦截块
-        # 不匹配 pageup/pagedown 会 fall-through 到此，active is None → 浏览态纯滚动。
-        if norm == "pageup" and actions is not None:
-            actions.page_up()
-            return
-        if norm == "pagedown" and actions is not None:
-            actions.page_down()
-            return
-
-        # 行内格式快捷键优先级必须高于浏览态全局快捷键：
-        # 这样鼠标选中文本后按 Ctrl+B/I/Shift+H/`/K 不会被
-        # 侧边栏切换、聚焦模式等浏览态快捷键抢先消费。
-        # combo→fmt_name 映射从 ShortcutManager 动态读取（用户自定义键位生效）。
-        inline_map = self._shortcut_mgr.inline_format_combos()
-        if combo in inline_map:
-            if actions is not None and not self._native_field_focused(actions):
-                selection_fmt = getattr(actions, "apply_inline_format_to_selection", None)
-                if actions.cursor_li is None and selection_fmt is not None:
-                    selection_fmt(inline_map[combo], combo)
-                else:
-                    actions.apply_inline_format(inline_map[combo])
-            return
-
-        # Ctrl+A 全选：两层均生效，原生控件聚焦时放行交由原生处理
-        if matches(combo, browse_sc.get("select_all", "ctrl+a")):
-            if actions is not None and not self._native_field_focused(actions):
-                if actions.select_all is not None:
-                    actions.select_all()
-            return
-
-        # Ctrl+F：聚焦搜索面板（两层均生效，VSCode 风格）
-        # Ctrl+F：文档内搜索浮层（两态均生效）。装配了 doc_search_open 时唤起
-        # 浮层（聚焦输入框）；否则回退旧行为（侧边栏搜索面板聚焦）。
-        if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
-            _fn = cb.get("doc_search_open")
-            if _fn is not None:
-                _fn()
-            else:
-                cb["focus_search"]()
-            return
-
-        # Ctrl+H：展开/收起替换栏（两层均生效，VSCode 风格）
-        if matches(combo, browse_sc.get("toggle_replace_bar", "ctrl+h")):
-            cb["toggle_replace_bar"]()
-            return
-
-        # Alt+Enter：替换当前匹配（两层均生效，搜索面板未激活时 no-op）
-        if matches(combo, browse_sc.get("replace_current", "alt+enter")):
-            cb["replace_current"]()
-            return
-
-        # Ctrl+Alt+Enter：全部替换（两层均生效）
-        if matches(combo, browse_sc.get("replace_all", "ctrl+alt+enter")):
-            cb["replace_all"]()
+        if self._handle_global_shortcuts(combo, norm, actions, cb):
             return
 
         layer = "edit" if actions is not None and actions.cursor_li is not None else "browse"
@@ -731,99 +665,25 @@ class KeyDispatcher:
         视图/导航不依赖文档选区）：新建/打开/保存/另存为/设置、切标签、
         软换行/缩放/拆分/侧边栏/主题、聚焦搜索、替换栏与替换动作。
         """
-        page = self._page_ref.current
         browse_sc = self._shortcut_mgr.get("browse")
-
-        def _run(name: str):
-            """调用 app 回调（若装配了），组合已匹配则必然存在。"""
-            fn = cb.get(name)
+        # Ctrl+F / Ctrl+Shift+F 的浮层优先分支：必须早于动作表，否则会被表内
+        # focus_search / global_find 抢先命中。浮层自身的输入框也在外来输入域内，
+        # 因此这里必须与编辑器内路径保持同样的优先级。
+        if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
+            fn = cb.get("doc_search_open") or cb.get("focus_search")
             if fn is not None:
                 fn()
-
-        def _run_async(name: str):
-            if page is None:
-                return
-            fn = cb.get(name)
-            if fn is not None:
-                page.run_task(fn)
-
-        # —— 标签切换 / 关闭 ——
-        if matches(combo, browse_sc.get("close_tab", "ctrl+w")):
-            _run("close_tab")
             return
-        if matches(combo, browse_sc.get("next_tab", "ctrl+tab")):
-            _run("next_tab")
-            return
-        if matches(combo, browse_sc.get("prev_tab", "ctrl+shift+tab")):
-            _run("prev_tab")
-            return
-        # —— 文件级操作 ——
-        if matches(combo, browse_sc.get("open", "ctrl+o")):
-            _run_async("open")
-            return
-        if matches(combo, browse_sc.get("open_folder", "ctrl+shift+o")):
-            _run_async("open_folder")
-            return
-        if matches(combo, browse_sc.get("save", "ctrl+s")):
-            _run_async("save")
-            return
-        if matches(combo, browse_sc.get("save_as", "ctrl+shift+s")):
-            _run_async("save_as")
-            return
-        if matches(combo, browse_sc.get("new", "ctrl+n")):
-            _run("new")
-            return
-        if matches(combo, browse_sc.get("open_settings", "ctrl+comma")):
-            _run("open_settings")
-            return
-        # —— 视图级开关（不触碰文档文本）——
-        if matches(combo, browse_sc.get("toggle_word_wrap", "ctrl+shift+r")):
-            _run("toggle_word_wrap")
-            return
-        if matches(combo, browse_sc.get("zoom_in", "ctrl+shift+=")):
-            _run("zoom_in")
-            return
-        if matches(combo, browse_sc.get("zoom_out", "ctrl+shift+-")):
-            _run("zoom_out")
-            return
-        if matches(combo, browse_sc.get("zoom_reset", "ctrl+shift+0")):
-            _run("zoom_reset")
-            return
-        if matches(combo, browse_sc.get("toggle_split_editor", "ctrl+\\")):
-            _run("toggle_split_editor")
-            return
-        if matches(combo, browse_sc.get("toggle_sidebar", "ctrl+shift+b")):
-            _run("toggle_sidebar")
-            return
-        if matches(combo, browse_sc.get("toggle_theme", "alt+t")):
-            _run("toggle_theme")
-            return
-        # —— 搜索 / 替换面板（焦点域输入框自身的面板级操作）——
-        # Ctrl+F：外来输入域下仍唤起文档内浮层搜索（若装配）；否则聚焦侧边栏。
-        if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
-            _fn = cb.get("doc_search_open")
-            if _fn is not None:
-                _fn()
-            else:
-                _run("focus_search")
-            return
-        # Ctrl+Shift+F：侧边栏文件夹全局搜索（global_search 装配时自动开启 folder）
         if matches(combo, browse_sc.get("global_find", "ctrl+shift+f")):
-            _fn = cb.get("global_search")
-            if _fn is not None:
-                _fn()
-            else:
-                _run("focus_search")
+            fn = cb.get("global_search") or cb.get("global_find")
+            if fn is not None:
+                fn()
             return
-        if matches(combo, browse_sc.get("toggle_replace_bar", "ctrl+h")):
-            _run("toggle_replace_bar")
-            return
-        if matches(combo, browse_sc.get("replace_current", "alt+enter")):
-            _run("replace_current")
-            return
-        if matches(combo, browse_sc.get("replace_all", "ctrl+alt+enter")):
-            _run("replace_all")
-            return
+        # 只执行全局窗口级动作表（不触碰文档文本/光标/选区），其余按键交原生输入框。
+        for name, default, style in _GLOBAL_ACTIONS:
+            if matches(combo, browse_sc.get(name, default)):
+                self._run_global_action(name, style, cb, None)
+                return
         # 其余按键全部交原生输入框处理（此处不消费、不作用编辑器）
 
     # ---- 编辑态光标导航（home/end/up/down/backspace/delete/tab/越界 arrow）----
@@ -1134,7 +994,8 @@ class KeyDispatcher:
             if actions.cut_current_line is not None:
                 try:
                     await actions.cut_current_line()
-                except Exception:
+                except RuntimeError:
+                    # 会话已销毁 / 控件未挂载时无法写入剪贴板；其余异常照常抛出
                     pass
             return
         # 浏览态：有 SelectionArea 选区文本时剪切选区

@@ -61,6 +61,8 @@ from services.recovery import (
     write_last_session_sentinel,
 )
 
+from app._contracts import BackupEnv
+
 
 class _FileChange(enum.IntEnum):
     """文件变化事件类型（与 watchfiles.Change 同语义，去除 watchfiles 依赖）。"""
@@ -70,7 +72,7 @@ class _FileChange(enum.IntEnum):
     deleted = 3
 
 
-def build_backup_controller(ctx):
+def build_backup_controller(ctx: BackupEnv):
     """构造备份控制器闭包组。
 
     返回 dict[str, Callable]：
@@ -552,6 +554,10 @@ def build_backup_controller(ctx):
                 _loop_task_holder["task"] = None
 
         return _cleanup
+
+    # 标记：驻留型后台循环。进程内渲染夹具（tests/harness.py）据此跳过本 effect，
+    # 避免测试收尾留下永不结束的 pending task。
+    start_backup_loop._background_loop = True  # type: ignore[attr-defined]
 
     def trigger_autosave_now():
         """即时触发自动保存（窗口失焦 / 最小化 / 光标离开编辑器时调用）。

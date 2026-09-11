@@ -20,7 +20,7 @@
 - extract_outward_text 的偏移相对于行级 raw（与 editor 的光标/选区偏移一致）。
 """
 
-from models import Line, Segment, SegType
+from models.document import Line, Segment, SegType
 from parser.reparse import reparse_line
 from utils.segment_helpers import PREFIX_SEGTYPES, WRAP_SYNTAX, display_text, line_raw
 

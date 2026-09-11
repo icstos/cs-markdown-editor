@@ -22,14 +22,15 @@ move_up / move_down
   _line_visual_layout / _find_vline_for_raw —— 函数内惰性导入，避免循环依赖）
 """
 
-from models import SegType
+from models.document import SegType
 from styles import block_text_size
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import _vline_off_at_x
+from views.editor._contracts import NavigationEnv
 
 
-def build_navigation(ctx):
+def build_navigation(ctx: NavigationEnv):
     """构造导航闭包组。
 
     返回 dict[str, Callable]：

@@ -22,7 +22,7 @@
 import functools
 import re
 
-from models import SegType
+from models.document import SegType
 
 # 行内解析插件：删除线 / 高亮 / 上下标（支持组合语法 ***加粗斜体*** 等）
 _INLINE_PLUGINS = ["strikethrough", "mark", "superscript", "subscript"]

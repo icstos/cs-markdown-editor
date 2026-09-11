@@ -21,7 +21,7 @@ import pytest
 
 from services import shortcut
 from services.file_ops import rename_path
-from views.sidebar import _collect_md_paths
+from services.file_tree import collect_md_paths
 
 # ---- 最小 .lnk 构造（MS-SHLLINK） ----
 
@@ -280,7 +280,7 @@ def test_collect_md_paths_includes_lnk_targets(tmp_path):
         ("file", "ref.lnk", str(lnk_txt)),
     ]
     # 去重后仅一个目标（note.md 与 alias.md.lnk 指向同一路径）
-    assert _collect_md_paths(tree) == [str(md)]
+    assert collect_md_paths(tree) == [str(md)]
 
 
 def test_collect_md_paths_lnk_target_outside_tree(tmp_path):
@@ -292,4 +292,4 @@ def test_collect_md_paths_lnk_target_outside_tree(tmp_path):
     lnk = tmp_path / "ext.lnk"
     _write_lnk(str(lnk), _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(md)))
     tree = [("file", "ext.lnk", str(lnk))]
-    assert _collect_md_paths(tree) == [str(md)]
+    assert collect_md_paths(tree) == [str(md)]

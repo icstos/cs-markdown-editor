@@ -35,12 +35,13 @@ from views._editor_helpers import _compute_delete_result as _compute_delete_resu
 from views._editor_helpers import _select_word_bounds, _vline_off_at_x
 from views._editor_helpers import _step_left as _step_left_impl
 from views._editor_helpers import _step_right as _step_right_impl
+from views.editor._contracts import OutwardEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
 
 
-def build_outward(ctx):
+def build_outward(ctx: OutwardEnv):
     """构造向外选区闭包组。
 
     返回 dict[str, Callable]：
@@ -74,7 +75,7 @@ def build_outward(ctx):
         - off == content_start（且 > 0）→ 跳到行首 raw 0
         - off == 0 → 返回 None（已在行首，不扩展）
         """
-        from models import SegType
+        from models.document import SegType
         if not (0 <= li < len(ctx.document.lines)):
             return None
         line = ctx.document.lines[li]

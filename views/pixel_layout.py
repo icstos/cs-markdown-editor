@@ -30,7 +30,7 @@ VisualLine。渲染层与光标测量共用同一换行函数，换行点天然�
 
 from dataclasses import dataclass
 
-from models import BlockType, Line, SegType, Segment
+from models.document import BlockType, Line, SegType, Segment
 from styles import FONT_MAIN, FONT_MONO, block_text_size
 from utils.segment_helpers import (
     FENCE_BLOCK_TYPES,

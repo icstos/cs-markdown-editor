@@ -38,8 +38,10 @@ from app.autosave import (
     autosave_on_switch_enabled,
 )
 
+from app._contracts import TabManagementEnv
 
-def build_tab_management(ctx):
+
+def build_tab_management(ctx: TabManagementEnv):
     """构造标签管理控制器闭包组。
 
     返回 dict[str, Callable]：

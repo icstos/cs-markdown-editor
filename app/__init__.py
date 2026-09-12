@@ -615,6 +615,60 @@ def App():
                 continue
             setattr(ctx, _slot, _fn)
 
+    # ============ 搜索/替换稳定闭包（KeyDispatcher → App → Sidebar 桥接）============
+    # 必须在 build_keyboard 之前装配：KeyDispatcher 构造期就把 app_callbacks 的值
+    # 立即取出，装配晚一步会让 Ctrl+H / Alt+Enter 等捕获到 AppContext 默认 no-op，
+    # 表现为「按键完全无反应」且不报错。
+    # 与 close_current_tab 同模式：use_memo([]) 创建一次，通过 ref 读取最新值。
+    # update_setting_ref 在 settings_controller 装配后写入；settings_ref 每渲染同步。
+    # Ctrl+F 聚焦：search_focus_seq_ref 持最新序号，set_search_focus_seq 触发渲染。
+    def _make_focus_search():
+        def _focus():
+            us = update_setting_ref.current
+            if us is None:
+                return
+            s = settings_ref.current
+            if not s.get("sidebar_open", False):
+                us("sidebar_open", True)
+            us("sidebar_panel", "search")
+            # 驱动 Sidebar 聚焦搜索输入框（面板切换 + 序号变化 → effect 聚焦）
+            search_focus_seq_ref.current += 1
+            set_search_focus_seq(search_focus_seq_ref.current)
+        return _focus
+
+    def _make_toggle_replace_bar():
+        def _toggle():
+            us = update_setting_ref.current
+            if us is None:
+                return
+            s = settings_ref.current
+            if not s.get("sidebar_open", False):
+                us("sidebar_open", True)
+            us("sidebar_panel", "search")
+            us("search_replace_expanded", not s.get("search_replace_expanded", False))
+        return _toggle
+
+    def _make_replace_current():
+        def _replace():
+            actions = sidebar_replace_ref.current
+            fn = actions.get("replace_current") if actions else None
+            if fn is not None:
+                fn()
+        return _replace
+
+    def _make_replace_all():
+        def _replace():
+            actions = sidebar_replace_ref.current
+            fn = actions.get("replace_all") if actions else None
+            if fn is not None:
+                fn()
+        return _replace
+
+    ctx.focus_search = ft.use_memo(_make_focus_search, [])
+    ctx.toggle_replace_bar = ft.use_memo(_make_toggle_replace_bar, [])
+    ctx.replace_current = ft.use_memo(_make_replace_current, [])
+    ctx.replace_all = ft.use_memo(_make_replace_all, [])
+
     keyboard_cbs = build_keyboard(ctx)
     # keyboard 组输出（dispatcher 由渲染期写入 dispatcher_ref，不落 ctx）
     for _slot, _fn in keyboard_cbs.items():
@@ -716,57 +770,6 @@ def App():
         return _close
 
     ctx.close_current_tab = ft.use_memo(_make_close_current_tab, [])
-
-    # ============ 搜索/替换稳定闭包（KeyDispatcher → App → Sidebar 桥接）============
-    # 与 close_current_tab 同模式：use_memo([]) 创建一次，通过 ref 读取最新值。
-    # update_setting_ref 在 settings_controller 装配后写入；settings_ref 每渲染同步。
-    # Ctrl+F 聚焦：search_focus_seq_ref 持最新序号，set_search_focus_seq 触发渲染。
-    def _make_focus_search():
-        def _focus():
-            us = update_setting_ref.current
-            if us is None:
-                return
-            s = settings_ref.current
-            if not s.get("sidebar_open", False):
-                us("sidebar_open", True)
-            us("sidebar_panel", "search")
-            # 驱动 Sidebar 聚焦搜索输入框（面板切换 + 序号变化 → effect 聚焦）
-            search_focus_seq_ref.current += 1
-            set_search_focus_seq(search_focus_seq_ref.current)
-        return _focus
-
-    def _make_toggle_replace_bar():
-        def _toggle():
-            us = update_setting_ref.current
-            if us is None:
-                return
-            s = settings_ref.current
-            if not s.get("sidebar_open", False):
-                us("sidebar_open", True)
-            us("sidebar_panel", "search")
-            us("search_replace_expanded", not s.get("search_replace_expanded", False))
-        return _toggle
-
-    def _make_replace_current():
-        def _replace():
-            actions = sidebar_replace_ref.current
-            fn = actions.get("replace_current") if actions else None
-            if fn is not None:
-                fn()
-        return _replace
-
-    def _make_replace_all():
-        def _replace():
-            actions = sidebar_replace_ref.current
-            fn = actions.get("replace_all") if actions else None
-            if fn is not None:
-                fn()
-        return _replace
-
-    ctx.focus_search = ft.use_memo(_make_focus_search, [])
-    ctx.toggle_replace_bar = ft.use_memo(_make_toggle_replace_bar, [])
-    ctx.replace_current = ft.use_memo(_make_replace_current, [])
-    ctx.replace_all = ft.use_memo(_make_replace_all, [])
 
     # ============ use_effect（hooks 顺序约束：函数体顶层调用）============
     ft.use_effect(settings_cbs["mount_picker"], [])

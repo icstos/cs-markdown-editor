@@ -212,7 +212,7 @@ class BackupEnv(Protocol):
 
 
 class KeyboardEnv(Protocol):
-    """键盘分发装配（KeyDispatcher + page 绑定）（build_keyboard 实际读取的 44 个字段）。"""
+    """键盘分发装配（KeyDispatcher + page 绑定）（build_keyboard 实际读取的 45 个字段）。"""
 
     active_index_ref: ft.Ref
     active_pane: int
@@ -229,6 +229,7 @@ class KeyboardEnv(Protocol):
     doc_search_next: Any
     doc_search_open_ref: ft.Ref
     doc_search_prev: Any
+    focus_mode: Callable[..., Any]
     focus_search: Callable[..., Any]
     global_search: Any
     is_diff_tab: bool

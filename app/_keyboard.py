@@ -78,6 +78,9 @@ def build_keyboard(ctx: KeyboardEnv):
             "toggle_replace_bar": ctx.toggle_replace_bar,
             "replace_current": ctx.replace_current,
             "replace_all": ctx.replace_all,
+            # 聚焦模式属视图范畴，必须经 app 层桥接：焦点在原生输入框时
+            # dispatcher 拿不到 EditorActions，缺失此键会让 Ctrl+Shift+K 静默失效。
+            "focus_mode": ctx.focus_mode,
             # 文档内搜索浮层（Ctrl+F）与侧边栏全局文件夹搜索（Ctrl+Shift+F）
             "doc_search_open": ctx.open_doc_search,
             "doc_search_close": ctx.close_doc_search,

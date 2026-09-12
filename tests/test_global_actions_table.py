@@ -32,12 +32,13 @@ CLS = next(
 )
 
 # 必须保留的关键全局动作（防误删）
+# 注：Ctrl+F / Ctrl+Shift+F 由浮层优先分支处理（早于表循环），不在表内。
 REQUIRED = {
     "close_tab", "next_tab", "prev_tab", "open", "open_folder", "save", "save_as",
     "new", "open_settings", "toggle_word_wrap", "zoom_in", "zoom_out", "zoom_reset",
     "toggle_split_editor", "toggle_sidebar", "toggle_theme", "toggle_raw",
-    "focus_search", "toggle_replace_bar", "replace_current", "replace_all",
-    "global_find",
+    "focus_mode", "focus_search", "toggle_replace_bar", "replace_current",
+    "replace_all",
 }
 VALID_STYLE = {"cb", "task", "raw"}
 

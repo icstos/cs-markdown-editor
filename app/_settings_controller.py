@@ -97,13 +97,24 @@ def build_settings_controller(ctx: SettingsEnv):
         ctx.set_capturing((None, None))
         ctx.set_settings_tab(tab)
 
+    def latest_settings() -> dict:
+        """settings 的最新快照（唯一读取入口）。
+
+        settings_ref 每渲染同步一次，但 set_settings 只改 hook 值、不刷新 ref。
+        若不在此处回填，同一 tick 内连续写设置时后续调用会基于渲染期旧快照重建
+        整个 dict，把前序写入覆盖掉（末次生效）。故写入后立即回填 ref，使 ref
+        成为「含未提交写入」的最新值。
+        """
+        ref = ctx.settings_ref
+        current = ref.current if ref is not None else None
+        return current if current is not None else ctx.settings
+
     def update_setting(key: str, value):
-        # 通过 settings_ref 读取最新 settings，避免闭包捕获的 ctx.settings
-        # 是过期快照（异步任务如自动保存运行时可能持有旧渲染周期的 ctx）。
-        # 否则 dict(ctx.settings) 会用旧快照覆盖最新值（如 workspace_folder 丢失）。
-        current = ctx.settings_ref.current if ctx.settings_ref is not None else ctx.settings
-        next_settings = dict(current)
+        next_settings = dict(latest_settings())
         next_settings[key] = value
+        if ctx.settings_ref is not None:
+            # 立即回填：同一 tick 内后续调用（如 Ctrl+Shift+F 连写 3 个键）才能叠加
+            ctx.settings_ref.current = next_settings
         ctx.set_settings(next_settings)
         save_settings(next_settings)
         ctx.apply_content_layout()
@@ -168,7 +179,7 @@ def build_settings_controller(ctx: SettingsEnv):
         save_settings(next_settings)
 
     def reset_shortcuts():
-        next_settings = dict(ctx.settings)
+        next_settings = dict(latest_settings())
         next_settings["shortcuts"] = {k: dict(v) for k, v in DEFAULT_SETTINGS["shortcuts"].items()}
         ctx.set_settings(next_settings)
         save_settings(next_settings)
@@ -218,7 +229,7 @@ def build_settings_controller(ctx: SettingsEnv):
             data = json.loads(payload)
             if not isinstance(data, dict):
                 raise ValueError("JSON 格式不正确")
-            next_settings = dict(ctx.settings)
+            next_settings = dict(latest_settings())
             next_settings["shortcuts"] = data
             ctx.set_settings(next_settings)
             save_settings(next_settings)
@@ -234,24 +245,24 @@ def build_settings_controller(ctx: SettingsEnv):
         _ref = ctx.native_input_ref
         if _ref is not None:
             _ref.current = None
-        update_setting("sidebar_open", not ctx.settings.get("sidebar_open", False))
+        update_setting("sidebar_open", not latest_settings().get("sidebar_open", False))
 
     def toggle_outline():
         """切换右侧大纲列开合（横向四列布局的第四列，一键收起/展开）。"""
-        update_setting("outline_open", not ctx.settings.get("outline_open", True))
+        update_setting("outline_open", not latest_settings().get("outline_open", True))
 
     def toggle_word_wrap():
         """切换自动换行（VSCode 风格 Alt+Z）：开 = 软换行，关 = 长行不换行。"""
-        update_setting("word_wrap", not ctx.settings.get("word_wrap", True))
+        update_setting("word_wrap", not latest_settings().get("word_wrap", True))
 
     def zoom_in():
         """放大界面（Typora 式 Ctrl+Shift+=）：每次 +10%，上限 200%。"""
-        cur = ctx.settings.get("zoom", 100)
+        cur = latest_settings().get("zoom", 100)
         update_setting("zoom", min(200, cur + 10))
 
     def zoom_out():
         """缩小界面（Typora 式 Ctrl+Shift+-）：每次 -10%，下限 50%。"""
-        cur = ctx.settings.get("zoom", 100)
+        cur = latest_settings().get("zoom", 100)
         update_setting("zoom", max(50, cur - 10))
 
     def zoom_reset():

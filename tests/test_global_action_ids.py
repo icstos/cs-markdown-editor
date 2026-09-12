@@ -21,7 +21,10 @@ from views.key_bindings import _GLOBAL_ACTIONS  # noqa: E402
 # 有意不走 ShortcutManager 的项：
 # - toggle_raw：由编辑器自身处理（EditorActions.toggle_raw），两层的默认键不同
 #   （browse=ctrl+/、edit=ctrl+enter），因此表里只登记动作名与调用方式。
-HANDLED_ELSEWHERE = {"toggle_raw"}
+# - global_find：Ctrl+Shift+F 由两条路径的「浮层优先分支」在表循环之前拦截
+#   （见 views/key_bindings.py 顶部两个 if matches(...) 分支），表项永远不可达。
+#   键位仍从 ShortcutManager 读取，用户自定义依然生效。
+HANDLED_ELSEWHERE = {"toggle_raw", "global_find"}
 
 REGISTERED = {a.id for a in ACTION_REGISTRY}
 CONFIG_KEYS = {

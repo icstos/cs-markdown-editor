@@ -306,8 +306,7 @@ def build_file_io_ops(ctx: FileIoEnv):
           （open_file_by_path 不再改写 workspace_folder）
 
         单次原子合并：一次性写入 workspace_folder + sidebar_open + sidebar_panel。
-        若分多次调 update_setting，每次基于渲染期快照重建会覆盖前序写入
-        （Flet 批量提交 set_settings，末次值生效），故此处直接合并后单次提交。
+        三个键同属一次提交，只需一次 save_settings 写盘 + 一次布局刷新。
         """
         picker = ctx.picker_holder.current
         if picker is None:

@@ -67,7 +67,6 @@ _GLOBAL_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("toggle_replace_bar", "ctrl+h", "cb"),
     ("replace_current", "alt+enter", "cb"),
     ("replace_all", "ctrl+alt+enter", "cb"),
-    ("global_find", "ctrl+shift+f", "cb"),
 )
 
 
@@ -370,9 +369,11 @@ class KeyDispatcher:
                 fn()
             return True
 
-        # Ctrl+Shift+F：装配了跨文件搜索时走它，否则回退侧边栏搜索面板
+        # Ctrl+Shift+F：侧边栏文件夹全局搜索（App 侧 global_search 负责展开侧边栏
+        # + 切搜索面板 + 开启文件夹范围 + 聚焦输入框）。该分支必须在动作表之前：
+        # 否则会被表内 focus_search 抢先命中同一按键。
         if matches(combo, browse_sc.get("global_find", "ctrl+shift+f")):
-            fn = cb.get("global_search") or cb.get("global_find")
+            fn = cb.get("global_search")
             if fn is not None:
                 fn()
             return True
@@ -667,7 +668,7 @@ class KeyDispatcher:
         """
         browse_sc = self._shortcut_mgr.get("browse")
         # Ctrl+F / Ctrl+Shift+F 的浮层优先分支：必须早于动作表，否则会被表内
-        # focus_search / global_find 抢先命中。浮层自身的输入框也在外来输入域内，
+        # focus_search 抢先命中。浮层自身的输入框也在外来输入域内，
         # 因此这里必须与编辑器内路径保持同样的优先级。
         if matches(combo, browse_sc.get("focus_search", "ctrl+f")):
             fn = cb.get("doc_search_open") or cb.get("focus_search")
@@ -675,7 +676,7 @@ class KeyDispatcher:
                 fn()
             return
         if matches(combo, browse_sc.get("global_find", "ctrl+shift+f")):
-            fn = cb.get("global_search") or cb.get("global_find")
+            fn = cb.get("global_search")
             if fn is not None:
                 fn()
             return
@@ -843,15 +844,6 @@ class KeyDispatcher:
         if matches(combo, shortcuts.get("format_hr", "ctrl+shift+u")):
             if actions is not None and not self._native_field_focused(actions):
                 actions.set_block(BlockType.HR)
-            return
-        # Ctrl+Shift+F：侧边栏文件夹全局搜索（global_search 装配时自动开启
-        # folder 并聚焦输入框；否则回退旧 focus_search 行为）。
-        if matches(combo, shortcuts.get("global_find", "ctrl+shift+f")):
-            _fn = cb.get("global_search")
-            if _fn is not None:
-                _fn()
-            else:
-                cb["focus_search"]()
             return
         # Alt+C：切换当前任务列表项勾选状态，浏览/编辑两态均生效。
         # 非任务行静默忽略（toggle_task_at_cursor 内部守卫），无副作用。

@@ -33,7 +33,6 @@ import urllib.request
 from collections import OrderedDict
 
 import uharfbuzz as _hb
-from PIL import Image as _PILImage
 
 # 字体族常量（与 styles.py 保持一致，避免循环依赖）
 FONT_MAIN = "Alibaba"
@@ -421,7 +420,12 @@ def resolve_image_src(url: str, file_path: str | None) -> str:
 
 
 def _read_image_size(src: str) -> tuple[int, int] | None:
-    """读取图片真实 (width, height)。本地路径直接打开；URL 下载后解析。"""
+    """读取图片真实 (width, height)。本地路径直接打开；URL 下载后解析。
+
+    Pillow 惰性导入：仅文档含图片时才用到，避免启动即加载 Pillow（~17ms）。
+    """
+    from PIL import Image as _PILImage
+
     try:
         if src.startswith(("http://", "https://")):
             with urllib.request.urlopen(src, timeout=5) as resp:

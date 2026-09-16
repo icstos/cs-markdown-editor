@@ -14,7 +14,6 @@
 from collections.abc import Callable
 
 import flet as ft
-from flet_code_editor import CodeEditor, CodeLanguage, CodeTheme, GutterStyle
 
 from models.document import BlockType, Line
 from services.clipboard import (
@@ -42,6 +41,21 @@ from views.pixel_layout import (
     _value_linear_width,
 )
 from views.rendered_line import RenderedLine
+
+# flet_code_editor 只在渲染代码块（CODE 围栏岛屿）时需要，导入成本 ~13ms；
+# 无代码块的文档（含首启空白文档）启动时可跳过，故首次渲染代码块时惰性导入。
+_code_editor_mod = None
+
+
+def _ce():
+    """惰性导入并返回 flet_code_editor 模块。"""
+    global _code_editor_mod
+    if _code_editor_mod is None:
+        import flet_code_editor as _mod
+
+        _code_editor_mod = _mod
+    return _code_editor_mod
+
 
 # 代码块语言选择下拉框的常用语言清单
 _COMMON_LANGS: list[tuple[str, str]] = [
@@ -74,10 +88,10 @@ _COMMON_LANGS: list[tuple[str, str]] = [
 ]
 
 
-def _code_language(lang: str | None) -> CodeLanguage:
+def _code_language(lang: str | None):
     """把 markdown 围栏语言标识映射为 CodeEditor 的 CodeLanguage 枚举。"""
     if not lang:
-        return CodeLanguage.PLAINTEXT
+        return _ce().CodeLanguage.PLAINTEXT
     key = lang.strip().replace("-", "_").replace(" ", "").upper()
     aliases = {
         "JS": "JAVASCRIPT",
@@ -96,7 +110,8 @@ def _code_language(lang: str | None) -> CodeLanguage:
         "PLAINTEXT": "PLAINTEXT",
     }
     key = aliases.get(key, key)
-    return getattr(CodeLanguage, key, CodeLanguage.PLAINTEXT)
+    lang_enum = _ce().CodeLanguage
+    return getattr(lang_enum, key, lang_enum.PLAINTEXT)
 
 
 def _lang_options(current_lang: str) -> list[ft.DropdownOption]:
@@ -973,7 +988,9 @@ def _render_code_block(
     lang = line.lang or ""
     page = ft.context.page
     is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
-    code_theme = CodeTheme.ATOM_ONE_DARK if is_dark else CodeTheme.GITHUB
+    code_theme = (
+        _ce().CodeTheme.ATOM_ONE_DARK if is_dark else _ce().CodeTheme.GITHUB
+    )
 
     # ---- 状态 ----
     copied, set_copied = ft.use_state(False)
@@ -1035,12 +1052,12 @@ def _render_code_block(
     gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.03, c.text)
 
     # ---- CodeEditor ----
-    editor = CodeEditor(
+    editor = _ce().CodeEditor(
         key=f"code-{line_idx}-{digits}",
         value=code,
         language=_code_language(lang),
         code_theme=code_theme,
-        gutter_style=GutterStyle(
+        gutter_style=_ce().GutterStyle(
             width=gutter_width,
             margin=Spacing.XS,
             show_line_numbers=True,

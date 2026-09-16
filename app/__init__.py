@@ -62,10 +62,21 @@ from views.status_bar import _compute_counts
 @ft.component
 def App():
     # ============ State（快照区）============
+    # 设置必须最先加载：初始标签文档取决于 settings["sample_shown"]（首启判定）。
+    settings, set_settings = ft.use_state(load_settings)
     # 多文档标签：每个 tab 持有 {document, file_path, dirty}；active_index 指向当前标签
+    # 初始文档：仅首次启动展示内置示例（SAMPLE_MD 约 298 行 → 首次渲染 ~225ms /
+    # 2400+ 控件）；之后启动直接空白文档（~63ms / 558 控件），客户端需构建的控件
+    # 树同步缩小，启动明显更快。首启标记由 _mark_sample_shown effect 落盘。
     tabs, set_tabs = ft.use_state(
         lambda: [
-            {"document": parser.parse_markdown(SAMPLE_MD), "file_path": None, "dirty": False}
+            {
+                "document": parser.parse_markdown(
+                    "" if settings.get("sample_shown", False) else SAMPLE_MD
+                ),
+                "file_path": None,
+                "dirty": False,
+            }
         ]
     )
     active_index, set_active_index = ft.use_state(0)
@@ -125,7 +136,6 @@ def App():
     # 状态机封装在 app.diff_scroll_sync.DiffScrollSync（page_ref 定义后通过 use_memo 创建）。
     # 亮/暗主题模式
     theme_mode, set_theme_mode = ft.use_state(ft.ThemeMode.LIGHT)
-    settings, set_settings = ft.use_state(load_settings)
     settings_open, set_settings_open = ft.use_state(False)
     settings_tab, set_settings_tab = ft.use_state("edit")
     shortcut_focus, set_shortcut_focus = ft.use_state((None, None))
@@ -876,6 +886,9 @@ def App():
         backup_started_ref.current = True
 
         def _do_scan():
+            # 说明：此处刻意保持同步执行（而非 asyncio.to_thread）——页面 run_task
+            # 在测试夹具的短生命周期事件循环里会留下 pending 线程任务，且备份扫描
+            # 只读哨兵清单（通常个位数文件），阻塞量可忽略。
             try:
                 ctx.cleanup_expired_backups()
             except Exception:
@@ -893,6 +906,17 @@ def App():
                 pass
 
     ft.use_effect(_startup_scan_recoverable, [])
+
+    # 首次启动标记：本次已展示内置示例 → 落盘 sample_shown=True，之后启动直接打开
+    # 空白文档（省去示例文档的解析与渲染）。仅首启有一次额外重渲染。
+    def _mark_sample_shown():
+        us = update_setting_ref.current
+        if us is None:
+            return
+        if not (settings_ref.current or {}).get("sample_shown", False):
+            us("sample_shown", True)
+
+    ft.use_effect(_mark_sample_shown, [])
 
     # ============ 渲染树 ============
     return build_render(ctx)

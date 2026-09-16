@@ -51,6 +51,9 @@ DEFAULT_SETTINGS: Settings = {
     "sidebar_width": 256,
     "outline_open": True,
     "recent_files": [],
+    # 内置示例文档是否已展示过：False = 首次启动（展示 SAMPLE_MD 并立即置 True）；
+    # True = 之后启动直接打开空白文档（省去 298 行示例的解析与渲染，加快启动）。
+    "sample_shown": False,
     # 工作区文件夹：显式「打开文件夹」后锚定文件树根目录；为 None 时回退到当前文件所在目录
     "workspace_folder": None,
     # 侧边栏搜索选项（默认全 False，符合"搜索当前文档、不区分大小写"惯例）

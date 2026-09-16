@@ -36,10 +36,8 @@ import shutil
 import urllib.request
 
 import flet as ft
-from PIL import Image as _PILImage
 
 import parser
-from services.ui_feedback import show_snack as _show_snack
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from utils.text_layout import resolve_image_src as _resolve_image_src
@@ -315,6 +313,9 @@ def build_image(ctx: ImageEnv):
             except RuntimeError:
                 page = None
             if page is not None:
+                # 惰性导入：提示仅失败路径使用，不必在启动时加载
+                from services.ui_feedback import show_snack as _show_snack
+
                 msg = "请先保存文档后再粘贴图片" if not ctx.file_path else "无法创建 assets 目录"
                 _show_snack(page, msg)
             return True  # 已处理（避免回退到文本粘贴导致二进制数据被当文本插入）
@@ -345,6 +346,9 @@ def build_image(ctx: ImageEnv):
         except Exception:
             img_data = None
         if img_data:
+            # PIL 惰性导入：仅粘贴位图时用到，避免启动即加载 Pillow（~17ms）
+            from PIL import Image as _PILImage
+
             # PIL 加载并标准化为 PNG（保证格式一致，避免 BMP/原始字节流兼容问题）
             try:
                 img = _PILImage.open(io.BytesIO(img_data))

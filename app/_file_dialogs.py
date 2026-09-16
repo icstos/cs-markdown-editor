@@ -36,7 +36,6 @@ import parser
 from app._tab_helpers import tab_group, tab_paths
 from services import file_ops, shortcut
 from services.file_io import read_text
-from services.ui_feedback import show_snack as _show_snack_impl
 
 from app._contracts import FileDialogsEnv
 
@@ -62,7 +61,12 @@ def build_file_dialogs(ctx: FileDialogsEnv):
     """
 
     def show_snack(msg: str):
-        """SnackBar 提示（委托 services.ui_feedback.show_snack，page 从 page_ref 读取）。"""
+        """SnackBar 提示（委托 services.ui_feedback.show_snack，page 从 page_ref 读取）。
+
+        ui_feedback 惰性导入：仅真正弹提示时才需要，避免启动即加载。
+        """
+        from services.ui_feedback import show_snack as _show_snack_impl
+
         _show_snack_impl(ctx.page_ref.current, msg)
 
     async def copy_path(path: str):

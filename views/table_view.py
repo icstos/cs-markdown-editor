@@ -14,11 +14,6 @@ from collections.abc import Callable
 
 import flet as ft
 
-try:
-    from flet_datatable2 import DataTable2
-except Exception:  # pragma: no cover
-    DataTable2 = ft.DataTable
-
 import parser
 from models.document import BlockType, Line
 from services.clipboard import copy_code_to_clipboard
@@ -33,6 +28,24 @@ from styles import (
 )
 from utils.table_helpers import ALIGN_RE, split_row
 from views.segment_view import segment_to_span
+
+# flet_datatable2 只在真正渲染表格时才需要：该包导入成本高（~54ms，连带大量
+# flet 控件子模块）。首启空白文档 / 不含表格的文档可完全跳过，故改为首次用到
+# 时惰性导入（缺失时回退 ft.DataTable）。
+_DataTable2 = None
+
+
+def _data_table2_cls():
+    """惰性获取 DataTable2 类（导入失败回退 ft.DataTable）。"""
+    global _DataTable2
+    if _DataTable2 is None:
+        try:
+            from flet_datatable2 import DataTable2
+        except Exception:  # pragma: no cover
+            from flet import DataTable as DataTable2
+        _DataTable2 = DataTable2
+    return _DataTable2
+
 
 # ---------------------------------------------------------------------------
 # 辅助函数
@@ -822,7 +835,7 @@ def TableView(
     _min_w = (
         content_width if (content_width and content_width != float("inf")) else None
     )
-    table = DataTable2(
+    table = _data_table2_cls()(
         columns=columns,
         rows=data_rows,
         column_spacing=12,

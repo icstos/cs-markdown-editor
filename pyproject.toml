@@ -9,12 +9,12 @@ authors = [{ name = "CSTOS" }]
 keywords = ["markdown", "editor", "flet", "wysiwyg", "typora"]
 
 dependencies = [
-    "flet==0.86.5",
+    "flet==1.0.0",
     "mistune>=3.3.4",
     "pillow>=12.3.0",
     "uharfbuzz>=0.40.0",
-    "flet-code-editor==0.86.5",
-    "flet-datatable2==0.86.5",
+    "flet-code-editor==1.0.0",
+    "flet-datatable2==1.0.0",
     "watchdog>=4.0.0",
 ]
 

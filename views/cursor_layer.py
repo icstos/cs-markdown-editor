@@ -32,7 +32,9 @@ from styles import FONT_MAIN, _current_colors
 from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING
 
 
-def make_strut(base_size: int, line_height: float, font_family: str = FONT_MAIN) -> ft.StrutStyle:
+def make_strut(
+    base_size: int, line_height: float, font_family: str = FONT_MAIN
+) -> ft.StrutStyle:
     """构造与渲染层 Text 共用的 StrutStyle 实例。
 
     force_strut_height=True 强制行高 = size * height，忽略字体内置 ascent/descent
@@ -125,7 +127,6 @@ def cursor_text_field(
         # 仅 wrap_sel_seq>0 时携带；平时 None 不发送（客户端不动控制器选区，
         # 不干扰 IME 组合态）。
         "selection": selection,
-
         # 不设 autofocus！autofocus 在每次重渲染时都会发送到 Flutter，导致
         # TextField 重新聚焦，IME 重新触发 on_change（双发问题的根因）。
         # 聚焦由 editor 端 use_effect([cursor_li]) 在切行时异步执行。
@@ -133,7 +134,7 @@ def cursor_text_field(
         "min_lines": 1,
         "max_lines": 1,
         # 无边框、透明背景、零内边距，绝不遮挡渲染层
-        "border": ft.InputBorder.NONE,
+        "border": ft.NoInputBorder(),
         "border_radius": 0,
         "filled": False,
         "content_padding": ft.Padding.all(0),

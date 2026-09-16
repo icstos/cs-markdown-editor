@@ -10,6 +10,8 @@
 - doc_has_text(doc)：文档是否有可见文本
 - is_blank_untitled(tab)：是否为空白未命名标签（可复用为新建/打开载体）
 - tab_display_name(tab)：统一标签显示名（diff 标签显示「left ⟷ right」）
+- closed_tab_snapshot(tab)：即将关闭的标签 → 可恢复快照（不可恢复返回 None）
+- push_closed_tabs(stack, tabs)：把一批已关闭标签压入「重新打开」栈（LIFO + 容量上限）
 
 设计要点：
 - 这些函数原本定义在 App 组件闭包内（每次重渲染重新创建）或 main.py 模块级，
@@ -90,6 +92,48 @@ def is_blank_untitled(tab: Tab) -> bool:
         and not tab.get("dirty")
         and not doc_has_text(tab["document"])
     )
+
+
+# 「重新打开已关闭标签」栈（Ctrl+Shift+T）容量上限：只保留最近关闭的 N 个标签。
+# 有路径的快照剥离 document（重开从磁盘加载），未命名草稿才持有 document 引用，
+# 因此栈内内存占用有界。
+CLOSED_TABS_LIMIT = 20
+
+
+def closed_tab_snapshot(tab: Tab) -> Tab | None:
+    """把即将关闭的标签转成可恢复快照；不可恢复的标签返回 None。
+
+    - 对比标签（type=="diff"）：不记录——它是两个文件的派生视图，恢复语义
+      不等价于「重新打开文件」（需要重新解析两侧并重建 diff 计算）。
+    - 空白未命名标签：不记录（恢复一个空标签没有意义）。
+    - 有路径的标签：剥离 document 字段。重开时从磁盘重新加载即可；关闭前若有
+      未保存修改，关闭确认流程（保存 / 不保存）已让用户做出决定，不需要在内存
+      中长期保留整份文档。
+    - 未命名草稿（无路径）：内容不在磁盘上，保留 document 引用，重开即还原。
+    """
+    if tab.get("type") == "diff" or is_blank_untitled(tab):
+        return None
+    if tab.get("file_path"):
+        return {k: v for k, v in tab.items() if k != "document"}
+    return dict(tab)
+
+
+def push_closed_tabs(stack: list[Tab], tabs) -> int:
+    """把一批已关闭标签压入「重新打开」栈（LIFO），返回实际入栈数量。
+
+    同一批内按给定顺序追加（关闭顺序），栈尾为最近关闭；超过 CLOSED_TABS_LIMIT
+    时丢弃最旧的快照（栈头方向最旧）。
+    """
+    added = 0
+    for tab in tabs:
+        snap = closed_tab_snapshot(tab)
+        if snap is None:
+            continue
+        stack.append(snap)
+        added += 1
+    if len(stack) > CLOSED_TABS_LIMIT:
+        del stack[: len(stack) - CLOSED_TABS_LIMIT]
+    return added
 
 
 def tab_display_name(tab: Tab) -> str:

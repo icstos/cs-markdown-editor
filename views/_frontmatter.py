@@ -27,7 +27,6 @@ from views import _block_frame
 _FM_DRAG_GROUP = "frontmatter-rows"
 
 
-
 def render_frontmatter(
     line: Line,
     line_idx: int,
@@ -65,24 +64,24 @@ def render_frontmatter(
     # 取色原则：每种类型一个固定色相，亮暗模式仅调整明度/饱和度
     if is_dark:
         _type_colors = {
-            "bool":   "#6BA0F5",  # 柔蓝（真/假：逻辑值）
+            "bool": "#6BA0F5",  # 柔蓝（真/假：逻辑值）
             "number": "#65C292",  # 柔薄荷绿（数值）
-            "date":   "#DD9658",  # 柔琥珀橙（日期时间）
-            "array":  "#B08FD8",  # 柔丁香紫（列表/字典）
-            "null":   "#8B939E",  # 中性灰（空值）
+            "date": "#DD9658",  # 柔琥珀橙（日期时间）
+            "array": "#B08FD8",  # 柔丁香紫（列表/字典）
+            "null": "#8B939E",  # 中性灰（空值）
             "string": "#E6EDF3",  # 主文本色（字符串）
         }
-        _key_color = "#75A4F0"   # 柔雾蓝（键名 + 标题，突出属性标识）
+        _key_color = "#75A4F0"  # 柔雾蓝（键名 + 标题，突出属性标识）
     else:
         _type_colors = {
-            "bool":   "#1677FF",  # Ant Design 蓝（逻辑值）
+            "bool": "#1677FF",  # Ant Design 蓝（逻辑值）
             "number": "#0E7C66",  # 深青绿（数值）
-            "date":   "#B54708",  # 焦糖橙（日期时间）
-            "array":  "#6B5B95",  # 雅致紫（列表/字典）
-            "null":   "#8A919E",  # 中性灰（空值）
+            "date": "#B54708",  # 焦糖橙（日期时间）
+            "array": "#6B5B95",  # 雅致紫（列表/字典）
+            "null": "#8A919E",  # 中性灰（空值）
             "string": "#1F2329",  # 主文本色（字符串）
         }
-        _key_color = "#1A4480"   # 深海军蓝（键名 + 标题，权威标识）
+        _key_color = "#1A4480"  # 深海军蓝（键名 + 标题，权威标识）
 
     # ---- 状态 ----
     copied, set_copied = ft.use_state(False)
@@ -107,7 +106,8 @@ def render_frontmatter(
         ),
         on_click=lambda e, txt=content: (
             page.run_task(copy_code_to_clipboard, clipboard_ref, txt, set_copied)
-            if page is not None and not copied else None
+            if page is not None and not copied
+            else None
         ),
     )
 
@@ -155,10 +155,10 @@ def render_frontmatter(
     )
 
     # ---- 可编辑属性表格 ----
-    _HANDLE_WIDTH = 22    # 拖拽把手列宽度
+    _HANDLE_WIDTH = 22  # 拖拽把手列宽度
     _KEY_COL_WIDTH = 140  # 键列固定宽度
     _MORE_BTN_WIDTH = 30  # 行操作菜单（⋮）列宽度
-    _DEL_BTN_WIDTH = 32   # 删除按钮列宽度
+    _DEL_BTN_WIDTH = 32  # 删除按钮列宽度
 
     # 编辑态键值对列表：本地 state 管理实时编辑，变化时序列化写回文档
     editing_pairs, set_editing_pairs = ft.use_state(
@@ -266,12 +266,14 @@ def render_frontmatter(
 
     def _paste_row(idx: int) -> None:
         """在 idx 行之后插入一行：优先内部缓冲区（本会话复制），否则读系统剪贴板。"""
+
         def _insert(k: str, v: str) -> None:
             new_pairs = [list(p) for p in editing_pairs]
             insert_at = min(idx + 1, len(new_pairs))
             new_pairs.insert(insert_at, [k, v])
             set_editing_pairs(new_pairs)
             _commit_pairs(new_pairs)
+
         if copied_row is not None:
             _insert(copied_row[0], copied_row[1])
             return
@@ -282,20 +284,24 @@ def render_frontmatter(
         """行操作菜单项：剪切 / 复制 / 粘贴 / 删除（桌面端交互直觉）。"""
         return [
             ft.PopupMenuItem(
-                content="剪切", icon=ft.Icons.CONTENT_CUT,
+                content="剪切",
+                icon=ft.Icons.CONTENT_CUT,
                 on_click=lambda e, i=idx: _cut_row(i),
             ),
             ft.PopupMenuItem(
-                content="复制", icon=ft.Icons.CONTENT_COPY,
+                content="复制",
+                icon=ft.Icons.CONTENT_COPY,
                 on_click=lambda e, i=idx: _copy_row(i),
             ),
             ft.PopupMenuItem(
-                content="粘贴", icon=ft.Icons.CONTENT_PASTE,
+                content="粘贴",
+                icon=ft.Icons.CONTENT_PASTE,
                 on_click=lambda e, i=idx: _paste_row(i),
             ),
             ft.PopupMenuItem(),  # 分隔
             ft.PopupMenuItem(
-                content="删除", icon=ft.Icons.DELETE_OUTLINE,
+                content="删除",
+                icon=ft.Icons.DELETE_OUTLINE,
                 on_click=lambda e, i=idx: _delete_row(i),
             ),
         ]
@@ -418,8 +424,10 @@ def render_frontmatter(
                 value=key_val,
                 text_size=base - 6,
                 color=_key_color,
-                text_style=ft.TextStyle(font_family=FONT_MONO, weight=ft.FontWeight.W_500),
-                border=ft.InputBorder.NONE,
+                text_style=ft.TextStyle(
+                    font_family=FONT_MONO, weight=ft.FontWeight.W_500
+                ),
+                border=ft.NoInputBorder(),
                 fill_color=ft.Colors.TRANSPARENT,
                 dense=True,
                 content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
@@ -430,8 +438,12 @@ def render_frontmatter(
                     font_family=FONT_MONO,
                 ),
                 on_change=lambda e, i=idx: _on_key_change(i, e.control.value or ""),
-                on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
-                on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
+                on_focus=lambda e: (
+                    on_code_focus(line_idx) if on_code_focus is not None else None
+                ),
+                on_blur=lambda e: (
+                    on_code_blur(line_idx) if on_code_blur is not None else None
+                ),
             )
             # 值 TextField：按数据类型着色，无边框透明底（紧凑高度）
             val_field = ft.TextField(
@@ -439,7 +451,7 @@ def render_frontmatter(
                 text_size=base - 5,
                 color=val_color,
                 text_style=ft.TextStyle(font_family=val_font),
-                border=ft.InputBorder.NONE,
+                border=ft.NoInputBorder(),
                 fill_color=ft.Colors.TRANSPARENT,
                 dense=True,
                 content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
@@ -449,8 +461,12 @@ def render_frontmatter(
                     color=ft.Colors.with_opacity(0.35, c.muted),
                 ),
                 on_change=lambda e, i=idx: _on_value_change(i, e.control.value or ""),
-                on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
-                on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
+                on_focus=lambda e: (
+                    on_code_focus(line_idx) if on_code_focus is not None else None
+                ),
+                on_blur=lambda e: (
+                    on_code_blur(line_idx) if on_code_blur is not None else None
+                ),
             )
             # 删除按钮：悬停时显红色警示
             del_btn = ft.IconButton(
@@ -465,7 +481,9 @@ def render_frontmatter(
                         ft.ControlState.DEFAULT: ft.Colors.with_opacity(0.4, c.muted),
                     },
                     bgcolor={
-                        ft.ControlState.HOVERED: ft.Colors.with_opacity(0.08, "#E5484D"),
+                        ft.ControlState.HOVERED: ft.Colors.with_opacity(
+                            0.08, "#E5484D"
+                        ),
                         ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT,
                     },
                 ),
@@ -622,8 +640,7 @@ def render_frontmatter(
         bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
         border_radius=Radius.MD,
         padding=ft.Padding.only(
-            left=Spacing.MD, right=Spacing.MD,
-            top=Spacing.XS, bottom=Spacing.SM
+            left=Spacing.MD, right=Spacing.MD, top=Spacing.XS, bottom=Spacing.SM
         ),
         border=only_border(
             top=ft.BorderSide(1, border_color),
@@ -634,7 +651,10 @@ def render_frontmatter(
     )
 
     return _block_frame.wrap_block(
-        content_ctrl, line, base, line_idx,
+        content_ctrl,
+        line,
+        base,
+        line_idx,
         is_current_line=is_current_line,
         is_flash=is_flash,
         on_size_change=on_line_size_change,
@@ -656,7 +676,7 @@ def parse_yaml_pairs(content: str) -> list[tuple[str, str]]:
         if idx <= 0:
             continue
         key = raw_line[:idx].strip()
-        val = raw_line[idx + 1:].strip()
+        val = raw_line[idx + 1 :].strip()
         pairs.append((key, val))
     return pairs
 

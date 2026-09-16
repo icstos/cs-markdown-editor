@@ -3,7 +3,7 @@
 闭包组：build_dispatcher / bind_keyboard
 
 跨组依赖（通过 ctx 装配槽，调用时读取）：
-- file_io_ops 组：save_doc / new_doc / open_doc
+- file_io_ops 组：save_doc / new_doc / open_doc / reopen_closed_tab
 - settings_controller 组：toggle_sidebar / toggle_theme / toggle_word_wrap /
   toggle_split_editor / open_settings / on_capture / on_cancel_capture
 - tab_management 组：close_tab / cycle_tab
@@ -72,6 +72,9 @@ def build_keyboard(ctx: KeyboardEnv):
             "toggle_split_editor": ctx.toggle_split_editor,
             "open_settings": ctx.open_settings,
             "close_tab": lambda: ctx.close_tab(ctx.active_index_ref.current),
+            # Ctrl+Shift+T：恢复最近关闭的标签（LIFO 栈，全部关闭路径的唯一漏斗
+            # do_close_many 入栈，此处出栈并重新打开）
+            "reopen_closed_tab": ctx.reopen_closed_tab,
             "next_tab": lambda: ctx.cycle_tab(1),
             "prev_tab": lambda: ctx.cycle_tab(-1),
             "focus_search": ctx.focus_search,

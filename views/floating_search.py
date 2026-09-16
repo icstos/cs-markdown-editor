@@ -120,7 +120,7 @@ def FloatingSearch(
                     hint_text="搜索当前文档…",
                     prefix_icon=ft.Icons.SEARCH,
                     dense=True,
-                    border=ft.InputBorder.NONE,
+                    border=ft.NoInputBorder(),
                     text_size=13,
                     text_style=ft.TextStyle(font_family=FONT_MAIN),
                     content_padding=ft.Padding.symmetric(
@@ -156,7 +156,9 @@ def FloatingSearch(
                     overflow=ft.TextOverflow.ELLIPSIS,
                     width=118,
                 ),
-                _nav_btn(ft.Icons.CLOSE, "关闭 (Esc)", lambda e: on_close(), disabled=False),
+                _nav_btn(
+                    ft.Icons.CLOSE, "关闭 (Esc)", lambda e: on_close(), disabled=False
+                ),
             ],
             spacing=Spacing.SM,
             tight=True,

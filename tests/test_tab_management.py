@@ -63,6 +63,8 @@ def _make_ctx(
         page_ref=SimpleNamespace(current=None),
         tabs_ref=SimpleNamespace(current=list(tabs)),
         active_index_ref=SimpleNamespace(current=active_index),
+        # 「重新打开已关闭标签」栈（Ctrl+Shift+T）：do_close_many 入栈
+        closed_tabs_ref=SimpleNamespace(current=[]),
         active_pane_ref=SimpleNamespace(current=active_pane),
         active_index_left_ref=SimpleNamespace(current=active_index_left),
         active_index_right_ref=SimpleNamespace(current=active_index_right),

@@ -159,6 +159,9 @@ def App():
     tabs_ref.current = tabs
     active_index_ref = ft.use_ref(active_index)
     active_index_ref.current = active_index
+    # 「重新打开已关闭标签」栈（Ctrl+Shift+T）：do_close_many 入栈、reopen_closed_tab
+    # 出栈。刻意不进 state——栈变化不需要重渲染，只影响下一次按键的恢复结果。
+    closed_tabs_ref = ft.use_ref([])
     # 组激活索引 / 组会话计数 ref 镜像：控制器（activate_index / do_close_many）
     # 与异步回调读取最新值，避免闭包捕获渲染期快照（同 tabs_ref 模式）。
     active_index_left_ref = ft.use_ref(active_index_left)
@@ -395,6 +398,7 @@ def App():
         page_ref=page_ref,
         tabs_ref=tabs_ref,
         active_index_ref=active_index_ref,
+        closed_tabs_ref=closed_tabs_ref,
         settings_ref=settings_ref,
         dispatcher_ref=dispatcher_ref,
         native_input_ref=native_input_ref,

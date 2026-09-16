@@ -191,6 +191,8 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
         _submenu("导出", export_controls, c),
         _menu_item("设置", "Ctrl+,", on_click=lambda e: ctx.open_settings(), c=c),
         _menu_item("关闭", "Ctrl+W", on_click=lambda e: ctx.close_tab(ctx.active_index), c=c),
+        _menu_item("重新打开关闭的标签页", "Ctrl+Shift+T",
+                   on_click=lambda e: ctx.reopen_closed_tab(), c=c),
     ]
 
     # ============ 编辑菜单 ============

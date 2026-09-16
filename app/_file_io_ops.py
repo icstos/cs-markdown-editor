@@ -1,7 +1,7 @@
 """文件 IO 控制器（从 main.py 闭包抽取）。
 
-闭包组：push_recent_file / open_file_by_path / new_doc / open_doc /
-open_folder / save_doc / save_as_doc / export_doc / set_status_message /
+闭包组：push_recent_file / open_file_by_path / reopen_closed_tab / new_doc /
+open_doc / open_folder / save_doc / save_as_doc / export_doc / set_status_message /
 backup_tab_before_overwrite / check_external_change
 
 跨组依赖（通过 ctx 装配槽，调用时读取）：
@@ -56,9 +56,9 @@ def build_file_io_ops(ctx: FileIoEnv):
     """构造文件 IO 控制器闭包组。
 
     返回 dict[str, Callable]：
-    push_recent_file / open_file_by_path / new_doc / open_doc / open_folder /
-    save_doc / save_as_doc / export_doc / set_status_message /
-    backup_tab_before_overwrite / check_external_change
+    push_recent_file / open_file_by_path / reopen_closed_tab / new_doc /
+    open_doc / open_folder / save_doc / save_as_doc / export_doc /
+    set_status_message / backup_tab_before_overwrite / check_external_change
     """
     # 正在异步加载的文件路径集合：防止用户在加载期间重复点击同一文件
     # 触发多次加载（加载完成时从集合移除）。
@@ -78,8 +78,9 @@ def build_file_io_ops(ctx: FileIoEnv):
     def open_file_by_path(
         path: str,
         jump_to: tuple[int, int | None] | None = None,
+        display_name: str | None = None,
     ):
-        """从绝对路径打开文件（供侧边栏文件树点击与 open_doc 复用）。
+        """从绝对路径打开文件（供侧边栏文件树点击 / open_doc / reopen_closed_tab 复用）。
 
         异步加载：read_text + parse_markdown 在后台线程执行，不阻塞 UI 事件循环，
         加载期间用户可继续编辑当前文档。加载完成后基于最新 tabs 状态决定复用
@@ -98,6 +99,9 @@ def build_file_io_ops(ctx: FileIoEnv):
         - .lnk 指向 .md/.markdown → 打开/编辑目标文档（最近文件记录目标路径）
         - .lnk 指向其他类型 → 交系统默认程序打开快捷方式（启动目标程序）
         - .lnk 目标失效（被移动/删除）→ SnackBar 提示，不打开
+
+        display_name：标签显示名覆盖（仅 reopen_closed_tab 传入，用于恢复 .lnk
+        标签原本的链接文件名显示）；path 本身是 .lnk 时仍以链接文件名为准。
         """
         # 先登记 pending jump（无论后续 session 是否变化，effect 都会触发）
         if jump_to is not None:
@@ -105,7 +109,6 @@ def build_file_io_ops(ctx: FileIoEnv):
             ctx.set_pending_jump_sig(ctx.pending_jump_sig + 1)
 
         # 快捷方式解析：统一入口分流（侧边栏点击 / 右键打开 / 最近文件 / Ctrl+O）
-        display_name = None
         if shortcut.is_shortcut(path):
             target = shortcut.resolve_shortcut_target(path)
             if target and target.lower().endswith((".md", ".markdown")):
@@ -844,9 +847,40 @@ def build_file_io_ops(ctx: FileIoEnv):
         size_kb = os.path.getsize(path) // 1024
         ctx.show_snack(f"已导出 {ext.upper()}（{size_kb} KB）")
 
+    def reopen_closed_tab():
+        """Ctrl+Shift+T：恢复最近关闭的标签（LIFO 栈，连续按可逐个向前恢复）。
+
+        - 有路径的标签：从磁盘重新打开，复用 open_file_by_path 的组内去重 /
+          快捷方式显示名 / 最近文件记录 / 外部修改监测；文件已被移动或删除时
+          提示并继续弹下一个快照（不让一个失效项挡住后面的历史）。
+        - 未命名草稿：内容不在磁盘上，直接用快照里的 document 追加到焦点组，
+          未保存内容原样还原。
+        - 栈空：SnackBar 提示，不抛异常。
+        """
+        stack = ctx.closed_tabs_ref.current
+        while stack:
+            snap = stack.pop()
+            path = snap.get("file_path")
+            if path:
+                if not os.path.isfile(path):
+                    ctx.show_snack(
+                        f"无法重新打开：{os.path.basename(path)} 已被移动或删除"
+                    )
+                    continue
+                open_file_by_path(path, display_name=snap.get("display_name"))
+                return
+            # 未命名草稿：恢复到焦点侧组，丢弃旧 _tid / group（组可能已随拆分收起变化）
+            gi = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
+            fields = {k: v for k, v in snap.items() if k not in ("_tid", "group")}
+            fields["group"] = gi
+            ctx.append_and_activate(fields)
+            return
+        ctx.show_snack("没有可重新打开的已关闭标签")
+
     return {
         "push_recent_file": push_recent_file,
         "open_file_by_path": open_file_by_path,
+        "reopen_closed_tab": reopen_closed_tab,
         "new_doc": new_doc,
         "open_doc": open_doc,
         "open_folder": open_folder,

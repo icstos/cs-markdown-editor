@@ -46,7 +46,7 @@ def RawEditor(
             value=raw_draft,
             multiline=True,
             min_lines=20,
-            border=ft.InputBorder.NONE,
+            border=ft.NoInputBorder(),
             text_size=body_font_size,
             text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
             on_change=lambda e: on_change(e.control.value),

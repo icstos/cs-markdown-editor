@@ -112,6 +112,9 @@ class AppContext:
     page_ref: ft.Ref
     tabs_ref: ft.Ref
     active_index_ref: ft.Ref
+    # 「重新打开已关闭标签」栈（Ctrl+Shift+T）：do_close_many 入栈、reopen_closed_tab
+    # 出栈。只读 ref 不入 state——栈变化不驱动 UI，只影响下一次按键的恢复结果。
+    closed_tabs_ref: ft.Ref
     settings_ref: ft.Ref  # 最新 settings 快照（供异步任务读取，避免闭包捕获过期快照）
     dispatcher_ref: ft.Ref  # KeyDispatcher 实例
     paste_old_draft: ft.Ref  # 粘贴前 draft 快照（供 handle_paste 做 diff 定位）
@@ -150,6 +153,8 @@ class AppContext:
     # file_io_ops 组
     push_recent_file: Callable = field(default=lambda *a: None)
     open_file_by_path: Callable = field(default=lambda *a: None)
+    # Ctrl+Shift+T：恢复最近关闭的标签（LIFO 栈，可连续按多次）
+    reopen_closed_tab: Callable = field(default=lambda: None)
     # 跨文件"打开后跳转"：open_file_by_path(path, jump_to=(li, off)) 写入 pending_jump_ref，
     # session/pending_jump_sig 变化时 _fire_pending_jump effect 消费并调用 jump_to_line(li, off)。
     # 解决 EditorActions 重建时序：open 触发 session++ 重建 MarkdownEditor，子组件先于父 effect

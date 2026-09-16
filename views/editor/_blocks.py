@@ -199,7 +199,7 @@ def build_blocks(ctx: BlocksEnv):
         toggle_task(li)
 
     def format_task():
-        """Ctrl+Shift+T：当前行转为任务列表项（- [ ] content）。
+        """Ctrl+Shift+L：当前行转为任务列表项（- [ ] content）。
 
         复用 set_block 的 LIST_UO 分支 + task=True 标志，光标位置由
         set_block 末尾的重定位逻辑自动保持（前缀 2→6 字符自动处理）。

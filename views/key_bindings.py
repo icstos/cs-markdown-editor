@@ -46,6 +46,7 @@ from views._combo import combo as key_combo
 # 新增全局动作只需在这里加一行；漏加会让该键在某一焦点域静默失效。
 _GLOBAL_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("close_tab", "ctrl+w", "cb"),
+    ("reopen_closed_tab", "ctrl+shift+t", "cb"),
     ("next_tab", "ctrl+tab", "cb"),
     ("prev_tab", "ctrl+shift+tab", "cb"),
     ("open", "ctrl+o", "task"),

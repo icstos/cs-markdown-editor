@@ -16,13 +16,14 @@ import flet as ft
 
 
 class TabManagementEnv(Protocol):
-    """多文档标签与拆分组的 CRUD / 激活 / 关闭（build_tab_management 实际读取的 25 个字段）。"""
+    """多文档标签与拆分组的 CRUD / 激活 / 关闭（build_tab_management 实际读取的 26 个字段）。"""
 
     active_index: int
     active_index_left_ref: ft.Ref
     active_index_ref: ft.Ref
     active_index_right_ref: ft.Ref
     active_pane_ref: ft.Ref
+    closed_tabs_ref: ft.Ref
     confirm_close: list | None
     page_ref: ft.Ref
     save_doc: Callable[..., Any]
@@ -46,7 +47,7 @@ class TabManagementEnv(Protocol):
 
 
 class FileIoEnv(Protocol):
-    """文件读写 / 打开 / 保存 / 导出 / 最近文件（build_file_io_ops 实际读取的 28 个字段）。"""
+    """文件读写 / 打开 / 保存 / 导出 / 最近文件 / 重新打开（build_file_io_ops 实际读取的 29 个字段）。"""
 
     activate_index: Callable[..., Any]
     active_index_left_ref: ft.Ref
@@ -57,6 +58,7 @@ class FileIoEnv(Protocol):
     apply_content_layout: Callable[..., Any]
     bump_fs_version: Callable[..., Any]
     bump_tab_session: Callable[..., Any]
+    closed_tabs_ref: ft.Ref
     document: Any
     file_path: str | None
     is_diff_tab_ref: ft.Ref
@@ -212,7 +214,7 @@ class BackupEnv(Protocol):
 
 
 class KeyboardEnv(Protocol):
-    """键盘分发装配（KeyDispatcher + page 绑定）（build_keyboard 实际读取的 45 个字段）。"""
+    """键盘分发装配（KeyDispatcher + page 绑定）（build_keyboard 实际读取的 46 个字段）。"""
 
     active_index_ref: ft.Ref
     active_pane: int
@@ -245,6 +247,7 @@ class KeyboardEnv(Protocol):
     open_settings: Callable[..., Any]
     page_ref: ft.Ref
     paste_old_draft: Any
+    reopen_closed_tab: Callable[..., Any]
     replace_all: Callable[..., Any]
     replace_current: Callable[..., Any]
     save_as_doc: Callable[..., Any]

@@ -7,7 +7,9 @@ save_and_close_pending / close_without_save / cancel_close
 
 跨组依赖（通过 ctx 装配槽，调用时读取）：
 - file_io_ops 组：save_doc（save_and_close_pending 逐个保存脏标签）
-- 共享：tab_is_dirty / new_tab / tab_group / group_indices（纯函数，直接导入）
+- 共享：tab_is_dirty / new_tab / tab_group / group_indices / push_closed_tabs
+  （纯函数，直接导入；push_closed_tabs 写入 ctx.closed_tabs_ref.current，
+  do_close_many 是全部关闭路径的唯一漏斗 → 记录点唯一）
 
 设计要点：
 - 所有写操作基于 tabs_ref.current 最新值计算，避免批量操作时索引漂移与
@@ -31,7 +33,13 @@ save_and_close_pending / close_without_save / cancel_close
 """
 
 import parser
-from app._tab_helpers import group_indices, new_tab, tab_group, tab_is_dirty
+from app._tab_helpers import (
+    group_indices,
+    new_tab,
+    push_closed_tabs,
+    tab_group,
+    tab_is_dirty,
+)
 from app.autosave import (
     AutosaveContext,
     autosave_all_dirty_sync,
@@ -231,6 +239,12 @@ def build_tab_management(ctx: TabManagementEnv):
         remove_set = {i for i in indices if 0 <= i < len(old_tabs)}
         if not remove_set:
             return
+        # 记录已关闭标签到「重新打开」栈（Ctrl+Shift+T 恢复，LIFO）。
+        # do_close_many 是 Ctrl+W / 关闭确认弹层 / 批量关闭的全部路径的唯一漏斗，
+        # 因此这里是唯一的记录点（同一批按索引升序入栈，栈尾为最近关闭）。
+        push_closed_tabs(
+            ctx.closed_tabs_ref.current, [old_tabs[i] for i in sorted(remove_set)]
+        )
         new_tabs = [t for i, t in enumerate(old_tabs) if i not in remove_set]
         if not new_tabs:
             new_tabs = [new_tab(document=parser.parse_markdown(""),

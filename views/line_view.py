@@ -32,8 +32,8 @@ from styles import (
     only_border,
 )
 from utils.segment_helpers import PREFIX_SEGTYPES
-from views.cursor_layer import cursor_text_field
 from views import _block_frame, _frontmatter
+from views.cursor_layer import cursor_text_field
 from views.pixel_layout import (
     _block_padding,
     _compute_wrap_width,
@@ -128,7 +128,6 @@ def _cursor_overlay(
     precomputed_wrap_width: float | None = None,
     pos_value: str | None = None,
     wrap_sel_seq: int = 0,
-
 ) -> ft.TextField:
     """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off（2D 视觉行）。
 
@@ -162,7 +161,9 @@ def _cursor_overlay(
         cw = content_width if content_width is not None else float("inf")
         wrap_width = _compute_wrap_width(cw, left_pad)
         visual_lines = _line_visual_layout(
-            line, base, wrap_width,
+            line,
+            base,
+            wrap_width,
             cursor_raw_offset=cursor_off,
             line_height=line_height,
         )
@@ -198,7 +199,10 @@ def _cursor_overlay(
                 # textwidth（跨视觉行累加，与渲染层同源 offsets_x），caret 精确
                 # 落回光标像素位置，IME 候选框跟随正确位置弹出。
                 _w = _value_linear_width(
-                    visual_lines, cursor_off - len(_eff_value), vline, cursor_px_x,
+                    visual_lines,
+                    cursor_off - len(_eff_value),
+                    vline,
+                    cursor_px_x,
                 )
                 if _w is not None:
                     cursor_px_x = cursor_px_x - _w
@@ -278,11 +282,12 @@ def _render_math_block(
             multiline=True,
             min_lines=2,
             max_lines=6,
-            border=ft.InputBorder.NONE,
+            border=ft.NoInputBorder(),
             text_size=14,
             text_style=ft.TextStyle(font_family=FONT_MONO, color=c.math_fg),
-            on_change=lambda e: on_change_math(line_idx, e.control.value)
-                if on_change_math else None,
+            on_change=lambda e: (
+                on_change_math(line_idx, e.control.value) if on_change_math else None
+            ),
             on_focus=lambda e: on_math_focus(line_idx) if on_math_focus else None,
             on_blur=lambda e: on_math_blur(line_idx) if on_math_blur else None,
             expand=True,
@@ -290,17 +295,29 @@ def _render_math_block(
         if math_field_ref is not None:
             text_field.ref = math_field_ref
 
-        header = ft.Row([
-            ft.Icon(ft.Icons.FUNCTIONS, size=13, color=c.math_fg),
-            ft.Text("公式编辑", size=11, color=c.muted,
-                    font_family=FONT_MONO, weight=ft.FontWeight.W_600),
-            ft.Container(expand=True),
-            ft.Text("点击外部完成", size=11, color=c.muted),
-        ], spacing=Spacing.SM, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        header = ft.Row(
+            [
+                ft.Icon(ft.Icons.FUNCTIONS, size=13, color=c.math_fg),
+                ft.Text(
+                    "公式编辑",
+                    size=11,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                    weight=ft.FontWeight.W_600,
+                ),
+                ft.Container(expand=True),
+                ft.Text("点击外部完成", size=11, color=c.muted),
+            ],
+            spacing=Spacing.SM,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
 
         source_label = ft.Text(
-            "源码", size=10, color=c.muted,
-            font_family=FONT_MONO, weight=ft.FontWeight.W_500,
+            "源码",
+            size=10,
+            color=c.muted,
+            font_family=FONT_MONO,
+            weight=ft.FontWeight.W_500,
         )
 
         source_section = ft.Container(
@@ -310,14 +327,19 @@ def _render_math_block(
         )
 
         divider = ft.Divider(
-            height=1, thickness=1,
+            height=1,
+            thickness=1,
             color=ft.Colors.with_opacity(0.2, c.math_fg),
-            leading_indent=0, trailing_indent=0,
+            leading_indent=0,
+            trailing_indent=0,
         )
 
         preview_label = ft.Text(
-            "预览", size=10, color=c.muted,
-            font_family=FONT_MONO, weight=ft.FontWeight.W_500,
+            "预览",
+            size=10,
+            color=c.muted,
+            font_family=FONT_MONO,
+            weight=ft.FontWeight.W_500,
         )
 
         preview_md = ft.Markdown(
@@ -347,7 +369,9 @@ def _render_math_block(
                 spacing=Spacing.SM,
                 tight=True,
             ),
-            bgcolor=c.math_bg, border_radius=Radius.MD, width=float("inf"),
+            bgcolor=c.math_bg,
+            border_radius=Radius.MD,
+            width=float("inf"),
             padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             border=only_border(left=ft.BorderSide(3, c.math_fg)),
         )
@@ -359,7 +383,10 @@ def _render_math_block(
             extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
         )
         content = ft.Container(
-            content=md, bgcolor=c.math_bg, border_radius=Radius.MD, width=float("inf"),
+            content=md,
+            bgcolor=c.math_bg,
+            border_radius=Radius.MD,
+            width=float("inf"),
             padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             alignment=ft.Alignment.CENTER,
             ink=True,
@@ -367,9 +394,14 @@ def _render_math_block(
         )
 
     return _block_frame.wrap_block(
-        content, line, base, line_idx,
-        is_current_line=is_current_line, is_flash=is_flash,
-        on_size_change=on_line_size_change, diff_mark=diff_mark,
+        content,
+        line,
+        base,
+        line_idx,
+        is_current_line=is_current_line,
+        is_flash=is_flash,
+        on_size_change=on_line_size_change,
+        diff_mark=diff_mark,
     )
 
 
@@ -493,27 +525,56 @@ def LineView(
     # ============ 代码块（始终可编辑 CodeEditor 独立岛屿）============
     if line.block_type == BlockType.CODE:
         return _render_code_block(
-            line, line_idx, base, content_width, clipboard_ref,
-            on_change_code, on_code_focus, on_code_blur, on_change_lang,
-            on_code_selection, code_field_ref, is_current_line, is_flash,
-            on_line_size_change, diff_mark=diff_mark,
+            line,
+            line_idx,
+            base,
+            content_width,
+            clipboard_ref,
+            on_change_code,
+            on_code_focus,
+            on_code_blur,
+            on_change_lang,
+            on_code_selection,
+            code_field_ref,
+            is_current_line,
+            is_flash,
+            on_line_size_change,
+            diff_mark=diff_mark,
         )
 
     # ============ YAML 前置元数据（Obsidian 风格属性卡片）============
     if line.block_type == BlockType.FRONTMATTER:
         return _frontmatter.render_frontmatter(
-            line, line_idx, base, content_width, clipboard_ref,
-            on_change_code, on_code_focus, on_code_blur,
-            code_field_ref, is_current_line, is_flash, on_line_size_change,
+            line,
+            line_idx,
+            base,
+            content_width,
+            clipboard_ref,
+            on_change_code,
+            on_code_focus,
+            on_code_blur,
+            code_field_ref,
+            is_current_line,
+            is_flash,
+            on_line_size_change,
             diff_mark=diff_mark,
         )
 
     # ============ 块级公式 MATH（浏览态 ft.Markdown / 编辑态 TextField）============
     if line.block_type == BlockType.MATH:
         return _render_math_block(
-            line, line_idx, base, content_width,
-            on_change_math, on_math_focus, on_math_blur, math_field_ref,
-            is_math_editing, is_current_line, is_flash, on_line_size_change,
+            line,
+            line_idx,
+            base,
+            content_width,
+            on_change_math,
+            on_math_focus,
+            on_math_blur,
+            math_field_ref,
+            is_math_editing,
+            is_current_line,
+            is_flash,
+            on_line_size_change,
             diff_mark=diff_mark,
         )
 
@@ -529,11 +590,18 @@ def LineView(
             padding=ft.Padding.symmetric(vertical=Spacing.LG),
             alignment=ft.Alignment.CENTER,
             ink=True,
-            on_click=lambda e, raw=line.raw: on_tap(line_idx, len(raw) if raw else 0) if on_tap else None,
+            on_click=lambda e, raw=line.raw: (
+                on_tap(line_idx, len(raw) if raw else 0) if on_tap else None
+            ),
         )
         return _block_frame.wrap_block(
-            content, line, base, line_idx,
-            is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
+            content,
+            line,
+            base,
+            line_idx,
+            is_current_line=is_current_line,
+            is_flash=is_flash,
+            on_size_change=on_line_size_change,
             diff_mark=diff_mark,
         )
     # HR 激活态：fall through 到下方普通文本路径（显示 --- 源码 + 光标，可编辑）
@@ -599,18 +667,20 @@ def LineView(
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 )
                 # 同级别左对齐：缩进 = (lvl-1) * Spacing.XXL，色条作为级别标识
-                items.append(ft.Container(
-                    content=row,
-                    padding=ft.Padding.only(
-                        left=(lvl - 1) * Spacing.XXL,
-                        top=Spacing.SM,
-                        bottom=Spacing.SM,
-                        right=Spacing.SM,
-                    ),
-                    on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
-                    ink=True,
-                    border_radius=Radius.SM,
-                ))
+                items.append(
+                    ft.Container(
+                        content=row,
+                        padding=ft.Padding.only(
+                            left=(lvl - 1) * Spacing.XXL,
+                            top=Spacing.SM,
+                            bottom=Spacing.SM,
+                            right=Spacing.SM,
+                        ),
+                        on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
+                        ink=True,
+                        border_radius=Radius.SM,
+                    )
+                )
             body = ft.Column(controls=items, spacing=0)
 
         content = ft.Container(
@@ -634,8 +704,13 @@ def LineView(
             ),
         )
         return _block_frame.wrap_block(
-            content, line, base, line_idx,
-            is_current_line=is_current_line, is_flash=is_flash, on_size_change=on_line_size_change,
+            content,
+            line,
+            base,
+            line_idx,
+            is_current_line=is_current_line,
+            is_flash=is_flash,
+            on_size_change=on_line_size_change,
             diff_mark=diff_mark,
         )
 
@@ -650,7 +725,9 @@ def LineView(
         cw = content_width if content_width is not None else float("inf")
         shared_ww = _compute_wrap_width(cw, left_pad)
         shared_vlines = _line_visual_layout(
-            line, base, shared_ww,
+            line,
+            base,
+            shared_ww,
             cursor_raw_offset=effective_cursor_off,
             line_height=line_height,
         )
@@ -670,9 +747,20 @@ def LineView(
                 if _lv is not None:
                     pos_value = _lv
         overlay = _cursor_overlay(
-            line, base, line_height, effective_cursor_off, content_width, line_idx, nav_seq,
-            field_ref, cursor_value, on_cursor_change, on_cursor_submit, on_cursor_focus,
-            on_cursor_blur, on_selection_change,
+            line,
+            base,
+            line_height,
+            effective_cursor_off,
+            content_width,
+            line_idx,
+            nav_seq,
+            field_ref,
+            cursor_value,
+            on_cursor_change,
+            on_cursor_submit,
+            on_cursor_focus,
+            on_cursor_blur,
+            on_selection_change,
             precomputed_vlines=shared_vlayout[1] if shared_vlayout else None,
             wrap_sel_seq=wrap_sel_seq,
             precomputed_wrap_width=shared_vlayout[0] if shared_vlayout else None,
@@ -730,7 +818,9 @@ def LineView(
             cw = content_width if content_width is not None else float("inf")
             sec_ww = _compute_wrap_width(cw, left_pad)
             sec_vlines = _line_visual_layout(
-                line, base, sec_ww,
+                line,
+                base,
+                sec_ww,
                 cursor_raw_offset=None,
                 line_height=line_height,
             )
@@ -757,15 +847,17 @@ def LineView(
                     if 0 < prefix_len < len(pv.offsets_x):
                         psx -= pv.offsets_x[prefix_len]
                         pex -= pv.offsets_x[prefix_len]
-                sec_overlays.append(ft.Container(
-                    width=max(pex - psx, 2),
-                    height=text_h,
-                    left=psx,
-                    top=pv.vline_idx * text_h,
-                    bgcolor=ft.Colors.with_opacity(0.25, c.link),
-                    border_radius=2,
-                ))
-        for (_sli, sbase, sext) in secondary_cursors:
+                sec_overlays.append(
+                    ft.Container(
+                        width=max(pex - psx, 2),
+                        height=text_h,
+                        left=psx,
+                        top=pv.vline_idx * text_h,
+                        bgcolor=ft.Colors.with_opacity(0.25, c.link),
+                        border_radius=2,
+                    )
+                )
+        for _sli, sbase, sext in secondary_cursors:
             vline = _find_vline_for_raw(sec_vlines, sbase)
             if vline is None:
                 continue
@@ -796,23 +888,27 @@ def LineView(
                         sel_x_start -= vline.offsets_x[prefix_len]
                         sel_x_end -= vline.offsets_x[prefix_len]
                 sel_width = max(sel_x_end - sel_x_start, 2)
-                sec_overlays.append(ft.Container(
-                    width=sel_width,
-                    height=text_h,
-                    left=sel_x_start,
-                    top=px_y,
-                    bgcolor=ft.Colors.with_opacity(0.25, c.link),
-                    border_radius=2,
-                ))
+                sec_overlays.append(
+                    ft.Container(
+                        width=sel_width,
+                        height=text_h,
+                        left=sel_x_start,
+                        top=px_y,
+                        bgcolor=ft.Colors.with_opacity(0.25, c.link),
+                        border_radius=2,
+                    )
+                )
             # 副光标竖条标记（垂直居中于行框）
-            sec_overlays.append(ft.Container(
-                width=2,
-                height=base,
-                left=px_x,
-                top=px_y + cursor_y_off,
-                bgcolor=c.text,
-                border_radius=1,
-            ))
+            sec_overlays.append(
+                ft.Container(
+                    width=2,
+                    height=base,
+                    left=px_x,
+                    top=px_y + cursor_y_off,
+                    bgcolor=c.text,
+                    border_radius=1,
+                )
+            )
         if sec_overlays:
             inner = ft.Stack(
                 controls=[inner] + sec_overlays,
@@ -826,13 +922,17 @@ def LineView(
     if line.segments and line.segments[0].seg_type in PREFIX_SEGTYPES:
         content_start_off = len(line.segments[0].raw)
     return _block_frame.wrap_block(
-        inner, line, base, line_idx,
-        is_current_line=is_current_line, on_size_change=on_line_size_change,
+        inner,
+        line,
+        base,
+        line_idx,
+        is_current_line=is_current_line,
+        on_size_change=on_line_size_change,
         diff_mark=diff_mark,
         on_click=(
-            lambda e, li=line_idx, off=content_start_off: on_tap(li, off)
-            if on_tap is not None
-            else None
+            lambda e, li=line_idx, off=content_start_off: (
+                on_tap(li, off) if on_tap is not None else None
+            )
         ),
     )
 
@@ -887,7 +987,7 @@ def _render_code_block(
         text_size=12,
         dense=True,
         content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
-        border=ft.InputBorder.NONE,
+        border=ft.NoInputBorder(),
         fill_color=ft.Colors.TRANSPARENT,
         enable_search=True,
         editable=False,
@@ -910,7 +1010,8 @@ def _render_code_block(
         ),
         on_click=lambda e, txt=code: (
             page.run_task(copy_code_to_clipboard, clipboard_ref, txt, set_copied)
-            if page is not None and not copied else None
+            if page is not None and not copied
+            else None
         ),
     )
 
@@ -956,14 +1057,20 @@ def _render_code_block(
         autocomplete=True,
         on_change=lambda e: (
             on_change_code(line_idx, e.control.value)
-            if on_change_code is not None else None
+            if on_change_code is not None
+            else None
         ),
-        on_focus=lambda e: on_code_focus(line_idx) if on_code_focus is not None else None,
+        on_focus=lambda e: (
+            on_code_focus(line_idx) if on_code_focus is not None else None
+        ),
         on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
         # 光标/选区跟踪：写入 (value, base, extent)，供代码块边界方向键跳出判定
         on_selection_change=(
-            lambda e: on_code_selection(line_idx, e)
-            if on_code_selection is not None else None
+            lambda e: (
+                on_code_selection(line_idx, e)
+                if on_code_selection is not None
+                else None
+            )
         ),
     )
     if code_field_ref is not None:
@@ -988,7 +1095,9 @@ def _render_code_block(
     )
 
     # ---- 折叠时显示摘要 ----
-    preview_text = code.split("\n")[0][:60] + ("…" if len(code.split("\n")[0]) > 60 else "")
+    preview_text = code.split("\n")[0][:60] + (
+        "…" if len(code.split("\n")[0]) > 60 else ""
+    )
     collapsed_preview = ft.Container(
         content=ft.Row(
             controls=[
@@ -1032,8 +1141,7 @@ def _render_code_block(
         bgcolor=c.code_block_bg,
         border_radius=Radius.MD,
         padding=ft.Padding.only(
-            left=Spacing.MD, right=Spacing.MD,
-            top=Spacing.XS, bottom=Spacing.SM
+            left=Spacing.MD, right=Spacing.MD, top=Spacing.XS, bottom=Spacing.SM
         ),
         shadow=card_shadow(Elevation.LOW, is_dark),
         border=only_border(
@@ -1045,8 +1153,13 @@ def _render_code_block(
     )
 
     return _block_frame.wrap_block(
-        content, line, base, line_idx,
-        on_click=(lambda e: on_code_focus(line_idx)) if on_code_focus is not None else None,
+        content,
+        line,
+        base,
+        line_idx,
+        on_click=(lambda e: on_code_focus(line_idx))
+        if on_code_focus is not None
+        else None,
         is_current_line=is_current_line,
         is_flash=is_flash,
         on_size_change=on_line_size_change,

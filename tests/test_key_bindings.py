@@ -209,6 +209,7 @@ def make_dispatcher(
         "toggle_theme": make_cb("toggle_theme"),
         "open_settings": make_cb("open_settings"),
         "close_tab": make_cb("close_tab"),
+        "reopen_closed_tab": make_cb("reopen_closed_tab"),
         "next_tab": make_cb("next_tab"),
         "prev_tab": make_cb("prev_tab"),
         "toggle_word_wrap": make_cb("toggle_word_wrap"),

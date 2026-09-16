@@ -183,6 +183,7 @@ PARITY_CASES = [
     (evt("n", ctrl=True), "new"),
     (evt("o", ctrl=True), "open"),
     (evt("w", ctrl=True), "close_tab"),
+    (evt("t", ctrl=True, shift=True), "reopen_closed_tab"),
     (evt("tab", ctrl=True), "next_tab"),
     (evt("tab", ctrl=True, shift=True), "prev_tab"),
     (evt("b", ctrl=True, shift=True), "toggle_sidebar"),

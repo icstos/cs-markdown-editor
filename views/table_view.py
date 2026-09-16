@@ -34,10 +34,10 @@ from styles import (
 from utils.table_helpers import ALIGN_RE, split_row
 from views.segment_view import segment_to_span
 
-
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
+
 
 def _parse_table_lines(
     lines: list[Line], start_idx: int
@@ -79,7 +79,7 @@ def _normalize_rows(rows: list[list[str]]) -> list[list[str]]:
 
 
 def _cell_text(cell: str) -> str:
-    return cell.strip() or "\u00A0"  # 不换行空格：确保空单元格有可测量宽度
+    return cell.strip() or "\u00a0"  # 不换行空格：确保空单元格有可测量宽度
 
 
 def _render_cell_spans(cell_text: str, base_size: int = 14) -> list[ft.TextSpan]:
@@ -93,7 +93,7 @@ def _render_cell_spans(cell_text: str, base_size: int = 14) -> list[ft.TextSpan]
     """
     text = cell_text.strip()
     if not text:
-        return [ft.TextSpan(text="\u00A0", style=ft.TextStyle(size=base_size))]
+        return [ft.TextSpan(text="\u00a0", style=ft.TextStyle(size=base_size))]
     segs = parser.parse_inline(text)
     spans: list[ft.TextSpan] = []
     for i, seg in enumerate(segs):
@@ -147,6 +147,7 @@ def _align_icon(align: str) -> str:
 # TableView 组件
 # ---------------------------------------------------------------------------
 
+
 @ft.memo
 @ft.component
 def TableView(
@@ -199,7 +200,9 @@ def TableView(
     if col_count == 0:
         return ft.Container()
 
-    aligns = [_align_of(aligns[i]) if i < len(aligns) else "left" for i in range(col_count)]
+    aligns = [
+        _align_of(aligns[i]) if i < len(aligns) else "left" for i in range(col_count)
+    ]
     header_row = normalized[0]
     body_rows = normalized[1:] if len(normalized) > 1 else []
 
@@ -243,9 +246,11 @@ def TableView(
         # 延迟复位守卫：等待 on_blur 触发窗口过去后恢复
         page = ft.context.page
         if page is not None:
+
             async def _reset_guard():
                 await asyncio.sleep(0.1)
                 nav_guard_ref.current = False
+
             page.run_task(_reset_guard)
 
     def _commit_current():
@@ -388,22 +393,26 @@ def TableView(
     def _auto_focus_first_cell():
         # auto_focus_li == line_idx：仅当前表格匹配创建行；edit_cell is None：
         # 避免用户已点进某格后又因 auto_focus 抢焦
-        if auto_focus_li is not None and auto_focus_li == line_idx and edit_cell is None:
+        if (
+            auto_focus_li is not None
+            and auto_focus_li == line_idx
+            and edit_cell is None
+        ):
             _start_edit(header_idx, 0)
 
     ft.use_effect(_auto_focus_first_cell, [auto_focus_li])
 
     # ---- 当前选中行/列（工具栏操作目标）----
-    sel = edit_cell or (
-        (row_indices[-1] if row_indices else header_idx, col_count - 1)
-    )
+    sel = edit_cell or ((row_indices[-1] if row_indices else header_idx, col_count - 1))
     sel_li, sel_ci = sel
 
     # ---- 工具栏操作 ----
     def _do_add_row():
         _commit_current()
-        target_li = sel_li if sel_li in row_indices else (
-            row_indices[-1] if row_indices else sep_idx
+        target_li = (
+            sel_li
+            if sel_li in row_indices
+            else (row_indices[-1] if row_indices else sep_idx)
         )
         if on_table_op is not None:
             on_table_op("add_row", {"after_li": target_li, "col_count": col_count})
@@ -435,86 +444,130 @@ def TableView(
 
     def _do_set_align(align: str):
         if on_table_op is not None:
-            on_table_op("set_align", {
-                "table_start": line_idx, "col_idx": sel_ci, "align": align,
-            })
+            on_table_op(
+                "set_align",
+                {
+                    "table_start": line_idx,
+                    "col_idx": sel_ci,
+                    "align": align,
+                },
+            )
 
     # ---- 右键菜单 ----
     def _cell_context_items(li: int, ci: int, is_header: bool) -> list:
         items: list = []
         if not is_header:
-            items.extend([
+            items.extend(
+                [
+                    ft.PopupMenuItem(
+                        content="上方插入行",
+                        on_click=lambda e: (
+                            on_table_op(
+                                "add_row", {"after_li": li - 1, "col_count": col_count}
+                            )
+                            if on_table_op
+                            else None
+                        ),
+                    ),
+                    ft.PopupMenuItem(
+                        content="下方插入行",
+                        on_click=lambda e: (
+                            on_table_op(
+                                "add_row", {"after_li": li, "col_count": col_count}
+                            )
+                            if on_table_op
+                            else None
+                        ),
+                    ),
+                    ft.PopupMenuItem(
+                        content="删除行",
+                        on_click=lambda e: (
+                            on_table_op("delete_row", {"li": li})
+                            if on_table_op
+                            else None
+                        ),
+                    ),
+                    ft.PopupMenuItem(),
+                ]
+            )
+        items.extend(
+            [
                 ft.PopupMenuItem(
-                    content="上方插入行",
+                    content="左侧插入列",
                     on_click=lambda e: (
-                        on_table_op("add_row", {"after_li": li - 1, "col_count": col_count})
-                        if on_table_op else None
+                        on_table_op("add_col", {"table_start": line_idx, "col_idx": ci})
+                        if on_table_op
+                        else None
                     ),
                 ),
                 ft.PopupMenuItem(
-                    content="下方插入行",
+                    content="右侧插入列",
                     on_click=lambda e: (
-                        on_table_op("add_row", {"after_li": li, "col_count": col_count})
-                        if on_table_op else None
+                        on_table_op(
+                            "add_col", {"table_start": line_idx, "col_idx": ci + 1}
+                        )
+                        if on_table_op
+                        else None
                     ),
                 ),
                 ft.PopupMenuItem(
-                    content="删除行",
+                    content="删除列",
                     on_click=lambda e: (
-                        on_table_op("delete_row", {"li": li})
-                        if on_table_op else None
+                        on_table_op(
+                            "delete_col", {"table_start": line_idx, "col_idx": ci}
+                        )
+                        if on_table_op
+                        else None
                     ),
                 ),
                 ft.PopupMenuItem(),
-            ])
-        items.extend([
-            ft.PopupMenuItem(
-                content="左侧插入列",
-                on_click=lambda e: (
-                    on_table_op("add_col", {"table_start": line_idx, "col_idx": ci})
-                    if on_table_op else None
+                ft.PopupMenuItem(
+                    content="左对齐",
+                    on_click=lambda e: (
+                        on_table_op(
+                            "set_align",
+                            {
+                                "table_start": line_idx,
+                                "col_idx": ci,
+                                "align": "left",
+                            },
+                        )
+                        if on_table_op
+                        else None
+                    ),
                 ),
-            ),
-            ft.PopupMenuItem(
-                content="右侧插入列",
-                on_click=lambda e: (
-                    on_table_op("add_col", {"table_start": line_idx, "col_idx": ci + 1})
-                    if on_table_op else None
+                ft.PopupMenuItem(
+                    content="居中对齐",
+                    on_click=lambda e: (
+                        on_table_op(
+                            "set_align",
+                            {
+                                "table_start": line_idx,
+                                "col_idx": ci,
+                                "align": "center",
+                            },
+                        )
+                        if on_table_op
+                        else None
+                    ),
                 ),
-            ),
-            ft.PopupMenuItem(
-                content="删除列",
-                on_click=lambda e: (
-                    on_table_op("delete_col", {"table_start": line_idx, "col_idx": ci})
-                    if on_table_op else None
+                ft.PopupMenuItem(
+                    content="右对齐",
+                    on_click=lambda e: (
+                        on_table_op(
+                            "set_align",
+                            {
+                                "table_start": line_idx,
+                                "col_idx": ci,
+                                "align": "right",
+                            },
+                        )
+                        if on_table_op
+                        else None
+                    ),
                 ),
-            ),
-            ft.PopupMenuItem(),
-            ft.PopupMenuItem(
-                content="左对齐",
-                on_click=lambda e: (
-                    on_table_op("set_align", {
-                        "table_start": line_idx, "col_idx": ci, "align": "left",
-                    }) if on_table_op else None
-                ),
-            ),
-            ft.PopupMenuItem(
-                content="居中对齐",
-                on_click=lambda e: (
-                    on_table_op("set_align", {
-                        "table_start": line_idx, "col_idx": ci, "align": "center",
-                    }) if on_table_op else None
-                ),
-            ),
-            ft.PopupMenuItem(
-                content="右对齐",
-                on_click=lambda e: (
-                    on_table_op("set_align", {
-                        "table_start": line_idx, "col_idx": ci, "align": "right",
-                    }) if on_table_op else None
-                ),
-            ),
-        ])
+            ]
+        )
         return items
 
     # ---- 渲染：列头 ----
@@ -527,13 +580,15 @@ def TableView(
                     key=f"th-edit-{nav_seq}",
                     value=edit_draft,
                     autofocus=True,
-                    border=ft.InputBorder.NONE,
+                    border=ft.NoInputBorder(),
                     filled=True,
                     fill_color=_safe_color(c.link, 0.10),
                     dense=True,
                     content_padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                     text_style=ft.TextStyle(
-                        font_family=FONT_MAIN, color=c.text, size=14,
+                        font_family=FONT_MAIN,
+                        color=c.text,
+                        size=14,
                         weight=ft.FontWeight.W_600,
                     ),
                     text_align=_align_text_align(aligns[ci]),
@@ -599,13 +654,15 @@ def TableView(
                         key=f"td-edit-{nav_seq}",
                         value=edit_draft,
                         autofocus=True,
-                        border=ft.InputBorder.NONE,
+                        border=ft.NoInputBorder(),
                         filled=True,
                         fill_color=_safe_color(c.link, 0.10),
                         dense=True,
                         content_padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                         text_style=ft.TextStyle(
-                            font_family=FONT_MAIN, color=c.text, size=14,
+                            font_family=FONT_MAIN,
+                            color=c.text,
+                            size=14,
                         ),
                         text_align=_align_text_align(aligns[ci]),
                         cursor_color=c.link,
@@ -628,7 +685,9 @@ def TableView(
                         # segment_style 对 TEXT 段仅设 size+color，font_family 由此继承。
                         spans=_render_cell_spans(row[ci], base_size=14),
                         style=ft.TextStyle(
-                            font_family=FONT_MAIN, color=c.text, size=14,
+                            font_family=FONT_MAIN,
+                            color=c.text,
+                            size=14,
                         ),
                         text_align=_align_text_align(aligns[ci]),
                         max_lines=4,
@@ -655,9 +714,9 @@ def TableView(
                     content=content,
                     # 编辑态不绑 on_tap：避免点击当前编辑单元格时重复触发
                     # _start_edit 导致 TextField 重建（key 变化）、光标跳动。
-                    on_tap=None if is_editing else (
-                        lambda e, li=source_li, ci=ci: _start_edit(li, ci)
-                    ),
+                    on_tap=None
+                    if is_editing
+                    else (lambda e, li=source_li, ci=ci: _start_edit(li, ci)),
                 )
             )
         data_rows.append(
@@ -702,11 +761,10 @@ def TableView(
             text_size=12,
             dense=True,
             content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
-            border=ft.InputBorder.NONE,
+            border=ft.NoInputBorder(),
             fill_color=ft.Colors.TRANSPARENT,
             on_select=lambda e: (
-                _do_set_align(e.control.value)
-                if e.control.value is not None else None
+                _do_set_align(e.control.value) if e.control.value is not None else None
             ),
         ),
         alignment=ft.Alignment.CENTER_LEFT,
@@ -741,7 +799,9 @@ def TableView(
             ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=14, color=c.muted),
             ft.Text(
                 f"{len(body_rows) + 1} × {col_count}",
-                size=11, color=c.muted, font_family=FONT_MONO,
+                size=11,
+                color=c.muted,
+                font_family=FONT_MONO,
             ),
             ft.Container(expand=True),
             _tb_btn("+ 行", lambda e: _do_add_row(), tooltip="新增行"),
@@ -759,7 +819,9 @@ def TableView(
     # min_width 不支持 float("inf")：word_wrap=False 时 content_width=inf，
     # JSON 序列化为 "Infinity"（非标准），Flutter 无法解析导致渲染异常
     # （如只显示首列）。转为 None 让 DataTable2 自适应内容宽度。
-    _min_w = content_width if (content_width and content_width != float("inf")) else None
+    _min_w = (
+        content_width if (content_width and content_width != float("inf")) else None
+    )
     table = DataTable2(
         columns=columns,
         rows=data_rows,
@@ -771,9 +833,13 @@ def TableView(
         horizontal_lines=ft.BorderSide(1, _safe_color(c.border, 0.08)),
         vertical_lines=ft.BorderSide(1, _safe_color(c.border, 0.06)),
         border=ft.TableBorder.all(
-            1, _safe_color(c.border, 0.10),
-        ) if hasattr(ft, "TableBorder") else ft.Border.all(
-            1, _safe_color(c.border, 0.10),
+            1,
+            _safe_color(c.border, 0.10),
+        )
+        if hasattr(ft, "TableBorder")
+        else ft.Border.all(
+            1,
+            _safe_color(c.border, 0.10),
         ),
         border_radius=12,
         show_bottom_border=True,
@@ -783,7 +849,8 @@ def TableView(
             ft.ControlState.PRESSED: _safe_color(c.link, 0.08),
         },
         bgcolor=_safe_color(
-            getattr(c, "surface", c.code_bg), 0.96,
+            getattr(c, "surface", c.code_bg),
+            0.96,
         ),
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         show_checkbox_column=False,
@@ -815,7 +882,8 @@ def TableView(
         content = ft.Container(
             content=content,
             border=ft.Border.all(
-                2, _safe_color(c.link, 0.20),
+                2,
+                _safe_color(c.link, 0.20),
             ),
             border_radius=Radius.XXXL,
             padding=ft.Padding.all(1),

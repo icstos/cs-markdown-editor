@@ -10,7 +10,12 @@
    这正是本次改造的原始诉求；
 3. **契约未变**：点击进入编辑态后是原生多行 `TextField`，四个围栏回调
    （on_change / on_focus / on_blur / on_selection_change）的参数形态不变，
-   因此 views/editor/_fence.py 与 key_bindings 的路由无需改动。
+   因此 views/editor/_fence.py 与 key_bindings 的路由无需改动；
+4. **编辑态与浏览态同宽同折行**：编辑态用 `Stack` 把浏览态那个高亮层垫在下面、
+   上面叠文字透明的编辑框，两层共用容器约束与字体度量（含显式 letter_spacing），
+   故折行点与光标逐字对齐，且编辑时语法高亮持续可见。锁定这条是因为真机上出现
+   过"编辑态行宽异常"：`KeyboardListener` 只把自己撑开、传给内容的是松约束，
+   多行 TextField 因此缩到内在宽度（实测 300px vs 应有的 728px）。
 """
 
 import sys
@@ -29,7 +34,7 @@ from services.code_highlight import (  # noqa: E402
     clear_highlight_cache,
     highlight_lines,
 )
-from styles import get_colors  # noqa: E402
+from styles import FONT_MONO, Spacing, get_colors  # noqa: E402
 from tests.harness import RenderHarness  # noqa: E402
 from views import line_view as lv  # noqa: E402
 
@@ -270,14 +275,15 @@ def test_syntax_spans_use_theme_colors():
 
 
 def test_click_enters_edit_mode_with_native_multiline_field():
-    """点击代码块 → 生成原生多行 TextField（替代 CodeEditor）。"""
+    """点击代码块 → 生成原生多行 TextField（替代 CodeEditor），并保留高亮层。"""
     with _rendered() as h:
         assert _code_text(h) is not None, "初始应为浏览态"
         field = _enter_edit(h)
         assert field.multiline is True
         assert field.value == PARSED_CODE
         assert field.min_lines == len(LOGICAL_LINES)
-        assert _code_text(h) is None, "编辑态不应同时渲染高亮浏览层"
+        # 编辑态的高亮层仍应在：字符由它呈现，编辑框只留光标与选区
+        assert _code_text(h) is not None, "编辑态丢失了底层高亮层"
 
 
 def test_edit_change_forwards_to_on_change_code():
@@ -383,10 +389,33 @@ def _keyboard_listeners(h: RenderHarness) -> list[ft.KeyboardListener]:
 
 
 def _edit_listener(h: RenderHarness) -> ft.KeyboardListener:
-    """编辑态内的按键监听器（只包住编辑框，焦点在代码块内才触发）。"""
+    """编辑态的按键监听器（包住整个正文，焦点在代码块内才触发）。
+
+    注意它包的是**整个叠加层**而不是编辑框：`KeyboardListener` 会把内容撑开但不
+    向内容传递紧宽度，直接包编辑框会让多行 TextField 缩到内在宽度（行宽异常根因）。
+    """
     listeners = _keyboard_listeners(h)
     assert listeners, "编辑态未挂载 KeyboardListener，Tab 收不到"
     return listeners[0]
+
+
+def _overlay(h: RenderHarness) -> ft.Stack:
+    """编辑态叠加容器：底层高亮层 + 顶层透明编辑层。"""
+    stacks = h.find(lambda n: isinstance(n, ft.Stack))
+    assert stacks, "编辑态未使用 Stack 叠加高亮层与编辑层"
+    return stacks[0]
+
+
+def _gutter_cell_w(h: RenderHarness) -> float:
+    """行号列宽（从渲染出的行号单元格反推，避免在测试里复制宽度公式）。"""
+    cells = [
+        n
+        for n in h.find(lambda n: isinstance(n, ft.Container))
+        if isinstance(n.content, ft.Text)
+        and str(getattr(n.content, "value", "")).isdigit()
+    ]
+    assert cells, "未找到行号单元格"
+    return cells[0].width
 
 
 def _caret(h: RenderHarness, field: ft.TextField, base: int, extent: int) -> None:
@@ -404,12 +433,89 @@ def _press(h: RenderHarness, listener: ft.KeyboardListener, key: str) -> None:
     h.interact(lambda: listener.on_key_down(_key_event(key)))
 
 
-def test_edit_body_wraps_field_in_keyboard_listener():
-    """编辑框被按键监听器包住：Tab 只在焦点位于代码块内时才被接走。"""
+def test_edit_body_overlays_field_on_highlight_layer():
+    """编辑态 = Stack[高亮层, 编辑层]，且监听器包住整个正文而非编辑框。
+
+    `KeyboardListener` 只把自己撑开、不向内容传递紧宽度：若直接包住编辑框，
+    多行 TextField 会缩到内在宽度（真机实测 300px vs 应有的 728px）→ 折行提前、
+    块高多出两行，即"编辑态行宽异常"。故它必须在最外层。
+    """
     with _rendered() as h:
         field = _enter_edit(h)
+        stack = _overlay(h)
+        assert isinstance(stack.controls[0], ft.Column), "Stack 底层应是高亮正文列"
+        assert field not in stack.controls, "编辑框应在 Stack 的第二层里"
         listener = _edit_listener(h)
-        assert listener.content is field, "监听器必须直接包住编辑框"
+        assert listener.content is stack, "监听器应包住整个叠加层"
+        assert listener.content is not field, "监听器不能直接包住编辑框（会收窄宽度）"
+
+
+def test_edit_field_receives_tight_width_from_flex_parent():
+    """换行模式下编辑框由 flex 容器赋予**紧宽度**，不得缩到内在宽度。
+
+    这条直接对应"编辑态行宽异常"：宽度塌缩时编辑框只有 300px、浏览态代码列有 728px，
+    折行点因此完全对不上。修复手段是让编辑框挂在 `Container(expand=True)` 下
+    （无界约束下才允许退化为固定宽度）。
+    """
+    with _rendered(word_wrap=True) as h:
+        field = _enter_edit(h)
+        assert field.width is None, "换行模式不应给编辑框固定宽度，应由 flex 撑满"
+        holders = [
+            n
+            for n in h.find(lambda n: isinstance(n, ft.Container))
+            if n.expand and n.content is field
+        ]
+        assert holders, "编辑框未被 expand 容器承载，宽度会塌缩到内在宽度"
+
+
+def test_edit_field_is_transparent_and_matches_highlight_metrics():
+    """编辑框文字透明，且字体度量与高亮层逐项一致（字距尤甚）。
+
+    任一项不一致都会让光标相对底层可见文字漂移；字距差异按 0.25px/字形线性累积，
+    长行尤其明显（两层都必须**显式**指定，因为 `TextStyle.letter_spacing` 默认 None
+    走继承，继承链不确定）。
+    """
+    with _rendered() as h:
+        field = _enter_edit(h)
+        style = field.text_style
+        assert style.color == ft.Colors.TRANSPARENT, "编辑框文字应透明"
+        assert style.letter_spacing is not None, "字距必须显式指定"
+
+        ref = _code_text(h).spans[0].style
+        assert style.font_family == ref.font_family == FONT_MONO
+        assert style.size == ref.size, "字号不一致 → 行高与折行点漂移"
+        assert style.height == ref.height, "行高倍数不一致 → 光标纵向漂移"
+        assert style.letter_spacing == ref.letter_spacing, "字距不一致 → 光标横向漂移"
+
+
+def test_edit_field_text_area_aligns_with_highlight_column():
+    """编辑框文本区左缘与高亮层代码列同 x，右侧不再额外留白。
+
+    右侧若也留一个间距，编辑框每行可用宽度就比浏览态少一个 `Spacing.MD`，折行点
+    会比浏览态提前——真机探针实测两侧文本区同为 728px 时折行点才完全一致。
+    """
+    with _rendered() as h:
+        field = _enter_edit(h)
+        pad = field.content_padding
+        assert pad.left == _gutter_cell_w(h) + Spacing.MD, "左内边距应等于行号列宽 + 间距"
+        assert pad.right == 0, "右侧留白会让可用宽度比浏览态少一个间距"
+
+
+def test_word_wrap_off_edit_shares_scroll_with_highlight():
+    """关闭换行：高亮层与编辑层共用同一个横向滚动容器（滚动位置天然同步）。"""
+    with _rendered(word_wrap=False) as h:
+        field = _enter_edit(h)
+        stack = _overlay(h)
+        scroll_rows = [
+            n
+            for n in h.find(lambda n: isinstance(n, ft.Row))
+            if getattr(n, "scroll", None) == ft.ScrollMode.AUTO
+        ]
+        assert scroll_rows, "关闭换行时编辑态应有横向滚动容器"
+        assert any(stack in (r.controls or []) for r in scroll_rows), (
+            "叠加层应直接放进滚动容器，两层才能同步滚动"
+        )
+        assert field.width is not None, "无界约束下必须给编辑框固定宽度（flex 不可用）"
 
 
 def test_tab_inserts_indent_and_forwards_to_on_change_code():
@@ -529,7 +635,7 @@ def test_tab_induced_blur_keeps_edit_mode():
 
         assert blur_rec.calls == [], "把遍历副作用当成了真实失焦（会清掉撤销会话）"
         assert _edit_fields(h), "Tab 后被踢出了编辑态"
-        assert _code_text(h) is None
+        assert _code_text(h) is not None, "编辑态应保留底层高亮层"
 
 
 def test_real_blur_still_exits_edit_mode():

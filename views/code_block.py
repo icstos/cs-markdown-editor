@@ -5,13 +5,23 @@
 也没有暴露任何换行开关——"开启换行时代码块内也软换行"在产品上无法达成。故整体
 改用 Flet 原生控件重建代码块。
 
-两态：
+两态（共用同一份行内容与同一套字体度量，宽度 / 折行点 / 行高因此严格一致）：
 - 浏览态：逐逻辑行 `ft.Text(spans=...)` + Pygments 语义色
   （services.code_highlight 分词 → styles.Colors.code_syntax 取色）。
   word_wrap=True 时文本按容器宽度自然折行，续行与首行同列；False 时单行不折、
   整块横向滚动。
-- 编辑态：`ft.TextField(multiline=True)` + 等宽字体，选区 / IME / 撤销 / 软换行
-  全部交给框架原生实现。
+- 编辑态：`ft.Stack` 把**同一个高亮正文层**垫在下面，上面叠一个文字透明的
+  `ft.TextField(multiline=True)`——字符仍由底层高亮层呈现，编辑框只提供原生光标、
+  选区、IME 与撤销。两层同宽（同一容器约束）、同字距（显式 `letter_spacing`）、
+  同行高，故折行点与光标位置逐字对齐，且**编辑过程中语法高亮持续可见**。
+
+叠加层的两个实测约束（真机探针，勿凭直觉改）：
+- `KeyboardListener` 必须放在**最外层**包住整个正文，不能只包编辑框：它只把自己
+  撑开，传给 `content` 的是**松约束**，多行 `TextField` 会据此缩到内在宽度
+  （实测 300px vs 应有的 728px），折行因此提前、块高多出 2 个视觉行——这正是
+  "编辑态行宽异常"的根因。
+- `Stack` 用默认的 LOOSE：本组件位于滚动 `Column` 内、交叉轴约束无界，
+  `StackFit.EXPAND` 会把高度约束成 infinity（整块高度 inf、块体渲不出来）。
 
 契约不变（换实现不换接口）：`on_change / on_focus / on_blur / on_selection_change`
 四件套的语义与旧 CodeEditor 完全一致，因此 `views/editor/_fence.py` 的围栏闭包组
@@ -33,6 +43,8 @@ state，从而不扰动既有的 `code_focus_ref` 路由与 `ft.memo` 依赖。
 - services.clipboard（复制代码到系统剪贴板）
 - styles（FONT_MONO / Radius / Spacing / Elevation / card_shadow / code_syntax）
 - utils.code_indent（Tab / Shift+Tab 的缩进变换，纯函数）
+- utils.text_layout（`_FLET_DEFAULT_LETTER_SPACING`：与渲染层一致的字距，
+  高亮层与编辑层必须同值，否则折行点与光标随字数线性漂移）
 - views._block_frame（块级包裹：缩进 / diff / 当前行高亮 / 高度上报）
 """
 
@@ -54,6 +66,7 @@ from styles import (
     only_border,
 )
 from utils.code_indent import apply_indent
+from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING
 from views import _block_frame
 
 # 代码块行高倍数：等宽字体下 1.5 倍行距，紧凑与可读的平衡点。
@@ -106,17 +119,22 @@ def _lang_options(current_lang: str) -> list[ft.DropdownOption]:
 
 
 def _span_style(color: str, size: int) -> ft.TextStyle:
-    """代码片段文字样式：等宽 + 固定行高倍数 + 语义色。
+    """代码片段文字样式：等宽 + 固定行高倍数 + 语义色 + 显式字距。
 
-    字体族 / 字号 / 行高在 span 上重复声明（而非仅依赖 Text 的 style 继承）：
+    字体族 / 字号 / 行高 / 字距在 span 上重复声明（而非仅依赖 Text 的 style 继承）：
     Flet 序列化只发送非空字段，继承链一旦在某个版本上表现不一致，就会退化成
     默认字体并让行高与行号错位，显式声明可完全规避该类风险。
+
+    `letter_spacing` 尤其不能省：`ft.TextStyle.letter_spacing` 默认是 None（走继承），
+    而编辑态叠加的 `TextField` 若同样留空，两侧可能取到不同的字距，每个字形差 0.25px
+    → 折行点与光标位置随字符数线性漂移（长行尤其明显）。两层显式同值即彻底对齐。
     """
     return ft.TextStyle(
         color=color,
         font_family=FONT_MONO,
         size=size,
         height=_CODE_LINE_HEIGHT,
+        letter_spacing=_FLET_DEFAULT_LETTER_SPACING,
     )
 
 
@@ -313,8 +331,13 @@ def render_code_block(
             padding=ft.Padding.only(top=Spacing.XS, right=Spacing.MD),
         )
 
-    def _build_read_body() -> ft.Control:
-        """浏览态：逐逻辑行高亮渲染，折行由 Flutter 按容器宽度原生完成。"""
+    def _read_column() -> ft.Column:
+        """高亮正文列：逐逻辑行高亮渲染，折行由 Flutter 按容器宽度原生完成。
+
+        浏览态与编辑态**共用本层**：编辑态把它作为底层高亮，上面叠一个文字透明的
+        原生编辑框。两层吃同一份容器约束、同一套字体度量，因此宽度、折行点、行高
+        严格一致——这是"编辑态与渲染状态保持一致"的实现基础。
+        """
         rows: list[ft.Control] = []
         for i, spec in enumerate(highlight_lines(code, lang)):
             spans = [
@@ -351,12 +374,16 @@ def render_code_block(
                     vertical_alignment=ft.CrossAxisAlignment.START,
                 )
             )
-        body = ft.Column(controls=rows, spacing=0, tight=True)
+        return ft.Column(controls=rows, spacing=0, tight=True)
+
+    def _build_read_body() -> ft.Control:
+        """浏览态正文：换行开关只决定"要不要再套一层横向滚动"。"""
+        column = _read_column()
         if wrap:
-            return body
+            return column
         # 不换行：整块横向滚动（行号随内容滚动，行为与"关闭换行"的段落一致）
         return ft.Row(
-            controls=[body],
+            controls=[column],
             scroll=ft.ScrollMode.AUTO,
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
@@ -364,7 +391,11 @@ def render_code_block(
     # ============================ 编辑态 ============================
 
     def _build_edit_body() -> ft.Control:
-        """编辑态：原生多行 TextField（软换行 / 选区 / IME / 撤销全由框架负责）。"""
+        """编辑态：高亮层垫底 + 文字透明的原生编辑框叠加。
+
+        字符由底层高亮层呈现，编辑框只提供光标 / 选区 / IME / 撤销——因此编辑时
+        语法高亮持续可见，且两层同宽同折行（见模块 docstring 的两条实测约束）。
+        """
         # Tab 缩进后的光标位置：只能经渲染参数给客户端——渲染后的控件是冻结的，
         # 在 effect 里改 `field.selection` 会抛 "Frozen controls cannot be updated."
         # （flet 1.0 用冻结标记保证"控件状态只从渲染流入"，事后改属性不会被 diff 采纳）。
@@ -398,15 +429,20 @@ def render_code_block(
                 font_family=FONT_MONO,
                 size=code_size,
                 height=_CODE_LINE_HEIGHT,
-                color=c.code_block_fg,
+                # 字追高亮层：字体族 / 字号 / 行高 / 字距全部同值，否则折行点与光标
+                # 会相对底层可见文字漂移（见 _span_style 的说明）。
+                letter_spacing=_FLET_DEFAULT_LETTER_SPACING,
+                # 文字透明：字符不可见，只留光标与选区——可见字符由底层高亮层负责
+                color=ft.Colors.TRANSPARENT,
             ),
             cursor_color=c.link,
             cursor_width=2,
             selection_color=ft.Colors.with_opacity(0.25, c.link),
-            # 左内边距 = 行号列宽 + 间距：让代码正文与浏览态的代码列严格同 x，
-            # 进出编辑态时代码水平方向零位移（真机探针实测过无内边距时的横向跳动）。
+            # 左内边距 = 行号列宽 + 间距、右侧留 0：让编辑框的**文本区**与浏览态代码列
+            # 严格同 x 同宽（右侧若也留间距，每行可用宽度少一个 Spacing.MD，折行点会
+            # 比浏览态提前）。真机探针实测：两侧文本区同为 728px 时折行点完全一致。
             content_padding=ft.Padding.only(
-                left=gutter_w + Spacing.MD, right=Spacing.MD, top=0, bottom=0
+                left=gutter_w + Spacing.MD, right=0, top=0, bottom=0
             ),
             on_change=lambda e: (
                 on_change_code(line_idx, e.control.value)
@@ -424,33 +460,48 @@ def render_code_block(
             # 保留对外契约（历史上由编辑器持有该 ref）；聚焦不依赖它——它被文档内
             # 每个代码块依次赋值，多块共存时指向最后渲染的那个。
             code_field_ref.current = field
-        # 统一放进 Row 承载宽度：
-        # - 折行模式：TextField 默认按内容收缩（Column 交叉轴是松约束、它又不是
-        #   Flex 直接子项，expand 不生效），把 expand 交给外层编辑监听器、由 Row
-        #   承载才能占满正文宽度，换行点与浏览态一致（真机探针实测过收缩导致的折行变窄）。
-        # - 不换行模式：按最长行撑开宽度 + 横向滚动，与浏览态行为一致。
-        listener_kwargs: dict = {}
-        row_kwargs: dict = {"vertical_alignment": ft.CrossAxisAlignment.START}
+        # 编辑框必须拿到**紧宽度**才不会被内在宽度收窄（收缩 → 折行提前 → 行宽异常）：
+        # `Row` 的 `Container(expand=True)` 是拿到紧宽度最简单的办法——Flex 子项会被
+        # 赋予确定宽度，再原样传给编辑框。
+        # 注意不能改用 `KeyboardListener(expand=True)` 承载：它只把自己撑开，传给
+        # content 的是松约束（实测编辑框仍缩到 300px），监听器必须放到 Stack 外层。
         if wrap:
-            listener_kwargs["expand"] = True
+            field_layer: ft.Control = ft.Row(
+                controls=[ft.Container(expand=True, content=field)],
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            )
         else:
+            # 不换行：按最长行给编辑框固定宽度（无界约束下不能用 flex），与浏览态
+            # 的"单行不折 + 横向滚动"一致。
             longest = max(code.split("\n"), key=len, default="")
             field.width = max(
-                _EDIT_MIN_WIDTH, _measure_mono_width(longest, code_size) + Spacing.XXL
+                _EDIT_MIN_WIDTH + gutter_w + Spacing.MD,
+                gutter_w + Spacing.MD + _measure_mono_width(longest, code_size) + Spacing.MD,
             )
-            row_kwargs["scroll"] = ft.ScrollMode.AUTO
-        return ft.Row(
-            controls=[
-                # 编辑监听器只包住编辑框：焦点在代码块内才触发，因此 Tab 缩进既不会
-                # 干扰正文光标的 Tab（段首缩进/表格跳格），也不需要把事件通道层层上抛。
-                ft.KeyboardListener(
-                    content=field,
-                    on_key_down=_on_edit_key_down,
-                    on_key_up=_on_edit_key_up,
-                    **listener_kwargs,
-                )
-            ],
-            **row_kwargs,
+            field_layer = ft.Row(
+                controls=[field], vertical_alignment=ft.CrossAxisAlignment.START
+            )
+
+        # 高亮层与编辑层同处一个 Stack：Stack 用默认 LOOSE 按子项尺寸定型
+        # （EXPAND 在滚动 Column 内交叉轴无界 → 高度会算成 inf，整块渲不出来）。
+        overlay = ft.Stack(
+            alignment=ft.Alignment.TOP_LEFT,
+            controls=[_read_column(), field_layer],
+        )
+        body: ft.Control = overlay
+        if not wrap:
+            # 不换行：高亮层与编辑层共用同一个横向滚动容器，滚动位置天然同步。
+            body = ft.Row(
+                controls=[overlay],
+                scroll=ft.ScrollMode.AUTO,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            )
+        # 键盘监听器包住整个正文（而不仅编辑框）：焦点落在代码块内才触发，因此 Tab
+        # 缩进既不会干扰正文光标的 Tab（段首缩进/表格跳格），也不需要把事件通道上抛。
+        return ft.KeyboardListener(
+            content=body,
+            on_key_down=_on_edit_key_down,
+            on_key_up=_on_edit_key_up,
         )
 
     # ============================ 交互 ============================

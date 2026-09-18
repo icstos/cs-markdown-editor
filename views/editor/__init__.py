@@ -62,7 +62,33 @@ from views.tool_area import ToolArea
 # 大文件阈值:超过此行数自动切换到源码模式(RawEditor),避免 build_line_controls
 # 为每行构造 LineView 控件对象(含光标层/格式段/围栏岛屿等十几个子控件)导致
 # 渲染阶段卡死。RawEditor 使用单个原生 TextField,处理大文本高效。
+#
+# 注意:该阈值与「行视图窗口化」（下方 _WINDOW_* 常量）是两道独立防线,
+# 不要因为窗口化上线就把阈值调大——本模块每次重渲染都会重新调用
+# build_line_controls(受 @ft.memo 保护,行体不重跑,但控件对象仍会重建),
+# 阈值抬高会让「每击键重建 N 个 LineView 对象」的开销线性增长。
 _LARGE_DOC_LINES = 3000
+
+# ---------- 行视图窗口化（大文件首屏优化）----------
+# 背景：flet 的 ListView.build_controls_on_demand 只让 Flutter 客户端懒建
+# widget，Python 侧 controls 里的控件对象仍是全量构造的。实测 3 千行文档构造
+# 控件树约 2.4s，其中 95% 花在 flet 内部 _configure_dataclass（每个新增控件
+# 都要遍历它的 dataclass 字段子树）。所以「打开大文件慢」的根因是**控件个数**，
+# 只能靠不构造视口外的行来解决。
+#
+# 做法：只构造 [0, hi) 内的行，未构建的行**逐行**用一个等高占位容器补齐（高度取自
+# 与滚动定位同一份前缀和，故滚动条长度与跳转落点不变）；随着滚动 / 跳转按块外扩 hi。
+# 窗口上界单调不减 → 视口上方永远是真实行，不会因估算误差而跳动。
+#
+# 「逐行占位」是硬约束，不能用单个大容器覆盖整段：ListView.build_controls_on_demand
+# 下 Flutter 的 maxScrollExtent 由「已布局项平均高 × 项数」外推（只认真正布局过的
+# 项），单个大容器永远落在布局窗口之外 → maxScrollExtent 退化成「窗口行高 × 项数」，
+# 实测 1555 行文档 max 只有 4793（真值 ≈50000），文档后 90% 滚不到。
+# 详见 views/editor/_render.py 模块 docstring 与 tests/test_large_doc_open.py。
+_WINDOW_ACTIVATE = 200   # 行数超过此值才启用窗口化（小文档全量构造，行为与旧版一致）
+_WINDOW_INITIAL = 160    # 首屏构造行数（约 4~6 屏，够填满任意常见视口高度）
+_WINDOW_MARGIN = 40      # 视口外上下各预留的行数（滚动时提前物化）
+_WINDOW_CHUNK = 120      # 每次外扩的最少行数（迟滞：避免逐行跨越边界时频繁重渲染）
 
 
 @ft.component
@@ -171,6 +197,12 @@ def MarkdownEditor(
     viewport_w_ref = ft.use_ref(0.0)
     # 行实际渲染高度缓存:{line_idx: height_px}
     line_heights_ref = ft.use_ref({})
+    # 行视图窗口上界（窗口化）：已构建的行区间恒为 [0, window_hi)。
+    # 0 = 尚未外扩（首屏用 _WINDOW_INITIAL）；由 request_line_window 单调抬高。
+    window_hi, set_window_hi = ft.use_state(0)
+    # window_hi 的即时镜像：同一帧内多次请求（连续滚动事件）时防止按陈旧值重复扩窗。
+    # 0 表示「尚未外扩」，此时有效上界按 _WINDOW_INITIAL 计算。
+    window_hi_ref = ft.use_ref(0)
     # LineLayoutCache 缓存:跨行拖拽选区精确命中
     layout_cache_ref = ft.use_ref(None)
     # 行偏移前缀和缓存
@@ -425,6 +457,31 @@ def MarkdownEditor(
     # 共享闭包（非工厂产物）
     ctx.mark_dirty = mark_dirty
     ctx.set_outward_sel = _set_outward_sel
+
+    def _request_line_window(li: int) -> None:
+        """请求「确保 0..li 行已构建」（窗口化，幂等、只增不减）。
+
+        调用点（见 _scroll 组）：滚动事件（视口底部接近边界时）、
+        _safe_scroll_to / _scroll_line_centered（跳转目标在窗口外时）。
+
+        幂等且廉价：窗口足够时只做一次比较即返回，可安全地挂在滚动热路径上。
+        扩窗按 _WINDOW_CHUNK 向上取整，避免视口每越过一行就触发一次重渲染。
+        只增不减保证视口上方永远是已构建的真实行——若窗口能回缩，
+        上方会换成估算高度的占位容器，滚动时内容会跳动。
+        """
+        n = len(document.lines)
+        if n <= _WINDOW_ACTIVATE:
+            return  # 小文档全量构建，不窗口化
+        cur = window_hi_ref.current or min(n, _WINDOW_INITIAL)
+        target = min(n, li + 1 + _WINDOW_MARGIN)
+        if target <= cur:
+            return
+        new_hi = min(n, target + _WINDOW_CHUNK)
+        window_hi_ref.current = new_hi  # 即时生效：同一帧内多次请求不重复扩窗
+        set_window_hi(new_hi)
+
+    ctx.request_line_window = _request_line_window
+
     for _group in _handlers:
         for _slot, _fn in _group.items():
             setattr(ctx, _slot, _fn)
@@ -654,9 +711,25 @@ def MarkdownEditor(
     # 控件树(数万行 → 数十万控件对象)导致渲染阶段卡死。改用 RawEditor
     # (单个原生 TextField)渲染。effective_raw_mode 为 True 时 line_controls
     # 不被使用(渲染走 RawEditor 分支),此处置空跳过构造开销。
+    #
+    # 窗口化:非大文件且行数超过 _WINDOW_ACTIVATE 时只构造前 _WINDOW_INITIAL 行
+    # (尾部未构建行各给一个等高占位容器,项数与行数恒等);滚动 / 跳转时由
+    # request_line_window 按块外扩。
+    # 对比标签(diff_marks/diff_gaps)不窗口化:左右两侧需逐行对齐间隙容器,
+    # 而间隙高度不在 estimate_line_offset 的前缀和里,窗口外的占位会算错总高。
     if not effective_raw_mode:
+        _win = None
+        if (
+            _doc_line_count > _WINDOW_ACTIVATE
+            and not diff_marks
+            and not diff_gaps
+        ):
+            _win_hi = min(window_hi or _WINDOW_INITIAL, _doc_line_count)
+            if _win_hi < _doc_line_count:
+                _win = (0, _win_hi)
         line_controls = build_line_controls(
-            ctx, _stable_cbs, _table_stable, toc_entries, _highlight_map
+            ctx, _stable_cbs, _table_stable, toc_entries, _highlight_map,
+            window=_win,
         )
     else:
         line_controls = []

@@ -22,7 +22,7 @@ EDITOR = ROOT / "views" / "editor"
 CONTEXT = EDITOR / "_context.py"
 
 # 由 __init__.py 直接赋值的槽位（非工厂产物）
-HAND_WIRED = frozenset({"mark_dirty", "set_outward_sel"})
+HAND_WIRED = frozenset({"mark_dirty", "set_outward_sel", "request_line_window"})
 
 
 def _factory_slots() -> dict[str, set[str]]:

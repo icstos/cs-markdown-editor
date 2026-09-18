@@ -14,7 +14,7 @@
 - _node_raw_text 递归重建嵌套包裹器语法，保证 "".join(segments raw) 还原行源码。
 """
 
-from models.document import SegType, Segment
+from models.document import SegType, Segment, new_segment
 
 from parser._engine import _INLINE_WRAPPERS, _RE_INLINE_MATH, _get_md
 
@@ -26,13 +26,13 @@ def _split_inline_math(text: str) -> list[Segment]:
     for m in _RE_INLINE_MATH.finditer(text):
         start, end = m.span()
         if start > last:
-            parts.append(Segment(SegType.TEXT, text[last:start], text[last:start]))
+            parts.append(new_segment(SegType.TEXT, text[last:start], text[last:start]))
         formula = m.group(1)
-        parts.append(Segment(SegType.INLINE_MATH, f"${formula}$", formula))
+        parts.append(new_segment(SegType.INLINE_MATH, f"${formula}$", formula))
         last = end
     if last < len(text):
-        parts.append(Segment(SegType.TEXT, text[last:], text[last:]))
-    return parts or [Segment(SegType.TEXT, text, text)]
+        parts.append(new_segment(SegType.TEXT, text[last:], text[last:]))
+    return parts or [new_segment(SegType.TEXT, text, text)]
 
 
 def _flatten_text(children: list[dict]) -> str:
@@ -124,39 +124,39 @@ def _token_to_segments(tok: dict) -> list[Segment]:
 
         # 软换行 / 硬换行
         case "softbreak" | "linebreak":
-            return [Segment(SegType.TEXT, "\n", "\n")]
+            return [new_segment(SegType.TEXT, "\n", "\n")]
 
         # 包裹型节点（加粗 / 斜体 / 删除线 / 高亮 / 上下标，含任意嵌套组合）
         case _ if t in _INLINE_WRAPPERS:
             raw, text = _node_raw_text(tok)
             marks = _collect_marks(tok)
             seg_type = marks[0] if marks else SegType.TEXT
-            return [Segment(seg_type, raw, text, marks=tuple(marks))]
+            return [new_segment(seg_type, raw, text, marks=tuple(marks))]
 
         # 行内代码：raw 不含反引号
         case "codespan":
             raw = tok.get("raw", "")
-            return [Segment(SegType.CODESPAN, f"`{raw}`", raw)]
+            return [new_segment(SegType.CODESPAN, f"`{raw}`", raw)]
 
         # 链接 / 图片
         case "link":
             text = _flatten_text(tok.get("children", []))
             url = tok.get("attrs", {}).get("url", "")
-            return [Segment(SegType.LINK, f"[{text}]({url})", text, url=url)]
+            return [new_segment(SegType.LINK, f"[{text}]({url})", text, url=url)]
         case "image":
             alt = _flatten_text(tok.get("children", []))
             url = tok.get("attrs", {}).get("url", "")
-            return [Segment(SegType.IMAGE, f"![{alt}]({url})", alt, url=url)]
+            return [new_segment(SegType.IMAGE, f"![{alt}]({url})", alt, url=url)]
 
         # 内联 HTML
         case "inline_html":
             raw = tok.get("raw", "")
-            return [Segment(SegType.TEXT, raw, raw)]
+            return [new_segment(SegType.TEXT, raw, raw)]
 
         # 未识别节点退化为纯文本
         case _:
             text = _flatten_text(tok.get("children", [])) or tok.get("raw", "")
-            return [Segment(SegType.TEXT, text, text)] if text else []
+            return [new_segment(SegType.TEXT, text, text)] if text else []
 
 
 def parse_inline(content: str) -> list[Segment]:
@@ -166,12 +166,12 @@ def parse_inline(content: str) -> list[Segment]:
     空内容返回单个空文本段，保证行始终可被点击编辑。
     """
     if not content:
-        return [Segment(SegType.TEXT, "", "")]
+        return [new_segment(SegType.TEXT, "", "")]
     ast = _get_md()(content)
     for node in ast:
         if node.get("type") in ("paragraph", "heading"):
             segs: list[Segment] = []
             for tok in node.get("children", []):
                 segs.extend(_token_to_segments(tok))
-            return segs or [Segment(SegType.TEXT, content, content)]
-    return [Segment(SegType.TEXT, content, content)]
+            return segs or [new_segment(SegType.TEXT, content, content)]
+    return [new_segment(SegType.TEXT, content, content)]

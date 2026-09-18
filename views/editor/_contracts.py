@@ -106,7 +106,11 @@ class FormatEnv(Protocol):
 
 
 class ScrollEnv(Protocol):
-    """滚动 / 行高缓存 / 命中测试 的依赖契约（build_scroll 实际读取的 26 个字段）。"""
+    """滚动 / 行高缓存 / 命中测试 的依赖契约（build_scroll 实际读取的字段）。
+
+    `request_line_window`：窗口化（大文件首屏优化）下请求物化 0..li 行；
+    滚动事件与跳转路径调用，见 views/editor/_render.py 模块 docstring。
+    """
 
     body_font_size: float
     content_padding_top: int
@@ -126,6 +130,7 @@ class ScrollEnv(Protocol):
     offset_prefix_ref: ft.Ref
     on_scroll_change: Callable[..., Any]
     outward_sel: tuple[int, int, int, int] | None
+    request_line_window: Callable[..., None]
     scroll_offset_ref: ft.Ref
     set_cursor: Callable[..., None]
     set_cursor_li: Callable[..., None]
@@ -476,7 +481,12 @@ class ActionsEnv(Protocol):
 
 
 class LineControlsEnv(Protocol):
-    """行控件列表构造 的依赖契约（build_line_controls 实际读取的 35 个字段）。"""
+    """行控件列表构造 的依赖契约（build_line_controls 实际读取的字段）。
+
+    `estimate_line_offset`：窗口化时用行偏移前缀和差分算出每个未构建行的
+    占位容器高度（与 _scroll 组的滚动定位同源，保证滚动总高、列表项位置与
+    跳转落点三者一致）。必须逐行调用（项数 == 行数），见 _render 模块 docstring。
+    """
 
     alt_pressed_ref: ft.Ref
     body_font_size: float
@@ -493,6 +503,7 @@ class LineControlsEnv(Protocol):
     diff_gaps: dict[int, list[float]] | None
     diff_marks: dict[int, str] | None
     document: Document
+    estimate_line_offset: Callable[..., float]
     file_path: str | None
     flash_li: int
     handle_char_input: Callable[..., Any]

@@ -175,6 +175,11 @@ class EditorContext:
     # 共享闭包
     mark_dirty: Callable[[], None] = field(default=lambda: None)
     set_outward_sel: Callable[[Any], None] = field(default=lambda v: None)
+    # 行视图窗口化（大文件首屏优化）：请求「确保 0..li 行已构建」。
+    # 幂等、只增不减（窗口上界单调外扩），窗口足够时立即返回。
+    # 由 _scroll 组在滚动 / 跳转 / ensure_visible 时调用，实现按需物化视口附近的行；
+    # 装配方式为手工（非工厂产物，同 mark_dirty），契约登记见 _WIRING_SLOTS。
+    request_line_window: Callable[[int], None] = field(default=lambda li: None)
 
     # cursor 组
     cursor_base: Callable[..., int] = field(default=lambda *a: 0)
@@ -385,7 +390,7 @@ class EditorContext:
 
 # 装配槽契约：与上方「装配槽」区块字段一一对应（新增槽位必须同时登记到此处）。
 _WIRING_SLOTS: frozenset[str] = frozenset({
-    "mark_dirty", "set_outward_sel",
+    "mark_dirty", "set_outward_sel", "request_line_window",
     # cursor 组
     "cursor_base", "set_cursor", "end_input_session", "on_tap_line",
     "handle_char_input", "handle_paste", "handle_paste_plain",

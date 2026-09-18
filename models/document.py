@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 import flet as ft
+from flet.components.observable import ObservableList
 
 
 class SegType(StrEnum):
@@ -141,3 +142,92 @@ class Document:
     lines: list[Line] = field(default_factory=list)
     file_path: str | None = None
     dirty: bool = False
+
+
+# ---------------------------------------------------------------------------
+# 批量构造快速路径（整篇解析 / 行重建专用）
+# ---------------------------------------------------------------------------
+#
+# 背景：`@ft.observable` 的 `Observable.__setattr__` 每次赋值都要走
+# `_wrap_if_collection` → `value_equal` → `_notify`，而 `_notify` 即便
+# **没有任何监听者**也会迭代 WeakSet 并自增版本号。整篇解析要构造
+# 「行数 × 段数 × 字段数」个对象，实测解析 3 千行文档有 20 万次 `__setattr__`、
+# 6 万次 `_notify`，**observable 通知机制占解析总耗时 57%**（cProfile）。
+#
+# 这些通知在解析期是纯浪费：解析发生在文档挂载之前，此时 Document/Line
+# 上不可能存在监听者（监听由 flet 组件渲染时经 ObservableSubscription 建立）。
+#
+# 因此下面的构造器用 `object.__setattr__` 直写 `__dict__`，跳过通知链路，
+# 但**产出的对象与常规构造完全同构**（`segments` / `lines` 仍是
+# `ObservableList`，字段值一致），后续编辑期的可观察语义不受影响。
+# 这与 `parser/reparse.py::reparse_line_atomic` 已在用的做法同源
+# （该函数同样是 `object.__setattr__` + 末尾单次 notify）。
+#
+# 实测（3 千行混合文档）：30k 个 Segment 常规构造 206ms → 快速构造 36ms（5.7×）。
+
+
+def new_segment(
+    seg_type: SegType = SegType.TEXT,
+    raw: str = "",
+    text: str = "",
+    url: str = "",
+    level: int = 0,
+    marks: tuple = (),
+) -> Segment:
+    """快速构造 Segment（跳过 observable 逐字段通知，见本节说明）。"""
+    obj = Segment.__new__(Segment)
+    _sa = object.__setattr__
+    _sa(obj, "seg_type", seg_type)
+    _sa(obj, "raw", raw)
+    _sa(obj, "text", text)
+    _sa(obj, "url", url)
+    _sa(obj, "level", level)
+    _sa(obj, "marks", marks)
+    return obj
+
+
+def new_line(
+    block_type: BlockType = BlockType.PARAGRAPH,
+    raw: str = "",
+    segments: list[Segment] | tuple[Segment, ...] = (),
+    level: int = 0,
+    lang: str = "",
+    ordered: bool = False,
+    task: bool = False,
+    checked: bool = False,
+) -> Line:
+    """快速构造 Line（跳过 observable 逐字段通知，见本节说明）。
+
+    `segments` 仍包装为 `ObservableList`（归属本行），与常规构造的字段类型
+    逐一对齐——编辑期 `line.segments` 的赋值/替换语义因此完全不变。
+    """
+    obj = Line.__new__(Line)
+    _sa = object.__setattr__
+    _sa(obj, "block_type", block_type)
+    _sa(obj, "raw", raw)
+    _sa(obj, "level", level)
+    _sa(obj, "lang", lang)
+    _sa(obj, "ordered", ordered)
+    _sa(obj, "task", task)
+    _sa(obj, "checked", checked)
+    _sa(obj, "segments", ObservableList(obj, "segments", segments))
+    return obj
+
+
+def new_document(
+    lines: list[Line] | None = None,
+    file_path: str | None = None,
+    dirty: bool = False,
+) -> Document:
+    """快速构造 Document（跳过 observable 逐字段通知，见本节说明）。
+
+    `lines` 仍包装为 `ObservableList`：编辑器大量使用
+    `document.lines.insert / __setitem__ / __delitem__` 原地变更，
+    依赖其 `_touch()` 触发重渲染，类型必须与常规构造一致。
+    """
+    obj = Document.__new__(Document)
+    _sa = object.__setattr__
+    _sa(obj, "lines", ObservableList(obj, "lines", lines or []))
+    _sa(obj, "file_path", file_path)
+    _sa(obj, "dirty", dirty)
+    return obj

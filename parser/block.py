@@ -17,7 +17,16 @@
 - 代码块 / 数学块围栏 / 表格作为编辑单元合并，保留分隔行（对齐信息持久化）。
 """
 
-from models.document import BlockType, Document, Line, SegType, Segment
+from models.document import (
+    BlockType,
+    Document,
+    Line,
+    SegType,
+    Segment,
+    new_document,
+    new_line,
+    new_segment,
+)
 from utils.table_helpers import is_table_separator
 
 from parser._engine import (
@@ -119,7 +128,7 @@ def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, di
     """
     if block_type == BlockType.HEADING:
         lvl = info["level"]
-        return Segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl), {
+        return new_segment(SegType.HEADING_PREFIX, "#" * lvl + " ", "", level=lvl), {
             "level": lvl
         }
     if block_type == BlockType.LIST_UO:
@@ -130,20 +139,20 @@ def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, di
         indent_sp = " " * indent
         if info.get("task"):
             attrs = {"level": indent, "task": True, "checked": info["checked"]}
-            return Segment(
+            return new_segment(
                 SegType.LIST_PREFIX,
                 f"{indent_sp}{marker} [{'x' if info['checked'] else ' '}] ",
                 "",
                 level=indent,
             ), attrs
-        return Segment(
+        return new_segment(
             SegType.LIST_PREFIX, f"{indent_sp}{marker} ", "", level=indent
         ), {"level": indent}
     if block_type == BlockType.LIST_O:
         indent = info.get("indent", 0)
         indent_sp = " " * indent
         return (
-            Segment(
+            new_segment(
                 SegType.LIST_PREFIX, f"{indent_sp}{info['num']}. ", "", level=indent
             ),
             {"level": indent},
@@ -153,50 +162,51 @@ def _make_prefix_segment(block_type: BlockType, info: dict) -> tuple[Segment, di
         # 前缀 raw 用源码实际字符（">" / "> " / ">> "），保证
         # line.raw == "".join(segments.raw) 不变量（编辑/序列化/光标偏移依赖）
         prefix = info.get("prefix") or "> " * lvl
-        return Segment(SegType.QUOTE_PREFIX, prefix, "", level=lvl), {"level": lvl}
-    return Segment(SegType.TEXT, "", ""), {}
+        return new_segment(SegType.QUOTE_PREFIX, prefix, "", level=lvl), {"level": lvl}
+    return new_segment(SegType.TEXT, "", ""), {}
 
 
 def _build_line(raw: str) -> Line:
-    """把一行源码解析为 Line（非代码块行）。"""
+    """把一行源码解析为 Line（非代码块行）。
+
+    统一走 `models.new_line` / `new_segment` 快速构造器：整篇解析要构造
+    「行数 × 段数」个对象，常规构造每次都触发 observable 通知链路
+    （无监听者时也迭代 WeakSet），实测占解析总耗时 57%。详见
+    `models/document.py` 的「批量构造快速路径」说明。
+    """
     bt, info = _detect_block(raw)
-    line = Line(block_type=bt, raw=raw)
 
     if bt == BlockType.BLANK:
-        line.segments = [Segment(SegType.TEXT, "", "")]
-        return line
+        return new_line(bt, raw, [new_segment(SegType.TEXT, "", "")])
 
     if bt == BlockType.HR:
         # 保留原 raw（---/***/___），确保 line.raw == "".join(s.raw)，
         # 激活态编辑时光标位置与 raw 同步
-        line.segments = [Segment(SegType.TEXT, raw, raw)]
-        return line
+        return new_line(bt, raw, [new_segment(SegType.TEXT, raw, raw)])
 
     if bt == BlockType.MATH:
         content = info["content"]
-        line.segments = [Segment(SegType.MATH, content, content)]
-        return line
+        return new_line(bt, raw, [new_segment(SegType.MATH, content, content)])
 
     if bt == BlockType.TOC:
-        line.segments = [Segment(SegType.TEXT, "[toc]", "[toc]")]
-        return line
+        return new_line(bt, raw, [new_segment(SegType.TEXT, "[toc]", "[toc]")])
 
     if bt == BlockType.TABLE:
         # 表格行由专门的表格视图渲染，segments 只保留原始行源码，便于编辑回写。
-        line.segments = [Segment(SegType.TEXT, raw, raw)]
-        return line
+        return new_line(bt, raw, [new_segment(SegType.TEXT, raw, raw)])
 
     # 带前缀的块（heading / list / quote）
     if bt in (BlockType.HEADING, BlockType.LIST_UO, BlockType.LIST_O, BlockType.QUOTE):
         prefix_seg, attrs = _make_prefix_segment(bt, info)
-        for k, v in attrs.items():
-            setattr(line, k, v)
-        line.segments = [prefix_seg, *parse_inline(info["content"])]
-        return line
+        return new_line(
+            block_type=bt,
+            raw=raw,
+            segments=[prefix_seg, *parse_inline(info["content"])],
+            **attrs,
+        )
 
     # paragraph
-    line.segments = parse_inline(raw)
-    return line
+    return new_line(bt, raw, parse_inline(raw))
 
 
 def _is_table_row(raw: str) -> bool:
@@ -205,9 +215,15 @@ def _is_table_row(raw: str) -> bool:
 
 
 def parse_markdown(text: str) -> Document:
-    """把 Markdown 文本解析为 Document。代码块作为一个编辑单元合并。"""
+    """把 Markdown 文本解析为 Document。代码块作为一个编辑单元合并。
+
+    行缓冲在普通 list 中累积，最后一次性交给 `new_document` 包装为
+    `ObservableList`——避免逐行 `doc.lines.append()` 触发 observable 通知
+    （解析期无监听者，通知是纯开销）。产出的 Document 与逐行 append
+    完全同构。
+    """
     lines_src = text.split("\n")
-    doc = Document()
+    out: list[Line] = []
     i, n = 0, len(lines_src)
     while i < n:
         raw = lines_src[i]
@@ -225,9 +241,12 @@ def parse_markdown(text: str) -> Document:
                 # 找到配对关闭围栏，合并为 frontmatter 块
                 content = "\n".join(inner_lines)
                 full = f"---\n" + (content + "\n" if inner_lines else "") + "---"
-                line = Line(block_type=BlockType.FRONTMATTER, raw=full)
-                line.segments = [Segment(SegType.CODE, content, content)]
-                doc.lines.append(line)
+                out.append(
+                    new_line(
+                        BlockType.FRONTMATTER, full,
+                        [new_segment(SegType.CODE, content, content)],
+                    )
+                )
                 i = j + 1
                 continue
             # 无配对关闭围栏：降级为普通行（不作为 frontmatter 处理）
@@ -245,9 +264,13 @@ def parse_markdown(text: str) -> Document:
             code = "\n".join(inner)
             closing = lines_src[j] if j < n else fence
             full = f"{raw}\n" + (code + "\n" if inner else "") + closing
-            line = Line(block_type=BlockType.CODE, raw=full, lang=lang)
-            line.segments = [Segment(SegType.CODE, code, code)]
-            doc.lines.append(line)
+            out.append(
+                new_line(
+                    BlockType.CODE, full,
+                    [new_segment(SegType.CODE, code, code)],
+                    lang=lang,
+                )
+            )
             i = j + 1
             continue
         # 块级公式围栏：$$ 独占一行开闭，中间为公式正文（可多行）。
@@ -261,9 +284,12 @@ def parse_markdown(text: str) -> Document:
             formula = "\n".join(inner_m)
             closing = lines_src[j] if j < n else "$$"
             full = "$$\n" + (formula + "\n" if inner_m else "") + closing
-            line = Line(block_type=BlockType.MATH, raw=full)
-            line.segments = [Segment(SegType.MATH, formula, formula)]
-            doc.lines.append(line)
+            out.append(
+                new_line(
+                    BlockType.MATH, full,
+                    [new_segment(SegType.MATH, formula, formula)],
+                )
+            )
             i = j + 1
             continue
         if _is_table_row(raw) and i + 1 < n and is_table_separator(lines_src[i + 1]):
@@ -279,14 +305,16 @@ def parse_markdown(text: str) -> Document:
                 table_lines.append(lines_src[j])
                 j += 1
             for row in table_lines:
-                line = Line(block_type=BlockType.TABLE, raw=row)
-                line.segments = [Segment(SegType.TEXT, row, row)]
-                doc.lines.append(line)
+                out.append(
+                    new_line(
+                        BlockType.TABLE, row, [new_segment(SegType.TEXT, row, row)]
+                    )
+                )
             i = j
             continue
-        doc.lines.append(_build_line(raw))
+        out.append(_build_line(raw))
         i += 1
 
-    if not doc.lines:
-        doc.lines = [_build_line("")]
-    return doc
+    if not out:
+        out.append(_build_line(""))
+    return new_document(out)

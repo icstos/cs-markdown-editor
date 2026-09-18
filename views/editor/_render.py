@@ -4,6 +4,7 @@
 - diff 间隙（首行前对齐 + 每行后对齐）
 - 表格合并（连续 TABLE 行合并为单个 TableView）
 - 普通行 LineView（含光标层 / 行内格式 / 围栏岛屿 / diff 标记）
+- 窗口外行的**单个**高度占位容器（大文件首屏优化，见 `window` 参数）
 
 参数：
 - ctx：EditorContext（读取 document / cursor_* / theme_mode / diff_* 等）
@@ -11,21 +12,83 @@
 - table_stable：TableView 回调稳定包装器
 - toc_entries：大纲条目（use_memo 稳定化）
 - highlight_map：向外选区高亮映射（use_memo 稳定化）
+- window：(lo, hi) 行窗口上界；None / 覆盖全文档时不窗口化
 
 依赖项：
 - models（BlockType）
 - views.line_view（LineView）
 - views.table_view（TableView）
 - views.editor._helpers（_build_diff_gap）
+
+窗口化设计（大文件打开速度）：
+`ft.ListView.build_controls_on_demand` 只让 **Flutter 客户端**懒建 widget，
+Python 侧 `controls` 列表里的控件对象仍是全量构造的——实测 3 千行文档构造
+控件树约 2.4s，其中 95% 花在 flet 的 `_configure_dataclass`（每个新增控件
+都要遍历其 dataclass 字段子树）。真正省时间只能**不构造**视口外的行。
+
+窗口化只构造 `[lo, hi)` 内的行，两侧未构建的行各给一个**等高占位容器**
+（`ft.Container`，约 9µs/个，远低于 LineView 的 0.8ms/行）。
+占位高度取行偏移前缀和差分（`estimate_line_offset(j+1) - estimate_line_offset(j)`
+== `_estimate_line_height(j)`），必须**逐行一个**、而不是用一个容器覆盖整段——原因：
+
+1. `ListView.build_controls_on_demand` 下 `maxScrollExtent` 由 Flutter
+   `SliverChildBuilderDelegate._extrapolateMaxScrollOffset` 外推得到：
+   `leading + (已布局项总高 / 已布局项数) × 剩余项数`。也就是说 **Flutter 只认
+   "真正布局过" 的那些项的高度**。若尾部用单个大占位覆盖，它永远落在布局窗口
+   之外（视口只会滚到"外推值"处，够不到它），于是 `maxScrollExtent` 退化成
+   "窗口行平均高 × 项数"——实测 1555 行文档 max 只有 4793（真值 ≈50000），
+   文档后 90% 滚不到。
+2. 逐行占位让**项数与行数恒等**，外推的平均高才是真实行高的无偏估计；
+   且 Flutter 侧第 j 个列表项的布局位置恒等于 `estimate_line_offset(j)`
+   （已构建行：实测高 == 前缀和里的实测值；未构建行：占位高 == 前缀和估算值），
+   即「列表网格坐标」与「滚动定位尺子」是同一把尺子，落点不会漂移。
+
+窗口上界单调外扩（见 `__init__.py` 的 `request_line_window`），
+已构建区域只增不减 → 视口上方永远是真实行，不出现估算误差导致的跳动。
 """
 
 from collections.abc import Callable
 from typing import Any
 
+import flet as ft
+
 from models.document import BlockType
 from views.editor._helpers import _build_diff_gap
 from views.line_view import LineView
 from views.table_view import TableView
+
+
+def _placeholder_lines(ctx, lo: int, hi: int) -> list:
+    """未构建行 `[lo, hi)` 的等高占位容器（每行一个）。
+
+    高度 = 行偏移前缀和差分，与 `_scroll.py` 的滚动定位共用同一份前缀和，
+    故滚动条长度与「滚动到第 N 行」的落点仍与全量渲染一致（见模块 docstring）。
+    """
+    out: list = []
+    prev = ctx.estimate_line_offset(lo)
+    for j in range(lo, hi):
+        cur = ctx.estimate_line_offset(j + 1)
+        out.append(ft.Container(height=max(0.0, cur - prev)))
+        prev = cur
+    return out
+
+
+def _snap_window(
+    lines: list, lo: int, hi: int
+) -> tuple[int, int]:
+    """把窗口边界对齐到表格块边界：连续 TABLE 行必须整体落在窗口内。
+
+    表格是「连续 TABLE 行合并为单个 TableView」渲染的，窗口若切在表格中间，
+    会渲染出只有后半截的表格。上界向后扩、下界向前扩，各自吃掉整个 TABLE 连续段。
+    """
+    n = len(lines)
+    while lo > 0 and lines[lo].block_type == BlockType.TABLE and (
+        lines[lo - 1].block_type == BlockType.TABLE
+    ):
+        lo -= 1
+    while hi < n and lines[hi].block_type == BlockType.TABLE:
+        hi += 1
+    return lo, hi
 
 
 def build_line_controls(
@@ -34,11 +97,16 @@ def build_line_controls(
     table_stable: dict[str, Callable],
     toc_entries: list[Any],
     highlight_map: dict[int, tuple[int, int]],
+    window: tuple[int, int] | None = None,
 ) -> list:
     """构造行视图控件列表。
 
     遍历 document.lines，表格连续行合并为 TableView，其余行构造 LineView。
     diff_gaps 在首行前与每行后插入等高间隙容器，保持左右视觉行对齐。
+
+    window=(lo, hi) 时只构造 [lo, hi) 内的行，两侧未构建的行各给一个等高占位
+    容器（见模块 docstring）。window=None 或覆盖全文档时退化为全量构造，
+    与窗口化前的行为逐字一致；且此时 `len(controls) == len(document.lines)`。
     """
     c = ctx.c
     document = ctx.document
@@ -66,17 +134,29 @@ def build_line_controls(
     diff_marks = ctx.diff_marks
     diff_gaps = ctx.diff_gaps
 
+    n = len(document.lines)
+    win_lo, win_hi = 0, n
+    if window is not None:
+        win_lo = max(0, min(window[0], n))
+        win_hi = max(win_lo, min(window[1], n))
+        win_lo, win_hi = _snap_window(document.lines, win_lo, win_hi)
+
     line_controls: list = []
 
+    # 窗口上方占位：已构建区域从 win_lo 起，其上方的行必须以等高容器逐行补齐，
+    # 否则文档总高变短、滚动条比例与落点全错（前缀和与滚动定位同源）。
+    if win_lo > 0:
+        line_controls.extend(_placeholder_lines(ctx, 0, win_lo))
+
     # diff 间隙：首行之前的对齐间隙（对侧在开头有额外行时）
-    if diff_gaps:
+    if diff_gaps and win_lo == 0:
         _pre_gaps = diff_gaps.get(-1)
         if _pre_gaps:
             for _gh in _pre_gaps:
                 line_controls.append(_build_diff_gap(_gh, c))
 
-    i = 0
-    while i < len(document.lines):
+    i = win_lo
+    while i < win_hi:
         line = document.lines[i]
         is_act = cursor_li == i and cursor_li is not None
         # diff 行级标记：从 diff_marks 字典取当前行标记（None=普通行）
@@ -194,5 +274,11 @@ def build_line_controls(
             if _gaps:
                 for _gh in _gaps:
                     line_controls.append(_build_diff_gap(_gh, c))
+
+    # 窗口下方占位：未构建的尾部**逐行**以等高容器补齐（与滚动定位同源的前缀和）。
+    # 必须逐行而非单个大容器：Flutter 的 maxScrollExtent 由「已布局项平均高 ×
+    # 项数」外推，单个大容器永远布局不到（见模块 docstring）。
+    if win_hi < n:
+        line_controls.extend(_placeholder_lines(ctx, win_hi, n))
 
     return line_controls

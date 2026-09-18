@@ -33,6 +33,7 @@ _get_cursor_row_col / _build_highlight_map
 """
 
 import asyncio
+import bisect
 import contextlib
 
 import flet as ft
@@ -86,6 +87,13 @@ def build_scroll(ctx: ScrollEnv):
                 ctx.max_scroll_ref.current = e.max_scroll_extent
             if hasattr(e, "viewport_dimension"):
                 ctx.viewport_h_ref.current = e.viewport_dimension
+            # 窗口化（大文件首屏优化）：视口底部接近已构建边界时按块外扩窗口。
+            # 热路径：窗口够用时 request_line_window 立即返回（仅两次二分查找）。
+            if ctx.viewport_h_ref.current > 0:
+                _, last = _visible_line_range(
+                    ctx.scroll_offset_ref.current, ctx.viewport_h_ref.current
+                )
+                ctx.request_line_window(last)
             # diff 对比模式滚动同步：上报当前滚动位置，main.py 据此驱动另一侧
             if ctx.on_scroll_change is not None:
                 ctx.on_scroll_change(
@@ -207,16 +215,14 @@ def build_scroll(ctx: ScrollEnv):
             num_vlines = 1
         return num_vlines * base * ctx.line_height + 4
 
-    def _estimate_line_offset(li: int) -> float:
-        """累加 0..li 行高，得到目标行顶部的 y 偏移（相对 ListView 内容起点）。
+    def _offset_prefix() -> list[float]:
+        """行偏移前缀和（O(n) 一次性构建，后续 O(1)/O(log n) 复用）。
 
-        比旧的 li × (目标行字号 × line_height + 4) 估算准确得多：
-        - 各行按自身字号/块类型累加，而非统一用目标行字号
-        - 已构建行用实测高度，消除代码块/长段落换行/表格的估算偏差
-
-        性能优化：前缀和缓存——首次调用 O(n) 构建前缀和数组，后续调用 O(1) 查表。
-        原先每次调用都 O(li) 逐行累加，光标在第 500 行时每次导航需 500 次高度查找。
-        缓存在行高变化（on_line_size_change）或行数变化（reset_line_heights）时失效。
+        前缀和缓存：offset_prefix_ref。行高变化（on_line_size_change）或行数
+        变化（_reset_line_heights）时置 None 失效。滚动定位（_estimate_line_offset）
+        与窗口可见范围反查（_visible_line_range）共用同一份，保证两者坐标一致——
+        窗口化后「哪一行该被构建」与「滚动到第 N 行」必须用同一把尺子，
+        否则视口边缘会出现空占位或抖动。
         """
         n = len(ctx.document.lines)
         prefix = ctx.offset_prefix_ref.current
@@ -224,9 +230,37 @@ def build_scroll(ctx: ScrollEnv):
             # 前缀和构建已抽取到 _editor_helpers._build_offset_prefix（可单测）
             prefix = _build_offset_prefix([_estimate_line_height(j) for j in range(n)])
             ctx.offset_prefix_ref.current = prefix
+        return prefix
+
+    def _estimate_line_offset(li: int) -> float:
+        """累加 0..li 行高，得到目标行顶部的 y 偏移（相对 ListView 内容起点）。
+
+        比旧的 li × (目标行字号 × line_height + 4) 估算准确得多：
+        - 各行按自身字号/块类型累加，而非统一用目标行字号
+        - 已构建行用实测高度，消除代码块/长段落换行/表格的估算偏差
+        """
+        prefix = _offset_prefix()
+        n = len(prefix) - 1
         if 0 <= li <= n:
             return prefix[li]
         return prefix[n] if n > 0 else 0.0
+
+    def _visible_line_range(offset: float, viewport: float) -> tuple[int, int]:
+        """由滚动偏移 + 视口高度反查可见行范围 [first, last]（含边界行）。
+
+        用与滚动定位同一份前缀和，二分定位首/末可见行。
+        供窗口化（request_line_window）判断「窗口是否还够用」——
+        不够时按块外扩，够时立即返回（热路径，每次滚动都会调）。
+        """
+        prefix = _offset_prefix()
+        n = len(prefix) - 1
+        if n <= 0:
+            return (0, 0)
+        first = bisect.bisect_right(prefix, offset) - 1
+        last = bisect.bisect_right(prefix, offset + max(0.0, viewport)) - 1
+        first = max(0, min(first, n - 1))
+        last = max(first, min(last, n - 1))
+        return (first, last)
 
     async def _safe_scroll_to(li: int, to_top: bool = False,
                               cursor_y_in_line: float = 0.0):
@@ -247,6 +281,11 @@ def build_scroll(ctx: ScrollEnv):
         """
         if ctx.list_view_ref.current is None:
             return
+        # 窗口化（大文件）：目标行若在窗口外，先请求扩展——否则目标行根本不存在，
+        # scroll_to 落点会偏、ensure_visible 也找不到行。请求幂等，窗口足够时零开销；
+        # 外扩后 ListView 重挂载该段行，随后两步滚动（估算→实测精修）用更新后的
+        # 实测高度重新累加，落点依旧精确。
+        ctx.request_line_window(li)
         try:
             top_padding = ctx.content_padding_top
             if to_top:
@@ -431,6 +470,8 @@ def build_scroll(ctx: ScrollEnv):
         lv = ctx.list_view_ref.current
         if lv is None:
             return
+        # 窗口化（大文件）：搜索跳转目标行可能远在窗口外，先请求物化该行
+        ctx.request_line_window(li)
         try:
             viewport = ctx.viewport_h_ref.current or 600
             cache = ctx.line_heights_ref.current

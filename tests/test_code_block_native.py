@@ -16,10 +16,15 @@
    故折行点与光标逐字对齐，且编辑时语法高亮持续可见。锁定这条是因为真机上出现
    过"编辑态行宽异常"：`KeyboardListener` 只把自己撑开、传给内容的是松约束，
    多行 TextField 因此缩到内在宽度（实测 300px vs 应有的 728px）。
+5. **头部行高紧凑**：头部行高恒为 `_HEADER_H`，故头部内不得出现 Material 固有
+   尺寸控件（IconButton 40 / Dropdown 48）——它们是"顶部行过高"的唯一成因，
+   比内边距的影响大一个量级。锁定时同时守住"每个子项都显式声明了高度"，
+   因为头部高度是硬锁的，超高子项会被静默裁切。
 """
 
 import sys
 import types
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -35,7 +40,8 @@ from services.code_highlight import (  # noqa: E402
     highlight_lines,
 )
 from styles import FONT_MONO, Spacing, get_colors  # noqa: E402
-from tests.harness import RenderHarness  # noqa: E402
+from tests.harness import RenderHarness, walk  # noqa: E402
+from views import code_block as blk  # noqa: E402
 from views import line_view as lv  # noqa: E402
 
 # 含空行、缩进、字符串，覆盖"空行行盒高度"与多类语义色
@@ -88,9 +94,11 @@ def _rendered(
     focus=None,
     blur=None,
     selection=None,
+    change_lang=None,
+    raw: str = FENCE,
 ):
     """在组件渲染上下文内渲染代码块（`ft.use_state` / `use_effect` 需要宿主）。"""
-    line = _code_line()
+    line = _code_line(raw)
 
     @ft.component
     def _Probe():
@@ -104,7 +112,7 @@ def _rendered(
                 change or _noop,
                 focus or _noop,
                 blur or _noop,
-                _noop,
+                change_lang or _noop,
                 selection or _noop,
                 _ref(None),
                 active,
@@ -647,4 +655,196 @@ def test_real_blur_still_exits_edit_mode():
     assert blur_rec.calls == [(0,)]
     assert _code_text(h) is not None
     assert not _edit_fields(h)
+
+
+# ==================== 6. 头部工具栏紧凑性 ====================
+
+
+def _subtree(root) -> Iterator:
+    """头部子树遍历：在 harness.walk 之上补 `items`。
+
+    `harness.walk` 只顺着 controls / content / actions / title 下钻，而语言菜单的
+    `PopupMenuItem` 只存在于 `PopupMenuButton.items` 里，不补这一步就遍历不到。
+    """
+    for node in walk(root):
+        yield node
+        items = getattr(node, "items", None)
+        if isinstance(items, (list, tuple)):
+            for item in items:
+                if isinstance(item, ft.BaseControl):
+                    yield from _subtree(item)
+
+
+def _header(h: RenderHarness) -> ft.Row:
+    """头部工具栏：按高度常量定位（不猜控件顺序）。"""
+    rows = [
+        n
+        for n in h.find(lambda n: isinstance(n, ft.Row))
+        if getattr(n, "height", None) == blk._HEADER_H
+    ]
+    assert rows, f"未找到定高为 {blk._HEADER_H} 的头部工具栏"
+    return rows[0]
+
+
+def _lang_button(h: RenderHarness) -> ft.PopupMenuButton:
+    btns = h.find(lambda n: isinstance(n, ft.PopupMenuButton))
+    assert btns, "头部未挂载语言选择器"
+    return btns[0]
+
+
+def _header_icon_btns(h: RenderHarness) -> list[ft.Container]:
+    """头部紧凑图标按钮：定见方 + ink 水波 + 单个 Icon。"""
+    return [
+        n
+        for n in _subtree(_header(h))
+        if isinstance(n, ft.Container)
+        and n.ink
+        and n.width == blk._HEADER_H
+        and n.height == blk._HEADER_H
+    ]
+
+
+def test_header_row_height_is_locked_to_compact_token():
+    """头部行高被显式锁定。
+
+    行高由**最高子项**决定，不锁就会被 Material 的固有尺寸顶回去——这正是
+    "顶部行过高"的成因，跟内边距无关（真机探针：压内边距后行高纹丝不动）。
+    """
+    with _rendered() as h:
+        assert _header(h).height == blk._HEADER_H, "头部行高未锁定在紧凑高度"
+
+
+def test_header_has_no_material_min_tap_target_controls():
+    """头部不得出现 IconButton / Dropdown（含菜单项内容里的）。
+
+    真机实测高度：IconButton 40（`visual_density=COMPACT` 也只降到 32）、
+    Dropdown **恒为 48** —— 即使 `dense=True` / `text_size=12` / 内边距归零。
+    且 Dropdown 用 `height=` 强压会**裁切其文字**（压到 24 时文字溢出到下一行标签上），
+    所以它只能整体换掉，不能压。这条守住"换掉"的结论。
+    """
+    with _rendered() as h:
+        for node in _subtree(_header(h)):
+            assert not isinstance(
+                node, (ft.IconButton, ft.Dropdown)
+            ), f"头部出现 {type(node).__name__}：其固有高度会顶大行高"
+
+
+def test_header_children_declare_explicit_height_within_cap():
+    """每个定高子项都不超过 `_HEADER_H`。
+
+    头部行高是**硬锁**的，超过该值的子项会被静默裁切（视觉损坏、无报错）。
+    这条守住"硬锁不会切到东西"这一前提，也就守住了上一条的替换是安全的。
+    """
+    with _rendered() as h:
+        sized = [
+            n
+            for n in _subtree(_header(h))
+            if isinstance(n, (ft.Container, ft.PopupMenuButton))
+            and getattr(n, "height", None) is not None
+        ]
+        assert len(sized) >= 3, f"头部定高子项过少（{len(sized)}），结构可能已变"
+        for node in sized:
+            assert node.height <= blk._HEADER_H, (
+                f"{type(node).__name__} 高 {node.height} > {blk._HEADER_H}，"
+                "会被头部硬锁裁切"
+            )
+
+
+def test_header_icon_buttons_are_compact_and_clickable():
+    """折叠 / 复制用固定尺寸 Container（项目紧凑按钮惯例），不是 IconButton。"""
+    with _rendered() as h:
+        btns = _header_icon_btns(h)
+        tooltips = [n.tooltip for n in btns]
+        assert tooltips == ["折叠", "复制代码"], f"头部图标按钮不符：{tooltips}"
+        for node in btns:
+            assert node.on_click is not None, "图标按钮没有单击回调"
+        assert len(h.find(lambda n: isinstance(n, ft.IconButton))) == 0
+
+
+def test_header_shows_line_count_and_no_decoration_icon():
+    """头部信息构成：折叠 / 语言 / 行数 / 复制；无装饰性冗余图标。"""
+    with _rendered() as h:
+        header = _header(h)
+        texts = [
+            getattr(n, "value", None)
+            for n in _subtree(header)
+            if isinstance(n, ft.Text)
+        ]
+        assert f"{len(LOGICAL_LINES)} 行" in texts, f"缺少行数标签：{texts}"
+        assert any(isinstance(n, ft.PopupMenuButton) for n in _subtree(header))
+        assert not any(
+            isinstance(n, ft.Icon) and n.icon == ft.Icons.DATA_OBJECT
+            for n in _subtree(header)
+        ), "装饰性图标应已移除以保持头部紧凑"
+
+
+def test_language_trigger_shows_display_name_not_fence_key():
+    """语言标签显示展示名（Python），而不是围栏里的标识（python）。"""
+    with _rendered() as h:
+        texts = [
+            getattr(n, "value", None)
+            for n in _subtree(_lang_button(h).content)
+            if isinstance(n, ft.Text)
+        ]
+        assert "Python" in texts, f"语言标签未显示展示名：{texts}"
+        assert "python" not in texts, "语言标签显示了围栏标识而非展示名"
+
+
+def test_language_menu_lists_common_langs_and_checks_current():
+    """菜单覆盖常用语言、项高已压缩、且恰好勾选当前语言。"""
+    with _rendered() as h:
+        items = _lang_button(h).items
+        assert len(items) == len(blk._COMMON_LANGS), "语言菜单项数与常用清单不符"
+        checked = [i for i in items if i.checked]
+        assert len(checked) == 1, "应当只有当前语言被勾选"
+        assert getattr(checked[0].content, "value", None) == "Python"
+        assert all(i.height < 48 for i in items), "菜单项未压缩（默认 48，26 项会很长）"
+
+
+def test_language_menu_click_forwards_key_to_on_change_lang():
+    """选中菜单项 → on_change_lang(line_idx, 标识)，契约与旧 Dropdown 一致。"""
+    rec = _Recorder()
+    with _rendered(change_lang=rec) as h:
+        items = _lang_button(h).items
+        go = [i for i in items if getattr(i.content, "value", None) == "Go"]
+        assert go, "语言菜单里没有 Go 选项"
+        h.interact(go[0].on_click, None)
+    assert rec.calls == [(0, "go")], f"选语言回传不符契约：{rec.calls}"
+
+
+def test_language_menu_appends_unknown_current_lang():
+    """围栏写了清单外的标识（如 py3）时：末位追加并勾选，用户能看到当前状态。"""
+    with _rendered(raw="```py3\n" + RAW_CODE + "```") as h:
+        items = _lang_button(h).items
+        assert len(items) == len(blk._COMMON_LANGS) + 1, "未追加清单外的当前语言"
+        last = items[-1]
+        assert last.checked is True, "清单外的当前语言未被勾选"
+        assert getattr(last.content, "value", None) == "py3"
+
+
+def test_lang_display_maps_known_and_passes_unknown_through():
+    """展示名映射：空标识 → Plain text，未知标识原样回显（别名不等于无语言）。"""
+    assert blk._lang_display("") == "Plain text"
+    assert blk._lang_display("python") == "Python"
+    assert blk._lang_display("cpp") == "C++"
+    assert blk._lang_display("py3") == "py3"
+
+
+def test_lang_entries_appends_unknown_current_only():
+    """`_lang_entries`：常用清单打底，仅在必要时追加当前语言，不改动原清单。"""
+    assert blk._lang_entries("python") == blk._COMMON_LANGS
+    assert blk._lang_entries("") == blk._COMMON_LANGS
+    entries = blk._lang_entries("py3")
+    assert entries[:-1] == blk._COMMON_LANGS
+    assert entries[-1] == ("py3", "py3")
+
+
+def test_collapse_button_switches_to_preview():
+    """折叠按钮切到首行预览：正文（高亮层 / 编辑框）卸载。"""
+    with _rendered() as h:
+        collapse = [n for n in _header_icon_btns(h) if n.tooltip == "折叠"]
+        assert collapse, "未找到折叠按钮"
+        h.interact(collapse[0].on_click, None)
+        assert _code_text(h) is None, "折叠后仍渲染了正文高亮层"
+        assert not _edit_fields(h), "折叠后不应有编辑框"
 

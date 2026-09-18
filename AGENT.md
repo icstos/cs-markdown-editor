@@ -73,6 +73,7 @@
 - 禁止在事件回调里用 `e.control.value` 当"当前文本"：它是**渲染时**的取值，flet 不会把客户端输入回写到控件属性。拿它配 `e.selection` 的新偏移量做文本变换会用"旧文本 + 新偏移"越界裁剪，实测会吃掉用户刚输入的字符。文本一律以文档模型为唯一真相，回调里只记偏移量。
 - 禁止把 `KeyboardListener` 当作"需要撑满可用宽度的子项的父级"：它只把自己撑开，**不向 `content` 传递紧宽度**（内容拿到松约束）。后果：多行 `TextField` 缩到内在宽度（实测 728px 可用宽度下只有 300px），折行提前、块高变化。需要紧宽度时用 `Row([Container(expand=True, content=X)])`，监听器放最外层。
 - 禁止在滚动 `Column` 内用 `Stack(fit=ft.StackFit.EXPAND)`：交叉轴约束无界 → 高度算成 `inf`，整块渲染不出来。叠层一律用默认的 `LOOSE`（按子项尺寸定型）。
+- 禁止把 `ft.IconButton` / `ft.Dropdown` 放进需要紧凑行高的工具栏：**行高 = 最高子项**，二者有 Material 固有高度且**压内边距无效** —— `IconButton` 默认 40（`visual_density=COMPACT` 也只降到 32），`Dropdown` 恒为 48（即使 `dense=True` / `text_size=12` / `content_padding` 归零，内部 `InputDecorator` 的高度不减）。给 `Dropdown` 设 `height=` 能改外框但**会裁切内部文字**。紧凑替代：图标按钮用固定尺寸 `Container(ink=True, width/height=22, tooltip=...)`（见 `views/status_bar.py`），语言/选项选择用自绘触发器的 `PopupMenuButton`（见 `views/code_block.py`）。
 - 禁止修改 `page.theme_mode` 于渲染期之外（`App` 渲染期间同步写入保证 `_current_colors()` 取色一致）。
 - 键盘事件只经 `KeyDispatcher`（`views/key_bindings.py`）分发：`page.on_keyboard_event → KeyDispatcher.handle(e)`，`actions_ref` 每次渲染按优先级 diff > split > 单编辑器 绑定（`app/_focus_router.py` 的 `_get_active_nav()`）；禁止在别处直接挂接键盘事件处理编辑动作。
 

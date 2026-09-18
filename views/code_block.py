@@ -23,6 +23,15 @@
 - `Stack` 用默认的 LOOSE：本组件位于滚动 `Column` 内、交叉轴约束无界，
   `StackFit.EXPAND` 会把高度约束成 infinity（整块高度 inf、块体渲不出来）。
 
+头部行高 = **最高子项**，故紧凑与否由子项的固有高度决定（不是内边距）：
+- `ft.Dropdown` 恒为 48px（即使 `dense` / `text_size=12` / 内边距归零——内部
+  `InputDecorator` 的固有高度），且用 `height=` 强压会裁切其文字（压到 24px 时
+  文字溢出到下一行标签上）→ 只能整体换掉，改自绘的 `PopupMenuButton` 触发器。
+- `ft.IconButton` 默认 40px（`visual_density=COMPACT` 也只降到 32）→ 改用固定尺寸的
+  `Container(ink=True)`，与 `views/status_bar.py` 的紧凑按钮同一套做法。
+真机 A/B（同一条渲染路径，只改 `_HEADER_H`）实测：头部 48 → 22 时**块高恰好减少
+26px**，且随后的截图确认标签 / 图标 / 行数三者在 22px 内垂直居中、无裁切。
+
 契约不变（换实现不换接口）：`on_change / on_focus / on_blur / on_selection_change`
 四件套的语义与旧 CodeEditor 完全一致，因此 `views/editor/_fence.py` 的围栏闭包组
 与 `views/key_bindings.py` 的"边界方向键跳出 / 空块 Backspace 删除 / Tab 放行"
@@ -77,6 +86,12 @@ _CODE_LINE_HEIGHT = 1.5
 # 不换行（word_wrap=False）模式下编辑框的最小宽度：短代码也要有可用的输入区。
 _EDIT_MIN_WIDTH = 420.0
 
+# 头部工具栏行高（与状态栏紧凑图标按钮同值）。
+# 头部行高 = 其**最高子项**，所以这里的每个交互元素都必须显式压到这个高度：
+# Material 的固有尺寸会把行高重新顶大（实测 IconButton 40、Dropdown 48），
+# 这才是"顶部行过高"的真实成因——不是内边距。
+_HEADER_H = 22.0
+
 # 代码块语言选择下拉框的常用语言清单
 # （key = Markdown 围栏语言标识，需与 Pygments get_lexer_by_name 的名称对齐）
 _COMMON_LANGS: list[tuple[str, str]] = [
@@ -109,13 +124,31 @@ _COMMON_LANGS: list[tuple[str, str]] = [
 ]
 
 
-def _lang_options(current_lang: str) -> list[ft.DropdownOption]:
-    """构造语言下拉框选项；若当前语言不在常用清单内，追加为额外选项。"""
-    options = [ft.DropdownOption(key=k, text=t) for k, t in _COMMON_LANGS]
+def _lang_display(lang: str) -> str:
+    """语言标识 → 展示名（如 "python" → "Python"）。
+
+    未知标识原样回显：围栏里可以写 Pygments 认识的别名（如 `py3`），
+    没有展示名不等于无语言，不能显示成空。
+    """
+    if not lang:
+        return dict(_COMMON_LANGS)[""]
+    for key, text in _COMMON_LANGS:
+        if key == lang:
+            return text
+    return lang
+
+
+def _lang_entries(current_lang: str) -> list[tuple[str, str]]:
+    """语言菜单项 `(标识, 展示名)` 列表。
+
+    当前语言不在常用清单内时追加为末项 —— 否则"当前值"不存在于选项中，
+    用户点开菜单会看不到自己现在的选择，也无法确认当前状态。
+    """
+    entries = list(_COMMON_LANGS)
     known = {k for k, _ in _COMMON_LANGS}
     if current_lang and current_lang not in known:
-        options.append(ft.DropdownOption(key=current_lang, text=current_lang))
-    return options
+        entries.append((current_lang, current_lang))
+    return entries
 
 
 def _span_style(color: str, size: int) -> ft.TextStyle:
@@ -231,65 +264,109 @@ def render_code_block(
     gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.04, c.text)
     border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
 
-    # ---- 语言选择器 ----
-    lang_dropdown = ft.Dropdown(
-        value=lang,
-        options=_lang_options(lang),
-        width=150,
-        text_size=12,
-        dense=True,
-        content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
-        border=ft.NoInputBorder(),
-        fill_color=ft.Colors.TRANSPARENT,
-        enable_search=True,
-        editable=False,
-        on_select=lambda e: (
-            on_change_lang(line_idx, e.control.value or "")
-            if on_change_lang is not None and e.control.value is not None
-            else None
+    # ---- 头部交互元素 ----
+    # 两者都必须显式压到 _HEADER_H，否则头部会被它们的固有尺寸顶高：
+    # - 不用 `ft.Dropdown`：它即使 `dense=True` / `text_size=12` / 内边距归零，
+    #   高度仍恒为 48px（内部 InputDecorator 的固有高度），是头部行高的**唯一**
+    #   决定项。用 `height=` 强行压缩会裁切其文字（真机探针实测：文字下坠错位，
+    #   压到 24px 时直接溢出到下一行标签上），故此路不通。
+    #   改用 `PopupMenuButton` + 自绘紧凑触发器，并顺手拿到菜单定位与选中态。
+    # - 不用 `ft.IconButton`：Material 的最小点击区把它撑到 40px
+    #   （`visual_density=COMPACT` 也只降到 32）。改用固定尺寸的
+    #   `Container(ink=True)` —— 与 `views/status_bar.py` 的紧凑按钮同一套做法，
+    #   点击有水波反馈、悬停有 tooltip，全局观感一致。
+    def _header_icon(icon: str, tooltip: str, color: str, on_click) -> ft.Control:
+        """固定 _HEADER_H 见方的头部图标按钮。"""
+        return ft.Container(
+            width=_HEADER_H,
+            height=_HEADER_H,
+            border_radius=Radius.SM,
+            alignment=ft.Alignment.CENTER,
+            ink=True,
+            tooltip=tooltip,
+            on_click=lambda e: on_click(),
+            content=ft.Icon(icon, size=14, color=color),
+        )
+
+    # 语言选择器：当前语言是可点的紧凑标签（Typora 同款位置与交互直觉）。
+    # 菜单项用 `on_click` 而非 `on_select`：后者只给被选项的控件 ID 字符串，
+    # 还得反查映射；前者可闭包捕获标识，是项目既有写法（tool_area / tab_bar）。
+    lang_button = ft.PopupMenuButton(
+        height=_HEADER_H,
+        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
+        tooltip="选择代码语言",
+        # UNDER：菜单向下展开，不遮住代码本身（默认 OVER 会盖住正文前几行）
+        menu_position=ft.PopupMenuPosition.UNDER,
+        shape=ft.RoundedRectangleBorder(radius=Radius.MD),
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+            padding=ft.Padding.all(0),
+            overlay_color=ft.Colors.with_opacity(0.08, c.text),
         ),
+        content=ft.Row(
+            controls=[
+                ft.Text(
+                    value=_lang_display(lang),
+                    size=12,
+                    color=c.text,
+                    font_family=FONT_MONO,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+                ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=c.muted),
+            ],
+            spacing=1,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        items=[
+            ft.PopupMenuItem(
+                # 压缩项高（默认 48）：26 个语言的菜单因此不必滚动太多
+                height=28,
+                content=ft.Text(value=text, size=12, font_family=FONT_MONO),
+                # 勾选当前语言：菜单一打开就能确认当前状态，无需记忆
+                checked=key == lang,
+                on_click=(
+                    (lambda e, k=key: on_change_lang(line_idx, k))
+                    if on_change_lang is not None
+                    else None
+                ),
+            )
+            for key, text in _lang_entries(lang)
+        ],
     )
 
     # ---- 复制按钮 ----
-    copy_btn = ft.IconButton(
-        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
-        icon_size=14,
-        tooltip="已复制" if copied else "复制代码",
-        padding=ft.Padding.all(Spacing.MD),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-            color=ft.Colors.GREEN if copied else c.muted,
-        ),
-        on_click=lambda e, txt=code: (
-            page.run_task(copy_code_to_clipboard, clipboard_ref, txt, set_copied)
+    copy_btn = _header_icon(
+        ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+        "已复制" if copied else "复制代码",
+        ft.Colors.GREEN if copied else c.muted,
+        lambda: (
+            page.run_task(copy_code_to_clipboard, clipboard_ref, code, set_copied)
             if page is not None and not copied
             else None
         ),
     )
 
     # ---- 折叠按钮 ----
-    collapse_btn = ft.IconButton(
-        icon=ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
-        icon_size=14,
-        tooltip="展开" if is_collapsed else "折叠",
-        padding=ft.Padding.all(Spacing.MD),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-            color=c.muted,
-        ),
-        on_click=lambda e: _toggle_collapse(),
+    # `_toggle_collapse` 定义于下方"交互"分节，这里只能延迟绑定（lambda 内解析名字），
+    # 与本文件 `_build_edit_body` 引用 `_exit_edit` 的方式一致。
+    collapse_btn = _header_icon(
+        ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
+        "展开" if is_collapsed else "折叠",
+        c.muted,
+        lambda: _toggle_collapse(),
     )
 
     # ---- 头部工具栏 ----
+    # 显式定高：把所有子项锁在 _HEADER_H 内，后续若有人往头部塞 Material 控件，
+    # 行高不会悄悄膨胀（tests/test_code_block_native.py 有用例守住每个子项的高度）。
+    # 左侧刻意不放装饰性图标（原 DATA_OBJECT）：语言标签紧邻其右，语义重复，
+    # 紧凑头部里多一个字形只会让起点更乱。
     header = ft.Row(
         controls=[
             collapse_btn,
-            ft.Icon(
-                ft.Icons.DATA_OBJECT,
-                size=13,
-                color=ft.Colors.with_opacity(0.5, c.muted),
-            ),
-            lang_dropdown,
+            lang_button,
             ft.Container(expand=True),
             ft.Text(
                 value=f"{line_count} 行",
@@ -300,6 +377,7 @@ def render_code_block(
             copy_btn,
         ],
         spacing=Spacing.SM,
+        height=_HEADER_H,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 

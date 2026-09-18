@@ -5,7 +5,7 @@
 也没有暴露任何换行开关——"开启换行时代码块内也软换行"在产品上无法达成。故整体
 改用 Flet 原生控件重建代码块。
 
-两态（共用同一份行内容与同一套字体度量，宽度 / 折行点 / 行高因此严格一致）：
+两态（共用同一份行内容与同一套字体度量，宽度 / 折行点 / 行盒因此严格一致）：
 - 浏览态：逐逻辑行 `ft.Text(spans=...)` + Pygments 语义色
   （services.code_highlight 分词 → styles.Colors.code_syntax 取色）。
   word_wrap=True 时文本按容器宽度自然折行，续行与首行同列；False 时单行不折、
@@ -15,13 +15,16 @@
   选区、IME 与撤销。两层同宽（同一容器约束）、同字距（显式 `letter_spacing`）、
   同行高，故折行点与光标位置逐字对齐，且**编辑过程中语法高亮持续可见**。
 
-叠加层的两个实测约束（真机探针，勿凭直觉改）：
+叠加层的三个实测约束（真机探针，勿凭直觉改）：
 - `KeyboardListener` 必须放在**最外层**包住整个正文，不能只包编辑框：它只把自己
   撑开，传给 `content` 的是**松约束**，多行 `TextField` 会据此缩到内在宽度
   （实测 300px vs 应有的 728px），折行因此提前、块高多出 2 个视觉行——这正是
   "编辑态行宽异常"的根因。
 - `Stack` 用默认的 LOOSE：本组件位于滚动 `Column` 内、交叉轴约束无界，
   `StackFit.EXPAND` 会把高度约束成 infinity（整块高度 inf、块体渲不出来）。
+- 编辑框必须显式带 `strut_style=_edit_strut(size)`：否则 Flutter 自造的强制 strut
+  会把含中文/emoji（字体回退字形）的行压到 24px，而高亮层同一行是 25px，
+  光标因此**逐行累积上飘**（详见 `_edit_strut` 的实测数据）。
 
 头部行高 = **最高子项**，故紧凑与否由子项的固有高度决定（不是内边距）：
 - `ft.Dropdown` 恒为 48px（即使 `dense` / `text_size=12` / 内边距归零——内部
@@ -174,6 +177,35 @@ def _span_style(color: str, size: int) -> ft.TextStyle:
 def _syn_color(c, kind: str) -> str:
     """语义类别 → 主题色（未收录类别回退代码块正文色）。"""
     return c.code_syntax.get(kind, c.code_block_fg)
+
+
+def _edit_strut(size: int) -> ft.StrutStyle:
+    """编辑框的行盒 strut：**必须显式给出，且 `force_strut_height=False`**。
+
+    为什么这不是可选项：`TextField` 在未指定 strut 时，Flutter 会自造一个
+    `force_strut_height=True` 的 strut，把每行高度钉死在 `size × height`（16×1.5=24px）；
+    而高亮浏览层的 `ft.Text` 没有 strut，行盒取"该行所有 run 的自然行高最大值"。
+    两者只在纯 ASCII 下相等——**一旦行内出现需要字体回退的字形（中文注释、emoji），
+    回退字体的度量更大，`ft.Text` 的行盒就变成 25px，编辑框仍是 24px**：
+    真机实测（同宽同样式）中文 1 行 25 / 2 行 50、`x = 1  # 注释` 混合行 25、emoji 25，
+    而编辑框对应恒为 24/48。
+
+    后果是**逐行累积的纵向错位**：每经过一个含中文/emoji 的行，可见文字相对光标
+    下移 1px（折行的中文长注释一次下移 2px），越往下越明显——即用户报的
+    "越往后面的行光标越往上偏"。这正是当初把编辑框换成"透明叠层"后才暴露的：
+    两层一旦同行同列，行盒就必须逐行严格相等，而不是"看起来差不多"。
+
+    给出 `force_strut_height=False` 的 strut 后，编辑框的行盒退化为与 `ft.Text` 相同的
+    "自然最大值"（strut 只保证下限 24px，不再压制回退字形的行高）。真机实测 6 组样本
+    与浏览层**逐一相等**：纯 ASCII 1 行 24 / 2 行 48、中文 1 行 25 / 2 行 50、
+    `x = 1  # 注释` 混合 2 行 51、emoji 1 行 27。
+    """
+    return ft.StrutStyle(
+        font_family=FONT_MONO,
+        size=size,
+        height=_CODE_LINE_HEIGHT,
+        force_strut_height=False,
+    )
 
 
 def _measure_mono_width(text: str, size: int) -> float:
@@ -513,6 +545,9 @@ def render_code_block(
                 # 文字透明：字符不可见，只留光标与选区——可见字符由底层高亮层负责
                 color=ft.Colors.TRANSPARENT,
             ),
+            # 行盒 strut：不显式给的话 Flutter 会自造一个强制 strut，把含中文/emoji 的
+            # 行压到 24px，而高亮层同一行是 25px → 光标逐行上飘（见 _edit_strut）。
+            strut_style=_edit_strut(code_size),
             cursor_color=c.link,
             cursor_width=2,
             selection_color=ft.Colors.with_opacity(0.25, c.link),

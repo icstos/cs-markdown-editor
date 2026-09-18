@@ -496,6 +496,43 @@ def test_edit_field_is_transparent_and_matches_highlight_metrics():
         assert style.letter_spacing == ref.letter_spacing, "字距不一致 → 光标横向漂移"
 
 
+def test_edit_field_declares_non_forcing_strut():
+    """编辑框必须显式带"不强制行高"的 strut —— 这是光标纵向漂移的根因修复。
+
+    `TextField` 不指定 strut 时，Flutter 会自造一个 `force_strut_height=True` 的 strut，
+    把每行高度钉死为 `size × height`（16×1.5=24px）；而浏览层 `ft.Text` 无 strut，
+    行盒取"该行所有 run 的自然行高最大值"。两者仅在纯 ASCII 下相等——
+    行内一旦出现需要字体回退的字形（中文注释、emoji），`ft.Text` 行盒变成 25px、
+    编辑框仍是 24px，于是**每经过一个中文/emoji 行，可见文字相对光标下移 1px**，
+    越往下越明显，即用户报的"越往后面的行光标越往上偏"。
+
+    `force_strut_height=False` 让 strut 只保证下限，编辑框行盒退化为与 `ft.Text`
+    相同的自然最大值，两层逐行严格相等。此测试锁死这一约束，防止被"顺手简化"掉。
+    """
+    with _rendered() as h:
+        field = _enter_edit(h)
+        strut = field.strut_style
+        assert strut is not None, "编辑框缺 strut_style → Flutter 自造强制 strut，中文/emoji 行光标上飘"
+        assert strut.force_strut_height is False, "strut 必须不强制行高，否则回退字形的行盒被压扁"
+        assert strut.font_family == FONT_MONO, "strut 字体族应与正文一致"
+        assert strut.height == blk._CODE_LINE_HEIGHT, "strut 行高倍数应与正文一致"
+
+
+def test_edit_strut_helper_shape():
+    """`_edit_strut` 是编辑框 strut 的唯一来源，字段须与正文样式同源同值。"""
+    strut = blk._edit_strut(16)
+    assert isinstance(strut, ft.StrutStyle)
+    assert strut.font_family == FONT_MONO
+    assert strut.size == 16
+    assert strut.height == blk._CODE_LINE_HEIGHT
+    assert strut.force_strut_height is False
+
+    ref = blk._span_style(ft.Colors.WHITE, 16)
+    assert strut.font_family == ref.font_family
+    assert strut.size == ref.size
+    assert strut.height == ref.height
+
+
 def test_edit_field_text_area_aligns_with_highlight_column():
     """编辑框文本区左缘与高亮层代码列同 x，右侧不再额外留白。
 

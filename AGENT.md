@@ -98,7 +98,8 @@
 - 禁止移动 `views/key_bindings.py` `KeyDispatcher.handle` 中「向外选区拦截块」到 layer 判定之后，后果：outward_sel 激活时 `cursor_li is None` → layer=browse，Backspace 误路由到 SelectionArea 删除分支。
 - 禁止将 `core/history.py` `EditHistory` 固定容量 50 改为无界，或把行级 `LineEditSnapshot` 改为全文 `EditorSnapshot`，后果：大文档撤销栈内存膨胀。
 - 禁止使同行输入时 `cursor_text_field` 的 `key` 发生变化（key 基于 `li + nav_seq`，仅撤销/重做等强制重建场景递增 `nav_seq`），后果：TextField 重建打断 IME 组合态。
-- 禁止移除渲染层 Text 与 cursor TextField 共用的同一 `StrutStyle`（`force_strut_height=True`），后果：光标 baseline 与渲染文字 baseline 错位。
+- 禁止移除渲染层 Text 与 cursor TextField 共用的同一 `StrutStyle`（`force_strut_height=True`，仅适用于 `views/cursor_layer.py` 的**单行浮层光标**），后果：光标 baseline 与渲染文字 baseline 错位。
+- 禁止删除代码块编辑框的 `strut_style=_edit_strut(size)`（`views/code_block.py`，`force_strut_height=False`）。注意这与上一条**取相反的值、且不可统一**：单行光标层是"TextField 浮在一个视觉行上"，两层都能钉死同一行高；代码块叠层是"多行 TextField 压在**多行 `ft.Text`** 上"，而 **`ft.Text` 没有 `strut_style` 字段**（已核实），只能反过来让 TextField 不强制行高。缺省时 Flutter 会自造 `force_strut_height=True` 的 strut 把每行钉在 `size×height`（16×1.5=24px），而 `ft.Text` 取"该行所有 run 的自然行高最大值"—— 行内一旦有字体回退字形（中文注释、emoji）就变成 25px，于是**每过一个中文/emoji 行，可见文字相对光标下移 1px**（折行中文注释一次 2px），越往下越明显，即"光标逐行上飘"。后果：编辑态光标与渲染文字纵向错位。
 - 禁止绕过 `ft.memo` 缓存约定随意增删 `views/line_view.py` 的 prop（非激活行 prop 集合必须稳定），后果：光标移动触发全列表重渲染，性能退化。
 - 禁止在 `views/editor/_fence.py` 之外给 CODE/TABLE/MATH 岛屿接入 active/draft 编辑系统，后果：独立岛屿架构被破坏，光标跳动；岛屿聚焦期间必须保留 `code_focus_ref`/`table_focus_ref` 守卫让 KeyDispatcher 放行原生键。
 - 禁止用 `ft.PopupMenuButton` 实现右键菜单（项目约定统一 `ft.ContextMenu`），后果：与既有菜单体系（手动 `open(global_position=...)`、`secondary_trigger` 控制）不兼容。

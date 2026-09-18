@@ -89,7 +89,7 @@ def build_blocks(ctx: BlocksEnv):
                 ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1 :]
             )
             ctx.mark_dirty()
-            # 退出光标编辑态，代码块 CodeEditor 待用户点击聚焦编辑
+            # 退出光标编辑态，代码块待用户点击进入编辑（Typora 式）
             ctx.set_cursor_line(li)
             ctx.set_cursor_li(None)
             return

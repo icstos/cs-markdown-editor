@@ -226,7 +226,7 @@ def test_paste_in_progress_blocks_input():
 
 
 def test_fence_line_ignored():
-    """围栏行（代码块）由 CodeEditor 岛处理，不走字符 delta。"""
+    """围栏行（代码块）由原生编辑岛处理，不走字符 delta。"""
     ctx, calls = _make_ctx([_line("```", block_type=BlockType.CODE)])
     build_cursor(ctx)["handle_char_input"]("a")
     assert ctx.document.lines[0].raw == "```"

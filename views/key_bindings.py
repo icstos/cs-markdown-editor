@@ -192,7 +192,7 @@ class KeyDispatcher:
     # ---- 共享工具 ----
     @staticmethod
     def _native_field_focused(actions: EditorActions | None) -> bool:
-        """代码块 CodeEditor / 表格 TableView / 公式 TextField 的原生编辑控件是否聚焦。
+        """代码块编辑框 / 表格 TableView / 公式 TextField 的原生编辑控件是否聚焦。
 
         聚焦时文本编辑键与剪贴板组合交由原生控件处理，跳过全局导航/选区/剪贴板逻辑。
         """
@@ -499,7 +499,7 @@ class KeyDispatcher:
         ):
             return
 
-        # 代码块 CodeEditor / 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板
+        # 代码块编辑框 / 表格 TableView 聚焦时：文本编辑键（无修饰键）与剪贴板
         # 组合交由原生控件处理（Tab 缩进、方向键移动、Backspace、Ctrl+C 复制等），
         # 跳过全局导航/选区/剪贴板逻辑避免冲突。全局快捷键（Ctrl+S/Z、Ctrl+Tab 切换
         # 等）不在跳过清单内，仍正常处理。表格的 Tab/Escape 由 editor.py 的 _on_key_down
@@ -507,7 +507,7 @@ class KeyDispatcher:
         if self._native_field_focused(actions):
             # Typora 式：空代码块聚焦时按 Backspace（无修饰键）→ 删除整个代码块。
             # 必须在 _NATIVE_NAV_KEYS 放行之前拦截：backspace 在放行清单内，否则会
-            # 直接 return 交由原生 CodeEditor 处理（空内容时原生 Backspace 无效果）。
+            # 直接 return 交由原生编辑框处理（空内容时原生 Backspace 无效果）。
             # code_focus_ref.current 非 None 精确锁定代码块（表格/公式走各自 ref）。
             if (
                 norm == "backspace"
@@ -744,7 +744,7 @@ class KeyDispatcher:
             return True
         if norm == "tab" and not e.ctrl:
             # Ctrl+Tab 已在 handle() 顶部拦截为标签切换，此处仅处理普通 Tab。
-            # 代码块 Tab 由 CodeEditor 原生处理（缩进），此处跳过不拦截。
+            # 代码块 Tab 由原生编辑框处理，此处跳过不拦截。
             # 表格 Tab 由 editor.py _on_key_down 通过 table_nav_ref 路由到
             # TableView 单元格导航（table_focus_ref 守卫已跳过此处，但用户从
             # 非编辑态按 Tab 时 active 可能指向 TABLE 行，此处拦截防止 indent）。

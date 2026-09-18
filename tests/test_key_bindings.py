@@ -712,7 +712,7 @@ def test_edit_shift_tab_outdents():
 
 
 def test_edit_tab_in_code_block_consumed():
-    """代码块行按 Tab：不放给 indent（交由原生 CodeEditor）。"""
+    """代码块行按 Tab：不放给 indent（交由原生编辑框）。"""
     calls: list = []
     line = Line(BlockType.CODE, "code")
     actions = make_actions(calls, cursor_li=0, active_line=line)
@@ -849,7 +849,7 @@ def test_empty_code_block_backspace_deletes_block():
 
 
 def test_nonempty_code_block_backspace_passthrough():
-    """非空代码块（handle_code_backspace 返回 False）→ 交由原生 CodeEditor 处理。"""
+    """非空代码块（handle_code_backspace 返回 False）→ 交由原生编辑框处理。"""
     calls: list = []
     actions = make_actions(calls, code_backspace_ret=False)
     d, _, _ = make_dispatcher(actions, [])
@@ -913,7 +913,7 @@ def test_code_boundary_arrow_exit_false_passthrough():
 
 
 def test_code_boundary_shift_arrow_not_intercepted():
-    """Shift+方向键（选区扩展）→ 不拦截，交原生 CodeEditor。"""
+    """Shift+方向键（选区扩展）→ 不拦截，交原生编辑框。"""
     calls: list = []
     actions = make_actions(calls, code_exit_ret=True)
     d, _, _ = make_dispatcher(actions, [])

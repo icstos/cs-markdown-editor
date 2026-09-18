@@ -67,6 +67,9 @@ class Colors:
     diff_del_bg: str = "#ffeef0"  # 删除行背景
     diff_gap_add_bg: str = "#f0fff4"  # 新增侧间隙背景（更浅）
     diff_gap_del_bg: str = "#fff5f5"  # 删除侧间隙背景（更浅）
+    # 代码块语法高亮：语义类别 → 颜色。类别常量见 services/code_highlight.py
+    # （kw/str/com/num/fn/type/var/op/err），未收录类别回退 code_block_fg。
+    code_syntax: dict[str, str] = field(default_factory=dict)
 
 
 # 亮色：浅色商务科技配色，简洁专业，适配白天办公场景
@@ -96,6 +99,19 @@ _LIGHT = Colors(
     toolbar_bg="#F1F3F7",    # 工具栏底，与 bg 明显分层
     border="#E5E8ED",        # 偏冷边框灰
     search_active_bg="#FFB300",  # 激活匹配：饱和橙黄（普通匹配 #FFE082 之上更醒目）
+    # 代码块语法高亮：取 GitHub Light 语义色阶（红关键字 / 深蓝字符串 / 灰注释 /
+    # 蓝数字 / 紫函数 / 焦糖类型），与 code_block_bg(#F6F8FA) 同一色系语言
+    code_syntax={
+        "kw": "#CF222E",   # 关键字、控制流
+        "str": "#0A3069",  # 字符串
+        "com": "#6E7781",  # 注释
+        "num": "#0550AE",  # 数字、常量
+        "fn": "#8250DF",   # 函数名、内置名
+        "type": "#953800",  # 类、命名空间、装饰器
+        "var": "#24292F",  # 变量、属性
+        "op": "#57606A",   # 运算符、标点
+        "err": "#CF222E",  # 词法错误
+    },
     heading_colors={
         1: "#1A4480",  # 深海军蓝 - 最高层级，权威
         2: "#2C7BE5",  # 亮蓝 - 主结构
@@ -142,6 +158,19 @@ _DARK = Colors(
     diff_del_bg="#2e1a1d",   # 暗色删除行背景
     diff_gap_add_bg="#16201a",  # 暗色新增侧间隙
     diff_gap_del_bg="#1f1618",   # 暗色删除侧间隙
+    # 代码块语法高亮：在 One Dark 语义分工上统一降饱和（与暗色主题"护眼、低饱和"
+    # 一致），避免暗底上高饱和色闪烁
+    code_syntax={
+        "kw": "#C08BD8",   # 关键字、控制流（柔紫）
+        "str": "#8FBF7F",  # 字符串（柔绿）
+        "com": "#6E7A86",  # 注释（中性灰，最弱）
+        "num": "#D9A05B",  # 数字、常量（柔琥珀）
+        "fn": "#7FB2E8",   # 函数名、内置名（柔蓝）
+        "type": "#D8C078",  # 类、命名空间、装饰器（柔黄）
+        "var": "#D98C8C",  # 变量、属性（柔珊瑚）
+        "op": "#9AA4B0",   # 运算符、标点（中性）
+        "err": "#D98C8C",  # 词法错误
+    },
     heading_colors={
         1: "#75A4F0",  # 柔雾蓝 - 最高层级
         2: "#65C292",  # 柔薄荷绿

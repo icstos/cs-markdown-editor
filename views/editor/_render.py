@@ -128,6 +128,8 @@ def build_line_controls(
                     input_session_ref=input_session_ref if is_act else None,
                     cursor_value=cursor_field_value if is_act else "",
                     content_width=content_width,
+                    # 软换行总开关：代码块浏览态据此折行 / 横向滚动（段落走 content_width）
+                    word_wrap=ctx.word_wrap,
                     line_height=line_height,
                     body_font_size=ctx.body_font_size,
                     is_current_line=is_act,

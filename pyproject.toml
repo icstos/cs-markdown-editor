@@ -1,7 +1,7 @@
 [project]
 name = "cs-markdown-editor"
 version = "0.1.0"
-description = "Typora 式段级所见即所得 Markdown 编辑器，基于 Flet 0.86.2 声明式组件与 mistune 实时渲染"
+description = "Typora 式段级所见即所得 Markdown 编辑器，基于 Flet 1.0 声明式组件与 mistune 实时渲染"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -13,7 +13,7 @@ dependencies = [
     "mistune>=3.3.4",
     "pillow>=12.3.0",
     "uharfbuzz>=0.40.0",
-    "flet-code-editor==1.0.0",
+    "pygments>=2.19.0",
     "flet-datatable2==1.0.0",
     "watchdog>=4.0.0",
 ]

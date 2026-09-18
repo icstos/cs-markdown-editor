@@ -36,7 +36,7 @@
 | 无序 / 有序列表 | 嵌套缩进；无序列表圆点 `•` 按层级着色（与标题共用色阶），有序保留数字 |
 | 任务列表 | `- [ ]` / `- [x]`，可点击复选框切换状态；软换行折行时复选框始终停留在第一行（Typora 式顶对齐），已勾选内容删除线 + 半透明淡化 |
 | 引用 | 支持多层嵌套，左侧逐层包裹彩色边框（复用标题色阶红橙绿青蓝紫，半透明柔和色调），`Tab` / `Shift+Tab` 行内调整引用层级 |
-| 代码块 | 基于 flet-code-editor，语法高亮（亮色 GitHub / 暗色 One Dark）、行号（位数自适应）、语言选择下拉、折叠、复制按钮、可直接编辑；始终可编辑的独立岛屿；边界方向键跳出（第一行 `↑`/行首 `←`、最后一行 `↓`/行尾 `→` 移出代码块，无相邻行时自动新建空行） |
+| 代码块 | Flet 原生双态实现（`views/code_block.py`）：**浏览态**语法高亮（Pygments 分词 → 主题语义色，亮色 GitHub Light / 暗色 One Dark 降饱和）、行号（位数自适应，折行时色带连续）、语言选择下拉、折叠、复制按钮；**点击进入编辑态**（原生多行 `TextField`，选区 / IME / 撤销交给框架）；**开启换行时块内自动折行**（续行与首行同列），关闭换行时整块横向滚动；边界方向键跳出（第一行 `↑`/行首 `←`、最后一行 `↓`/行尾 `→` 移出代码块，无相邻行时自动新建空行） |
 | 行间公式 | `$$...$$`；浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态同时显示源码编辑器与实时渲染预览（垂直堆叠） |
 | 分隔线 | `---` / `***` / `___` |
 | 目录 | `[toc]` 卡片式目录：头部图标 + 标题 + 计数，彩色细竖线区分标题级别，同级别左对齐，H1/H2 加粗；点击条目跳转对应标题（带高亮脉冲反馈） |
@@ -79,7 +79,7 @@
 | [mistune](https://mistune.lepture.com/) ≥ 3.3.4 | 行内 AST 解析；HTML 导出（含 strikethrough / mark / 上下标 / 表格等插件） |
 | [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) ≥ 0.40.0 | 文本整形测量（与 Skia/Flutter 同引擎，光标像素级对齐渲染层文字） |
 | [Pillow](https://pillow.readthedocs.io/) ≥ 12.3.0 | 图片尺寸读取与缩放 |
-| [flet-code-editor](https://pub.dev/packages/flet_code_editor) ≥ 0.86.2 | 代码块语法高亮编辑（基于 flutter_code_editor，行号 / 高亮 / 语言切换 / 折叠） |
+| [Pygments](https://pygments.org/) ≥ 2.19.0 | 代码块语法分词（`services/code_highlight.py`，惰性导入；未知语言 / 超长代码回退纯文本，仅失去上色） |
 | [flet-datatable2](https://pub.dev/packages/flet_datatable2) ≥ 0.86.2 | 表格渲染与编辑（DataTable 扩展，固定表头 / 单元格编辑） |
 
 > **Python** ≥ 3.12（`pyproject.toml`）；模型层使用 `StrEnum`（3.11+ 特性）
@@ -96,7 +96,7 @@ python main.py
 或安装依赖后运行：
 
 ```bash
-pip install flet mistune pillow uharfbuzz flet-code-editor flet-datatable2
+pip install flet mistune pillow uharfbuzz pygments flet-datatable2
 python main.py
 ```
 
@@ -366,7 +366,7 @@ Document ─── Line ─── Segment
   → 渲染层 Text 显示新内容，TextField 重新定位到新光标位置
 ```
 
-**围栏岛屿**（CODE / TABLE / MATH / HR / TOC）：自管理独立可编辑控件，不进入 Stack。代码块用 `CodeEditor` 始终可编辑；表格用 `DataTable2` 单元格编辑；公式 / 分隔线 / TOC 视图态渲染。
+**围栏岛屿**（CODE / TABLE / MATH / HR / TOC）：自管理独立控件，不进入 Stack。代码块用 Flet 原生双态（`views/code_block.py`：高亮浏览 + 多行 `TextField` 编辑）；表格用 `DataTable2` 单元格编辑；公式 / 分隔线 / TOC 视图态渲染。
 
 ### 像素布局与命中测试（`views/pixel_layout.py`）
 
@@ -699,7 +699,7 @@ tests/                      # 单元测试（python -m pytest tests/ -q，共 97
 - **原子化重解析**：高频编辑路径用 `reparse_line_atomic`（仅触发 1 次 observable 通知，替代 `reparse_line` 的 2-7 次）
 - **`ft.memo` 行级缓存**：`LineView` 用 `@ft.memo` 装饰，非激活行的 prop 集合稳定（`line` / `line_idx` / `content_width` / `line_height` + 版本号 prop + 回调），cursor 移动时仅旧激活行 + 新激活行 prop 变化，其余 N-2 行直接复用缓存
 - **块级前缀也是段**：`#`、`-`、`>` 统一抽象为 `Segment`；标题在阅读态隐藏前缀、编辑态整行原文
-- **独立岛屿架构**：代码块（flet-code-editor）与表格（flet-datatable2）作为自管理独立岛屿，不走 active/draft 系统；内部自管编辑状态，通过 `on_change_*` 原地更新行模型避免频繁重渲染致光标跳动，仅在行数变化时触发重渲染更新高度
+- **独立岛屿架构**：代码块（`views/code_block.py`，Flet 原生双态）与表格（flet-datatable2）作为自管理独立岛屿，不走 active/draft 系统；内部自管编辑状态，通过 `on_change_*` 原地更新行模型避免频繁重渲染致光标跳动，仅在行数变化时触发重渲染更新高度
 - **代码块 / 表格聚焦守卫**：`code_focus_ref` / `table_focus_ref` 跟踪聚焦状态，`KeyDispatcher` 据此跳过全局导航 / 剪贴板键，交由原生 TextField 处理 Tab / Enter / Backspace / 方向键 / 复制
 - **结构操作重建新 Line 对象**：表格 `add_col` / `delete_col` / `set_align` 等原地修改 `lines[i].raw` 时，必须创建新 `Line` 对象替换，否则 `document.lines = lines` 浅拷贝元素引用不变，observable 判定未变化不触发重渲染
 - **渲染态选区包裹行内格式**：渲染态选中文字产生 `outward_sel` 而非 `active`，`toggle_inline` / `toggle_link` 在 `cursor_li is None` 时检查 `outward_sel_ref`，同段选区在 raw 两侧插入包裹标记并 `reparse_line`；跨段选区静默跳过

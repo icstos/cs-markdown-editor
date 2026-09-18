@@ -5,12 +5,12 @@
 - **定位**：对标 Typora 的光标级所见即所得（WYSIWYG）Markdown 桌面编辑器。核心能力：Stack 双层架构（底层渲染层 + 顶层透明 TextField 光标层）、像素级光标对齐（HarfBuzz）、IME 友好输入、软换行 2D 视觉行布局、多文档标签、文件对比 diff、拆分编辑器（左右独立标签组，同文件副本共享 document 实时同步）、侧边栏文件树（.lnk 快捷方式支持 + 外部变化实时监测）/大纲/搜索、快捷键自定义、自动保存与崩溃恢复。
 - **技术栈与版本**：
   - Python ≥ 3.12（`requires-python`，模型层用 `StrEnum`）
-  - Flet ≥ 0.86.2（声明式组件：`@ft.component` + `use_state`/`use_effect` + `@ft.observable`/`@ft.memo`，启动 `ft.run(main)` + `page.render(App)`）
+  - Flet ≥ 1.0.0（声明式组件：`@ft.component` + `use_state`/`use_effect` + `@ft.observable`/`@ft.memo`，启动 `ft.run(main)` + `page.render(App)`）
   - mistune ≥ 3.3.4（行内 AST 解析 + HTML 导出）
   - uharfbuzz ≥ 0.40.0（文本整形测量，与 Skia/Flutter 同引擎）
   - Pillow ≥ 12.3.0（图片尺寸读取）
-  - flet-code-editor ≥ 0.86.2（代码块语法高亮编辑岛屿）
-  - flet-datatable2 ≥ 0.86.2（表格编辑岛屿）
+  - Pygments ≥ 2.19.0（代码块语法分词，`services/code_highlight.py`；惰性导入）
+  - flet-datatable2 ≥ 1.0.0（表格编辑岛屿）
   - watchdog ≥ 4.0.0（外部修改检测，原生文件通知）
 - **运行环境与前提**：Windows 优先的桌面应用；字体 `assets/fonts/AlibabaPuHuiTi-3-55-Regular.otf`（注册名 "Alibaba"）；用户设置持久化于项目根 `settings.json`（由 `config/settings.py` 深合并管理，非源码，禁止提交改动假设）；备份目录由 `services/backup.py` 管理。
 
@@ -29,7 +29,7 @@
 | 快捷键路由/自定义键位 | `views/key_bindings.py`、`views/editor/_key.py`、`services/shortcuts.py`、`views/settings_dialog.py` | `.trae/documents/快捷键自定义功能实现计划.md`、`README.md`「键盘事件分发」 |
 | 行内格式（加粗/斜体/链接等 Toggle） | `views/editor/_inline_format.py`、`parser/selection.py` | `README.md`「关键设计决策」 |
 | 向外选区（Shift+方向键/跨段选区/剪切） | `views/editor/_outward.py`、`views/editor/_clipboard.py` | `.trae/documents/向外选区键盘路由补全.md`、`.trae/documents/段级编辑-向外选区与剪切删除支持.md` |
-| 代码块/表格/公式围栏岛屿 | `views/editor/_fence.py`、`views/table_view.py`、`utils/table_helpers.py` | `.trae/documents/table-refactoring-plan.md`、`.trae/documents/公式功能实现计划.md` |
+| 代码块/表格/公式围栏岛屿 | `views/code_block.py`、`views/editor/_fence.py`、`views/table_view.py`、`utils/table_helpers.py` | `.trae/documents/table-refactoring-plan.md`、`.trae/documents/公式功能实现计划.md` |
 | 标签栏/多文档管理 | `app/_tab_management.py`、`app/_tab_helpers.py`、`views/tab_bar.py` | `.trae/documents/top-tab-bar-multi-doc.md` |
 | 文件对比（diff 标签） | `app/_diff_controller.py`、`views/diff_view.py`、`app/diff_scroll_sync.py`、`views/diff_markers.py` | `.trae/documents/diff-as-tab.md` |
 | 拆分编辑器（左右独立标签组/共享document同步） | `app/_split_editor.py`、`app/_tab_management.py`、`app/_focus_router.py`、`app/_tab_helpers.py` | `README.md`「向右拆分编辑器（左右独立标签组）」 |
@@ -68,7 +68,9 @@
 - 禁止 `utils/` 内出现任何 `import models/parser/services/views/app`；后果：破坏叶子层纯函数定位，工具函数被状态耦合污染。
 - 禁止绕过 `parser/__init__.py` 直接 `from parser.block import ...`（包外部调用方）；后果：绕过唯一聚合入口产生循环依赖风险。包内部子模块按 DAG 方向单向依赖。
 - 禁止视图层（`views/`）内实现 Markdown 解析/序列化逻辑；解析一律走 `parser`。后果：解析口径分裂，roundtrip 测试失效。
-- 禁止 UI 更新走命令式路径：不得手动增删控件、不得在组件渲染后手动 `control.update()`/`page.update()` 改 UI；一切界面变化由 `@ft.observable` 字段变更或 `use_state` 触发。后果：Flet 0.86 组件在 render 中构建后被冻结，命令式 `row.update()` 直接抛 `RuntimeError`。
+- 禁止 UI 更新走命令式路径：不得手动增删控件、不得在组件渲染后手动 `control.update()`/`page.update()` 改 UI；一切界面变化由 `@ft.observable` 字段变更或 `use_state` 触发。后果：Flet 1.0 组件在 render 中构建后被**冻结**，命令式 `row.update()` / `field.value = ...` / `field.selection = ...` 直接抛 `RuntimeError: Frozen controls cannot be updated.`；控件状态只能从渲染流入（写成渲染参数）。唯一例外是**方法调用**（如 `await field.focus()`）。
+- 禁止用 `control.ref = my_ref` 事后绑定 `ref`：`ref` 是 `InitVar`，只在 `__init__` 里由 `BaseControl.__post_init__` 绑定，事后赋值永不生效（`my_ref.current` 恒为 `None`，聚焦/读值静默失效）。必须在构造函数里传 `ref=`。
+- 禁止在事件回调里用 `e.control.value` 当"当前文本"：它是**渲染时**的取值，flet 不会把客户端输入回写到控件属性。拿它配 `e.selection` 的新偏移量做文本变换会用"旧文本 + 新偏移"越界裁剪，实测会吃掉用户刚输入的字符。文本一律以文档模型为唯一真相，回调里只记偏移量。
 - 禁止修改 `page.theme_mode` 于渲染期之外（`App` 渲染期间同步写入保证 `_current_colors()` 取色一致）。
 - 键盘事件只经 `KeyDispatcher`（`views/key_bindings.py`）分发：`page.on_keyboard_event → KeyDispatcher.handle(e)`，`actions_ref` 每次渲染按优先级 diff > split > 单编辑器 绑定（`app/_focus_router.py` 的 `_get_active_nav()`）；禁止在别处直接挂接键盘事件处理编辑动作。
 

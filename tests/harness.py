@@ -46,6 +46,22 @@ class _HarnessSession(Session):
     def _Session__send_message(self, message: Any) -> None:
         """吞掉出站消息：夹具没有前端可发。"""
 
+    async def invoke_method(
+        self,
+        control_id: int,
+        method_name: str,
+        args: Any,
+        timeout: float | None = None,
+    ) -> Any:
+        """控件方法调用视为立即生效。
+
+        真实客户端会回执 ``invokeMethod``，而 ``Session.invoke_method`` 在无回执时会
+        ``await`` 到超时（``timeout=None`` 即永久等待）。夹具里没有前端，不接管这一步
+        会把任何 ``await control.focus()`` 之类的调用挂死——连 effect 都跑不完。
+        这里直接返回：方法在真机上的效果（聚焦 / 滚动等）由真机探针验证。
+        """
+        return None
+
 
 class RenderHarness:
     """在进程内渲染组件并驱动其更新 / 副作用 / 交互回调。"""
@@ -154,10 +170,14 @@ class RenderHarness:
             if not effects and not updates:
                 break
             rounds += 1
-            for hook, is_cleanup in effects:
-                self._run_effect(hook, is_cleanup)
+            # 与 flet `Session.__updates_scheduler` 严格同序：先跑控件更新（组件重渲染），
+            # 再跑 effect。顺序反了会让 effect 读到重建前的旧控件——ref 尚未重新绑定，
+            # 「渲染提交后操作控件」这类 effect（聚焦、回写光标）会打到已废弃的对象上，
+            # 夹具里看似失败、真机上却是对的（或反之）。
             for control in updates:
                 control.update()
+            for hook, is_cleanup in effects:
+                self._run_effect(hook, is_cleanup)
         return rounds
 
     def _run_effect(self, hook: Any, is_cleanup: bool) -> None:

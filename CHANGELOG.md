@@ -4,6 +4,63 @@
 
 ## [未发布]
 
+### 2026-09-17 代码块重写：Flet 原生双态实现，支持块内软换行 + 语法高亮
+
+- **问题根因**：代码块原用 `flet-code-editor` 的 `CodeEditor`，但上游
+  `flutter_code_editor` 的 `CodeField.wrap` 是"已声明未实现"的空属性（对应 PR
+  仍为 Draft），Flet 侧也未暴露任何换行开关 —— 开启换行时"代码块内也折行"在
+  产品上无法达成（改 Python 属性无效，改 Dart 需整体 `flet build`）
+- **移除依赖**：`flet-code-editor` 从 `pyproject.toml` 与 README 依赖表移除，
+  改由 `pygments` 提供分词（`views/line_view.py` 中的惰性 `_ce()` 导入与
+  `_code_language` 语言枚举映射一并删除）
+- **新增 `views/code_block.py`（Flet 原生双态）**：
+  - **浏览态**：逐逻辑行 `ft.Text(spans=...)` 高亮渲染，语义类别（关键字 / 字符串 /
+    注释 / 数字 / 函数 / 类型 / 变量 / 运算符 / 词法错误）经 `styles.Colors.code_syntax`
+    上色（亮色 GitHub Light 语义色阶 / 暗色 One Dark 统一降饱和）；行号列位数自适应，
+    折行时底色带连续、编号仍与首行基线对齐
+  - **编辑态**：原生多行 `ft.TextField`（等宽字体、独立行高倍数与浏览态一致），
+    选区 / IME / 撤销 / 软换行全部交给框架；点击块体进入（`use_effect` 移交焦点），
+    失焦回到高亮浏览态
+  - **Tab / Shift+Tab 缩进**：原生多行 `TextField` 不消费 Tab —— Flutter 把它当焦点
+    遍历键，flet 1.0 既无 Focus / Shortcuts 控件、`TextField` 也无 `on_key_down`，
+    控件层无从拦截（真机探针实测：回调返回 `True` 也拦不住遍历，`KEYDOWN Tab` 与
+    `BLUR` 同帧发生）。故组件内嵌 `ft.KeyboardListener` 包住编辑框，捕获 Tab 后自行
+    插入 4 空格缩进（Shift+Tab 反向去缩进，多行选区逐行处理），改写走 `on_change_code`
+    从而与手工输入共享撤销 / 标脏 / 重渲染路径；随后的遍历失焦被识别为副作用（不退出
+    编辑态），焦点在本次重渲染提交后由 `use_effect` 收回，缩进后的光标位置随渲染参数
+    下发。`Ctrl+Tab` 属全局标签切换，不插入缩进
+  - **软换行**：`word_wrap=True` 时文本按容器宽度折行、续行与首行同列；`False` 时
+    单行不折、整块横向滚动（编辑态按最长行撑开宽度后横向滚动，与浏览态行为一致）
+  - 保留头部语言下拉 / 折叠 / 复制 / 行数，保留 diff 背景、当前行高亮、高度上报
+- **新增 `services/code_highlight.py`**：纯逻辑分词服务（Pygments 惰性导入，结果
+  按 (语言, 代码) FIFO 缓存）。**不变式**：`highlight_lines` 行数恒等于
+  `code.split("\n")` 行数、逐行拼接恒等于原文 —— 行号、逻辑行坐标与边界方向键
+  跳出都依赖它；未知语言 / Pygments 缺失 / 超长代码（>200k 字符）/ 分词行数不符
+  四种情况统一回退纯文本（只失去上色，内容与行数不变）
+- **新增 `utils/code_indent.py`**：Tab / Shift+Tab 的缩进变换纯函数
+  （`apply_indent(value, base, extent, direction) -> (value, base, extent)`）。
+  收敛折叠光标插入 / 去缩进（优先 4 空格，退化为制表符）、多行选区逐行缩进
+  （排除起点恰好等于选区终点的行）、偏移量裁剪与"无可去缩进时零改动"等边界
+- **新增 `styles.Colors.code_syntax`**：语义类别 → 颜色映射（亮 / 暗各一套），
+  配色属主题、分词属服务，同一份分词结果可跨主题复用
+- **契约零改动**：`on_change / on_focus / on_blur / on_selection_change` 四件套
+  与旧 `CodeEditor` 语义完全一致，`views/editor/_fence.py` 的围栏闭包组与
+  `views/key_bindings.py` 的"边界方向键跳出 / 空块 Backspace 删除 / Tab 放行"
+  未作任何修改；`LineView` 新增 `word_wrap` prop（`views/editor/_render.py` 透传
+  `ctx.word_wrap`）。`on_code_focus` 改为幂等（重复聚焦不重启撤销会话）
+- **flet 1.0 坑位修复（顺带）**：`ref` 是 `InitVar`，只在构造时绑定，事后
+  `control.ref = x` 永远不生效 —— `views/code_block.py` 与 `views/line_view.py`
+  的公式编辑框均改为构造参数传入；渲染后的控件被标记为冻结，事后改属性会抛
+  `Frozen controls cannot be updated.`，故光标位置只能经渲染参数下发
+- 测试：新增 `tests/test_code_block_native.py` 25 项（分词不变式与回退、缓存命中、
+  换行开关下的 expand/no_wrap 与横向滚动容器、空行行盒、主题语义色、点击进入
+  编辑态、四个回调透传、`code_field_ref` 赋值、Tab / Shift+Tab 缩进与光标保持、
+  Tab 引发的失焦不退出编辑态、真实失焦仍退出、依赖清理守卫）；
+  新增 `tests/test_code_indent.py` 21 项（折叠光标插入/去缩进、部分缩进、制表符、
+  多行选区、偏移裁剪与往返一致性）；pytest 1356 通过
+
+## [未发布]
+
 ### 2026-09-05 搜索体验升级：文档内搜索浮层（Ctrl+F）+ 侧边栏全局文件夹搜索（Ctrl+Shift+F）
 
 - **Ctrl+Shift+F**：激活侧边栏搜索面板、自动开启「文件夹范围」并聚焦搜索输入框

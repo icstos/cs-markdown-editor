@@ -228,7 +228,7 @@ def measure_text_width(text: str, font_family: str, size: int) -> float:
     - 单字符：_char_width_cache（独立小缓存，逐字符累加高频场景命中率高）
     - 多字符（≤256 字符）：_measure_cache LRU（激活行重渲染时非激活段文本不变，
       命中缓存跳过 HarfBuzz 整形，O(1) 查表）
-    - 超长文本（>256 字符）：不缓存（避免单条占用过大内存；代码块走 CodeEditor
+    - 超长文本（>256 字符）：不缓存（避免单条占用过大内存；代码块走原生渲染
       独立路径，不经过此函数）
     需要逐字符光标偏移时优先用 measure_text_offsets（cluster 级，含 kerning）。
     """

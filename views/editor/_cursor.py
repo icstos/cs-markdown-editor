@@ -861,7 +861,7 @@ def build_cursor(ctx: CursorEnv):
         # Typora 式：```[lang] 独占一行 + 回车（光标在行尾）→ 当前行转为代码块。
         # 仅段落行触发（标题/列表/引用的 before 含前缀，正则不匹配，自然不触发）。
         # 代码块创建走 _make_code_line（parse_markdown 合并围栏），不能用 _reparse_atomic
-        # （后者无法把段落转为 CODE 块）。创建后退出光标编辑态，CodeEditor 待点击聚焦。
+        # （后者无法把段落转为 CODE 块）。创建后退出光标编辑态，待点击进入编辑。
         if (
             line.block_type == BlockType.PARAGRAPH
             and not after.strip()

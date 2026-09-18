@@ -194,7 +194,7 @@ def MarkdownEditor(
     code_focus_ref = ft.use_ref(None)
     code_edit_snapshot = ft.use_ref(None)
     code_edit_changed = ft.use_ref(False)
-    # CodeEditor 光标/选区跟踪：on_code_selection 写入 (value, base, extent)，
+    # 代码块编辑框光标/选区跟踪：on_code_selection 写入 (value, base, extent)，
     # 供 KeyDispatcher 代码块边界方向键跳出（↑/←/↓/→）判定边界
     code_caret_ref = ft.use_ref(None)
     table_focus_ref = ft.use_ref(None)

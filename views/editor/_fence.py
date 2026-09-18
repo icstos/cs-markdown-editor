@@ -97,6 +97,12 @@ def build_fence(ctx: FenceEnv):
             ctx.mark_dirty()
 
     def on_code_focus(li: int) -> None:
+        # 同一行重复聚焦不重启撤销会话：代码块组件按 Tab 插入缩进后，需要把被 Flutter
+        # 焦点遍历带走的焦点收回（组件内已抑制这次失焦，未清理聚焦态），随后编辑框会再
+        # 送来一次 on_focus。此时若重新捕获快照，整个编辑会话就会多占一个撤销条目，
+        # 破坏"一个聚焦会话 = 一个撤销条目"的防抖语义。
+        if ctx.code_focus_ref.current == li:
+            return
         ctx.code_focus_ref.current = li
         # 代码块/frontmatter 聚焦时退出光标编辑态
         if ctx.cursor_li is not None:
@@ -120,9 +126,9 @@ def build_fence(ctx: FenceEnv):
             ctx.code_caret_ref.current = None
 
     def on_code_selection(li: int, e) -> None:
-        """CodeEditor 光标/选区变化：记录 (value, base, extent) 供边界跳出检测。
+        """代码块编辑框光标/选区变化：记录 (value, base, extent) 供边界跳出检测。
 
-        value 取 CodeEditor 内部全文（与 selection 偏移同一坐标系，含折叠区）；
+        value 取编辑框内部全文（与 selection 偏移同一坐标系）；
         base/extent 为选区两端偏移（折叠光标时二者相等）。记录到
         ctx.code_caret_ref，KeyDispatcher 收到方向键时据此判定是否在代码块
         边界（第一行 / 首行行首 / 最后一行 / 末行行尾）。
@@ -145,7 +151,7 @@ def build_fence(ctx: FenceEnv):
     def handle_code_exit(norm: str) -> bool:
         """代码块边界方向键：光标跳出代码块（Typora 式）。
 
-        触发场景（CodeEditor 聚焦时 KeyDispatcher 检测到方向键）：
+        触发场景（代码块编辑框聚焦时 KeyDispatcher 检测到方向键）：
         - ↑：光标在第一行 → 跳出到代码块上一行行尾
         - ←：光标在第一行行首 → 跳出到上一行行尾（换行回绕）
         - ↓：光标在最后一行 → 跳出到下一行行首
@@ -153,7 +159,7 @@ def build_fence(ctx: FenceEnv):
         若代码块前/后无行（或相邻行同为岛屿块），则创建新空段落行承接光标。
 
         返回 True 已处理（消费按键），False 未处理（非边界 / 有选区 / 表格 / 公式聚焦，
-        继续放行原生 CodeEditor 导航）。
+        继续放行原生编辑框导航）。
         """
         if norm not in ("arrowup", "arrowleft", "arrowdown", "arrowright"):
             return False
@@ -235,7 +241,7 @@ def build_fence(ctx: FenceEnv):
                 ctx.mark_dirty()
                 target_li, target_off = li + 1, 0
 
-        # 清理代码块聚焦态（防 CodeEditor 失焦时序竞争 + 后续按键路由误判），
+        # 清理代码块聚焦态（防编辑框失焦时序竞争 + 后续按键路由误判），
         # 模拟 on_code_blur 的清理，与 handle_code_backspace 一致
         ctx.code_focus_ref.current = None
         ctx.code_edit_snapshot.current = None
@@ -249,10 +255,10 @@ def build_fence(ctx: FenceEnv):
     def handle_code_backspace(li: int) -> bool:
         """空代码块/空 frontmatter Backspace 删除：替换为空白段落行（Typora 式）。
 
-        返回 True 表示已处理（消费 Backspace，阻止传给原生 CodeEditor）；
+        返回 True 表示已处理（消费 Backspace，阻止传给原生编辑框）；
         False 表示未处理（非空块 / 非代码块/frontmatter / 越界，继续走原生删除）。
 
-        触发场景：CodeEditor 聚焦时全局 KeyDispatcher 检测到 BackSpace，
+        触发场景：代码块编辑框聚焦时全局 KeyDispatcher 检测到 BackSpace，
         先尝试本函数；若块内容为空（含仅空白字符）则整体删除。
         删除后进入段落编辑态（光标定位到行首），与 set_block 的早返回模式一致。
         """
@@ -272,14 +278,14 @@ def build_fence(ctx: FenceEnv):
         new_line.segments = [Segment(SegType.TEXT, "", "")]
         ctx.document.lines = ctx.document.lines[:li] + [new_line] + ctx.document.lines[li + 1:]
         ctx.mark_dirty()
-        # 清理代码块聚焦状态（模拟 on_code_blur 的清理，防止 CodeEditor 卸载时
+        # 清理代码块聚焦状态（模拟 on_code_blur 的清理，防止编辑框卸载时
         # on_blur 未触发导致 code_focus_ref 残留，_native_field_focused 误判）
         ctx.code_focus_ref.current = None
         ctx.code_edit_snapshot.current = None
         ctx.code_edit_changed.current = False
         if getattr(ctx, "code_caret_ref", None) is not None:
             ctx.code_caret_ref.current = None
-        # 进入段落编辑态（光标定位到行首）；suppress_blur 防 CodeEditor 卸载
+        # 进入段落编辑态（光标定位到行首）；suppress_blur 防编辑框卸载
         # 级联 blur 干扰新聚焦的 cursor TextField
         ctx.suppress_blur.current = True
         ctx.set_cursor(li, 0)

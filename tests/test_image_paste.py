@@ -196,9 +196,12 @@ def test_paste_unsaved_doc_returns_true_and_hints(tmp_path):
 
 
 def test_paste_unsaved_doc_snackbar_called_when_page_available(tmp_path):
-    """file_path 为 None 且 page 可用时 → _show_snack 被调用提示先保存。
+    """file_path 为 None 且 page 可用时 → show_snack 被调用提示先保存。
 
     用 PropertyMock patch ft.context.page property，模拟 Flet 上下文可用。
+    patch 目标是 `services.ui_feedback.show_snack`：`_image.py` 在函数内
+    `from services.ui_feedback import show_snack`，模块上并没有这个名字，
+    只有 patch 真正的定义处才能截住这次调用。
     """
     from unittest.mock import PropertyMock
     doc = parse_markdown("正文")
@@ -209,7 +212,7 @@ def test_paste_unsaved_doc_snackbar_called_when_page_available(tmp_path):
     cbs = build_image(ctx)
     snack_calls: list[str] = []
     fake_page = MagicMock()
-    with patch("views.editor._image._show_snack", lambda page, msg: snack_calls.append(msg)), \
+    with patch("services.ui_feedback.show_snack", lambda page, msg: snack_calls.append(msg)), \
          patch.object(ft.context.__class__, "page", new_callable=PropertyMock,
                       return_value=fake_page):
         handled = asyncio.run(cbs["paste_image_from_clipboard"]())

@@ -113,7 +113,7 @@ def test_wrap_block_base_is_required_positional():
 
 
 def test_render_code_block_real_call():
-    """按调用点参数真实调用：CodeEditor 岛渲染不得抛异常。"""
+    """按调用点参数真实调用：代码块岛渲染不得抛异常。"""
     control = _render_in_component(
         lv._render_code_block,
         _line(BlockType.CODE, "```python\nprint(1)\n```"),

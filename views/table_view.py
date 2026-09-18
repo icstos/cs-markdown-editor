@@ -1,6 +1,6 @@
 """表格视图：基于 DataTable2 的 Typora/Word 风格表格渲染与编辑。
 
-表格作为独立可编辑岛屿（类似代码块的 CodeEditor）：
+表格作为独立可编辑岛屿（与代码块的 Flet 原生编辑框同构）：
 - 单击单元格进入编辑模式（TextField 替换 Text）
 - Tab/Shift+Tab/Enter 单元格间导航（Tab 在末格新增行）
 - 工具栏 + 右键菜单支持行列增删、对齐设置

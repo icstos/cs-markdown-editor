@@ -162,7 +162,7 @@ class EditorContext:
     cursor_pulse_ref: ft.Ref = field(default=None)
     # 上/下键自驱动重复任务标志（asyncio.Task | None），_key.py 长按导航用
     arrow_repeat_ref: ft.Ref = field(default=None)
-    # CodeEditor 光标/选区跟踪：(value, base_offset, extent_offset) | None，
+    # 代码块编辑框光标/选区跟踪：(value, base_offset, extent_offset) | None，
     # on_code_selection 写入，供 KeyDispatcher 代码块边界方向键跳出判定
     code_caret_ref: ft.Ref = field(default=None)
 
@@ -287,7 +287,7 @@ class EditorContext:
     on_change_code: Callable[[int, str], None] = field(default=lambda *a: None)
     on_code_focus: Callable[[int], None] = field(default=lambda *a: None)
     on_code_blur: Callable[[int], None] = field(default=lambda *a: None)
-    # CodeEditor 光标/选区变化：记录 (value, base, extent) 到 code_caret_ref
+    # 代码块编辑框光标/选区变化：记录 (value, base, extent) 到 code_caret_ref
     on_code_selection: Callable[..., None] = field(default=lambda *a: None)
     # 空代码块 Backspace 删除：返回 True 已处理（消费 Backspace），False 未处理
     handle_code_backspace: Callable[[int], bool] = field(default=lambda *a: False)

@@ -75,7 +75,7 @@ def test_empty_code_block_deleted():
     assert ctx.code_focus_ref.current is None
     assert ctx.code_edit_snapshot.current is None
     assert ctx.code_edit_changed.current is False
-    # suppress_blur 置 True（防 CodeEditor 卸载级联 blur）
+    # suppress_blur 置 True（防编辑框卸载级联 blur）
     assert ctx.suppress_blur.current is True
     # 光标进入编辑态（行首）
     assert ("set_cursor", 0, 0) in calls

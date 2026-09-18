@@ -6,7 +6,8 @@
   （IME 友好），由 editor 端 use_effect 异步清空；每个字符输入即时渲染到文档，
   光标像素级对齐渲染层文字间隙
 - 围栏岛屿（CODE/MATH/HR/TOC）：保留独立分支，不进入 Stack
-  CODE 用 CodeEditor 始终可编辑；MATH/HR/TOC 视图态渲染
+  CODE 为 Flet 原生双态（高亮浏览 / 原生编辑，见 views/code_block.py）；
+  MATH/HR/TOC 视图态渲染
 
 状态由 editor.py 驱动：cursor_li/cursor_off/nav_seq/cursor_ref。本文件只负责渲染 + 命中。
 """
@@ -16,22 +17,18 @@ from collections.abc import Callable
 import flet as ft
 
 from models.document import BlockType, Line
-from services.clipboard import (
-    copy_code_to_clipboard,
-)
 from styles import (
     FONT_MAIN,
     FONT_MONO,
-    Elevation,
     Radius,
     Spacing,
     _current_colors,
     block_text_size,
-    card_shadow,
     only_border,
 )
 from utils.segment_helpers import PREFIX_SEGTYPES
 from views import _block_frame, _frontmatter
+from views.code_block import render_code_block as _render_code_block
 from views.cursor_layer import cursor_text_field
 from views.pixel_layout import (
     _block_padding,
@@ -42,85 +39,9 @@ from views.pixel_layout import (
 )
 from views.rendered_line import RenderedLine
 
-# flet_code_editor 只在渲染代码块（CODE 围栏岛屿）时需要，导入成本 ~13ms；
-# 无代码块的文档（含首启空白文档）启动时可跳过，故首次渲染代码块时惰性导入。
-_code_editor_mod = None
-
-
-def _ce():
-    """惰性导入并返回 flet_code_editor 模块。"""
-    global _code_editor_mod
-    if _code_editor_mod is None:
-        import flet_code_editor as _mod
-
-        _code_editor_mod = _mod
-    return _code_editor_mod
-
-
-# 代码块语言选择下拉框的常用语言清单
-_COMMON_LANGS: list[tuple[str, str]] = [
-    ("", "Plain text"),
-    ("python", "Python"),
-    ("javascript", "JavaScript"),
-    ("typescript", "TypeScript"),
-    ("java", "Java"),
-    ("kotlin", "Kotlin"),
-    ("swift", "Swift"),
-    ("go", "Go"),
-    ("rust", "Rust"),
-    ("c", "C"),
-    ("cpp", "C++"),
-    ("csharp", "C#"),
-    ("php", "PHP"),
-    ("ruby", "Ruby"),
-    ("html", "HTML"),
-    ("css", "CSS"),
-    ("json", "JSON"),
-    ("yaml", "YAML"),
-    ("xml", "XML"),
-    ("sql", "SQL"),
-    ("bash", "Bash / Shell"),
-    ("powershell", "PowerShell"),
-    ("markdown", "Markdown"),
-    ("dockerfile", "Dockerfile"),
-    ("ini", "INI"),
-    ("diff", "Diff"),
-]
-
-
-def _code_language(lang: str | None):
-    """把 markdown 围栏语言标识映射为 CodeEditor 的 CodeLanguage 枚举。"""
-    if not lang:
-        return _ce().CodeLanguage.PLAINTEXT
-    key = lang.strip().replace("-", "_").replace(" ", "").upper()
-    aliases = {
-        "JS": "JAVASCRIPT",
-        "TS": "TYPESCRIPT",
-        "PY": "PYTHON",
-        "C++": "CPP",
-        "C#": "CS",
-        "SH": "SHELL",
-        "BASH": "SHELL",
-        "ZSH": "SHELL",
-        "CSHARP": "CS",
-        "PLAIN": "PLAINTEXT",
-        "TEXT": "PLAINTEXT",
-        "TXT": "PLAINTEXT",
-        "NONE": "PLAINTEXT",
-        "PLAINTEXT": "PLAINTEXT",
-    }
-    key = aliases.get(key, key)
-    lang_enum = _ce().CodeLanguage
-    return getattr(lang_enum, key, lang_enum.PLAINTEXT)
-
-
-def _lang_options(current_lang: str) -> list[ft.DropdownOption]:
-    """构造语言下拉框选项；若当前语言不在常用清单内，追加为额外选项。"""
-    options = [ft.DropdownOption(key=k, text=t) for k, t in _COMMON_LANGS]
-    known = {k for k, _ in _COMMON_LANGS}
-    if current_lang and current_lang not in known:
-        options.append(ft.DropdownOption(key=current_lang, text=current_lang))
-    return options
+# 代码块（CODE 围栏岛屿）实现在 views/code_block.py：Flet 原生双态（高亮浏览 +
+# 原生编辑），替代不支持软换行的 flet-code-editor。此处以别名引入，保持
+# `line_view._render_code_block` 调用点与测试契约不变。
 
 
 def _cursor_overlay(
@@ -293,6 +214,10 @@ def _render_math_block(
         # 本函数重新执行读取最新 formula，preview_md 的 value 自动同步刷新。
         text_field = ft.TextField(
             key=f"math-edit-{line_idx}",
+            # ref 必须在构造时传入：flet 的 ref 是 InitVar，只在 __init__ 里绑定
+            # （BaseControl.__post_init__ 的 `ref.current = self`），事后 `text_field.ref = x`
+            # 不会绑定，ref 恒为 None（进入编辑态后无法把焦点交给源码框）。
+            ref=math_field_ref,
             value=formula,
             multiline=True,
             min_lines=2,
@@ -307,9 +232,6 @@ def _render_math_block(
             on_blur=lambda e: on_math_blur(line_idx) if on_math_blur else None,
             expand=True,
         )
-        if math_field_ref is not None:
-            text_field.ref = math_field_ref
-
         header = ft.Row(
             [
                 ft.Icon(ft.Icons.FUNCTIONS, size=13, color=c.math_fg),
@@ -434,6 +356,8 @@ def LineView(
     input_session_ref: ft.Ref | None = None,
     cursor_value: str = "",
     content_width: float | None = None,
+    # 软换行总开关（settings.word_wrap）：代码块浏览态据此决定折行 / 横向滚动
+    word_wrap: bool = True,
     line_height: float = 1.6,
     body_font_size: int = 16,
     is_current_line: bool = False,
@@ -445,7 +369,7 @@ def LineView(
     line_seg_count: int = 0,
     # 主题失效 prop：切换主题时 line/版本号/回调均不变，ft.memo 会复用缓存
     # 跳过函数体执行，导致 _current_colors() 不被重新调用，行内代码、公式、
-    # 引用、列表、标题色与 CodeEditor 的 code_theme 停留在旧主题。
+    # 引用、列表、标题色与代码块的 code_syntax 停留在旧主题。
     # 通过 theme_mode 变化触发 memo 失效，重新执行函数体取色。LineView
     # 内部不读取此值（_current_colors 直接读 page.theme_mode，已由 App
     # 在渲染期同步写入），仅作 memo 触发用。
@@ -522,7 +446,7 @@ def LineView(
     + 版本号 prop + 回调），cursor 移动时仅旧激活行 + 新激活行 prop 变化，
     其余 N-2 行 ft.memo 直接复用缓存，跳过 Python 函数体执行。主题切换时
     line/版本号/回调均不变，靠 theme_mode prop 变化触发 memo 失效，让
-    _current_colors() 与 CodeEditor 的 code_theme 重新取最新主题色。
+    _current_colors() 与代码块的 code_syntax 重新取最新主题色。
     """
     c = _current_colors()
     base = block_text_size(line.block_type, line.level, body_font_size)
@@ -537,7 +461,7 @@ def LineView(
         if ref_off is not None and ref_off >= 0:
             effective_cursor_off = ref_off
 
-    # ============ 代码块（始终可编辑 CodeEditor 独立岛屿）============
+    # ============ 代码块（Flet 原生双态独立岛屿，见 views/code_block.py）============
     if line.block_type == BlockType.CODE:
         return _render_code_block(
             line,
@@ -555,6 +479,7 @@ def LineView(
             is_flash,
             on_line_size_change,
             diff_mark=diff_mark,
+            word_wrap=word_wrap,
         )
 
     # ============ YAML 前置元数据（Obsidian 风格属性卡片）============
@@ -954,231 +879,6 @@ def LineView(
 
 # 前置元数据属性行拖拽分组已随 render_frontmatter 迁至 views/_frontmatter.py
 
-
-def _render_code_block(
-    line: Line,
-    line_idx: int,
-    base: int,
-    content_width: float | None,
-    clipboard_ref: ft.Ref | None,
-    on_change_code: Callable[[int, str], None] | None,
-    on_code_focus: Callable[[int], None] | None,
-    on_code_blur: Callable[[int], None] | None,
-    on_change_lang: Callable[[int, str], None] | None,
-    on_code_selection: Callable[..., None] | None,
-    code_field_ref: ft.Ref | None,
-    is_current_line: bool,
-    is_flash: bool = False,
-    on_line_size_change: Callable[[int, float], None] | None = None,
-    diff_mark: str | None = None,
-) -> ft.Control:
-    """代码块分支：CodeEditor 始终可编辑独立岛屿（Typora/VSCode 风格）。
-
-    特性：
-    - 动态高度：通过 on_size_change 回调自适应内容高度
-    - 语法高亮：基于 CodeTheme（GitHub/Atom One Dark）
-    - 行号显示：紧凑行号区，宽度自适应
-    - 自动补全：启用 autocomplete=True
-    - 语言选择：下拉框支持搜索
-    - 折叠支持：点击折叠按钮可折叠代码块
-    - 精致视觉：代码块容器带阴影、主题适配
-    """
-    c = _current_colors()
-    code = line.segments[0].text if line.segments else ""
-    lang = line.lang or ""
-    page = ft.context.page
-    is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
-    code_theme = (
-        _ce().CodeTheme.ATOM_ONE_DARK if is_dark else _ce().CodeTheme.GITHUB
-    )
-
-    # ---- 状态 ----
-    copied, set_copied = ft.use_state(False)
-    is_collapsed, set_collapsed = ft.use_state(False)
-
-    # ---- 语言选择器 ----
-    lang_dropdown = ft.Dropdown(
-        value=lang,
-        options=_lang_options(lang),
-        width=150,
-        text_size=12,
-        dense=True,
-        content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
-        border=ft.NoInputBorder(),
-        fill_color=ft.Colors.TRANSPARENT,
-        enable_search=True,
-        editable=False,
-        on_select=lambda e: (
-            on_change_lang(line_idx, e.control.value or "")
-            if on_change_lang is not None and e.control.value is not None
-            else None
-        ),
-    )
-
-    # ---- 复制按钮 ----
-    copy_btn = ft.IconButton(
-        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
-        icon_size=14,
-        tooltip="已复制" if copied else "复制代码",
-        padding=ft.Padding.all(Spacing.MD),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-            color=ft.Colors.GREEN if copied else c.muted,
-        ),
-        on_click=lambda e, txt=code: (
-            page.run_task(copy_code_to_clipboard, clipboard_ref, txt, set_copied)
-            if page is not None and not copied
-            else None
-        ),
-    )
-
-    # ---- 折叠按钮 ----
-    collapse_btn = ft.IconButton(
-        icon=ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
-        icon_size=14,
-        tooltip="展开" if is_collapsed else "折叠",
-        padding=ft.Padding.all(Spacing.MD),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-            color=c.muted,
-        ),
-        on_click=lambda e: set_collapsed(not is_collapsed),
-    )
-
-    # ---- 行号区宽度计算（含折叠手柄预留 20px）----
-    line_count = max(1, code.count("\n") + 1)
-    digits = len(str(line_count))
-    gutter_width = max(56, 20 + digits * 10 + 20 + Spacing.SM)
-    gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.03, c.text)
-
-    # ---- CodeEditor ----
-    editor = _ce().CodeEditor(
-        key=f"code-{line_idx}-{digits}",
-        value=code,
-        language=_code_language(lang),
-        code_theme=code_theme,
-        gutter_style=_ce().GutterStyle(
-            width=gutter_width,
-            margin=Spacing.XS,
-            show_line_numbers=True,
-            show_errors=False,
-            show_folding_handles=True,
-            background_color=gutter_bg,
-            text_style=ft.TextStyle(font_family=FONT_MONO, size=11, color=c.muted),
-        ),
-        text_style=ft.TextStyle(font_family=FONT_MONO, size=14, color=c.text),
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
-        height=0 if is_collapsed else None,
-        read_only=False,
-        autofocus=False,
-        autocomplete=True,
-        on_change=lambda e: (
-            on_change_code(line_idx, e.control.value)
-            if on_change_code is not None
-            else None
-        ),
-        on_focus=lambda e: (
-            on_code_focus(line_idx) if on_code_focus is not None else None
-        ),
-        on_blur=lambda e: on_code_blur(line_idx) if on_code_blur is not None else None,
-        # 光标/选区跟踪：写入 (value, base, extent)，供代码块边界方向键跳出判定
-        on_selection_change=(
-            lambda e: (
-                on_code_selection(line_idx, e)
-                if on_code_selection is not None
-                else None
-            )
-        ),
-    )
-    if code_field_ref is not None:
-        editor.ref = code_field_ref
-
-    # ---- 头部工具栏 ----
-    header = ft.Row(
-        controls=[
-            collapse_btn,
-            lang_dropdown,
-            ft.Container(expand=True),
-            ft.Text(
-                value=f"{line_count} 行",
-                size=11,
-                color=c.muted,
-                font_family=FONT_MONO,
-            ),
-            copy_btn,
-        ],
-        spacing=Spacing.SM,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-    )
-
-    # ---- 折叠时显示摘要 ----
-    preview_text = code.split("\n")[0][:60] + (
-        "…" if len(code.split("\n")[0]) > 60 else ""
-    )
-    collapsed_preview = ft.Container(
-        content=ft.Row(
-            controls=[
-                ft.Text(
-                    value=preview_text or "(空代码块)",
-                    size=12,
-                    color=c.muted,
-                    font_family=FONT_MONO,
-                    max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                    expand=True,
-                ),
-                ft.Text(
-                    value=f"{line_count} 行",
-                    size=11,
-                    color=c.muted,
-                    font_family=FONT_MONO,
-                ),
-            ],
-            spacing=Spacing.MD,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
-        bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
-        border_radius=Radius.MD,
-    )
-
-    # ---- 主内容 ----
-    main_content = ft.Column(
-        controls=[
-            header,
-            collapsed_preview if is_collapsed else editor,
-        ],
-        spacing=Spacing.XS,
-    )
-
-    # ---- 代码块容器 ----
-    border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
-    content = ft.Container(
-        content=main_content,
-        bgcolor=c.code_block_bg,
-        border_radius=Radius.MD,
-        padding=ft.Padding.only(
-            left=Spacing.MD, right=Spacing.MD, top=Spacing.XS, bottom=Spacing.SM
-        ),
-        shadow=card_shadow(Elevation.LOW, is_dark),
-        border=only_border(
-            top=ft.BorderSide(1, border_color),
-            bottom=ft.BorderSide(1, border_color),
-            left=ft.BorderSide(1, border_color),
-            right=ft.BorderSide(1, border_color),
-        ),
-    )
-
-    return _block_frame.wrap_block(
-        content,
-        line,
-        base,
-        line_idx,
-        on_click=(lambda e: on_code_focus(line_idx))
-        if on_code_focus is not None
-        else None,
-        is_current_line=is_current_line,
-        is_flash=is_flash,
-        on_size_change=on_line_size_change,
-        diff_mark=diff_mark,
-    )
+# 代码块（CODE 围栏岛屿）渲染实现已迁至 views/code_block.py（Flet 原生双态：
+# 高亮浏览 + 原生编辑），本模块通过顶部 import 的 _render_code_block 别名调用，
+# 调用点参数与测试契约保持不变。

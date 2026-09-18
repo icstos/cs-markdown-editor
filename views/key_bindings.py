@@ -44,6 +44,9 @@ from views._combo import combo as key_combo
 # - `_handle_foreign_only`：焦点在搜索框/对话框等原生输入框时只执行本表
 #   （其余按键交原生输入框，见 tests/test_key_bindings.py）
 # 新增全局动作只需在这里加一行；漏加会让该键在某一焦点域静默失效。
+#
+# 表内「默认键」只是兜底：实际匹配用 `_global_targets()` 取**浏览层 ∪ 编辑层 ∪ 默认**，
+# 这样设置面板里对两层分别改键位都能生效（见 `_global_targets` 说明）。
 _GLOBAL_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("close_tab", "ctrl+w", "cb"),
     ("reopen_closed_tab", "ctrl+shift+t", "cb"),
@@ -55,7 +58,7 @@ _GLOBAL_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("save_as", "ctrl+shift+s", "task"),
     ("new", "ctrl+n", "cb"),
     ("open_settings", "ctrl+comma", "cb"),
-    ("toggle_word_wrap", "ctrl+shift+r", "cb"),
+    ("toggle_word_wrap", "alt+z", "cb"),
     ("zoom_in", "ctrl+shift+=", "cb"),
     ("zoom_out", "ctrl+shift+-", "cb"),
     ("zoom_reset", "ctrl+shift+0", "cb"),
@@ -254,6 +257,28 @@ class KeyDispatcher:
             ref.current = False
 
     # ---- 主入口 ----
+    def _global_targets(self, name: str, default: str) -> set[str]:
+        """全局动作的可匹配键位集合：**浏览层配置 ∪ 编辑层配置 ∪ 表内默认键**。
+
+        为什么需要并集：全局窗口级动作的设计语义是「两层均生效」，但它们统一在
+        **layer 判定之前**执行（这样浏览态与编辑态行为一致），而键位配置是**分层存储**的
+        ——「设置 → 快捷键」面板对 scope=both 的动作会分别渲染浏览态 / 编辑态两行。
+        若这里只读浏览层配置，用户在**编辑态那行**改的键位就会被静默忽略：
+        面板显示新键位、按下去毫无反应（本类是历史遗留缺陷，已由本方法修正）。
+
+        空串必须剔除：`matches("", "")` 为真，而纯修饰键事件（单按 Ctrl/Shift/Alt）
+        的 combo 恰好是空串，保留空键位会让动作在每次按修饰键时误触发。
+
+        取的是并集而非「编辑层优先」：两层都绑定时两个键都能用，宁可多响应也不静默失败。
+        """
+        targets = {
+            self._shortcut_mgr.shortcut("browse", name),
+            self._shortcut_mgr.shortcut("edit", name),
+            default,
+        }
+        targets.discard("")
+        return targets
+
     def _run_global_action(self, name: str, style: str, cb: dict, actions) -> None:
         """执行一个全局窗口级动作（见 `_GLOBAL_ACTIONS`）。
 
@@ -385,9 +410,10 @@ class KeyDispatcher:
                 actions.format_document()
             return True
 
-        # 其余全局窗口级动作：单一动作表驱动，与外部输入域路径共用（避免两处不一致）
+        # 其余全局窗口级动作：单一动作表驱动，与外部输入域路径共用（避免两处不一致）。
+        # 键位匹配用 _global_targets（浏览层 ∪ 编辑层 ∪ 默认），使两层分别自定义都生效。
         for name, default, style in _GLOBAL_ACTIONS:
-            if matches(combo, browse_sc.get(name, default)):
+            if any(matches(combo, t) for t in self._global_targets(name, default)):
                 self._run_global_action(name, style, cb, actions)
                 return True
         return False
@@ -682,8 +708,9 @@ class KeyDispatcher:
                 fn()
             return
         # 只执行全局窗口级动作表（不触碰文档文本/光标/选区），其余按键交原生输入框。
+        # 与编辑器内路径共用 _global_targets，保证两层自定义键位在外部输入域同样生效。
         for name, default, style in _GLOBAL_ACTIONS:
-            if matches(combo, browse_sc.get(name, default)):
+            if any(matches(combo, t) for t in self._global_targets(name, default)):
                 self._run_global_action(name, style, cb, None)
                 return
         # 其余按键全部交原生输入框处理（此处不消费、不作用编辑器）
@@ -805,7 +832,6 @@ class KeyDispatcher:
         shortcuts: dict[str, str],
         layer: str,
     ) -> None:
-        cb = self._app_callbacks
         # Ctrl+0~6：切换当前行标题级别（0=普通段落，1~6=H1~H6），浏览/编辑两态均生效。
         # 代码块/表格聚焦时跳过（避免把代码块/表格行误转为标题），return 阻止后续判定。
         if combo in ("ctrl+0", "ctrl+1", "ctrl+2", "ctrl+3",
@@ -871,19 +897,14 @@ class KeyDispatcher:
             if actions is not None and not self._native_field_focused(actions):
                 actions.apply_inline_format(inline_map[combo])
             return
+        # 说明：save / save_as / new / open_settings / focus_mode 等**全局窗口级动作**
+        # 已在 `_handle_global_shortcuts` 的动作表里消费（该方法早于本方法执行），
+        # 此处不再重复一份 if 链——历史上两处硬编码兜底默认键（如 focus_mode 的
+        # "ctrl+k"）与注册表漂移，正是「改键后失效」的成因之一。
+        # 本方法只保留**分层语义确实不同**的动作：撤销/重做（两层可分别改键）、
+        # 剪贴板（浏览态走 SelectionArea / 编辑态走光标）。
         if layer == "browse":
-            if matches(combo, shortcuts.get("save", "ctrl+s")):
-                page.run_task(cb["save"])
-            elif matches(combo, shortcuts.get("save_as", "ctrl+shift+s")):
-                page.run_task(cb["save_as"])
-            elif matches(combo, shortcuts.get("new", "ctrl+n")):
-                cb["new"]()
-            elif matches(combo, shortcuts.get("open_settings", "ctrl+comma")):
-                cb["open_settings"]()
-            elif matches(combo, shortcuts.get("focus_mode", "ctrl+k")):
-                if actions is not None:
-                    actions.toggle_focus_mode()
-            elif matches(
+            if matches(
                 combo, shortcuts.get("redo", "ctrl+y")
             ) or matches(combo, shortcuts.get("redo_alt", "ctrl+shift+z")):
                 if actions is not None:
@@ -912,12 +933,8 @@ class KeyDispatcher:
                     self._begin_paste(actions)
                     page.run_task(self._do_paste_plain_check)
             return
-        # edit 层
-        if matches(combo, shortcuts.get("save", "ctrl+s")):
-            page.run_task(cb["save"])
-        elif matches(combo, shortcuts.get("save_as", "ctrl+shift+s")):
-            page.run_task(cb["save_as"])
-        elif matches(combo, shortcuts.get("undo", "ctrl+z")):
+        # edit 层（save/save_as 同理由动作表负责，见上）
+        if matches(combo, shortcuts.get("undo", "ctrl+z")):
             if actions is not None:
                 actions.undo()
         elif matches(

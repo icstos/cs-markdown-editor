@@ -110,6 +110,9 @@
 - 禁止控制器闭包运行时调用与自身装配槽同名的 `ctx.set_*`（如 `ctx.set_active_pane` 在 `app/__init__.py` 装配后已被控制器函数覆盖），必须在 `build_*(ctx)` 构造期先捕获原始 state setter 再使用，后果：闭包读到自身 → 无限自调用 `RecursionError`（已踩坑，`tests/test_split_editor.py` 有装配覆盖回归测试）。
 - 必须维护拆分编辑组不变式：`active_index == 焦点侧组激活索引`（经 `app/_tab_management.py` 的 `activate_index` 统一维护）；拆分态下右组不可为空（`do_close_many` 右组清空时自动收起拆分）。后果：手写 `set_active_index` 绕过统一入口会破坏标签行 / 编辑器 / 焦点三处状态一致性。
 - 同文件多副本必须共享同一 `document` 对象（拆分开启 / 跨组打开时直接引用，非 re-parse 复制），且所有元数据变更（dirty / mtime / 路径 / 外部重载）必须按 document 身份（`is` 比较）同步所有副本、自动保存与定时备份必须按 document 身份去重。后果：副本内容与脏标记不一致——关闭确认误判、同内容双写盘、另一副本保存被误判为外部修改。
+- 禁止在 `ACTION_REGISTRY` 登记**没有实现与分发分支**的动作：注册表是「设置 → 快捷键」面板的数据源，面板会为每一项渲染可编辑键位框，用户会看到「Ctrl+U 下划线」这类键位并可自定义，按下去却毫无反应。新增动作必须同时具备 `EditorActions` 实现 + `views/key_bindings.py` 的分发分支，`tests/test_shortcut_reachability.py` 会拦住"只有注册、没有接线"的条目。
+- 禁止给全局窗口级动作的键位匹配只读单层配置：`_GLOBAL_ACTIONS` 的执行早于 layer 判定（保证两层行为一致），键位必须经 `KeyDispatcher._global_targets()` 取**浏览层 ∪ 编辑层 ∪ 表内默认**（并剔除空串，否则纯修饰键事件 `combo == ""` 会误触发）。只读浏览层会让「设置 → 快捷键」里编辑态那行改的键位被静默忽略。
+- 禁止让 `toggle_word_wrap` 脱离 `alt+z`：README 核心特性、状态栏 tooltip、上下文菜单三处都向用户承诺 `Alt+Z`（VSCode 约定），默认键位必须与之一致；改键位时三处文档 + `DEFAULT_SHORTCUTS` + `_GLOBAL_ACTIONS` 必须同步（`tests/test_shortcut_reachability.py` 守护）。
 
 ## 5. 标准验证流程
 
@@ -423,6 +426,23 @@
 - 把重复的 if 链抽成「动作表」时，**特例分支的优先级必须显式保留**：
   Ctrl+F 在两个路径中都需要「浮层优先于侧边栏搜索面板」，若把它写成表内普通项，
   会被同表内前序项抢先命中。改造后应由测试断言「特例分支位置早于表循环」。
+- **梳理快捷键不要只看实现，要建立「注册 → 默认值 → 分发 → 文档」四方的闭环检查**。
+  本轮据此一次暴露三类缺陷：
+  1. *幽灵动作*：`ACTION_REGISTRY` 里有 `delete_line` / `copy_rich` /
+     `format_underline` / `insert_image` / `clear_format` / `format_h1..code_block`
+     共 11 项，既无 `EditorActions` 实现也无分发分支，却在设置面板里显示可编辑键位。
+     （前一轮只删了 `DEFAULT_SHORTCUTS`，注册表与 `settings.json` 仍留着 → 清理要三处同步。）
+  2. *键位漂移*：`toggle_word_wrap` 文档三处写 `Alt+Z`，实际绑定 `Ctrl+Shift+R`。
+     用户报「Alt+Z 失效」——根因不是按键没被识别（`combo()` 对 Alt 组合完全正常），
+     而是**根本没人绑这个键**。定位捷径：先确认 `combo(evt("z", alt=True))` 有输出，
+     再全仓搜该键位，若无绑定即可判定是「未绑定」而非「被吞」。
+  3. *分层自定义被忽略*：全局动作统一按浏览层配置匹配，编辑态那行的改键静默失效。
+  最后用 `tests/test_shortcut_reachability.py`（15 条）把三条不变量锁死，并做**变异测试**
+  验证护栏真的会红（把动作表改回只读浏览层 / 把键位改回旧值，两次都精确失败）。
+  **新增护栏后必须做一次变异验证**，否则无法区分「护栏有效」与「断言恒真」。
+- 往 `DEFAULT_SHORTCUTS` 里删键位时**必须同时清 `settings.json`**：`load_settings()`
+  做深合并，残留的旧键位会覆盖新默认值，导致"改了默认键但本地仍按旧键"。同理，
+  改默认键位后若不同步 `settings.json`，本机（用户自己）会永远停在旧键位上。
 
 **重构硬约束（不可回退项）**：`transparent cursor TextField 不设 value`、
 `nav_seq` 仅撤销/重做递增（保 IME 组合态）、`reparse_line_atomic` 热路径、

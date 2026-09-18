@@ -4,6 +4,68 @@
 
 ## [未发布]
 
+### 2026-09-18 修复 Alt+Z 自动换行失效；清理幽灵快捷键；全局动作认两层自定义键位
+
+**问题**：`Alt+Z` 切自动换行完全无反应（VSCode 约定、README 核心特性段与状态栏
+tooltip 都这么写）。顺着这条线做了一次「注册 → 默认值 → 分发 → 文档」四方闭环梳理，
+共暴露三类缺陷。
+
+**缺陷 1 — `toggle_word_wrap` 键位漂移（用户报告的 BUG）**
+- 实际绑定是 `Ctrl+Shift+R`，而 README 核心特性段 / 状态栏 tooltip
+  「自动换行 (Alt+Z)」/ `_settings_controller.toggle_word_wrap` 文档串**三处都写 Alt+Z**，
+  上下文菜单又写 `Ctrl+Shift+R` —— 四处说法不一，用户按的 `Alt+Z` **根本没有被绑定**
+- 排除了"按键被吞"：`combo(evt("z", alt=True))` 输出 `alt+z` 完全正常
+  （`Alt+T` 切主题、`Alt+C` 切任务一直是好的），确认是**未绑定**而非事件链路问题
+- 修复：两层默认键统一为 `alt+z`（`DEFAULT_SHORTCUTS` / `ACTION_REGISTRY` /
+  `_GLOBAL_ACTIONS` / `settings.json`），并同步菜单标签与 README 表格
+- ⚠️ `settings.json` **必须同步**：`load_settings()` 深合并会让残留的旧键位
+  永久覆盖新默认值（不同步则本机仍按 `Ctrl+Shift+R`）
+
+**缺陷 2 — 11 个「幽灵动作」占据设置面板（有键位、无实现、无分发）**
+- `delete_line`(Ctrl+Shift+D) / `copy_rich`(Ctrl+Shift+C) / `format_underline`(Ctrl+U) /
+  `insert_image`(Ctrl+Shift+I) / `clear_format`(Ctrl+R)，以及无默认键的
+  `format_h1` / `format_h2` / `format_h3` / `format_paragraph` / `format_quote` /
+  `format_code_block` —— 全部只有注册表条目，**没有 `EditorActions` 实现、
+  没有分发分支**。设置面板却为它们渲染「修改 / 恢复默认」按钮
+- 上一次清理只删了 `DEFAULT_SHORTCUTS`，注册表与 `settings.json` 都还留着，
+  于是面板照旧显示、`reset()` 还能把它们还原成"有键位的死项"
+- 修复：三处同步移除；`ACTION_REGISTRY` 顶部写明「登记即必须接线」的不变量。
+  上下文菜单里那几条 `disabled=True` 的占位项保留（本就是灰显的规划位）
+- 标题级别（`Ctrl+0~6`）改由既有的「固定键盘（不可自定义）」提示说明
+
+**缺陷 3 — 全局动作只认浏览层配置，编辑态的自定义键位被静默忽略**
+- `_GLOBAL_ACTIONS` 里 23 个全局窗口级动作统一在 layer 判定**之前**执行，
+  却只拿 `ShortcutManager.get("browse")` 做匹配。而设置面板对 `scope=both` 的动作
+  会分别渲染浏览态 / 编辑态两行 —— 用户在**编辑态那行**改的键位一点用都没有
+- 修复：新增 `KeyDispatcher._global_targets()`，目标键位取
+  **浏览层 ∪ 编辑层 ∪ 表内默认**，并**剔除空串**
+  （`matches("", "")` 为真，而纯修饰键事件的 combo 恰是空串，保留空键位会让
+  动作在每次单按 Ctrl/Shift/Alt 时误触发）
+- 两条路径（编辑器内 / 原生输入框内）共用该方法，行为保持一致
+
+**顺带清理**
+- 删除 `_handle_shortcuts` 中已被动作表覆盖的**死分支**（browse 的
+  save / save_as / new / open_settings / focus_mode，edit 的 save / save_as）。
+  这些分支里的硬编码兜底默认键（`focus_mode` 写 `"ctrl+k"`，实际是 `ctrl+shift+k`）
+  正是「改键后行为不一致」的来源
+- `toggle_split_editor` 补上 edit 层默认键（`Ctrl+\` 本就两层可用，注册表却只声明
+  browse，导致设置面板编辑态那行显示「未绑定」）
+- README 快捷键表全面校对：补 `Ctrl+Shift+V` 纯文本粘贴（两处缺失）、
+  删除 5 个幽灵动作行、`Ctrl+Shift+R` → `Alt+Z`；「编辑态补充」一节改名为
+  「其他固定键（不可自定义）」——原表把 `paste_plain` / `close_tab` / `Ctrl+\` /
+  `toggle_raw` 等**已登记**的动作误列为「未登记」
+
+**测试**
+- 新增 `tests/test_shortcut_reachability.py`（15 条）：注册动作必须可分发、
+  `DEFAULT_SHORTCUTS` 无孤儿键、registry 与默认值双向一致、同层无重复键、
+  `Alt+Z` 绑定锁定、全局动作认两层配置、空键位不匹配纯修饰键
+- `tests/test_key_bindings.py` 新增 `Alt+Z` 两个用例 + 旧键位 `Ctrl+Shift+R` 已解绑护栏；
+  `tests/test_key_dispatch_parity.py` 的 parity 用例改为 `Alt+Z`
+- **变异测试验证护栏有效**：把动作表改回"只读浏览层"→
+  `test_global_action_honours_edit_layer_binding` 精确失败；把键位改回
+  `ctrl+shift+r` → `test_toggle_word_wrap_bound_to_alt_z` 精确失败
+- 全量 **1391 通过**（修改前 1376）
+
 ### 2026-09-18 修复代码块编辑态光标纵向漂移（换行开启时越往下越偏）
 
 - **问题**：代码块开启换行后进入编辑态，**越靠后的行，可见文字相对光标越往上偏**

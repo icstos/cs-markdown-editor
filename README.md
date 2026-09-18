@@ -127,7 +127,7 @@ cs-markdown-editor
 | `Ctrl+/` | 原文模式 — 在可视化编辑与原始 Markdown 间切换 |
 | `Ctrl+comma` | 打开设置 — 进入设置中心 |
 | `Ctrl+Shift+k` | 聚焦模式 — 切换窗口全屏聚焦写作 |
-| `Ctrl+Shift+r` | 自动换行 — 切换文档长行是否自动换行 |
+| `Alt+z` | 自动换行 — 切换文档长行是否自动换行（VSCode 风格） |
 | `Ctrl+\` | 拆分编辑器 — 向右拆分编辑器，多视口查看同一文档（VSCode 风格 Ctrl+\） |
 | `Ctrl+w` | 关闭标签 — 关闭当前标签（全局生效，脏标签走确认） |
 | `Ctrl+Shift+t` | 重新打开关闭的标签页 — 按关闭顺序恢复最近关闭的标签（可连续按多次，文件从磁盘重新加载） |
@@ -142,6 +142,7 @@ cs-markdown-editor
 | `Ctrl+c` | 复制 — 复制选区文本到剪贴板 |
 | `Ctrl+x` | 剪切 — 复制选区文本到剪贴板并删除选中内容 |
 | `Ctrl+v` | 粘贴 — 在光标处插入剪贴板内容，多行自动拆分 |
+| `Ctrl+Shift+v` | 纯文本粘贴 — 粘贴并剥离 Markdown 语法（MarkText 风格） |
 | `Ctrl+a` | 全选 — 选中整个文档内容 |
 | `Ctrl+f` | 聚焦搜索 — 切到侧边栏搜索面板并聚焦搜索框 |
 | `Ctrl+h` | 切换替换条 — 展开/收起替换条（VSCode 风格 Ctrl+H），自动切到搜索面板 |
@@ -150,8 +151,6 @@ cs-markdown-editor
 | `Ctrl+;` | 插入日期 — 在光标处插入当前日期（YYYY-MM-DD），浏览态在当前行末尾插入 |
 | `Ctrl+Shift+;` | 插入日期时间 — 在光标处插入当前日期时间（YYYY-MM-DD HH:mm:ss），浏览态在当前行末尾插入 |
 | `Shift+Alt+f` | 格式化文档 — 按规范格式化整篇 Markdown：行尾空格/末尾换行、行内代码、任务列表、引用、中英文混排空格 |
-| `Ctrl+Shift+d` | 删除行 — 删除光标所在行 |
-| `Ctrl+Shift+c` | 复制为富文本 — 将选区内容转为 HTML 富文本复制到剪贴板 |
 | `Ctrl+Shift+f` | 全局查找 — 在侧边栏搜索面板中跨文件查找 |
 | `Ctrl+Shift+=` | 放大 — 放大界面（Ctrl+Shift+=），每次 +10% |
 | `Ctrl+Shift+-` | 缩小 — 缩小界面（Ctrl+Shift+-），每次 -10% |
@@ -169,7 +168,8 @@ cs-markdown-editor
 | `Ctrl+Shift+b` | 切换侧边栏 — 显示或隐藏侧边栏 |
 | `Ctrl+enter` | 原文模式 — 在可视化编辑与原始 Markdown 间切换 |
 | `Ctrl+Shift+k` | 聚焦模式 — 切换窗口全屏聚焦写作 |
-| `Ctrl+Shift+r` | 自动换行 — 切换文档长行是否自动换行 |
+| `Alt+z` | 自动换行 — 切换文档长行是否自动换行（VSCode 风格） |
+| `Ctrl+\` | 拆分编辑器 — 向右拆分编辑器，多视口查看同一文档（VSCode 风格 Ctrl+\） |
 | `Ctrl+l` | 无序列表 — 将当前行切换为无序列表 |
 | `Ctrl+Shift+l` | 任务列表 — 将当前行切换为任务列表项（- [ ]） |
 | `Alt+c` | 切换任务状态 — 勾选/取消勾选当前任务列表项 |
@@ -186,6 +186,7 @@ cs-markdown-editor
 | `Ctrl+c` | 复制 — 复制选区文本到剪贴板 |
 | `Ctrl+x` | 剪切 — 复制选区文本到剪贴板并删除选中内容 |
 | `Ctrl+v` | 粘贴 — 在光标处插入剪贴板内容，多行自动拆分 |
+| `Ctrl+Shift+v` | 纯文本粘贴 — 粘贴并剥离 Markdown 语法（MarkText 风格） |
 | `Ctrl+a` | 全选 — 选中整个文档内容 |
 | `Ctrl+f` | 聚焦搜索 — 切到侧边栏搜索面板并聚焦搜索框 |
 | `Ctrl+h` | 切换替换条 — 展开/收起替换条（VSCode 风格 Ctrl+H），自动切到搜索面板 |
@@ -194,37 +195,30 @@ cs-markdown-editor
 | `Ctrl+;` | 插入日期 — 在光标处插入当前日期（YYYY-MM-DD），浏览态在当前行末尾插入 |
 | `Ctrl+Shift+;` | 插入日期时间 — 在光标处插入当前日期时间（YYYY-MM-DD HH:mm:ss），浏览态在当前行末尾插入 |
 | `Shift+Alt+f` | 格式化文档 — 按规范格式化整篇 Markdown：行尾空格/末尾换行、行内代码、任务列表、引用、中英文混排空格 |
-| `Ctrl+Shift+d` | 删除行 — 删除光标所在行 |
-| `Ctrl+Shift+c` | 复制为富文本 — 将选区内容转为 HTML 富文本复制到剪贴板 |
 | `Ctrl+Shift+f` | 全局查找 — 在侧边栏搜索面板中跨文件查找 |
-| `Ctrl+u` | 下划线 — 选中文本包裹 <u> 标签（HTML 下划线） |
-| `Ctrl+Shift+i` | 插入图片 — 在光标处插入图片语法 ![](url) |
-| `Ctrl+r` | 清除格式 — 清除选中文本的所有行内格式标记 |
 | `Ctrl+Shift+=` | 放大 — 放大界面（Ctrl+Shift+=），每次 +10% |
 | `Ctrl+Shift+-` | 缩小 — 缩小界面（Ctrl+Shift+-），每次 -10% |
 | `Ctrl+Shift+0` | 实际大小 — 重置缩放为 100%（Ctrl+Shift+0） |
 
-### 编辑态补充（注册表未收录的固定键）
+### 其他固定键（不可自定义）
 
 下表为**未登记进 `ACTION_REGISTRY`** 的固定键（不出现在「设置 → 快捷键」中），
-键位取自 `services/shortcuts.py` 的 `DEFAULT_SHORTCUTS` 与 `views/key_bindings.py`
-的分发实现：
+键位与行为写在 `views/key_bindings.py` 的分发实现里：
 
 | 快捷键 | 功能 |
 |--------|------|
 | `Ctrl+0` | 当前行恢复为普通段落 |
 | `Ctrl+1` – `Ctrl+6` | 当前行为 H1–H6 标题 |
-| `Ctrl+Shift+V` | 纯文本粘贴（剥离 Markdown 语法） |
-| `Ctrl+\` | 向右拆分编辑器 / 关闭拆分 |
-| `Ctrl+w` | 关闭当前标签 |
-| `Ctrl+Shift+R` | 切换自动换行（默认绑定；工具栏亦可切换） |
-| `Ctrl+Enter` | 切换原文模式（编辑态默认键，等价浏览态的 `Ctrl+/`） |
 | `Escape` | 清空所有副光标 → 清除向外选区；均无时交给编辑器默认行为（**不再切换侧边栏**，侧边栏固定为 `Ctrl+Shift+B`） |
 | `Alt+Click` / `Alt+Shift+Click` | 添加副光标 / 列光标（多光标） |
 | `Shift+Click` / `Shift+方向键` | 从光标处向外扩展选区（跨段 / 跨行） |
 
 > 上面的「编辑态」表中，行内格式（加粗 / 斜体 / 高亮 / 删除线 / 行内代码 / 链接 /
 > 行内公式）由 `ShortcutManager.inline_format_combos()` 从设置动态解析，改键后立即生效。
+>
+> 「浏览态」与「编辑态」两张表所列动作均登记在 `ACTION_REGISTRY` 中，可在
+> 「设置 → 快捷键」里逐层改键。**全局窗口级动作（文件 / 标签 / 视图 / 搜索替换）在两层
+> 都生效，两层各自改的键位都会被识别**（见表内说明）。
 
 ### 光标导航（固定，不可自定义）
 

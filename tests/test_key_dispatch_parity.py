@@ -189,7 +189,7 @@ PARITY_CASES = [
     (evt("b", ctrl=True, shift=True), "toggle_sidebar"),
     (evt("t", alt=True), "toggle_theme"),
     (evt("k", ctrl=True, shift=True), "focus_mode"),
-    (evt("r", ctrl=True, shift=True), "toggle_word_wrap"),
+    (evt("z", alt=True), "toggle_word_wrap"),
     (evt("f", ctrl=True), "focus_search"),
     (evt("h", ctrl=True), "toggle_replace_bar"),
     (evt("enter", alt=True), "replace_current"),

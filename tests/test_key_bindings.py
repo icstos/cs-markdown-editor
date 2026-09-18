@@ -461,11 +461,30 @@ def test_ctrl_shift_tab_prev_tab():
     assert "prev_tab" in app_calls
 
 
-def test_ctrl_shift_r_toggle_word_wrap():
+def test_alt_z_toggle_word_wrap():
+    """Alt+Z：自动换行开关（VSCode 约定，与状态栏提示/README 一致）。"""
+    app_calls: list = []
+    d, app_calls, _ = make_dispatcher(None, app_calls)
+    d.handle(evt("z", alt=True))
+    assert "toggle_word_wrap" in app_calls
+
+
+def test_alt_z_toggle_word_wrap_edit_mode():
+    """Alt+Z 在编辑态同样生效（全局窗口级动作，两层统一）。"""
+    app_calls: list = []
+    calls: list = []
+    actions = make_actions(calls, cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls)
+    d.handle(evt("z", alt=True))
+    assert "toggle_word_wrap" in app_calls
+
+
+def test_ctrl_shift_r_no_longer_toggles_word_wrap():
+    """旧键位 Ctrl+Shift+R 已解绑（回归护栏：防止文档/实现再次漂移）。"""
     app_calls: list = []
     d, app_calls, _ = make_dispatcher(None, app_calls)
     d.handle(evt("r", ctrl=True, shift=True))
-    assert "toggle_word_wrap" in app_calls
+    assert "toggle_word_wrap" not in app_calls
 
 
 def test_ctrl_backslash_toggle_split():

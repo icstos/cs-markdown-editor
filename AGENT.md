@@ -47,6 +47,7 @@
 | 测试编写 | `tests/`（按 `test_<模块>.py` 命名） | 同目录下同类测试文件、`pyproject.toml` `[tool.pytest.ini_options]` |
 | 依赖更新 | `pyproject.toml` | `README.md`「技术栈」 |
 | 打包发布 | `pyproject.toml` `[tool.flet.*]` | — |
+| 日志/异常排查/崩溃现场/性能卡顿定位 | `utils/log.py`、`utils/diagnostics.py`、运行时 `logs/` | 本文件「6. 异常排查」、`tests/test_logging.py` |
 
 ## 3. 全局架构与调用边界
 
@@ -123,6 +124,10 @@
 - 标题文字的取色口唯一：编辑区、侧栏大纲（`views/toc.py`）、文档内 `[toc]` 卡片（`views/line_view.py` 的 `BlockType.TOC` 分支）都必须走 `styles.heading_text_color(level, c)`，字重走 `block_weight(BlockType.HEADING, level)`（编辑区）/ `styles.outline_heading_weight(level)`（大纲与目录卡片）。禁止在任何一处另写 `c.heading_colors.get(...)`、另起一套字重分级（如「H1/H2 加粗、其余常规」）或写死颜色值。后果：大纲条目与正文标题不再逐级对应（改前大纲文字统一为正文灰 `#1F2329`，只靠 3px 色条区分级别，扫一眼认不出条目是哪一级），且切主题时四处各自漂移。另：`styles.heading_text_color` 的取色口**不得**替换为「渲染时把当时的颜色字符串存进 prop」之类的快照方案——`_current_colors()` 在渲染期读取 `page.theme_mode`，快照会让切主题后大纲停在旧色。`tests/test_outline_color.py` 直接比对「大纲渲染出的色/重」与「编辑区**真渲染输出**（`raw_to_visible_spans`）」，并锁定大纲字重 == 编辑区字重整体降一档（12px 紧凑列表的档位换算，不产生同重级别）。
 - 禁止让侧栏大纲与文档内 `[toc]` 卡片出现第二套视觉规则：条目的缩进步长、色条宽度可以按容器密度不同（侧栏 14px/3px、卡片 16px/2px，因为卡片本身有边框与内边距），但**颜色与字重必须同源**（见上一条），否则两者会逐渐漂移成两个组件（`test_toc_card_matches_outline` 守护）。
 
+- 禁止延迟 `utils.log.setup()` 的安装位置：必须在 `main.py` 顶部、**早于 `import flet` / `import app`** 执行（`LOG = setup()`）。这是「最早安装」原则——项目自己的模块在导入期就可能抛异常，日志装晚了这些异常就没有任何痕迹。后果：启动即崩时零现场，只能靠逐段注释代码二分。
+- 禁止移除 `utils/log.py::attach_flet` 对 `page.run_task` 的异常现场包装（`_instrument_run_task` / `_report_task_failure`）：flet 的 `page.run_task` 把协程异常 **re-raise 在 `concurrent.futures` 的完成回调里**（该模块只打一行 ERROR，既不写现场文件、logger 名字也不含 crash），而这是本项目最常用的异步入口（打开/保存/导出/自动保存全走它）。后果：所有 `page.run_task` 内的异常重新退化成「只有一行日志、无线索」。
+- 禁止在热路径（逐字符输入 / 每行渲染 / 滚动回调 / 光标移动）打重活日志：日志虽走 `QueueHandler` 入队（写盘在后台线程、调用方 O(1)），但**入队之前的参数求值在调用方线程执行**。因此热路径禁止 `log.debug(f"...")` 形式的 f-string（**无条件先求值**，即使级别过滤掉了也白算）、禁止 `repr(document)` / `json.dumps(...)` 这类为了打日志而遍历大对象、禁止逐行/逐段打日志。需要时用惰性参数形式 `log.debug("x=%s", x)`，并只在排查期临时调 `DEBUG`。
+
 ## 5. 标准验证流程
 
 按顺序执行（工作目录 = 项目根）：
@@ -161,7 +166,55 @@
    ruff format --check .   # 如使用格式化
    ```
 
-## 6. 重构基线（当前进度）
+## 6. 异常排查：日志在哪、怎么看
+
+**先记住一句话**：定位异常不需要猜，去看 `logs/` 下的现场文件；拿不准实际路径就用
+`python -c "from utils.log import log_file; print(log_file())"` 问日志自己。
+
+**日志位置解析顺序**（`utils/log.py::setup()`）：环境变量 `CS_MD_LOG_DIR` >
+开发态（项目内 `logs/`，由 `pyproject.toml` + `.git` 存在与否判定）> 平台标准目录。
+启动时 `logs/app.log` 首行即**会话头**（会话 id / 应用版本 / Python 与 flet 版本 /
+pid / cwd / 实际日志路径 / 级别），任何一条日志都能据此回连到具体是哪次运行。
+
+| 现象 | 去哪看 | 关键读法 |
+|---|---|---|
+| 报错（同步路径） | `logs/app.log` 的 `[ERROR]` / `[WARNING]` 行 | 格式为 `[级别] 模块:行号 (线程名) 消息`，按 `模块:行号` 直达 |
+| 报错（异步任务） | `logs/crash-*-task.log` | `page.run_task` 内的协程异常，含「异步任务异常 + 协程名」 |
+| 未响应 / 卡死 | `logs/crash-*-freeze.log` | **主线程栈就是卡住的那一行**，不必复现 |
+| 闪退 / 无任何输出 | `logs/crash-*.log` | 主线程未捕获 / 子线程异常 / 析构期异常三类现场 |
+| 某操作「变慢了」 | 现场文件的时间线段 | 找 `+delta` 突增的那一笔，即慢在哪个动作 |
+
+**崩溃现场文件 `crash-*.log` 的结构**（`utils.log.crash_snapshot`）：
+
+1. 首行：中文现场标题（如「现场快照 · 主线程无响应 5.1s」），文件名本身是纯 ASCII；
+2. `----- traceback -----`：完整异常链；
+3. `----- 时间线（最近 64 步）-----`：最近关键动作，每条带 `+delta` 增量毫秒；
+4. `----- 线程栈 -----`：`sys._current_frames()` 抓的**全线程栈**（主线程置首）。
+
+现场写盘走**同步直写**而非常规的队列——崩溃路径上后台监听线程可能已经死了，
+只有同步写才留得住最后那一笔。
+
+**三个机制的分工**：
+
+- **操作时间线**（`diagnostics.mark(event, **fields)` / `timed(...)`）：内存里的有界
+  环形缓冲（`TIMELINE_SIZE = 64`），平时零 I/O，只在出「现场」时整体 dump。
+  新增关键动作时顺手 `mark()` 一笔，下一次崩溃就有迹可循。
+- **慢操作检测**（`diagnostics.timed("打开 · 读取解析", slow_ms=200)`）：超 `SLOW_MS=200`
+  打 WARNING、超 `VERY_SLOW_MS=1500` 打 ERROR。**跨 `await` 的计时段必须传
+  `inflight=False`**，否则看门狗会把「正在等 IO、主线程正忙着跑事件循环」误判成
+  「界面卡死」，并在 freeze 现场里指错人。
+- **卡顿看门狗**（`diagnostics.start_watchdog()`）：主线程心跳协程每秒 `beat()`，
+  超过 `FREEZE_S=5.0` 未跳即判定无响应、抓全栈出 `crash-*-freeze.log`；恢复后再记
+  一笔「界面已恢复（约 X s）」。同一次卡顿只出一次现场（不刷屏）。
+
+**级别开关**：设置项 `settings.json` 的 `log_level`（默认 `INFO`，改后重启生效）；
+环境变量 `CS_MD_LOG_LEVEL` **优先于**设置项。排查卡顿/时序问题时临时调 `DEBUG`。
+
+**加日志的姿势**：`from utils import log as ulog` 会拿到模块级 logger；
+新增模块统一 `log = logging.getLogger(__name__)`；异常留痕优先
+`log.warning("...", exc_info=True)`（带栈）而非 `log.warning(str(e))`（丢栈）。
+
+## 7. 重构基线（当前进度）
 
 **验证基线**：`python -m pytest tests/ -q -p no:cacheprovider` → 1002 passed +
 182 环境性 `tmp_path` 报错（受限环境专属，非代码缺陷）。
@@ -456,4 +509,5 @@
 **重构硬约束（不可回退项）**：`transparent cursor TextField 不设 value`、
 `nav_seq` 仅撤销/重做递增（保 IME 组合态）、`reparse_line_atomic` 热路径、
 `ft.memo` 行级缓存 prop 稳定性、`active_index == 焦点侧组激活索引` 不变式、
-同文件多副本共享 `document` 身份。详见第 4 节红线规则。
+同文件多副本共享 `document` 身份、`utils.log.setup()` 早于 `import flet`/`import app`、
+`page.run_task` 的异常现场包装不得移除。详见第 4 节红线规则。

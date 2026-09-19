@@ -42,12 +42,14 @@ import asyncio
 import contextlib
 import enum
 import importlib.util
+import logging
 import os
 from typing import Any
 
 import parser
 from app._tab_helpers import doc_has_text
 from app.autosave import AutosaveContext, autosave_all_dirty, autosave_all_dirty_sync
+from utils import diagnostics
 from services.backup import (
     cleanup_old_backups,
     delete_backup as _delete_backup_file,
@@ -70,6 +72,9 @@ class _FileChange(enum.IntEnum):
     added = 1
     modified = 2
     deleted = 3
+
+
+log = logging.getLogger(__name__)
 
 
 def build_backup_controller(ctx: BackupEnv):
@@ -172,17 +177,22 @@ def build_backup_controller(ctx: BackupEnv):
         while True:
             try:
                 await asyncio.sleep(_effective_backup_interval())
-                _backup_all_tabs()
+                # 全量备份是主线程同步写盘：既是潜在的界面卡顿源，也是崩溃恢复的
+                # 唯一依赖，所以既计时又留痕。
+                with diagnostics.timed("定时全量备份", slow_ms=1000):
+                    _backup_all_tabs()
                 # 顺带清理过期备份（低频，每轮一次）
                 try:
                     cleanup_old_backups(ctx.settings)
                 except Exception:
-                    pass
+                    log.warning("清理过期备份失败（下轮重试）", exc_info=True)
             except asyncio.CancelledError:
                 # 正常停止（应用退出）
                 raise
             except Exception:
-                # 异常不退出循环，等下个 tick 重试
+                # 异常不退出循环，等下个 tick 重试——但必须留痕：否则「备份一直
+                # 失败」在用户侧只表现为「没有备份」，无从查起。
+                log.error("定时备份轮次失败，将在下个周期重试", exc_info=True)
                 continue
 
     async def _autosave_loop():
@@ -194,10 +204,14 @@ def build_backup_controller(ctx: BackupEnv):
         while True:
             try:
                 await asyncio.sleep(_effective_autosave_interval())
-                autosave_all_dirty(_make_autosave_ctx())
+                with diagnostics.timed("定时自动保存", slow_ms=1000):
+                    autosave_all_dirty(_make_autosave_ctx())
             except asyncio.CancelledError:
                 raise
             except Exception:
+                # 同 _backup_loop：自动保存失败必须留痕，否则用户只会看到
+                # 「文件没保存」而日志里一片空白。
+                log.error("自动保存轮次失败，将在下个周期重试", exc_info=True)
                 continue
 
     async def _external_check_loop():
@@ -595,9 +609,10 @@ def build_backup_controller(ctx: BackupEnv):
         静默执行，不抛异常。
         """
         try:
-            _backup_all_tabs()
+            with diagnostics.timed("即时全量备份", slow_ms=1000):
+                _backup_all_tabs()
         except Exception:
-            pass
+            log.error("即时全量备份失败（退出/关闭前）", exc_info=True)
 
     def write_exit_sentinel():
         """退出前写入会话哨兵（记录本次会话产生的备份路径）。
@@ -621,6 +636,7 @@ def build_backup_controller(ctx: BackupEnv):
         try:
             return find_recoverable_on_startup(ctx.settings)
         except Exception:
+            log.error("扫描可恢复草稿失败（恢复面板将不弹出）", exc_info=True)
             return []
 
     def scan_recent_backups():
@@ -631,6 +647,7 @@ def build_backup_controller(ctx: BackupEnv):
         try:
             return find_recent_backups(ctx.settings)
         except Exception:
+            log.error("扫描最近备份失败（手动恢复列表将为空）", exc_info=True)
             return []
 
     def open_backup_in_new_tab(backup_path: str):

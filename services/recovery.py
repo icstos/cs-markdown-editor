@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import time
 from typing import Any
@@ -122,6 +123,9 @@ def read_last_session_sentinel(
     return [p for p in paths if isinstance(p, str) and os.path.isfile(p)]
 
 
+log = logging.getLogger(__name__)
+
+
 def clear_last_session_sentinel(settings: dict[str, Any]) -> None:
     """删除 sentinel（恢复完成 / 用户跳过 / 写入空备份时调用）。"""
     try:
@@ -129,7 +133,8 @@ def clear_last_session_sentinel(settings: dict[str, Any]) -> None:
         if os.path.isfile(path):
             os.remove(path)
     except OSError:
-        pass
+        # 删不掉只影响「下次启动是否会再提示一次恢复」，不阻塞用户；留痕即可
+        log.debug("清除会话哨兵失败（下次启动可能重复提示恢复）", exc_info=True)
 
 
 def find_recoverable_on_startup(
@@ -158,7 +163,7 @@ def find_recoverable_on_startup(
         try:
             day_date = datetime.date.fromisoformat(parent)
         except ValueError:
-            pass
+            log.debug("备份目录名不是日期格式，按无日期处理 parent=%r", parent)
         info = _build_backup_info(p, os.path.basename(p), day_date)
         if info is not None:
             infos.append(info)

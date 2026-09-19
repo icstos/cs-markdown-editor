@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -94,6 +95,9 @@ class BackupInfo:
 # 路径解析
 # ---------------------------------------------------------------------------
 
+log = logging.getLogger(__name__)
+
+
 def get_backup_root(settings: dict[str, Any]) -> str:
     """解析备份根目录。
 
@@ -112,10 +116,13 @@ def get_backup_root(settings: dict[str, Any]) -> str:
     except OSError:
         # 创建失败时回退到用户家目录下的 .cs-md-backup（保证备份总能写入）
         fallback = os.path.join(os.path.expanduser("~"), ".cs-md-backup")
+        log.warning("备份根目录不可用，回退到 %s（原因见下）", fallback, exc_info=True)
         try:
             os.makedirs(fallback, exist_ok=True)
         except OSError:
-            pass
+            # 连家目录都建不出来：备份功能实际已失效，必须留痕（用户会问
+            # 「为什么没有备份」，这就是答案）。
+            log.error("备份目录彻底不可用，备份与覆盖前副本均会失败 root=%s", fallback, exc_info=True)
         root = fallback
     return root
 
@@ -149,7 +156,8 @@ def get_today_backup_dir(
     try:
         os.makedirs(day_dir, exist_ok=True)
     except OSError:
-        pass
+        # 当日目录建不出来 → 后续写入必然失败；这里只提示，让上层按既有逻辑处理
+        log.warning("当日备份目录创建失败 day_dir=%s", day_dir, exc_info=True)
     return day_dir
 
 
@@ -611,7 +619,7 @@ def cleanup_old_backups(settings: dict[str, Any]) -> int:
                 # 估算删除数（无法精确计数，按目录非空估算）
                 deleted_count += 1
             except OSError:
-                pass
+                log.debug("过期备份目录删除失败（下次清理会重试）day_dir=%s", day_dir, exc_info=True)
             continue
 
         # 介于两者之间：删除未命名草稿（已命名文档仍保留）

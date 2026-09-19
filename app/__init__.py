@@ -33,6 +33,7 @@
 
 import asyncio
 import contextlib
+import logging
 
 import flet as ft
 
@@ -54,9 +55,13 @@ from config.settings import load_settings
 from services import file_ops
 from services.shortcuts import ShortcutManager
 from styles import get_colors
+from utils import diagnostics
+from utils.log import apply_settings_level
 from views.diff_view import compute_diff_for_editors
 from views.doc_search import compute_doc_matches
 from views.status_bar import _compute_counts
+
+log = logging.getLogger(__name__)
 
 
 @ft.component
@@ -64,6 +69,8 @@ def App():
     # ============ State（快照区）============
     # 设置必须最先加载：初始标签文档取决于 settings["sample_shown"]（首启判定）。
     settings, set_settings = ft.use_state(load_settings)
+    # 日志级别：环境变量优先（启动最早期已生效），否则用设置里的值
+    apply_settings_level(settings.get("log_level"))
     # 多文档标签：每个 tab 持有 {document, file_path, dirty}；active_index 指向当前标签
     # 初始文档：仅首次启动展示内置示例（SAMPLE_MD 约 298 行 → 首次渲染 ~225ms /
     # 2400+ 控件）；之后启动直接空白文档（~63ms / 558 控件），客户端需构建的控件
@@ -862,7 +869,7 @@ def App():
                 window.on_event = _on_window_event
             page.on_disconnect = _on_disconnect
         except Exception:
-            pass
+            log.debug("窗口钩子绑定失败（Flet 版本差异？）", exc_info=True)
 
         def _cleanup():
             try:
@@ -871,7 +878,7 @@ def App():
                 if page.on_disconnect is _on_disconnect:
                     page.on_disconnect = None
             except Exception:
-                pass
+                log.debug("窗口钩子清理失败（退出路径，可忽略）", exc_info=True)
 
         return _cleanup
 
@@ -889,21 +896,23 @@ def App():
             # 说明：此处刻意保持同步执行（而非 asyncio.to_thread）——页面 run_task
             # 在测试夹具的短生命周期事件循环里会留下 pending 线程任务，且备份扫描
             # 只读哨兵清单（通常个位数文件），阻塞量可忽略。
-            try:
-                ctx.cleanup_expired_backups()
-            except Exception:
-                pass
-            infos = ctx.scan_recoverable()
-            if infos:
-                set_recovery_list(infos)
-                set_recovery_open(True)
+            with diagnostics.timed("启动 · 扫描可恢复草稿", slow_ms=1000):
+                try:
+                    ctx.cleanup_expired_backups()
+                except Exception:
+                    log.warning("启动清理过期备份失败", exc_info=True)
+                infos = ctx.scan_recoverable()
+                if infos:
+                    log.info("发现 %d 份可恢复草稿，弹出恢复面板", len(infos))
+                    set_recovery_list(infos)
+                    set_recovery_open(True)
 
         page = page_ref.current
         if page is not None:
             try:
                 page.run_task(_do_scan)
             except Exception:
-                pass
+                log.debug("启动扫描任务未能提交（页面尚未就绪？）", exc_info=True)
 
     ft.use_effect(_startup_scan_recoverable, [])
 

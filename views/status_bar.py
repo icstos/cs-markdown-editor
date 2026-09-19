@@ -18,6 +18,7 @@
 """
 
 import asyncio
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -61,6 +62,9 @@ def _compute_counts(document: Document) -> tuple[int, int, int, int]:
     )
     reading_min = max(1, round(word_count / 300)) if word_count > 0 else 0
     return word_count, char_count, para_count, reading_min
+
+
+log = logging.getLogger(__name__)
 
 
 @ft.component
@@ -122,12 +126,13 @@ def StatusBar(
                 await asyncio.sleep(_STATUS_TTL_SEC)
                 on_status_clear()
             except Exception:
-                pass
+                # 睡醒时页面可能已销毁（标签关闭 / 退出），状态清空失败无意义
+                log.debug("状态消息自动清理失败（页面可能已销毁）", exc_info=True)
 
         try:
             page.run_task(_delayed_clear)
         except Exception:
-            pass
+            log.debug("状态自动清理任务未能提交", exc_info=True)
 
     # 依赖 status_message 元组身份（App 每次推送新元组），消息不变时不重启计时器
     ft.use_effect(_auto_clear_status, [status_message])

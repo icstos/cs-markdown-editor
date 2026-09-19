@@ -17,6 +17,7 @@
 """
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -24,6 +25,8 @@ from services.shortcuts import DEFAULT_SHORTCUTS
 
 # PEP 695 类型别名：应用设置字典
 type Settings = dict[str, Any]
+
+log = logging.getLogger(__name__)
 
 SETTINGS_PATH: str = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "settings.json"
@@ -75,6 +78,9 @@ DEFAULT_SETTINGS: Settings = {
     "backup_dir": None,             # 自定义备份根目录；None 时使用平台默认路径
     # 外部修改检测：编辑期间监听原文件 mtime 变化，发现外部修改时弹出重载确认
     "detect_external_changes": True,
+    # 日志级别：DEBUG / INFO / WARNING / ERROR。改动后下次启动生效，
+    # 也可用环境变量 CS_MD_LOG_LEVEL 覆盖（启动最早期即生效）。
+    "log_level": "INFO",
     "shortcuts": {k: dict(v) for k, v in DEFAULT_SHORTCUTS.items()},
 }
 
@@ -104,6 +110,10 @@ def load_settings() -> Settings:
         merged["shortcuts"] = merged_sc
         return merged
     except Exception:
+        # 读取失败回退默认值是对的（设置不是关键路径），但必须留痕：否则用户
+        # 「改了设置不生效」时无从判断是文件损坏还是键位不对。
+        log.warning("读取 settings.json 失败，已回退默认设置 path=%s", SETTINGS_PATH,
+                    exc_info=True)
         return dict(DEFAULT_SETTINGS)
 
 
@@ -113,4 +123,5 @@ def save_settings(settings: Settings) -> None:
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
     except Exception:
-        pass
+        # 保存失败意味着用户的设置、最近文件、快捷键修改都会在重启后丢失
+        log.error("写入 settings.json 失败 path=%s", SETTINGS_PATH, exc_info=True)

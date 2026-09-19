@@ -32,6 +32,7 @@ backup_tab_before_overwrite / check_external_change
 """
 
 import asyncio
+import logging
 import os
 
 import flet as ft
@@ -43,6 +44,7 @@ from services import shortcut
 from services.backup import write_backup
 from services.export import export_to_docx, export_to_html, export_to_pdf
 from services.file_io import read_text, write_text, write_text_atomic
+from utils import diagnostics
 from utils.file_helpers import file_name
 
 from app._contracts import FileIoEnv
@@ -50,6 +52,8 @@ from app._contracts import FileIoEnv
 # 内存绝对保护上限：异步加载已避免 UI 卡死，但仍需防止极端大文件
 # （如误选 GB 级二进制文件）导致内存爆炸。超过此值拒绝打开。
 _MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
+
+log = logging.getLogger(__name__)
 
 
 def build_file_io_ops(ctx: FileIoEnv):
@@ -103,6 +107,7 @@ def build_file_io_ops(ctx: FileIoEnv):
         display_name：标签显示名覆盖（仅 reopen_closed_tab 传入，用于恢复 .lnk
         标签原本的链接文件名显示）；path 本身是 .lnk 时仍以链接文件名为准。
         """
+        diagnostics.mark("请求打开文件", 文件=os.path.basename(path) or path)
         # 先登记 pending jump（无论后续 session 是否变化，effect 都会触发）
         if jump_to is not None:
             ctx.pending_jump_ref.current = jump_to
@@ -175,8 +180,9 @@ def build_file_io_ops(ctx: FileIoEnv):
             # 后台线程执行 IO + 解析（asyncio.to_thread 在 Python 3.9+ 可用），
             # 不阻塞 Flet 事件循环。read_text 与 parse_markdown 均为纯函数，
             # 线程安全（无共享可变状态）。
-            text = await asyncio.to_thread(read_text, path)
-            doc = await asyncio.to_thread(parser.parse_markdown, text)
+            with diagnostics.timed("打开 · 读取解析", inflight=False, 文件=fname):
+                text = await asyncio.to_thread(read_text, path)
+                doc = await asyncio.to_thread(parser.parse_markdown, text)
         except Exception as e:
             _loading_paths.discard(path)
             ctx.show_snack(f"打开失败：{e}")
@@ -231,11 +237,13 @@ def build_file_io_ops(ctx: FileIoEnv):
     def _do_sync_load(path: str, display_name: str | None = None):
         """同步降级加载（page 未就绪时使用，启动初期极少触发）。"""
         try:
-            text = read_text(path)
+            with diagnostics.timed("打开 · 读取解析（同步降级）", 文件=os.path.basename(path)):
+                text = read_text(path)
+                doc = parser.parse_markdown(text)
         except Exception as e:
+            log.warning("同步加载失败 path=%s", path, exc_info=True)
             ctx.show_snack(f"打开失败：{e}")
             return
-        doc = parser.parse_markdown(text)
         doc.file_path = path
         try:
             last_mtime = os.path.getmtime(path)
@@ -336,7 +344,7 @@ def build_file_io_ops(ctx: FileIoEnv):
         try:
             ctx.set_status_message(msg, kind)
         except Exception:
-            pass
+            log.debug("状态栏消息推送失败（装配未就绪？）msg=%r", msg, exc_info=True)
 
     def _backup_before_overwrite(path: str, content: str, tab_data: dict) -> None:
         """覆盖前备份：原文件存在时生成一份历史副本到备份目录。
@@ -353,7 +361,9 @@ def build_file_io_ops(ctx: FileIoEnv):
             # 用原文件内容 + 当前 tab 元信息生成历史备份
             write_backup(ctx.settings, tab_data, original)
         except Exception:
-            pass
+            # 覆盖前备份失败不阻塞保存，但必须留痕：用户事后「找不回原内容」时
+            # 这是唯一能说明「备份当时没做成功」的证据。
+            log.warning("覆盖前备份失败 path=%s", path, exc_info=True)
 
     async def save_doc(tab_index: int | None = None, force: bool = False) -> bool:
         """保存指定标签（默认激活标签）。返回是否真正保存成功（用户取消另存则 False）。
@@ -536,6 +546,7 @@ def build_file_io_ops(ctx: FileIoEnv):
                     doc.dirty = False
                 except Exception:
                     # 写入失败兜底：备份到恢复目录，不弹对话框（自动保存静默）
+                    log.warning("自动保存失败（对比标签 %s 侧）path=%s", side, p, exc_info=True)
                     write_backup(ctx.settings, tab, text)
                     ok = False
             if not ok:
@@ -564,6 +575,7 @@ def build_file_io_ops(ctx: FileIoEnv):
             write_text_atomic(path, text)
         except Exception as e:
             # 写入失败兜底：备份到恢复目录，静默失败（自动保存不打断流程）
+            log.error("自动保存失败 path=%s", path, exc_info=True)
             write_backup(ctx.settings, tab, text)
             set_status_message(f"自动保存失败：{e}", "error")
             return False
@@ -829,17 +841,20 @@ def build_file_io_ops(ctx: FileIoEnv):
             path += f".{ext}"
 
         try:
-            if fmt == "html":
-                export_to_html(md_text, path, title=title)
-            elif fmt == "docx":
-                export_to_docx(md_text, path)
-            elif fmt == "pdf":
-                export_to_pdf(md_text, path, title=title)
+            with diagnostics.timed("导出文档", inflight=False, 格式=fmt):
+                if fmt == "html":
+                    export_to_html(md_text, path, title=title)
+                elif fmt == "docx":
+                    export_to_docx(md_text, path)
+                elif fmt == "pdf":
+                    export_to_pdf(md_text, path, title=title)
         except RuntimeError as e:
             # pandoc 不可用 / 转换失败：错误消息含安装指引
+            log.warning("导出失败（可预期的环境问题）fmt=%s path=%s: %s", fmt, path, e)
             ctx.show_snack(str(e))
             return
         except Exception as e:
+            log.error("导出失败 fmt=%s path=%s", fmt, path, exc_info=True)
             ctx.show_snack(f"导出失败：{e}")
             return
 

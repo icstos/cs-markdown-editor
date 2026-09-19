@@ -4,6 +4,61 @@
 
 ## [未发布]
 
+### 2026-09-19 可观测性：日志与崩溃现场（卡顿 / 报错 / 未响应可定位）
+
+诉求：「优化日志功能，保证在异常（卡顿、报错、未响应等）时 Agent/人工能通过日志定位问题」。
+改前项目**零日志**（0 处 `logging` 调用）却有 **187 处 except**，其中 **57 处纯静默
+`pass`**——任何异常发生时既无痕迹也无现场，只能靠反复复现与逐段注释代码二分。
+
+- **基础设施（两个新模块，纯标准库、刻意不依赖项目内任何模块以便最早安装）**：
+  - `utils/log.py`（约 550 行）：`RotatingFileHandler` 分级轮转；**`QueueHandler`
+    + 后台 `QueueListener`** —— 调用方只 `put_nowait` 入队（O(1)，不阻塞 UI 线程），
+    写盘在监听线程；`setup()` 幂等（root 已有 handler 时自动 no-op，与 flet 自带的
+    env 日志配置互不打架，装不上时降级 stderr 而不拖垮应用）。位置按
+    `CS_MD_LOG_DIR` > 开发态项目内 `logs/` > 平台标准目录 解析，启动首行打印会话头。
+  - `utils/diagnostics.py`（约 300 行）：`mark()` 操作时间线（有界 `deque`，内存里留
+    最近 64 个动作）、`timed()` 慢操作检测、`beat()` + **卡顿看门狗**（`freeze_s=5.0`）、
+    `snapshot()` 手动现场。
+- **全局异常钩子全覆盖**：`sys.excepthook`（主线程未捕获）、`threading.excepthook`
+  （子线程）、`sys.unraisablehook`（析构期异常）、asyncio `loop.set_exception_handler`、
+  `page.on_error`（flet 层）。
+- **关键补漏：`page.run_task` 的异常原本无现场**。真机验证发现 flet 把协程异常
+  `raise` 在 `concurrent.futures` 的完成回调里——该模块只打一行 ERROR、不写现场文件、
+  logger 名字也不含 crash，而这是本项目最常用的异步入口（打开 / 保存 / 导出 / 自动保存
+  全走它）。修复：`attach_flet` 幂等包装 `page.run_task`，失败时经 `_report_task_failure`
+  补写 `crash-*-task.log`。**这是本轮最实质的收益**。
+- **崩溃现场文件 `crash-*.log`**：`crash_snapshot()` **同步直写**（不走队列——崩溃路径
+  上监听线程可能已经死了，同步才留得住），内容 = 中文标题首行 + 完整 traceback +
+  **时间线（带 `+delta` 增量毫秒）** + **`sys._current_frames()` 全线程栈**（主线程置首）。
+  文件名纯 ASCII（中文标题进文件内首行），同秒多次触发由 `_unique_path()` 防覆盖。
+- **现场文件保留上限（`CRASH_KEEP = 50`）**：`app.log` 有 `RotatingFileHandler` 兜底，
+  但现场文件为了不互相覆盖是**每次一个新名字**，天生不受轮转约束——不裁剪的话，
+  崩溃循环（心跳 / 看门狗 / 自动保存循环里周期性抛错）能在几分钟内产出上千份文件
+  写满磁盘。现在每次写现场后 + 每次启动各裁一次，只留最新 50 份；清理自身全程
+  吞异常（绝不把异常带进崩溃路径）。这也顺手激活了此前**定义却从未被使用**的
+  `CRASH_GLOB` 常量。
+- **静默点补日志**：`app/_file_io_ops.py`(11 处)、`app/_backup_controller.py`、
+  `services/backup.py`、`services/recovery.py`、`config/settings.py`、`views/status_bar.py`
+  的静默 `pass` 按性质分级留痕；打开 / 导出 / 读取解析 / 备份循环等关键路径包 `timed()`。
+  原有刻意的容错语义（自动保存失败不阻塞切标签等）保留，只补痕迹。新增设置项
+  `log_level`（默认 `INFO`，环境变量 `CS_MD_LOG_LEVEL` 优先于设置项）。
+- **真机端到端验证，三类异常全部定位成功**：
+  - 报错：`logs/crash-20260919-150335-task.log`，含「异步任务异常 · _boom_async」+
+    完整 traceback + 时间线 + 全线程栈；
+  - 卡顿：`logs/crash-20260919-150341-freeze.log`，判定「界面无响应 5.1s」，
+    **主线程栈精确停在探针注入的 `time.sleep(7)` 那一行**，恢复后记「约 7.7s」；
+  - 启动：`logs/app.log` 首行会话头（版本 / pid / cwd / 日志路径）完整。
+- 新增 `tests/test_logging.py`（32 项）：`setup` 幂等、目录与级别解析、env 优先、
+  钩子落现场、崩溃文件含 traceback + 时间线 + 线程栈、时间线有界、`timed` 慢/极慢/失败、
+  看门狗 freeze → recovery → 静默（同次不刷屏）、`snapshot`、现场文件裁剪（含启动期
+  与写后两个触发点、最新一份绝不被删、目录不存在时安静返回）。夹具隔离宿主 logging 状态。
+- 变异验证：分别移除「写后裁剪」与「启动裁剪」两处调用，对应测试各自精确失败一次
+  （`1 failed`），证明护栏不是恒真断言。
+- 另一处顺带修正：`_prune_crash_files` 的 `keep` 曾写成默认参数 `keep: int = CRASH_KEEP`
+  ——默认参数在**函数定义时**求值，运行期调常量或 monkeypatch 都不会生效，已改为
+  `keep: int | None = None` + 调用时读取。
+- 全量回归：**1461 passed**（较改动前 1429 净增 32，即新增测试数，无回归）。
+
 ### 2026-09-19 视觉：大纲文字色与编辑区标题逐级对应
 
 诉求：「优化大纲内容显示，文字与编辑区标题颜色保持对应」。改前侧栏大纲与文档内

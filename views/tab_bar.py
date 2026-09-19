@@ -6,6 +6,12 @@
 - 紧凑高度，文件名省略号截断
 - 每个标签包裹 ft.ContextMenu，右键提供完整文件操作菜单
 - ConfirmCloseDialog：关闭脏标签时的确认弹层
+
+行高与大纲头部严格一致（styles.TOPBAR_H，真机探针量取并守护）：两列顶栏连成同一条
+水平带，底边线重合、编辑区与大纲列表顶部齐平。故本模块**不出现 ft.IconButton**：
+Material 的最小点击区会给它 40px 固有高，行高由最高子项决定 → 标签行会被顶到 44px，
+比大纲头部高出 12px（改前的实际症状）。图标按钮统一用固定尺寸的
+`Container(ink=True)`——与 views/code_block.py 头部、views/status_bar.py 同一套紧凑惯例。
 """
 
 import os
@@ -13,13 +19,23 @@ from collections.abc import Callable
 
 import flet as ft
 
-from styles import FONT_MAIN, Elevation, Radius, Spacing, card_shadow, get_colors, only_border
+from styles import (
+    FONT_MAIN,
+    TOPBAR_H,
+    Elevation,
+    Radius,
+    Spacing,
+    card_shadow,
+    get_colors,
+    only_border,
+)
 
 _DIRTY_COLOR = "#FF9F0A"  # 未保存修改星号色（亮暗通用警示橙）
 _TAB_WIDTH = 180          # 标签固定宽度（紧凑，超出文件名用省略号截断）
 _TAB_WIDTH_DIFF = 260     # 对比标签宽度（需容纳「左 ⟷ 右」双文件名）
 _TAB_ICON = 12            # 标签内图标/字号（紧凑）
 _TAB_RADIUS = Radius.SM   # 标签顶部圆角半径
+_ICON_BTN = 22            # 关闭 / 新建按钮固定边长（≤ TOPBAR_H，留出上下呼吸）
 
 
 def _file_name(path: str | None) -> str:
@@ -54,17 +70,22 @@ def TabBar(
     hover_index, set_hover_index = ft.use_state(-1)
 
     def _btn_icon(icon: str, tooltip: str, on_click: Callable, color: str) -> ft.Control:
-        return ft.IconButton(
-            icon=icon,
+        """固定 _ICON_BTN 见方的紧凑图标按钮（不用 ft.IconButton）。
+
+        真机实测：`ft.IconButton` 无论如何压内边距/传 icon_size，Material 的最小点击区
+        都把它定在 40px 高（`visual_density=COMPACT` 也只降到 32）→ 标签行被顶到
+        40+2×2=44，比大纲头部高 12px。改用 `Container(ink=True)` 后行高由 TOPBAR_H
+        决定（见 styles.TOPBAR_H），点击仍有水波反馈、悬停有 tooltip。
+        """
+        return ft.Container(
+            width=_ICON_BTN,
+            height=_ICON_BTN,
+            border_radius=Radius.MD,
+            alignment=ft.Alignment.CENTER,
+            ink=True,
             tooltip=tooltip,
-            icon_size=_TAB_ICON,
             on_click=on_click,
-            style=ft.ButtonStyle(
-                color=color,
-                bgcolor=ft.Colors.with_opacity(0.0, c.text),
-                padding=Spacing.XS,
-                shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-            ),
+            content=ft.Icon(icon, size=_TAB_ICON, color=color),
         )
 
     tab_controls: list[ft.Control] = []
@@ -281,6 +302,8 @@ def TabBar(
         )
 
         # 浏览器式标签：顶部圆角，无底部强调条（用背景色「连接」到编辑区）
+        # height=TOPBAR_H：标签铺满整条顶栏，激活态背景因此**直达底边线**——与下方
+        # 编辑区无缝合，同时把标签行整体高度锁在 TOPBAR_H（行高由最高子项决定）。
         tab_content = ft.Container(
             bgcolor=bgcolor,
             border_radius=ft.BorderRadius(
@@ -290,6 +313,7 @@ def TabBar(
             on_click=_on_tab_click,
             on_hover=_on_tab_hover,
             width=tab_width,
+            height=TOPBAR_H,
             padding=ft.Padding.only(
                 left=Spacing.MD, right=Spacing.SM,
                 top=Spacing.XS, bottom=Spacing.XS,
@@ -309,10 +333,13 @@ def TabBar(
             )
         )
 
-    # 尾部「+」新建按钮：固定在滚动区外，与标签栏底色一致
+    # 尾部「+」新建按钮：固定在滚动区外，与标签栏底色一致。
+    # 与标签容器同样锁定 TOPBAR_H，使整条顶栏高度只由这一个常量决定。
     new_btn = ft.Container(
         bgcolor=c.toolbar_bg,
-        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+        height=TOPBAR_H,
+        alignment=ft.Alignment.CENTER,
+        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
         content=_btn_icon(
             ft.Icons.ADD,
             "新建标签  Ctrl+N",

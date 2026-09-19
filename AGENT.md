@@ -118,6 +118,7 @@
 - 必须成对使用 `_render.resolve_window()` 的归一化结果：`build_line_controls()` 构建的行区间与 `line_padding()` 计算出的留白必须来自**同一次**窗口归一化（含表格边界对齐 `_snap_window`），否则表格行高度会被重复或漏算，总高不再守恒（`tests/test_large_doc_open.py::test_padding_accounts_for_table_snapped_window` 守护）。
 - 禁止为「绕过慢」而抬高 `_LARGE_DOC_LINES`（3000）或 `_WINDOW_ACTIVATE`（200）：前者是超大批量文档切源码模式的兜底防线，后者决定窗口化介入点，抬高阈值只会让「每击键重建 N 个 LineView 对象」的开销线性增长，并不解决控件个数问题。
 - 禁止让对比标签（`diff_marks` / `diff_gaps`）进入窗口化：diff 间隙容器的高度不在行偏移前缀和里，窗口外留白会算错总高导致左右两侧错位（`views/editor/__init__.py` 渲染入口已显式排除，`test_diff_mode_is_not_windowed` 守护）。
+- 禁止把顶栏（标签行 `views/tab_bar.py` / 大纲头部 `views/outline_panel.py`）的高度交给 Material 固有尺寸控件决定：两处内容带必须显式定高 `styles.TOPBAR_H`，行内**不得出现 `ft.IconButton` / `ft.Dropdown`**（固有高 40 / 48，`visual_density=COMPACT` 也只降到 32）——**行高由最高子项决定，压内边距无效**；图标按钮统一改用固定尺寸的 `Container(ink=True)`（与 `views/code_block.py` 头部、`views/status_bar.py` 同一惯例）。另：底边线必须挂在定高内容带**之外**，`Container(height=H, border=bottom 1px)` 的总高**就是 H**（边线被算进 H 内），会让两列底线差 1px 不共线。后果：编辑区与大纲列交界处出现可见台阶，顶栏被切成两段（改前实测差 12px）。`tests/test_topbar_height.py` 守护。
 
 ## 5. 标准验证流程
 

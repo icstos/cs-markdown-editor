@@ -248,6 +248,40 @@ def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
     return ft.FontWeight.NORMAL
 
 
+# 大纲条目的字重递进：把上面的编辑区字重**整体降一档**（800→700…500→400）。
+# 不是另起一套配色/粗细，而是同一套层级在另一档字号下的换算——编辑区标题是
+# 30→15px，大纲条目只有 12px，照搬 W_800 会糊成一团。降档后「大纲里的粗细顺序」
+# 与「正文里的粗细顺序」逐级一致，且相邻级别仍差 ≥100（不产生同重级别）。
+# tests/test_outline_color.py 守护这条对应关系。
+_OUTLINE_HEADING_WEIGHTS: dict[int, ft.FontWeight] = {
+    1: ft.FontWeight.W_700,
+    2: ft.FontWeight.W_600,
+    3: ft.FontWeight.W_600,
+    4: ft.FontWeight.W_500,
+    5: ft.FontWeight.W_500,
+    6: ft.FontWeight.W_400,
+}
+
+
+def outline_heading_weight(level: int) -> ft.FontWeight:
+    """大纲条目字重（侧栏大纲 / 文档内 [toc] 卡片共用）。"""
+    return _OUTLINE_HEADING_WEIGHTS.get(level, ft.FontWeight.NORMAL)
+
+
+def heading_text_color(level: int, c: Colors | None = None) -> str:
+    """标题文字色：编辑区正文、侧栏大纲、文档内 [toc] 卡片**共用的唯一取色口**。
+
+    三处标题文字都从这里取色，因此「大纲里的这一条」与「正文里的那行标题」
+    颜色天然一致——对应关系由同源保证，不靠各自维护一张对照表；亮/暗主题的
+    六级色阶由 `Colors.heading_colors` 提供，切主题时三处一起变
+    （tests/test_outline_color.py 直接对比「大纲取到的色」与「编辑区渲染出的色」）。
+
+    c：当前主题配色。渲染函数已持有 `_current_colors()` 时显式传入，避免重复取色。
+    """
+    colors = c if c is not None else _current_colors()
+    return colors.heading_colors.get(level, colors.text)
+
+
 def list_color_level(indent: int) -> int:
     """列表缩进（空格数）→ 1..6 色阶，与 heading_colors 共用。"""
     return min(max(indent // 2 + 1, 1), 6)

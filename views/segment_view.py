@@ -8,7 +8,8 @@
 
 依赖项：
 - models：BlockType / Line / SegType / Segment
-- styles：_current_colors / block_weight / list_color_level / prefix_style / segment_style
+- styles：_current_colors / block_weight / heading_text_color / list_color_level /
+  prefix_style / segment_style
 - utils.segment_helpers：PREFIX_SEGTYPES / display_text / split_seg_for_display
   （段类型常量与显示拆分）
 
@@ -27,6 +28,7 @@ from models.document import BlockType, Line, SegType, Segment
 from styles import (
     _current_colors,
     block_weight,
+    heading_text_color,
     list_color_level,
     prefix_style,
     segment_style,
@@ -107,7 +109,7 @@ def segment_to_span(
         style = ft.TextStyle(
             size=style.size,
             weight=weight,
-            color=c.heading_colors.get(heading_level, c.text),
+            color=heading_text_color(heading_level, c),
             italic=style.italic,
             font_family=style.font_family,
             decoration=style.decoration,
@@ -171,7 +173,7 @@ def segment_to_spans_partial(
         base_style = ft.TextStyle(
             size=base_style.size,
             weight=weight,
-            color=c.heading_colors.get(heading_level, c.text),
+            color=heading_text_color(heading_level, c),
             italic=base_style.italic,
             font_family=base_style.font_family,
             decoration=base_style.decoration,
@@ -339,7 +341,7 @@ def raw_to_visible_spans(
                 base_style = ft.TextStyle(
                     size=base_style.size,
                     weight=weight,
-                    color=c.heading_colors.get(heading_level, c.text),
+                    color=heading_text_color(heading_level, c),
                     italic=base_style.italic,
                     font_family=base_style.font_family,
                     decoration=base_style.decoration,

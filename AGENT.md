@@ -120,6 +120,9 @@
 - 禁止让对比标签（`diff_marks` / `diff_gaps`）进入窗口化：diff 间隙容器的高度不在行偏移前缀和里，窗口外留白会算错总高导致左右两侧错位（`views/editor/__init__.py` 渲染入口已显式排除，`test_diff_mode_is_not_windowed` 守护）。
 - 禁止把顶栏（标签行 `views/tab_bar.py` / 大纲头部 `views/outline_panel.py`）的高度交给 Material 固有尺寸控件决定：两处内容带必须显式定高 `styles.TOPBAR_H`，行内**不得出现 `ft.IconButton` / `ft.Dropdown`**（固有高 40 / 48，`visual_density=COMPACT` 也只降到 32）——**行高由最高子项决定，压内边距无效**；图标按钮统一改用固定尺寸的 `Container(ink=True)`（与 `views/code_block.py` 头部、`views/status_bar.py` 同一惯例）。另：底边线必须挂在定高内容带**之外**，`Container(height=H, border=bottom 1px)` 的总高**就是 H**（边线被算进 H 内），会让两列底线差 1px 不共线。后果：编辑区与大纲列交界处出现可见台阶，顶栏被切成两段（改前实测差 12px）。`tests/test_topbar_height.py` 守护。
 
+- 标题文字的取色口唯一：编辑区、侧栏大纲（`views/toc.py`）、文档内 `[toc]` 卡片（`views/line_view.py` 的 `BlockType.TOC` 分支）都必须走 `styles.heading_text_color(level, c)`，字重走 `block_weight(BlockType.HEADING, level)`（编辑区）/ `styles.outline_heading_weight(level)`（大纲与目录卡片）。禁止在任何一处另写 `c.heading_colors.get(...)`、另起一套字重分级（如「H1/H2 加粗、其余常规」）或写死颜色值。后果：大纲条目与正文标题不再逐级对应（改前大纲文字统一为正文灰 `#1F2329`，只靠 3px 色条区分级别，扫一眼认不出条目是哪一级），且切主题时四处各自漂移。另：`styles.heading_text_color` 的取色口**不得**替换为「渲染时把当时的颜色字符串存进 prop」之类的快照方案——`_current_colors()` 在渲染期读取 `page.theme_mode`，快照会让切主题后大纲停在旧色。`tests/test_outline_color.py` 直接比对「大纲渲染出的色/重」与「编辑区**真渲染输出**（`raw_to_visible_spans`）」，并锁定大纲字重 == 编辑区字重整体降一档（12px 紧凑列表的档位换算，不产生同重级别）。
+- 禁止让侧栏大纲与文档内 `[toc]` 卡片出现第二套视觉规则：条目的缩进步长、色条宽度可以按容器密度不同（侧栏 14px/3px、卡片 16px/2px，因为卡片本身有边框与内边距），但**颜色与字重必须同源**（见上一条），否则两者会逐渐漂移成两个组件（`test_toc_card_matches_outline` 守护）。
+
 ## 5. 标准验证流程
 
 按顺序执行（工作目录 = 项目根）：

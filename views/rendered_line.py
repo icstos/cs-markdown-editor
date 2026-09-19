@@ -26,7 +26,7 @@
 
 依赖项：
 - models：BlockType / Line / SegType
-- styles：FONT_MAIN / _current_colors / block_text_size / block_weight
+- styles：FONT_MAIN / _current_colors / block_text_size / block_weight / heading_text_color
 - utils.segment_helpers：PREFIX_SEGTYPES / display_text / split_seg_for_display
 - utils.text_layout：image_fit_size（图片尺寸测量）
 - views.pixel_layout：_line_raw_offsets_x / hit_test_line_x_raw / _line_visual_layout /
@@ -47,6 +47,7 @@ from styles import (
     _current_colors,
     block_text_size,
     block_weight,
+    heading_text_color,
     list_color_level,
     prefix_style,
 )
@@ -546,7 +547,7 @@ def RenderedLine(
 
         # 段落文字样式：标题行用标题字号/色阶，其余用 base
         if heading_level > 0:
-            p_color = c.heading_colors.get(heading_level, c.text)
+            p_color = heading_text_color(heading_level, c)
             p_weight = block_weight(BlockType.HEADING, heading_level)
             p_size = block_text_size(BlockType.HEADING, heading_level, body_font_size)
         else:

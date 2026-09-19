@@ -24,7 +24,9 @@ from styles import (
     Spacing,
     _current_colors,
     block_text_size,
+    heading_text_color,
     only_border,
+    outline_heading_weight,
 )
 from utils.segment_helpers import PREFIX_SEGTYPES
 from views import _block_frame, _frontmatter
@@ -548,8 +550,10 @@ def LineView(
 
     # ============ 目录 [toc] ============
     if line.block_type == BlockType.TOC:
-        # 目录卡片：与侧边栏大纲面板视觉一致——彩色细竖线区分标题级别
-        # （红橙绿青蓝紫），同级别条目左对齐到同一缩进位置，H1/H2 加粗突出主章节。
+        # 目录卡片：与侧边栏大纲面板**同一套取色口**——文字与色条都走
+        # styles.heading_text_color(level)，字重走 styles.outline_heading_weight(level)，
+        # 两处颜色与正文标题逐级对应（改主题同步换色，无需各自调色）。
+        # 同级别条目左对齐到同一缩进位置，色条作为级别强调。
         # 头部含图标 + 标题 + 计数，清爽卡片边框，科学有序。
         entries = toc_entries or []
         header = ft.Row(
@@ -589,14 +593,14 @@ def LineView(
         else:
             items: list[ft.Control] = []
             for li, lvl, text in entries:
-                color = c.heading_colors.get(lvl, c.muted)
-                bar = ft.Container(width=2, height=14, bgcolor=color, border_radius=2)
+                level_color = heading_text_color(lvl, c)
+                bar = ft.Container(width=2, height=14, bgcolor=level_color, border_radius=2)
                 txt = ft.Text(
                     value=text,
                     size=base - 3,
-                    color=c.text,
+                    color=level_color,
                     font_family=FONT_MAIN,
-                    weight=ft.FontWeight.W_600 if lvl <= 2 else ft.FontWeight.NORMAL,
+                    weight=outline_heading_weight(lvl),
                     max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS,
                     expand=True,

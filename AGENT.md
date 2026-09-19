@@ -113,6 +113,11 @@
 - 禁止在 `ACTION_REGISTRY` 登记**没有实现与分发分支**的动作：注册表是「设置 → 快捷键」面板的数据源，面板会为每一项渲染可编辑键位框，用户会看到「Ctrl+U 下划线」这类键位并可自定义，按下去却毫无反应。新增动作必须同时具备 `EditorActions` 实现 + `views/key_bindings.py` 的分发分支，`tests/test_shortcut_reachability.py` 会拦住"只有注册、没有接线"的条目。
 - 禁止给全局窗口级动作的键位匹配只读单层配置：`_GLOBAL_ACTIONS` 的执行早于 layer 判定（保证两层行为一致），键位必须经 `KeyDispatcher._global_targets()` 取**浏览层 ∪ 编辑层 ∪ 表内默认**（并剔除空串，否则纯修饰键事件 `combo == ""` 会误触发）。只读浏览层会让「设置 → 快捷键」里编辑态那行改的键位被静默忽略。
 - 禁止让 `toggle_word_wrap` 脱离 `alt+z`：README 核心特性、状态栏 tooltip、上下文菜单三处都向用户承诺 `Alt+Z`（VSCode 约定），默认键位必须与之一致；改键位时三处文档 + `DEFAULT_SHORTCUTS` + `_GLOBAL_ACTIONS` 必须同步（`tests/test_shortcut_reachability.py` 守护）。
+- 禁止在解析路径放弃 `models/document.py` 的 `new_segment` / `new_line` / `new_document` 快速构造器（回退到常规 dataclass 构造），后果：构造器逐个字段触发 observable 通知，3 千行文档解析/构造耗时回到 2.4s 级。注意 `segments` / `lines` 仍须包装为 `ObservableList` 且归属正确对象，否则编辑期的原地变更（`insert` / `__setitem__` / `__del__`）不触发重渲染。
+- 禁止把行视图窗口化的未构建区改回「占位控件」，**必须**用 `ListView.padding`（`views/editor/_render.py` 的 `line_padding()`，常量、零列表项）。后果：占位控件是列表项，而 `build_controls_on_demand` 下 Flutter 的 `maxScrollExtent` 由「已布局项平均高 × 项数」外推、**只认真正布局过的项**——占位落在布局窗口外就永远不被计入，实测 1555 行文档滚动范围只剩 4793px（真值 ≈50000），文档后 90% 滚不到；同时项数 = 总行数，编辑期控件树 diff 成本退化为 O(文档总行数)（实测单次重渲染 4.46ms → 39.58ms）。
+- 必须成对使用 `_render.resolve_window()` 的归一化结果：`build_line_controls()` 构建的行区间与 `line_padding()` 计算出的留白必须来自**同一次**窗口归一化（含表格边界对齐 `_snap_window`），否则表格行高度会被重复或漏算，总高不再守恒（`tests/test_large_doc_open.py::test_padding_accounts_for_table_snapped_window` 守护）。
+- 禁止为「绕过慢」而抬高 `_LARGE_DOC_LINES`（3000）或 `_WINDOW_ACTIVATE`（200）：前者是超大批量文档切源码模式的兜底防线，后者决定窗口化介入点，抬高阈值只会让「每击键重建 N 个 LineView 对象」的开销线性增长，并不解决控件个数问题。
+- 禁止让对比标签（`diff_marks` / `diff_gaps`）进入窗口化：diff 间隙容器的高度不在行偏移前缀和里，窗口外留白会算错总高导致左右两侧错位（`views/editor/__init__.py` 渲染入口已显式排除，`test_diff_mode_is_not_windowed` 守护）。
 
 ## 5. 标准验证流程
 

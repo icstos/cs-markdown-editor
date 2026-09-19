@@ -483,9 +483,9 @@ class ActionsEnv(Protocol):
 class LineControlsEnv(Protocol):
     """行控件列表构造 的依赖契约（build_line_controls 实际读取的字段）。
 
-    `estimate_line_offset`：窗口化时用行偏移前缀和差分算出每个未构建行的
-    占位容器高度（与 _scroll 组的滚动定位同源，保证滚动总高、列表项位置与
-    跳转落点三者一致）。必须逐行调用（项数 == 行数），见 _render 模块 docstring。
+    `estimate_line_offset`：窗口化时用行偏移前缀和算出未构建区的高度留白
+    （`_render.line_padding` → ListView 的 padding），与 _scroll 组的滚动定位
+    同源，保证滚动总高、列表项位置与跳转落点三者一致。
     """
 
     alt_pressed_ref: ft.Ref

@@ -20,31 +20,43 @@
 - views.table_view（TableView）
 - views.editor._helpers（_build_diff_gap）
 
-窗口化设计（大文件打开速度）：
+窗口化设计（大文件打开速度 + 编辑响应速度）：
 `ft.ListView.build_controls_on_demand` 只让 **Flutter 客户端**懒建 widget，
 Python 侧 `controls` 列表里的控件对象仍是全量构造的——实测 3 千行文档构造
 控件树约 2.4s，其中 95% 花在 flet 的 `_configure_dataclass`（每个新增控件
 都要遍历其 dataclass 字段子树）。真正省时间只能**不构造**视口外的行。
 
-窗口化只构造 `[lo, hi)` 内的行，两侧未构建的行各给一个**等高占位容器**
-（`ft.Container`，约 9µs/个，远低于 LineView 的 0.8ms/行）。
-占位高度取行偏移前缀和差分（`estimate_line_offset(j+1) - estimate_line_offset(j)`
-== `_estimate_line_height(j)`），必须**逐行一个**、而不是用一个容器覆盖整段——原因：
+窗口化只构造 `[lo, hi)` 内的行；未构建区域的高度由 `line_padding()` 交给
+**ListView 的 padding** 表示（一个常量，零个额外列表项）。
 
-1. `ListView.build_controls_on_demand` 下 `maxScrollExtent` 由 Flutter
-   `SliverChildBuilderDelegate._extrapolateMaxScrollOffset` 外推得到：
-   `leading + (已布局项总高 / 已布局项数) × 剩余项数`。也就是说 **Flutter 只认
-   "真正布局过" 的那些项的高度**。若尾部用单个大占位覆盖，它永远落在布局窗口
-   之外（视口只会滚到"外推值"处，够不到它），于是 `maxScrollExtent` 退化成
-   "窗口行平均高 × 项数"——实测 1555 行文档 max 只有 4793（真值 ≈50000），
-   文档后 90% 滚不到。
-2. 逐行占位让**项数与行数恒等**，外推的平均高才是真实行高的无偏估计；
-   且 Flutter 侧第 j 个列表项的布局位置恒等于 `estimate_line_offset(j)`
-   （已构建行：实测高 == 前缀和里的实测值；未构建行：占位高 == 前缀和估算值），
-   即「列表网格坐标」与「滚动定位尺子」是同一把尺子，落点不会漂移。
+为什么是 padding 而不是「占位控件」——两条真机实测证据（160 行窗口 + 区外
+44640px，文档总高 49440px）：
+
+| 未构建区的表示方式             | Flutter 上报的 maxScrollExtent | 评价 |
+|--------------------------------|-------------------------------|------|
+| 1 个高 44640px 的占位容器      | 4385（真值 48994）            | 外推够不到它，文档后段滚不到 |
+| 每行 1 个占位（1395 个项）     | 46205 → 滚动后收敛 48995      | 正确，但项数 = 行数 |
+| **ListView 底部 padding**      | **48995**                     | **精确，且项数 = 窗口行数** |
+
+原因：`build_controls_on_demand` 下 `maxScrollExtent` 由 Flutter
+`SliverChildBuilderDelegate._extrapolateMaxScrollOffset` 外推得到，
+公式为 `leading + (已布局项总高 / 已布局项数) × 剩余项数`——**Flutter 只认
+"真正布局过"的那些项的高度**。占位容器是列表项，落在布局窗口之外就永远
+不被计入；而 padding 是常量，Flutter 无需布局即知高度、直接计入总高。
+
+代价与收益：窗口行的总高仍走同一条外推（平均高 × 项数），但样本是真实行、
+误差只作用在"窗口那几屏"上（实测 <1% 文档总高，且随窗口增长自行收敛）；
+换来的是**列表项数 = 窗口行数**，即 flet 控件树 diff 的成本与文档总行数解耦
+（实测 1555 行文档：项数从 1555 降到 160，单次重渲染 19.7ms → 3.4ms）。
 
 窗口上界单调外扩（见 `__init__.py` 的 `request_line_window`），
 已构建区域只增不减 → 视口上方永远是真实行，不出现估算误差导致的跳动。
+
+依赖项：
+- models（BlockType）
+- views.line_view（LineView）
+- views.table_view（TableView）
+- views.editor._helpers（_build_diff_gap）
 """
 
 from collections.abc import Callable
@@ -56,21 +68,6 @@ from models.document import BlockType
 from views.editor._helpers import _build_diff_gap
 from views.line_view import LineView
 from views.table_view import TableView
-
-
-def _placeholder_lines(ctx, lo: int, hi: int) -> list:
-    """未构建行 `[lo, hi)` 的等高占位容器（每行一个）。
-
-    高度 = 行偏移前缀和差分，与 `_scroll.py` 的滚动定位共用同一份前缀和，
-    故滚动条长度与「滚动到第 N 行」的落点仍与全量渲染一致（见模块 docstring）。
-    """
-    out: list = []
-    prev = ctx.estimate_line_offset(lo)
-    for j in range(lo, hi):
-        cur = ctx.estimate_line_offset(j + 1)
-        out.append(ft.Container(height=max(0.0, cur - prev)))
-        prev = cur
-    return out
 
 
 def _snap_window(
@@ -91,6 +88,39 @@ def _snap_window(
     return lo, hi
 
 
+def resolve_window(document, window: tuple[int, int] | None) -> tuple[int, int]:
+    """把请求的窗口 (lo, hi) 归一化为最终生效的行区间（含表格边界对齐）。
+
+    `build_line_controls` 与 `line_padding` 必须用**同一个**归一化结果，
+    否则留白高度会与实际构建的行区间错位（表格行被重复或漏算高度）。
+    """
+    n = len(document.lines)
+    if window is None:
+        return 0, n
+    lo = max(0, min(window[0], n))
+    hi = max(lo, min(window[1], n))
+    return _snap_window(document.lines, lo, hi)
+
+
+def line_padding(ctx, window: tuple[int, int] | None) -> tuple[float, float]:
+    """窗口化时未构建区的 (上, 下) 高度留白，供 ListView 的 padding 使用。
+
+    高度取行偏移前缀和（与 `_scroll.py` 的滚动定位同一把尺子），故
+    「窗口行真实总高 + 留白 == 文档总高」恒成立：滚动条长度、跳转落点、
+    列表项位置三者一致，不会因估算误差漂移。
+
+    padding 是**常量**：Flutter 无需布局即知这部分高度，直接计入
+    `maxScrollExtent`（而占位控件是列表项，落在布局窗口外就永远不被计入 →
+    实测 1555 行文档 max 只有 4793，后 90% 滚不到。见模块 docstring）。
+    """
+    lo, hi = resolve_window(ctx.document, window)
+    top = ctx.estimate_line_offset(lo) if lo > 0 else 0.0
+    bottom = 0.0
+    if hi < len(ctx.document.lines):
+        bottom = ctx.estimate_line_offset(len(ctx.document.lines)) - ctx.estimate_line_offset(hi)
+    return max(0.0, top), max(0.0, bottom)
+
+
 def build_line_controls(
     ctx,
     stable_cbs: dict[str, Callable],
@@ -104,9 +134,10 @@ def build_line_controls(
     遍历 document.lines，表格连续行合并为 TableView，其余行构造 LineView。
     diff_gaps 在首行前与每行后插入等高间隙容器，保持左右视觉行对齐。
 
-    window=(lo, hi) 时只构造 [lo, hi) 内的行，两侧未构建的行各给一个等高占位
-    容器（见模块 docstring）。window=None 或覆盖全文档时退化为全量构造，
-    与窗口化前的行为逐字一致；且此时 `len(controls) == len(document.lines)`。
+    window=(lo, hi) 时只构造 [lo, hi) 内的行（表格边界对齐后）；未构建区域的
+    高度由调用方用 `line_padding()` 写进 ListView 的 padding——**不产生任何列表项**，
+    列表项数恒等于窗口行数（见模块 docstring：项数决定 flet 控件树 diff 成本）。
+    window=None 或覆盖全文档时退化为全量构造，与窗口化前的行为逐字一致。
     """
     c = ctx.c
     document = ctx.document
@@ -134,19 +165,11 @@ def build_line_controls(
     diff_marks = ctx.diff_marks
     diff_gaps = ctx.diff_gaps
 
-    n = len(document.lines)
-    win_lo, win_hi = 0, n
-    if window is not None:
-        win_lo = max(0, min(window[0], n))
-        win_hi = max(win_lo, min(window[1], n))
-        win_lo, win_hi = _snap_window(document.lines, win_lo, win_hi)
+    win_lo, win_hi = resolve_window(document, window)
 
     line_controls: list = []
 
-    # 窗口上方占位：已构建区域从 win_lo 起，其上方的行必须以等高容器逐行补齐，
-    # 否则文档总高变短、滚动条比例与落点全错（前缀和与滚动定位同源）。
-    if win_lo > 0:
-        line_controls.extend(_placeholder_lines(ctx, 0, win_lo))
+    # 窗口上方的未构建区：高度由调用方以 ListView padding.top 表示（不留列表项）
 
     # diff 间隙：首行之前的对齐间隙（对侧在开头有额外行时）
     if diff_gaps and win_lo == 0:
@@ -275,10 +298,7 @@ def build_line_controls(
                 for _gh in _gaps:
                     line_controls.append(_build_diff_gap(_gh, c))
 
-    # 窗口下方占位：未构建的尾部**逐行**以等高容器补齐（与滚动定位同源的前缀和）。
-    # 必须逐行而非单个大容器：Flutter 的 maxScrollExtent 由「已布局项平均高 ×
-    # 项数」外推，单个大容器永远布局不到（见模块 docstring）。
-    if win_hi < n:
-        line_controls.extend(_placeholder_lines(ctx, win_hi, n))
-
+    # 窗口下方的未构建区：高度由调用方以 ListView padding.bottom 表示。
+    # 不用占位控件：占位是列表项，落在 Flutter 布局窗口之外就不被计入
+    # maxScrollExtent（见模块 docstring 的实测表），且会让 diff 成本 = O(总行数)。
     return line_controls

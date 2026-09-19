@@ -53,7 +53,7 @@ from views.editor._multi_cursor import build_multi_cursor
 from views.editor._navigation import build_navigation
 from views.editor._outward import build_outward
 from views.editor._raw_mode import build_raw_mode
-from views.editor._render import build_line_controls
+from views.editor._render import build_line_controls, line_padding
 from views.editor._replace import build_replace
 from views.editor._scroll import build_scroll
 from views.raw_editor import RawEditor
@@ -76,14 +76,19 @@ _LARGE_DOC_LINES = 3000
 # 都要遍历它的 dataclass 字段子树）。所以「打开大文件慢」的根因是**控件个数**，
 # 只能靠不构造视口外的行来解决。
 #
-# 做法：只构造 [0, hi) 内的行，未构建的行**逐行**用一个等高占位容器补齐（高度取自
-# 与滚动定位同一份前缀和，故滚动条长度与跳转落点不变）；随着滚动 / 跳转按块外扩 hi。
-# 窗口上界单调不减 → 视口上方永远是真实行，不会因估算误差而跳动。
+# 做法：只构造 [0, hi) 内的行，未构建区域的高度交给 **ListView 的 padding**
+# （一个常量，不产生任何列表项；高度取自与滚动定位同一份行偏移前缀和，故
+# 「窗口行真实总高 + 留白 == 文档总高」恒成立，滚动条长度与跳转落点不变）；
+# 随着滚动 / 跳转按块外扩 hi。窗口上界单调不减 → 视口上方永远是真实行，
+# 不会因估算误差而跳动。
 #
-# 「逐行占位」是硬约束，不能用单个大容器覆盖整段：ListView.build_controls_on_demand
+# 「必须用 padding、不能用占位控件」是硬约束：ListView.build_controls_on_demand
 # 下 Flutter 的 maxScrollExtent 由「已布局项平均高 × 项数」外推（只认真正布局过的
-# 项），单个大容器永远落在布局窗口之外 → maxScrollExtent 退化成「窗口行高 × 项数」，
-# 实测 1555 行文档 max 只有 4793（真值 ≈50000），文档后 90% 滚不到。
+# 项），占位控件是列表项、落在布局窗口之外就永远不被计入 —— 实测 1555 行文档
+# max 只有 4793（真值 ≈50000），文档后 90% 滚不到；而 padding 是常量，Flutter
+# 无需布局即知高度、直接计入总高。padding 还让项数 = 窗口行数（而非总行数），
+# 即编辑期 flet 控件树 diff 的成本与文档总行数解耦（实测 1555 行文档：项数
+# 1555 → 160，单次重渲染 39.6ms → 4.5ms）。
 # 详见 views/editor/_render.py 模块 docstring 与 tests/test_large_doc_open.py。
 _WINDOW_ACTIVATE = 200   # 行数超过此值才启用窗口化（小文档全量构造，行为与旧版一致）
 _WINDOW_INITIAL = 160    # 首屏构造行数（约 4~6 屏，够填满任意常见视口高度）
@@ -712,11 +717,12 @@ def MarkdownEditor(
     # (单个原生 TextField)渲染。effective_raw_mode 为 True 时 line_controls
     # 不被使用(渲染走 RawEditor 分支),此处置空跳过构造开销。
     #
-    # 窗口化:非大文件且行数超过 _WINDOW_ACTIVATE 时只构造前 _WINDOW_INITIAL 行
-    # (尾部未构建行各给一个等高占位容器,项数与行数恒等);滚动 / 跳转时由
-    # request_line_window 按块外扩。
+    # 窗口化:非大文件且行数超过 _WINDOW_ACTIVATE 时只构造前 _WINDOW_INITIAL 行;
+    # 未构建区的高度交给 ListView 的 padding（一个常量,不产生列表项）,
+    # 滚动 / 跳转时由 request_line_window 按块外扩。
     # 对比标签(diff_marks/diff_gaps)不窗口化:左右两侧需逐行对齐间隙容器,
-    # 而间隙高度不在 estimate_line_offset 的前缀和里,窗口外的占位会算错总高。
+    # 而间隙高度不在 estimate_line_offset 的前缀和里,窗口外的留白会算错总高。
+    _pad_top = _pad_bottom = 0.0
     if not effective_raw_mode:
         _win = None
         if (
@@ -731,6 +737,9 @@ def MarkdownEditor(
             ctx, _stable_cbs, _table_stable, toc_entries, _highlight_map,
             window=_win,
         )
+        # 窗口 + 留白 == 文档总高（同一份行偏移前缀和）。padding 是常量，
+        # Flutter 无需布局即计入 maxScrollExtent → 滚动条长度与末页可达性正确。
+        _pad_top, _pad_bottom = line_padding(ctx, _win)
     else:
         line_controls = []
 
@@ -782,8 +791,20 @@ def MarkdownEditor(
                             spacing=0,
                             # 水平内边距移入 ListView 自身：滚动条贴紧列最右缘，
                             # 不再浮在内容区内（VSCode/Typora 直觉）；
-                            # 垂直留白仍由外层 Container 提供（顶部不随内容滚动）
-                            padding=ft.Padding.symmetric(horizontal=content_padding),
+                            # 垂直留白仍由外层 Container 提供（顶部不随内容滚动）。
+                            #
+                            # _pad_top/_pad_bottom：窗口化时未构建区的高度留白
+                            # （窗口 + 留白 == 文档总高，见 _render.line_padding）。
+                            # 必须走 padding 而不是等高的占位控件：占位是列表项，
+                            # 落在 Flutter 布局窗口之外就不计入 maxScrollExtent，
+                            # 实测会让 1555 行文档的滚动范围只剩 4793px（真值 ≈5 万），
+                            # 文档后段滚不到；padding 是常量，直接计入总高。
+                            padding=ft.Padding.only(
+                                left=content_padding,
+                                right=content_padding,
+                                top=_pad_top,
+                                bottom=_pad_bottom,
+                            ),
                             # ListView 虚拟化(build_controls_on_demand=True 默认):
                             # 仅构建视口内可见行,数千行文档不卡顿。maxScrollExtent
                             # 由首项高度估算,_scroll.py 的两步滚动逻辑已为此设计

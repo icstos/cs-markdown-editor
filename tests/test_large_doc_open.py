@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config.settings as cs  # noqa: E402
 from models.document import (  # noqa: E402
+    BlockType,
     Document,
     Line,
     Segment,
@@ -52,7 +53,7 @@ from views.editor import (  # noqa: E402
     _WINDOW_MARGIN,
     MarkdownEditor,
 )
-from views.editor._render import _snap_window  # noqa: E402
+from views.editor._render import _snap_window, resolve_window  # noqa: E402
 
 # 设置文件隔离（同 tests/test_boot_smoke.py：受限环境下 pytest tmp_path 不可用）
 _SANDBOX = Path(__file__).resolve().parent / ".perf-sandbox"
@@ -212,82 +213,172 @@ def _render(md: str, **props):
     return harness, doc
 
 
+def _render_capturing_prefix(md: str, monkeypatch, **props):
+    """渲染并截获编辑器自己那份行偏移前缀和（用于精确校验留白高度）。
+
+    前缀和由 `_scroll._offset_prefix()` 按需构建，是「滚动定位 / 窗口反查 /
+    留白高度」共用的唯一尺子。这里替换 `_scroll` 模块里的构建函数来拿它的
+    返回值——测试断言的是**与被测代码同一把尺子**算出来的结果，不是复算一遍。
+    """
+    import views.editor._scroll as scroll_mod
+
+    holder: dict = {}
+    orig = scroll_mod._build_offset_prefix
+
+    def spy(heights):
+        prefix = orig(heights)
+        holder["prefix"] = prefix
+        return prefix
+
+    monkeypatch.setattr(scroll_mod, "_build_offset_prefix", spy)
+    harness, doc = _render(md, **props)
+    return harness, doc, holder
+
+
 def _list_view(harness) -> ft.ListView:
     return next(n for n in walk(harness.tree) if isinstance(n, ft.ListView))
 
 
 def _built_line_count(lv: ft.ListView) -> int:
-    """已构建的行控件数（LineView 的 key 形如 line-N）。"""
-    return sum(1 for c in lv.controls if str(getattr(c, "key", "")).startswith("line-"))
+    """已构建的 行 数（LineView 的 key 形如 line-N，表格块合并为 1 项）。"""
+    lines = sum(
+        1 for c in lv.controls if str(getattr(c, "key", "")).startswith("line-")
+    )
+    tables = sum(
+        1 for c in lv.controls if str(getattr(c, "key", "")).startswith("table-")
+    )
+    return lines + tables
 
 
-def _placeholders(lv: ft.ListView) -> list:
-    """未构建行的等高占位容器（无 key）；窗口覆盖全文档时为空列表。
+def _foreign_controls(lv: ft.ListView) -> list:
+    """既不是行视图也不是表格视图的列表项 —— 应为空。
 
-    占位必须**逐行一个**，不能是单个大容器（见模块 docstring 第 2 节）。
+    窗口化**不允许**用占位控件填充未构建区（见模块 docstring 第 2 节）：
+    占位是列表项，落在 Flutter 布局窗口之外就不计入 maxScrollExtent。
     """
-    return [c for c in lv.controls if getattr(c, "key", None) is None]
+    return [
+        c
+        for c in lv.controls
+        if not str(getattr(c, "key", "")).startswith(("line-", "table-"))
+    ]
 
 
-def test_item_count_equals_line_count_when_windowed():
-    """窗口化后列表项数必须恒等于行数（Flutter 滚动范围外推的前提）。
+def test_windowed_doc_has_no_filler_items():
+    """窗口外的行不得以"占位控件"出现在列表里。
 
-    失效模式：用一个容器覆盖整段尾部 → 项数远小于行数 → Flutter 的
-    `maxScrollExtent` 只能按「已布局项（窗口内的真实行）平均高 × 项数」外推，
-    那个大占位永远落在布局窗口之外，于是 max 退化成窗口那几屏的高度，
-    文档后段滚不到（真机实测 1555 行文档 max 只有 4793，真值 ≈50000）。
+    失效模式：用占位控件（每行一个或整段一个）填高度 → Flutter 的
+    `maxScrollExtent` 只认"真正布局过"的项（外推公式 `已布局项总高 / 已布局项数
+    × 剩余项数`），占位落在布局窗口外就永远不被计入 → 滚动范围退化成窗口那几屏。
+    真机实测（160 行窗口 + 区外 44640px，总高 49440px）：
+      · 1 个 44640px 占位项   → max = 4385   （后 90% 滚不到）
+      · 每行 1 个占位（1395 项）→ max = 46205 → 滚动后收敛 48995
+      · ListView 底部 padding  → max = 48995 （精确）
+    故未构建区只能走 padding。
     """
     n_lines = 1200
     harness, doc = _render(_md_lines(n_lines))
     try:
         lv = _list_view(harness)
-        assert len(lv.controls) == len(doc.lines)
-        # 未构建的行一行一个占位，占位数 = 总行数 - 已构建行数
-        assert len(_placeholders(lv)) == n_lines - _built_line_count(lv)
+        assert len(doc.lines) == n_lines
+        assert _foreign_controls(lv) == []
+        # 列表项数 == 窗口行数（与总行数解耦）
+        assert len(lv.controls) == _built_line_count(lv)
+        assert len(lv.controls) < n_lines // 5
     finally:
         harness.dispose()
 
 
-def test_placeholder_heights_follow_line_offset_prefix():
-    """占位高度 = 行偏移前缀和差分：Flutter 侧第 j 项的布局位置 == 估算行偏移。
+def test_padding_equals_unbuilt_line_offset_span(monkeypatch):
+    """未构建区留白 == 该段的行偏移跨度（与编辑器自身的前缀和逐位相等）。
 
-    这是「列表网格坐标」与「滚动定位尺子」同源的保证（见 _render 模块 docstring）：
-    若占位高度改用「剩余总高 / 剩余行数」之类的常数，逐行位置就会与
-    estimate_line_offset 错开，滚动落点与大纲跳转都会偏。
+    这是「窗口行真实总高 + 留白 == 文档总高」的直接护栏：留白算错（漏算表格
+    扩展、用了未对齐的窗口上界、写死 0）都会让滚动条长度与末页可达性出错。
     """
     n_lines = 1200
-    harness, doc = _render(_md_lines(n_lines))
+    harness, doc, holder = _render_capturing_prefix(_md_lines(n_lines), monkeypatch)
     try:
         lv = _list_view(harness)
-        ph = _placeholders(lv)
-        assert ph
-        # 逐行高度应落在单行高的合理区间（不是 0、不是把整段合并成一个数）
-        assert all(20.0 <= c.height <= 60.0 for c in ph), [c.height for c in ph[:5]]
-        # 行高有差异（列表行 vs 代码块/标题），说明确实按行分别推算
-        assert len({round(c.height, 2) for c in ph}) > 1
-        # 占位高度合计 == 未构建段的行偏移跨度
+        prefix = holder["prefix"]
+        assert len(prefix) == len(doc.lines) + 1
         built = _built_line_count(lv)
-        assert len(ph) == n_lines - built
+        assert built == _WINDOW_INITIAL
+        assert lv.padding.bottom == pytest.approx(prefix[len(doc.lines)] - prefix[built])
+        assert lv.padding.bottom > 0
+        # 窗口从第 0 行起 → 上方无留白；水平内边距保持
+        assert lv.padding.top == 0
+        assert lv.padding.left == lv.padding.right == 36
+    finally:
+        harness.dispose()
+
+
+def test_padding_shrinks_as_window_grows(monkeypatch):
+    """滚动扩窗时留白按「新物化行的偏移跨度」精确减少（总高守恒）。"""
+    n_lines = 1200
+    harness, doc, holder = _render_capturing_prefix(_md_lines(n_lines), monkeypatch)
+    try:
+        lv = _list_view(harness)
+        prefix = holder["prefix"]
+        n = len(doc.lines)
+        before_pad = lv.padding.bottom
+        before_built = _built_line_count(lv)
+
+        harness.interact(lv.on_scroll, _ScrollEvent(pixels=25000.0))
+        lv = _list_view(harness)
+        after_built = _built_line_count(lv)
+        assert after_built > before_built
+        # 总高守恒：窗口真实总高 + 留白 == 文档总高（前缀和两段相加）
+        assert lv.padding.bottom == pytest.approx(prefix[n] - prefix[after_built])
+        assert lv.padding.bottom < before_pad
+    finally:
+        harness.dispose()
+
+
+def test_padding_accounts_for_table_snapped_window(monkeypatch):
+    """表格块跨窗口边界时，留白必须按**对齐后**的窗口上界计算（否则总高偏差）。
+
+    数据说明：155 行列表 + 空行 + 5 行表格 → 表格块占据行 156..160，
+    恰好被 _WINDOW_INITIAL=160 的窗口切成两半（160 是表格末行）。
+    """
+    md = "\n".join(
+        [f"- 前 {i}" for i in range(155)]
+        + [""]
+        + ["| a | b |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |", "| 5 | 6 |"]
+        + [""]
+        + [f"- 后 {i}" for i in range(300)]
+    )
+    harness, doc, holder = _render_capturing_prefix(md, monkeypatch)
+    try:
+        lv = _list_view(harness)
+        prefix = holder["prefix"]
+        n = len(doc.lines)
+        tbl = [i for i, ln in enumerate(doc.lines) if ln.block_type == BlockType.TABLE]
+        # 前置条件：窗口上界正落在表格块内部（行 160 是表格末行）→ 需对齐扩展
+        assert min(tbl) < _WINDOW_INITIAL <= max(tbl), tbl
+        win = resolve_window(doc, (0, _WINDOW_INITIAL))
+        assert win[1] > _WINDOW_INITIAL  # 表格被整体纳入 → 有效上界 > 请求上界
+        assert lv.padding.bottom == pytest.approx(prefix[n] - prefix[win[1]])
     finally:
         harness.dispose()
 
 
 def test_small_doc_not_windowed():
-    """行数不超过激活阈值时不窗口化：控件数与优化前逐字一致。"""
+    """行数不超过激活阈值时不窗口化：控件数与留白都与优化前逐字一致。"""
     harness, doc = _render(_md_lines(_WINDOW_ACTIVATE - 100))
     try:
         lv = _list_view(harness)
         assert len(lv.controls) == len(doc.lines)
-        assert _placeholders(lv) == []
+        assert lv.padding.top == 0 and lv.padding.bottom == 0
     finally:
         harness.dispose()
 
 
 def test_large_doc_first_paint_builds_only_window():
-    """大文档首屏只构造窗口内的行，其余行各一个轻量占位。
+    """大文档首屏只构造窗口内的行；未构建区以 padding（0 个列表项）表示。
 
     这是「打开大文件快」的本质：优化前首屏要构造全部 N 行控件（每行约 5 个
-    ft 控件、每个控件都要过一遍 flet 的 dataclass 遍历）。
+    ft 控件、每个控件都要过一遍 flet 的 dataclass 遍历）；而列表项数与
+    **每次重渲染的 flet diff 成本**成正比，故"项数 == 窗口行数"同时决定了
+    编辑响应速度（实测 1555 行文档单次重渲染 19.7ms → 3.4ms）。
     """
     n_lines = 1200
     assert n_lines > _WINDOW_ACTIVATE
@@ -298,8 +389,10 @@ def test_large_doc_first_paint_builds_only_window():
         assert _built_line_count(lv) == _WINDOW_INITIAL
         # 首屏工作量与总行数解耦（放宽到 1/5，留出实现微调空间）
         assert _built_line_count(lv) < n_lines // 5
-        # 但列表项数仍是完整的行数（滚动范围外推的前提）
-        assert len(lv.controls) == n_lines
+        # 项数 == 窗口行数：没有为未构建行留下任何列表项
+        assert len(lv.controls) == _built_line_count(lv)
+        # 未构建区高度 > 0（否则文档总高变短、末页滚不到）
+        assert lv.padding.bottom > 0
     finally:
         harness.dispose()
 
@@ -307,7 +400,7 @@ def test_large_doc_first_paint_builds_only_window():
 def test_scroll_extends_window_and_never_shrinks():
     """滚动到窗口外 → 按块外扩；回滚到文档开头 → 窗口不回缩。
 
-    回缩会让视口上方重新变成估算高度的占位容器，实测高度与估算不一致 →
+    回缩会让视口上方重新变成估算高度的留白，实测高度与估算不一致 →
     滚动内容跳动。故上界单调不减是**正确性约束**，不只是性能取舍。
     """
     harness, _ = _render(_md_lines(1200))
@@ -330,18 +423,18 @@ def test_scroll_extends_window_and_never_shrinks():
         harness.dispose()
 
 
-def test_scroll_to_end_materialises_all_and_drops_placeholders():
-    """滚到文档末尾 → 窗口覆盖全文档，占位容器全部消失。"""
+def test_scroll_to_end_materialises_all_and_clears_padding():
+    """滚到文档末尾 → 窗口覆盖全文档，留白归零、项数 == 行数。"""
     n_lines = 800
     harness, doc = _render(_md_lines(n_lines))
     try:
         lv = _list_view(harness)
-        assert _placeholders(lv)
+        assert lv.padding.bottom > 0
         harness.interact(lv.on_scroll, _ScrollEvent(pixels=1e7))
         lv = _list_view(harness)
         assert _built_line_count(lv) == len(doc.lines)
         assert len(lv.controls) == len(doc.lines)
-        assert _placeholders(lv) == []
+        assert lv.padding.bottom == 0
     finally:
         harness.dispose()
 
@@ -355,7 +448,7 @@ def test_diff_mode_is_not_windowed():
     try:
         lv = _list_view(harness)
         assert len(lv.controls) == len(doc.lines)
-        assert _placeholders(lv) == []
+        assert lv.padding.top == 0 and lv.padding.bottom == 0
     finally:
         harness.dispose()
 

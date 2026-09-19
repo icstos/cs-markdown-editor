@@ -4,6 +4,80 @@
 
 ## [未发布]
 
+### 2026-09-19 性能：大文件打开提速 + 编辑重渲染 39.6ms → 4.5ms（功能不增不减）
+
+用户提出两条相邻诉求——「加快大文件打开速度」与「保持功能不变，提高整体操作响应速度」。
+两条诉求的根因同一：**Python 侧控件对象个数**。flet 的
+`ListView.build_controls_on_demand` 只让 **Flutter 客户端**懒建 widget，Python 侧
+`controls` 列表里的控件对象仍是全量构造的。实测 3 千行文档构造控件树约 2.4s，其中约
+95% 花在 flet 内部的 `_configure_dataclass`（每个新增控件都要遍历它的 dataclass
+字段子树）。所以只能靠「不构造视口外的行」来解决，分三步落地。
+
+**优化 1 — 解析走快速构造器（打开大文件）**
+- `models/document.py` 新增 `new_segment` / `new_line` / `new_document`：用
+  `object.__new__` + `object.__setattr__` 直填字段，跳过 dataclass 构造与
+  observable 逐字段通知；`segments` / `lines` 仍包装为 `ObservableList`，
+  与常规构造的字段类型逐一对齐（编辑期赋值/替换语义完全不变）
+- `parser/inline.py`、`parser/block.py` 的解析路径改走这三个构造器
+
+**优化 2 — 行视图窗口化（打开大文件）**
+- 只构造 `[0, hi)` 内的行，`hi` 随滚动/跳转按块外扩（`_WINDOW_INITIAL=160` /
+  `_WINDOW_MARGIN=40` / `_WINDOW_CHUNK=120`，行数 ≤ `_WINDOW_ACTIVATE=200` 时不启用，
+  小文档行为与旧版逐字一致）
+- 表格是「连续 TABLE 行合并为单个 TableView」渲染的，窗口边界必须对齐到表格块边界
+  （`_render._snap_window`），否则会渲染出只有后半截的表格
+- 窗口上界单调不减（`window_hi_ref` 即时镜像防止同一帧重复扩窗）→ 视口上方永远是
+  真实行，不出现估算误差导致的跳动
+- 对比标签（`diff_marks` / `diff_gaps`）不窗口化：间隙高度不在行偏移前缀和里，
+  窗口外的留白会算错总高
+
+**优化 3 — 未构建区用 ListView padding，不用占位控件（编辑响应速度）**
+这是本轮的关键修正。窗口化的第一版用「逐行等高占位容器」补齐未构建区，实测在真机上
+**滚动范围严重退化**：
+- 占位控件是**列表项**，而 `build_controls_on_demand` 下 Flutter 的 `maxScrollExtent`
+  由 `SliverChildBuilderDelegate._extrapolateMaxScrollOffset` 外推
+  （`已布局项总高 / 已布局项数 × 剩余项数`）——**只认"真正布局过"的那些项的高度**。
+  占位容器落在布局窗口之外就永远不被计入 → 实测 1555 行文档 `max` 只有 4793
+  （真值 ≈50000），**文档后 90% 滚不到**
+- 单个大占位容器更差（永远在布局窗口外）；逐行占位虽能收敛到正确值，但项数 = 行数，
+  等于没省下 diff 成本
+- 改为 `ListView.padding`（`_render.line_padding()`）：padding 是**常量**，
+  Flutter 无需布局即知高度、直接计入总高 → 项数 = 窗口行数
+
+真机实测（真实 App，1750 行文档，逐段驱动滚动）：
+
+| 指标 | 实测 |
+|---|---|
+| 首屏构建项数 | 138（窗口 162 行，表格合并为 1 项）—— 无任何填充项 |
+| 首屏滚动范围 | `max=60482`（文档前缀总高 60302）；旧占位方案同规模只有 4793 |
+| 滚到底 | `offset` 追平 `max=65302`，`padding` 归零，窗口覆盖 `(0,1750)` |
+| 窗口外扩 | 162 → 408 → 758 → 1486 → 1750，全程单调不回缩 |
+| 总高守恒 | `pad.bottom` 54744 → 46238 → 34178 → 9094 → 0，与窗口同步收缩 |
+
+单次重渲染基准（1555 行文档）：
+
+| 指标 | 全量构造 | 占位方案（v1） | padding 方案 |
+|---|---|---|---|
+| 列表项数 | 1555 | 1555 | **160** |
+| 单次重渲染 | 39.58ms | 19.7ms | **4.46ms** |
+| ├ build_line_controls | 1.85ms | — | 1.45ms |
+| └ flet 控件树 diff | 17.46ms | 18.57ms | 2.47ms |
+
+代价：窗口行的总高仍走同一条外推（平均高 × 项数），误差只作用在「窗口那几屏」上
+（实测 <1% 文档总高，且随窗口增长自行收敛）；换来的是控件树 diff 成本与文档总行数解耦。
+
+**测试**
+- `tests/test_large_doc_open.py` 重写：删除占位断言，改为 padding 断言 ——
+  `test_windowed_doc_has_no_filler_items`（列表项必须全是真实行/表视图）、
+  `test_padding_equals_unbuilt_line_offset_span`（总高守恒，与被测代码共用
+  `_build_offset_prefix` 同一把尺子）、`test_padding_shrinks_as_window_grows`、
+  `test_padding_accounts_for_table_snapped_window`（表格边界对齐）、
+  `test_small_doc_not_windowed`、`test_large_doc_first_paint_builds_only_window`、
+  `test_scroll_extends_window_and_never_shrinks`、
+  `test_scroll_to_end_materialises_all_and_clears_padding`、
+  `test_diff_mode_is_not_windowed`
+- 全量 `1407 passed`
+
 ### 2026-09-18 修复 Alt+Z 自动换行失效；清理幽灵快捷键；全局动作认两层自定义键位
 
 **问题**：`Alt+Z` 切自动换行完全无反应（VSCode 约定、README 核心特性段与状态栏

@@ -100,6 +100,16 @@ def _wrap_context_menu(
     )
     items.append(ft.PopupMenuItem())  # 分隔
 
+    # Git：单文件专属修改历史（对齐 VS Code 资源管理器的「File History」，仅文件）
+    if not is_dir:
+        items.append(
+            ft.PopupMenuItem(
+                content="查看文件历史", icon=ft.Icons.HISTORY,
+                on_click=lambda e, p=path: on_action("git_history", p),
+            )
+        )
+        items.append(ft.PopupMenuItem())  # 分隔
+
     # 文件操作
     items.append(
         ft.PopupMenuItem(

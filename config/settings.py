@@ -81,6 +81,13 @@ DEFAULT_SETTINGS: Settings = {
     # 日志级别：DEBUG / INFO / WARNING / ERROR。改动后下次启动生效，
     # 也可用环境变量 CS_MD_LOG_LEVEL 覆盖（启动最早期即生效）。
     "log_level": "INFO",
+    # ============ Git 版本管理 ============
+    # 差异视图默认模式：unified（统一）| split（分栏）。切换后回写此项。
+    "git_diff_mode": "unified",
+    # 提交成功后自动推送（对标 VSCode 的 Commit & Push 开关）
+    "git_commit_push": False,
+    # 历史记录每页条数（服务层会裁剪到 [1, 500]，见 services/git/repository.py）
+    "git_history_page_size": 50,
     "shortcuts": {k: dict(v) for k, v in DEFAULT_SHORTCUTS.items()},
 }
 

@@ -163,6 +163,15 @@ def TabBar(
                     )
                 )
             context_items.append(ft.PopupMenuItem())  # 分隔
+            # Git：单文件专属修改历史（VS Code「Open Timeline / File History」等价入口）
+            context_items.append(
+                ft.PopupMenuItem(
+                    content="查看文件历史",
+                    icon=ft.Icons.HISTORY,
+                    on_click=lambda e, idx=i: on_context_action("git_history", idx),
+                )
+            )
+            context_items.append(ft.PopupMenuItem())  # 分隔
         # 新建文件/文件夹（有 file_path 时提供目录上下文）
         if path:
             context_items.append(

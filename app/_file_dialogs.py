@@ -60,6 +60,14 @@ def build_file_dialogs(ctx: FileDialogsEnv):
     on_tab_context_action / on_sidebar_context_action
     """
 
+    async def _forward_git_action(action: str, target):
+        """把 Git 破坏性操作的确认结果转发给 Git 控制器。
+
+        ``page.run_task`` 只接受协程函数，而 ``git_confirm_dialog_action`` 是同步
+        函数（内部自行调度异步任务），故需要这一层 async 包装。
+        """
+        ctx.git_confirm_dialog_action(action, target)
+
     def show_snack(msg: str):
         """SnackBar 提示（委托 services.ui_feedback.show_snack，page 从 page_ref 读取）。
 
@@ -213,6 +221,15 @@ def build_file_dialogs(ctx: FileDialogsEnv):
             except Exception as e:
                 show_snack(f"重载失败：{e}")
             # 「保留本地版本」走 on_file_dialog_cancel（见下方）
+        elif action.startswith("git_"):
+            # Git 破坏性操作（丢弃更改 / 删除分支）的确认回投：本控制器只负责
+            # 关闭对话框并转发，Git 语义留在 Git 控制器，避免文件对话框反向依赖
+            # Git（契约上的单向依赖）。
+            # 必须包一层 async：page.run_task 要求 handler 是协程**函数**，
+            # 直接传同步回调会抛 TypeError（只在日志里可见，表现为点击无反应）。
+            page = ctx.page_ref.current
+            if page is not None:
+                page.run_task(_forward_git_action, action, target)
 
     def on_file_dialog_cancel():
         """文件操作对话框取消回调：根据 action 分发。
@@ -326,6 +343,10 @@ def build_file_dialogs(ctx: FileDialogsEnv):
         elif action == "compare_with_selected":
             if path:
                 ctx.compare_with_selected(path)
+        elif action == "git_history":
+            # 单文件专属修改历史（标签右键菜单）：仅文件路径有效，目录不参与
+            if path and not os.path.isdir(path):
+                ctx.git_open_file_history(path)
         elif action == "new_file":
             if path:
                 dir_path = os.path.dirname(path)
@@ -499,6 +520,10 @@ def build_file_dialogs(ctx: FileDialogsEnv):
                 "文件夹名", "输入文件夹名", "",
                 f"在 {dir_path} 创建", "创建", dir_path,
             )
+        elif action == "git_history":
+            # 单文件专属修改历史（文件树右键菜单）：目录不参与文件历史
+            if not is_dir:
+                ctx.git_open_file_history(path)
         elif action == "copy_path":
             page = ctx.page_ref.current
             if page is not None:

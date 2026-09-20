@@ -4,6 +4,80 @@
 
 ## [未发布]
 
+### 2026-09-20 Git 版本管理：完整对标 VS Code 内置源代码管理
+
+诉求原文：「为现有文档编辑器完整集成 Git 版本管理模块，严格对标 VS Code 内置 Git
+功能……更改文件管理 / 内容更新与同步 / Git 历史记录 / 配套体验 / 技术约束」。
+
+**分层**：命令层 `services/git/`（新增 6 个模块）→ 装配层 `app/_git_controller.py`（41 个
+装配槽）→ 视图层 `views/git_panel.py` / `git_diff.py` / `git_branch_menu.py` / `git_widgets.py`。
+原有编辑器链路（标签模型 / 脏状态 / 关闭确认 / 自动保存 / 光标）**一行未改**。
+
+- **命令层独立封装**（`services/git/`）：
+  - `runner.py`：`find_git_executable()` + `GitRunner`（非交互 env `GIT_TERMINAL_PROMPT=0`、
+    `DEFAULT_TIMEOUT=20s`、网络操作 `NETWORK_TIMEOUT=180s`、stdout/stderr 分离、`ok` 判定）。
+  - `errors.py`：`GitError` 基类 + 9 个子类（未装 Git / 非仓库 / 权限 / 网络 / 认证 / 冲突 /
+    仓库损坏 / 超时 / 命令失败），`classify_error` 按**固定优先级**（认证 → 网络 → 损坏 →
+    非仓库 → 权限 → 冲突）匹配，另给 `friendly_message` / `friendly_hint`（用户可读 + 修复建议）。
+  - `porcelain.py`：`git status --porcelain=v2 -z`、`git log`（内嵌 `\x1f`/`\x1e` 分隔符，
+    一次拿全短哈希 / 作者 / 时间 / 摘要 / 父提交 / refs）、分支列表解析。
+  - `difftext.py`：统一 diff 解析（hunk 归属、行号）、分栏行装配 `build_split_rows`、
+    新增文件合成 diff、二进制探测、冲突标记扫描；`MAX_DIFF_LINES=12000` 上限保护。
+  - `repository.py`：`GitRepository`（status / branches / log 分页 / 提交详情 / 工作区与
+    历史 diff / stage / unstage / discard_* / delete_untracked / unstage_and_delete / commit /
+    undo_last_commit（`reset --mixed`）/ fetch / pull / push（含 `--force-with-lease`）/
+    switch / create / delete / merge / abort_merge / abort_rebase / conflict_markers / init）
+    + 按仓库根缓存的 `GitService`。
+- **侧边栏 Git 面板**（`views/git_panel.py`）：活动栏图标（带变更数角标）打开；「暂存的更改 /
+  更改」两个可折叠分区，原生状态字母 + 颜色（`styles.git_status_color()`）；分区标题栏
+  「全部暂存 / 全部取消暂存 / 丢弃所有工作区更改」，单文件行「暂存 / 取消暂存 / 丢弃」；
+  文件名过滤；顶部多行提交框 + 两个提交按钮 + 「提交后自动推送」开关 + Fetch/Pull/Push +
+  领先/落后计数；非仓库时给「初始化仓库」，未装 Git 时给「重新检测」。
+- **内嵌差异视图**（`views/git_diff.py`）：覆盖式面板（挂在根 `Stack`，不占标签、不动文档状态），
+  行级增删高亮 + 行号栏 + 统一/分栏切换（结果持久化到 `settings.git_diff_mode`）；点击行号
+  跳到编辑器对应行。**三层性能保护**：解析层 `MAX_DIFF_LINES`、渲染预算（首屏 2000 行、
+  滚动按需 +3000）、`ListView(build_controls_on_demand=True, item_extent=20)` 虚拟化。
+- **分支面板**（`views/git_branch_menu.py`）：本地/远端分组、当前分支置顶、过滤、新建输入框、
+  切换 / 合并 / 删除（删除走二次确认）。
+- **历史记录**：倒序提交列表（短哈希 / 作者 / 相对时间 / 摘要）→ 点击展开变更文件 → 单文件
+  历史 diff；按作者 / 关键词 / 文件名筛选；分页 `DEFAULT_PAGE_SIZE=50`（`git_history_page_size`
+  可配，上限 500）。标签右键与文件树右键新增「查看文件历史」。
+- **状态栏 / 活动栏**：状态栏新增 Git 段（分支 chip、`↑/↓` 领先落后、待提交计数、合并/变基
+  警示），点击分支开分支列表、点击计数开面板；活动栏「源代码管理」图标带变更数角标（>99 显示
+  `99+`）；全局菜单新增「Git」组。
+- **提交框快捷键的焦点域解法**：`Ctrl+Enter` / `Ctrl+Shift+Enter` 在编辑器里是「切换原文模式」，
+  在提交框里必须是「提交」。做法是新增**具名焦点域** `views/native_scope.DOMAIN_GIT_COMMIT`
+  + `KeyDispatcher._handle_git_commit_box`（在外来输入域门控**之前**消费），并**刻意不登记**
+  全局默认键位——登记就会被并进 `_global_targets()`，在编辑器里抢走 `Ctrl+Enter`。
+- **真实缺陷修复（写集成测试时发现，非本次新引入）**：
+  1. `丢弃所有工作区更改` 不删未跟踪文件：原实现调 `unstage_and_delete(["."])`，而
+     `abspath(".")` 是目录、`os.path.isfile` 判定为假 → 一个文件都没删。改为按状态条目
+     **三分支**（已跟踪 → `discard_working`；未跟踪 → `delete_untracked`；已暂存的新增 →
+     `unstage_and_delete`），并明确「丢弃所有」只覆盖它所在的分区（不动已暂存内容）。
+  2. 「单文件历史」把仓库外的文件当成仓库内文件：`os.path.relpath` 对仓库外路径**不会抛错**，
+     原来的 `try/except` 判边界全部漏判 → 改用 `GitRepository.contains()`。
+  3. 打开 Git 面板不刷新（活动栏入口只切面板）：保存文件不递增 `fs_version`，面板可能停在
+     上一次快照。`open_panel()` 与活动栏 `git` 分支现在都触发一次刷新（控制器内 0.12s 去抖）。
+- **自动刷新**：App 新增 `use_effect`，依赖 `workspace_folder 设置 + fs_version + 各标签脏标记
+  元组`——打开文件夹 / 换工作区 / 文件增删改 / 文档保存后自动重探仓库并刷新；脏标记只翻转一次，
+  不会每次击键触发 git 子进程。
+- **测试**：`tests/test_git_controller.py`（23 项，真实临时仓库 + 「手动泵」假页面把异步任务
+  变成确定性执行：探测 / 降级 / 暂存提交撤销闭环 / 丢弃三分支 / 差异视图与行号跳转 / Escape
+  逐层关闭 / 面板入口 / 历史筛选 / 分支增删切 / 无远端推送的失败上报）；`tests/test_git_render.py`
+  （7 项，真实 App 渲染树：面板与 props 齐备 / 非 Git 面板不渲染 / 覆盖层已挂载且默认隐藏 /
+  状态栏回调已接线 / 活动栏按钮开面板与收起面板 / 全局菜单 Git 组）；`tests/test_key_bindings.py`
+  追加 10 项（面板快捷键在编辑焦点与外来输入域都生效、提交框焦点域内 `Ctrl+Enter` /
+  `Ctrl+Shift+Enter` 分别提交暂存区与全部、匿名外来域与编辑器里 `Ctrl+Enter` 均不触发提交、
+  提交快捷键可自定义、Escape 的覆盖层优先与返回 False 时继续走编辑器路径、修饰键 Escape 不被吃）。
+  连同 `services/git/` 的 97 项服务层测试（`test_git_porcelain` 18 / `test_git_difftext` 13 /
+  `test_git_errors` 24 / `test_git_repository` 42），本模块共 **137 项**。
+  另修掉装配守护测试的两处假警报：`test_app_wiring.py` 原来把**嵌套辅助函数**（如
+  `_filters()`）返回的字典也当成控制器装配槽，导致 `author` / `keyword` / `path` 被误判为
+  「AppContext 缺失字段」；改为只收集控制器**顶层** return 的字典键。
+- 全量基线：**1629 collected**（此前 1492，净增 137 = 新增测试数）。受限会话下
+  `test_first_run_sample.py` 两项与若干 `tmp_path` 类夹具报错属环境性（宿主删除守卫 / 临时目录），
+  单独重跑全部通过。
+
 ### 2026-09-19 设置面板：固定关闭按钮 / 分组卡片排版 / 快捷键改动标记 / 新增「关于」页
 
 诉求：「右上角关闭按钮不随滚动条滚动；整体更和谐、美观、精致；快捷键分类相对默认有修改的要标记；

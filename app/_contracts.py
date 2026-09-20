@@ -92,6 +92,8 @@ class FileDialogsEnv(Protocol):
     do_close_many: Callable[..., Any]
     file_dialog: dict | None
     force_save_doc: Any
+    git_confirm_dialog_action: Callable[..., Any]
+    git_open_file_history: Callable[..., Any]
     open_external: Callable[..., Any]
     open_file_by_path: Callable[..., Any]
     page_ref: ft.Ref
@@ -213,6 +215,70 @@ class BackupEnv(Protocol):
     tabs_ref: ft.Ref
 
 
+class GitEnv(Protocol):
+    """Git 版本管理（build_git_controller 实际读取的 52 个字段）。
+
+    跨控制器依赖只有三处：``update_setting``（面板入口 / 差异模式与自动推送的
+    持久化）、``open_file_and_jump``（差异行号 → 编辑器定位）、``set_file_dialog``
+    （破坏性操作的二次确认）。仓储层（``services.git``）全部同步，控制器负责
+    用 ``asyncio.to_thread`` 线程化。
+    """
+
+    active_index_ref: ft.Ref
+    bump_fs_version: Callable[..., Any]
+    git_active_path: str | None
+    git_available: bool
+    git_branch_menu_open: bool
+    git_busy_ref: ft.Ref
+    git_commit_details: dict
+    git_commit_message_ref: ft.Ref
+    git_commit_push: bool
+    git_commit_seq: int
+    git_dialog_seq_ref: ft.Ref
+    git_diff_meta: dict
+    git_diff_open: bool
+    git_expanded_commits: frozenset
+    git_history: list
+    git_history_filter: dict
+    git_history_loading: bool
+    git_refresh_token: ft.Ref
+    git_root: str | None
+    git_service_ref: ft.Ref
+    git_status: Any
+    git_view: str
+    open_file_and_jump: Callable[..., Any]
+    page_ref: ft.Ref
+    set_file_dialog: Callable[..., None]
+    set_git_active_path: Callable[..., None]
+    set_git_available: Callable[..., None]
+    set_git_branch_menu_open: Callable[..., None]
+    set_git_branches: Callable[..., None]
+    set_git_busy: Callable[..., None]
+    set_git_commit_details: Callable[..., None]
+    set_git_commit_push: Callable[..., None]
+    set_git_commit_seq: Callable[..., None]
+    set_git_diff: Callable[..., None]
+    set_git_diff_meta: Callable[..., None]
+    set_git_diff_mode: Callable[..., None]
+    set_git_diff_open: Callable[..., None]
+    set_git_error: Callable[..., None]
+    set_git_expanded_commits: Callable[..., None]
+    set_git_history: Callable[..., None]
+    set_git_history_filter: Callable[..., None]
+    set_git_history_has_more: Callable[..., None]
+    set_git_history_loading: Callable[..., None]
+    set_git_root: Callable[..., None]
+    set_git_status: Callable[..., None]
+    set_git_version: Callable[..., None]
+    set_git_view: Callable[..., None]
+    set_git_workspace: Callable[..., None]
+    set_status_message: Callable[..., None]
+    settings: dict
+    show_snack: Callable[..., Any]
+    tabs_ref: ft.Ref
+    update_setting: Callable[..., Any]
+
+
 class KeyboardEnv(Protocol):
     """键盘分发装配（KeyDispatcher + page 绑定）（build_keyboard 实际读取的 46 个字段）。"""
 
@@ -233,6 +299,9 @@ class KeyboardEnv(Protocol):
     doc_search_prev: Any
     focus_mode: Callable[..., Any]
     focus_search: Callable[..., Any]
+    git_commit: Callable[..., Any]
+    git_escape: Callable[..., Any]
+    git_open_panel: Callable[..., Any]
     global_search: Any
     is_diff_tab: bool
     native_input_ref: ft.Ref

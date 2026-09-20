@@ -975,6 +975,10 @@ def Sidebar(
     # 外部输入焦点域 ref：搜索/替换/过滤输入框聚焦时置 token，KeyDispatcher
     # 据此不再把文档编辑快捷键（Ctrl+A 等）误作用到编辑器
     native_input_ref: ft.Ref | None = None,
+    # 源代码管理面板：由 App 用 views/git_panel.GitPanel 构造后传入
+    # （面板需要 App 持有的仓库状态，且与差异视图 / 状态栏共享同一份数据，
+    # 故不在 Sidebar 内部构造）。None 时该面板不可用。
+    git_panel: ft.Control | None = None,
 ):
     """左侧管理面板（横向四列布局第二列）：文件 / 搜索面板由功能栏（第一列）切换，右侧可拖拽调宽。
 
@@ -1610,6 +1614,10 @@ def Sidebar(
             set_highlight_dir=set_drop_hover_dir,
             native_ref=native_input_ref,
         )
+    elif active_panel == "git" and git_panel is not None:
+        # 源代码管理：控件树由 App 构造（状态与差异视图 / 状态栏共享），
+        # Sidebar 只负责把它放进第二列并保持宽度动画 / 裁剪语义一致。
+        panel = git_panel
     else:  # search
         # 跨文件点击回调：未提供时用 no-op 避免崩溃
         _open_and_jump = on_open_file_and_jump if on_open_file_and_jump is not None else (

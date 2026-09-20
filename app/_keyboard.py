@@ -90,6 +90,15 @@ def build_keyboard(ctx: KeyboardEnv):
             "doc_search_next": ctx.doc_search_next,
             "doc_search_prev": ctx.doc_search_prev,
             "global_search": ctx.global_search,
+            # 源代码管理：Ctrl+Shift+G 打开面板；提交两个动作只在「提交框焦点域」
+            # 内被派发（见 views/key_bindings._handle_git_commit_box），
+            # 不会在编辑器里抢走 Ctrl+Enter（那里是切换原文模式）。
+            "git_panel": ctx.git_open_panel,
+            "git_commit": lambda: ctx.git_commit(False),
+            "git_commit_all": lambda: ctx.git_commit(True),
+            # Escape 关闭 Git 覆盖层（差异视图 / 分支面板）。返回 True 表示已消费，
+            # 分发器据此在常规分发之前拦截（覆盖层才是当前"前台"）。
+            "git_escape": ctx.git_escape,
         },
         capturing=ctx.capturing,
         on_capture=ctx.on_capture,

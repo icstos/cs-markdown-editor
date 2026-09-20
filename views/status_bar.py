@@ -25,9 +25,9 @@ from collections.abc import Callable
 
 import flet as ft
 
-from models.document import BlockType, Document
 import parser
-from styles import FONT_MAIN, Radius, Spacing, get_colors, only_border
+from models.document import BlockType, Document
+from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, get_colors, only_border
 
 # 中英文词数统计正则：英文连续字母数字下划线算一词，中文每字算一词
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -85,6 +85,15 @@ def StatusBar(
     status_ref: ft.Ref | None = None,
     status_message: tuple[str, str] | None = None,
     on_status_clear: Callable[[], None] | None = None,
+    # ---- Git 段（分支名 / 领先落后 / 待提交计数，对标 VSCode 状态栏）----
+    git_branch: str | None = None,
+    git_detached: bool = False,
+    git_ahead: int = 0,
+    git_behind: int = 0,
+    git_pending: int = 0,
+    git_op: str | None = None,
+    on_click_branch: Callable[[], None] | None = None,
+    on_click_git: Callable[[], None] | None = None,
 ):
     """底部状态栏。
 
@@ -96,6 +105,9 @@ def StatusBar(
     status_message: (msg, kind) 元组，由 App 通过 set_status_message 写入 state。
     kind ∈ info/success/warn/error，影响颜色。显示 _STATUS_TTL_SEC 秒后由
     on_status_clear 回调清空（App 重置 state）。None 时隐藏状态消息。
+
+    Git 段（左簇，紧跟状态消息）：``⎇ main ↑2 ↓1 ●3``——分支名点击唤起分支面板；
+    待提交计数点击展开 Git 面板；进行中的合并/变基以警示色显示操作名。
     """
     c = get_colors(theme_mode)
 
@@ -178,7 +190,7 @@ def StatusBar(
     if status_message is not None:
         status_msg_text = status_message[0]
         kind = status_message[1] if len(status_message) > 1 else "info"
-        status_msg_color = _STATUS_COLOR.get(kind, None) or c.muted
+        status_msg_color = _STATUS_COLOR.get(kind) or c.muted
 
     status_widget = (
         ft.Container(
@@ -213,6 +225,104 @@ def StatusBar(
             content=ft.Icon(icon, size=14, color=color),
         )
 
+    def _chip(
+        content: ft.Control,
+        tooltip: str,
+        on_click: Callable[[], None] | None = None,
+    ) -> ft.Control:
+        """状态栏可点击小片（分支名 / 计数）：统一样式，避免各段各写一遍内边距。"""
+        return ft.Container(
+            content=content,
+            tooltip=tooltip,
+            ink=on_click is not None,
+            on_click=(lambda e: on_click()) if on_click else None,
+            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+            border_radius=ft.BorderRadius.all(4),
+        )
+
+    # ============ Git 段 ============
+    # 分支名（分离 HEAD 时提示）+ 领先/落后 + 待提交计数 + 进行中操作警示
+    git_controls: list[ft.Control] = []
+    if git_branch is not None or git_detached:
+        branch_label = git_branch or "分离 HEAD"
+        badge_children: list[ft.Control] = [
+            ft.Icon(ft.Icons.ACCOUNT_TREE, size=12, color=c.muted),
+            ft.Text(
+                branch_label,
+                size=11,
+                color=c.muted,
+                font_family=FONT_MAIN,
+                max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS,
+            ),
+        ]
+        counts_hint: list[str] = []
+        if git_ahead:
+            counts_hint.append(f"待推送 {git_ahead}")
+            badge_children.append(
+                ft.Text(f"↑{git_ahead}", size=11, color="#1A7F37", font_family=FONT_MONO)
+            )
+        if git_behind:
+            counts_hint.append(f"待拉取 {git_behind}")
+            badge_children.append(
+                ft.Text(f"↓{git_behind}", size=11, color="#CF222E", font_family=FONT_MONO)
+            )
+        if git_pending:
+            counts_hint.append(f"待提交 {git_pending}")
+        tip = "切换分支 / 新建分支"
+        if counts_hint:
+            tip = f"{tip}\n" + " · ".join(counts_hint)
+        git_controls.append(
+            _chip(
+                ft.Row(controls=badge_children, spacing=Spacing.XS, tight=True,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                tip,
+                on_click_branch,
+            )
+        )
+    if git_pending:
+        git_controls.append(
+            _chip(
+                ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.EDIT_NOTE, size=12, color="#B54708"),
+                        ft.Text(str(git_pending), size=11, color="#B54708",
+                                font_family=FONT_MONO),
+                    ],
+                    spacing=Spacing.XS,
+                    tight=True,
+                ),
+                f"{git_pending} 项待提交更改（点击打开源代码管理面板）",
+                on_click_git,
+            )
+        )
+    if git_op:
+        git_controls.append(
+            _chip(
+                ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=12, color="#FF9F0A"),
+                        ft.Text(f"{git_op}中", size=11, color="#FF9F0A",
+                                font_family=FONT_MAIN),
+                    ],
+                    spacing=Spacing.XS,
+                    tight=True,
+                ),
+                "存在未完成的 Git 操作（合并/变基），请解决冲突或中止",
+                on_click_git,
+            )
+        )
+    git_widget: ft.Control = (
+        ft.Row(
+            controls=[ft.Container(width=Spacing.LG), *git_controls],
+            spacing=0,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        if git_controls
+        else ft.Container(width=0, height=0)
+    )
+
     return ft.Container(
         bgcolor=ft.Colors.with_opacity(0.03, c.text),
         border=only_border(top=ft.BorderSide(1, c.border)),
@@ -241,6 +351,7 @@ def StatusBar(
                 ),
                 ft.Container(width=Spacing.LG),
                 status_widget,
+                git_widget,
                 ft.Container(expand=True),
                 ft.Text(
                     value=f"行 {row}  列 {col}",
@@ -327,7 +438,7 @@ class _StatusBarUpdaters:
     满足 App 侧 await 契约。
     """
 
-    __slots__ = ("update_cursor", "update_counts")
+    __slots__ = ("update_counts", "update_cursor")
 
     def __init__(self, update_cursor, update_counts):
         self.update_cursor = update_cursor

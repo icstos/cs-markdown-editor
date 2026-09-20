@@ -49,4 +49,5 @@ pytest-cache-files-*/
 .pytest_cache/
 tests/.tmp*/
 tests/.boot-sandbox/
+tests/.*-sandbox/
 tests/.scratch-*/

@@ -51,6 +51,9 @@ from views.diff_view import compute_diff_for_editors
 from views.editor import MarkdownEditor
 from views.file_dialogs import FileActionDialog
 from views.floating_search import FloatingSearch
+from views.git_branch_menu import GitBranchMenu
+from views.git_diff import GitDiffView
+from views.git_panel import GitPanel, git_panel_props
 from views.global_menu import build_global_menu
 from views.outline_panel import OutlinePanel
 from views.recovery_dialog import RecoveryDialog
@@ -188,10 +191,16 @@ def build_render(ctx) -> ft.Control:
     # ============ 侧边栏（第二列：管理面板）+ 功能栏（第一列）+ 大纲列（第四列）============
     sidebar_open = ctx.settings.get("sidebar_open", False)
     outline_open = ctx.settings.get("outline_open", True)
-    # 面板归一化：旧版大纲面板已独立为第四列，sidebar_panel 仅文件/搜索有效
+    # 面板归一化：旧版大纲面板已独立为第四列，sidebar_panel 仅文件/搜索/源代码管理有效
     _active_panel = ctx.settings.get("sidebar_panel", "files")
-    if _active_panel not in ("files", "search"):
+    if _active_panel not in ("files", "search", "git"):
         _active_panel = "files"
+    # 源代码管理面板：控件树在此构造（面板需要 App 持有的仓库状态 + 与差异视图 /
+    # 状态栏共享同一份数据），Sidebar 只负责放进第二列。
+    _git_state, _git_actions = git_panel_props(ctx)
+    git_panel_control = GitPanel(_git_state, _git_actions, ctx.theme_mode)
+    _git_st = ctx.git_status
+    _git_change_count = _git_st.change_count if _git_st is not None else 0
     # 侧边栏：始终渲染 Sidebar，内部统一控制宽度动画 0↔width + clip_behavior
     # + 拖拽调宽（dragging 时禁用动画即时跟随），实现 VSCode 式平滑开合。
     # 始终保持 Sidebar 挂载可保留内部状态（搜索词 / 文件过滤 / 滚动位置）。
@@ -232,6 +241,8 @@ def build_render(ctx) -> ft.Control:
         replace_actions_ref=ctx.sidebar_replace_ref,
         # VSCode 风格文件树：非 md 文件用系统默认程序打开
         on_open_external=ctx.open_external,
+        # 源代码管理面板（控件树由本函数构造，见上方 git_panel_props）
+        git_panel=git_panel_control,
     )
 
     # ============ 编辑器区 ============
@@ -391,6 +402,10 @@ def build_render(ctx) -> ft.Control:
     def _activity_click(key: str):
         if key == _active_panel and sidebar_open:
             ctx.toggle_sidebar()
+        elif key == "git":
+            # Git 面板走专用入口：它额外承担「打开即刷新」（保存文件不会递增
+            # fs_version，不刷新的话面板/角标可能停留在上一次快照）。
+            ctx.git_open_panel()
         else:
             ctx.change_sidebar_panel(key)
             if not sidebar_open:
@@ -402,6 +417,7 @@ def build_render(ctx) -> ft.Control:
         on_click_panel=_activity_click,
         menu=global_menu,
         theme_mode=ctx.theme_mode,
+        git_count=_git_change_count,
     )
 
     # 大纲列：始终渲染（保留滚动位置），open 时内容宽 240，收起时仅剩竖条
@@ -465,6 +481,15 @@ def build_render(ctx) -> ft.Control:
             status_ref=ctx.status_ref,
             status_message=ctx.status_message,
             on_status_clear=lambda: ctx.set_status_message(None),
+            # ---- Git 段：分支名（点击唤起分支面板）/ 领先落后 / 待提交计数 ----
+            git_branch=_git_st.branch if _git_st is not None else None,
+            git_detached=bool(_git_st.detached) if _git_st is not None else False,
+            git_ahead=_git_st.ahead if _git_st is not None else 0,
+            git_behind=_git_st.behind if _git_st is not None else 0,
+            git_pending=_git_change_count,
+            git_op=_git_st.op_label if (_git_st is not None and _git_st.in_operation) else None,
+            on_click_branch=ctx.git_open_branch_dialog,
+            on_click_git=ctx.git_open_panel,
         )
         if ctx.settings.get("show_footer", True)
         else ft.Container(height=0)
@@ -553,6 +578,46 @@ def build_render(ctx) -> ft.Control:
     # 文件对比已重构为双 MarkdownEditor 原生编辑模式（见 _build_diff_area），
     # 以 type=="diff" 标签形式管理，旧的 DiffView 全屏 overlay 已移除。
 
+    # ============ Git 内嵌差异视图 + 分支管理面板（叠在编辑区之上）============
+    # 两者都是「覆盖式面板」而非标签：Git diff 的内容不属于任何可编辑文档
+    # （工作区 / 暂存区 / 历史提交三个来源），做成标签需要改动标签模型、脏状态、
+    # 关闭确认、自动保存等一整套语义——覆盖层把影响面限制在渲染层，符合
+    # 「模块化扩展、不破坏原有编辑器核心功能」的约束。
+    # 叠放顺序：main_col → git_diff → git_branch → 对话框/设置，保证破坏性操作
+    # 的确认对话框永远显示在 Git 面板之上。
+    _git_meta = ctx.git_diff_meta or {}
+    git_diff_view = GitDiffView(
+        visible=ctx.git_diff_open,
+        diff=ctx.git_diff,
+        meta=_git_meta,
+        mode=ctx.git_diff_mode,
+        theme_mode=ctx.theme_mode,
+        busy=ctx.git_busy,
+        on_set_mode=ctx.git_set_diff_mode,
+        on_close=ctx.git_close_diff,
+        on_jump=ctx.git_diff_jump,
+        on_open_file=ctx.git_open_in_editor,
+        # 历史提交的差异是「当时的样子」，不可暂存 / 丢弃
+        on_stage=None if _git_meta.get("history") else ctx.git_diff_stage,
+        on_unstage=None if _git_meta.get("history") else ctx.git_diff_unstage,
+        on_discard=None if _git_meta.get("history") else ctx.git_diff_discard,
+    )
+    _gb_st = ctx.git_status
+    git_branch_menu = GitBranchMenu(
+        open_state=ctx.git_branch_menu_open,
+        branches=ctx.git_branches or [],
+        current=_gb_st.branch if _gb_st is not None else None,
+        theme_mode=ctx.theme_mode,
+        busy=ctx.git_busy,
+        native_input_ref=ctx.native_input_ref,
+        on_switch=ctx.git_switch_branch,
+        on_create=ctx.git_create_branch,
+        on_delete=ctx.git_delete_branch,
+        on_merge=ctx.git_merge_branch,
+        on_refresh=ctx.git_refresh_branches,
+        on_close=ctx.git_close_branch_menu,
+    )
+
     # ============ 恢复面板（启动时若存在可恢复草稿则弹出，手动入口在设置面板）============
     recovery_dialog = RecoveryDialog(
         open_state=ctx.recovery_open,
@@ -566,6 +631,8 @@ def build_render(ctx) -> ft.Control:
     return ft.Stack(
         controls=[
             main_col,
+            git_diff_view,
+            git_branch_menu,
             settings_view,
             confirm_dialog,
             file_dialog_view,

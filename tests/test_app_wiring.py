@@ -30,6 +30,33 @@ RENAMED_KEYS = {"cur_tab"}
 UNSTORED_KEYS = {"bind_keyboard", "dispatcher", "autosave_on_exit"}
 
 
+class _SlotKeys(ast.NodeVisitor):
+    """收集函数体**顶层** return 的字典字面量键。
+
+    嵌套函数（如 ``_filters()`` 返回 ``{"author", "keyword", "path"}``）返回的是
+    内部数据结构，不是控制器装配槽。若连嵌套 return 一起收集，这些内部键会被
+    误判成「AppContext 缺少的字段」，守护测试变成假警报——所以这里显式跳过
+    嵌套函数定义，只认控制器自身的返回字典。
+    """
+
+    def __init__(self) -> None:
+        self.keys: set[str] = set()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """遇到嵌套函数即停止下钻（顶层函数由调用方逐条语句喂入）。"""
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """同 visit_FunctionDef。"""
+
+    def visit_Return(self, node: ast.Return) -> None:
+        value = node.value
+        if isinstance(value, ast.Dict):
+            for k in value.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    self.keys.add(k.value)
+        self.generic_visit(node)
+
+
 def _controller_slots() -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for path in sorted(APP.glob("*.py")):
@@ -37,15 +64,11 @@ def _controller_slots() -> dict[str, set[str]]:
         for fn in tree.body:
             if not isinstance(fn, ast.FunctionDef) or not fn.name.startswith("build_"):
                 continue
-            keys = {
-                k.value
-                for node in ast.walk(fn)
-                if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
-                for k in node.value.keys
-                if isinstance(k, ast.Constant) and isinstance(k.value, str)
-            }
-            if keys:
-                out[fn.name] = keys
+            visitor = _SlotKeys()
+            for stmt in fn.body:
+                visitor.visit(stmt)
+            if visitor.keys:
+                out[fn.name] = visitor.keys
     return out
 
 

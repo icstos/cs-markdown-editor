@@ -22,6 +22,7 @@ SIGNATURE_ENV = {
     "build_file_io_ops": "FileIoEnv",
     "build_file_dialogs": "FileDialogsEnv",
     "build_diff_controller": "DiffEnv",
+    "build_git_controller": "GitEnv",
     "build_settings_controller": "SettingsEnv",
     "build_split_editor": "SplitEnv",
     "build_focus_router": "FocusRouterEnv",

@@ -83,6 +83,11 @@ class Colors:
     # 代码块语法高亮：语义类别 → 颜色。类别常量见 services/code_highlight.py
     # （kw/str/com/num/fn/type/var/op/err），未收录类别回退 code_block_fg。
     code_syntax: dict[str, str] = field(default_factory=dict)
+    # Git 变更标记色：键为变更类型字符串（services.git.models.ChangeKind 的值：
+    # added / modified / deleted / renamed / copied / type_changed / untracked /
+    # ignored / conflicted）。取色口统一为 styles.git_status_color()，禁止各处
+    # 另写一套色值——否则侧边栏 Git 面板、状态栏角标、diff 头部三处会逐渐漂移。
+    git: dict[str, str] = field(default_factory=dict)
 
 
 # 亮色：浅色商务科技配色，简洁专业，适配白天办公场景
@@ -132,6 +137,19 @@ _LIGHT = Colors(
         4: "#6B5B95",  # 雅致紫 - 子小节
         5: "#B54708",  # 焦糖橙 - 次级
         6: "#5C6573",  # 石板灰 - 最低级
+    },
+    # Git 变更标记色：沿用本主题既有色阶（绿=新增、橙=修改、红=删除/冲突、
+    # 紫=重命名、灰=忽略），与 heading_colors / code_syntax 同一套色相语言。
+    git={
+        "added": "#1A7F37",       # 新增（GitHub 绿）
+        "modified": "#B54708",    # 已修改（焦糖橙，同 H5）
+        "deleted": "#CF222E",     # 已删除（GitHub 红）
+        "renamed": "#8250DF",     # 已重命名（雅致紫）
+        "copied": "#0E7C66",      # 已复制（深青绿）
+        "type_changed": "#6B5B95",  # 类型变更
+        "untracked": "#1A7F37",   # 未跟踪（同绿，语义为「待加入」）
+        "ignored": "#8A919E",     # 已忽略（弱化）
+        "conflicted": "#CF222E",  # 冲突（红，需人工介入）
     },
 )
 
@@ -191,6 +209,18 @@ _DARK = Colors(
         4: "#B08FD8",  # 柔丁香紫
         5: "#DD9658",  # 柔琥珀橙
         6: "#C78787",  # 柔珊瑚红
+    },
+    # Git 变更标记色（暗色）：与 code_syntax 同一套降饱和策略，避免暗底闪烁
+    git={
+        "added": "#8FBF7F",       # 柔绿
+        "modified": "#D9A05B",    # 柔琥珀
+        "deleted": "#D98C8C",     # 柔珊瑚
+        "renamed": "#C08BD8",     # 柔紫
+        "copied": "#4FB8C9",      # 柔青
+        "type_changed": "#B08FD8",  # 柔丁香
+        "untracked": "#8FBF7F",
+        "ignored": "#8B939E",
+        "conflicted": "#D98C8C",
     },
 )
 
@@ -285,6 +315,17 @@ def heading_text_color(level: int, c: Colors | None = None) -> str:
 def list_color_level(indent: int) -> int:
     """列表缩进（空格数）→ 1..6 色阶，与 heading_colors 共用。"""
     return min(max(indent // 2 + 1, 1), 6)
+
+
+def git_status_color(kind: object, c: Colors | None = None) -> str:
+    """Git 变更类型的标记色：侧边栏面板 / 状态栏角标 / diff 头部**共用的唯一取色口**。
+
+    kind 接受 ``services.git.models.ChangeKind``（StrEnum，其 ``str()`` 即值）或
+    任意字符串；未收录的类别回退 ``muted``。三处都从这里取色，因此同一文件在
+    面板里的字母色与 diff 头部的统计色天然一致，切主题时一起变。
+    """
+    colors = c if c is not None else _current_colors()
+    return colors.git.get(str(kind), colors.muted)
 
 
 def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:

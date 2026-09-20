@@ -271,6 +271,44 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
         _menu_item("实际大小", "Ctrl+Shift+0", on_click=lambda e: ctx.zoom_reset(), c=c),
     ]
 
+    # ============ Git（源代码管理）菜单 ============
+    # 与 VS Code「源代码管理」菜单同构：入口/提交/同步/分支/历史/仓库六段。
+    # 所有条目都走 ctx 上已装配的 git_* 槽位（控制器内部自行调度异步任务），
+    # 因此这里保持同步调用即可，不需要 _run_async。
+    _git_ready = bool(getattr(ctx, "git_root", None))
+    _cur_file = getattr(ctx, "file_path", None)
+
+    def _git_history() -> None:
+        """切到 Git 面板的历史视图。"""
+        ctx.git_open_panel()
+        ctx.git_set_view("history")
+
+    git_controls = [
+        _menu_item("源代码管理", "Ctrl+Shift+G",
+                   on_click=lambda e: (ctx.git_open_panel(), ctx.git_set_view("changes")), c=c),
+        _separator(c),
+        _menu_item("提交暂存区", "Ctrl+Enter",
+                   on_click=lambda e: ctx.git_commit(False), disabled=not _git_ready, c=c),
+        _menu_item("提交所有更改", "Ctrl+Shift+Enter",
+                   on_click=lambda e: ctx.git_commit(True), disabled=not _git_ready, c=c),
+        _menu_item("撤销上次提交", "",
+                   on_click=lambda e: ctx.git_undo_commit(), disabled=not _git_ready, c=c),
+        _separator(c),
+        _menu_item("获取", "", on_click=lambda e: ctx.git_fetch(), disabled=not _git_ready, c=c),
+        _menu_item("拉取", "", on_click=lambda e: ctx.git_pull(), disabled=not _git_ready, c=c),
+        _menu_item("推送", "", on_click=lambda e: ctx.git_push(), disabled=not _git_ready, c=c),
+        _separator(c),
+        _menu_item("分支管理...", "", on_click=lambda e: ctx.git_open_branch_dialog(), c=c),
+        _separator(c),
+        _menu_item("查看历史", "", on_click=lambda e: _git_history(), disabled=not _git_ready, c=c),
+        _menu_item("查看当前文件历史", "",
+                   on_click=lambda e: ctx.git_open_file_history(_cur_file),
+                   disabled=not (_git_ready and _cur_file), c=c),
+        _separator(c),
+        _menu_item("初始化仓库", "", on_click=lambda e: ctx.git_init_repo(),
+                   disabled=_git_ready, c=c),
+    ]
+
     # ============ 帮助菜单 ============
     def _open_url(e, url: str):
         """调用系统默认浏览器打开 URL。"""
@@ -315,6 +353,7 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
                     _submenu("段落", paragraph_controls, c),
                     _submenu("格式", format_controls, c),
                     _submenu("视图", view_controls, c),
+                    _submenu("Git", git_controls, c),
                     _submenu("帮助", help_controls, c),
                 ],
                 # 紧凑图标按钮：减小内边距，圆角与标签栏一致；内容 alignment 强制

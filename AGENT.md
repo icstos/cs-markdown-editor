@@ -36,6 +36,7 @@
 | 快捷方式（.lnk）解析/操作语义 | `services/shortcut.py`、`views/sidebar.py`、`app/_file_dialogs.py` | `tests/test_shortcut.py`、`README.md`「文件与导出」 |
 | 文件夹实时监测（文件树刷新） | `views/sidebar.py`（`poll_fs_changes`）、`tests/test_fs_watch.py` | `README.md`「文件与导出」 |
 | 侧边栏文件树/拖拽/右键菜单/大纲/搜索 | `views/sidebar.py`、`app/_file_dialogs.py` | `.trae/documents/vscode-style-file-tree.md`、`.trae/documents/sidebar-search-enhancement.md`、`.trae/documents/sidebar-drag-resize-fix.md` |
+| Git 版本管理（面板/差异/历史/分支/同步） | `services/git/`（`runner`/`porcelain`/`repository`/`difftext`/`models`/`errors`）、`app/_git_controller.py`、`views/git_panel.py`、`views/git_diff.py`、`views/git_branch_menu.py`、`views/git_widgets.py` | `CHANGELOG.md`「Git 版本管理」、`README.md`「Git 版本管理」、`tests/test_git_*.py` |
 | 文件 IO/打开/保存/导出/最近文件 | `app/_file_io_ops.py`、`services/file_io.py`、`services/export.py`、`services/clipboard_html.py`、`services/html_to_markdown.py` | `README.md`「文件与导出」 |
 | 自动保存/备份/崩溃恢复 | `app/autosave.py`、`services/backup.py`、`services/recovery.py`、`app/_backup_controller.py`、`views/recovery_dialog.py` | `config/settings.py` 注释、`README.md` |
 | 设置面板/配置项增删 | `views/settings_dialog.py`、`config/settings.py`、`app/_settings_controller.py`、`config/app_meta.py`（关于页的版本与外链唯一来源） | `README.md`、`config/settings.py` 模块文档字符串、`tests/test_settings_dialog.py` |
@@ -144,6 +145,17 @@
 - 禁止移除 `utils/log.py::attach_flet` 对 `page.run_task` 的异常现场包装（`_instrument_run_task` / `_report_task_failure`）：flet 的 `page.run_task` 把协程异常 **re-raise 在 `concurrent.futures` 的完成回调里**（该模块只打一行 ERROR，既不写现场文件、logger 名字也不含 crash），而这是本项目最常用的异步入口（打开/保存/导出/自动保存全走它）。后果：所有 `page.run_task` 内的异常重新退化成「只有一行日志、无线索」。
 - 禁止在热路径（逐字符输入 / 每行渲染 / 滚动回调 / 光标移动）打重活日志：日志虽走 `QueueHandler` 入队（写盘在后台线程、调用方 O(1)），但**入队之前的参数求值在调用方线程执行**。因此热路径禁止 `log.debug(f"...")` 形式的 f-string（**无条件先求值**，即使级别过滤掉了也白算）、禁止 `repr(document)` / `json.dumps(...)` 这类为了打日志而遍历大对象、禁止逐行/逐段打日志。需要时用惰性参数形式 `log.debug("x=%s", x)`，并只在排查期临时调 `DEBUG`。
 
+**Git 版本管理（`services/git/` + `app/_git_controller.py` + `views/git_*`）**：
+
+- 禁止把提交框的 `Ctrl+Enter` / `Ctrl+Shift+Enter` 登记进 `views/key_bindings._GLOBAL_ACTIONS` 或 `services/shortcuts.DEFAULT_SHORTCUTS`：该表会被并进 `_global_targets()`（浏览层 ∪ 编辑层 ∪ 表内默认），在编辑器里抢走 `Ctrl+Enter`（那里是「切换原文模式」）。提交快捷键只能走**具名焦点域**分支：`views/native_scope.DOMAIN_GIT_COMMIT` + `KeyDispatcher._handle_git_commit_box`（`_handle_foreign_only` 开头调用，早于动作表）。注册表里这两个动作刻意留空默认键位，默认值只在焦点域分支内兜底。
+- 禁止让 Git 差异视图 / 分支面板成为标签页：它们是挂在 `app/_render.py` 根 `Stack` 上的**覆盖层**（`GitDiffView` / `GitBranchMenu`，用 `visible` / `open_state` 控制）。做成标签会牵扯标签模型、脏状态、关闭确认与自动保存四条既有链路，违反「不侵入原有编辑能力」。
+- 禁止把 Git 的异步任务直接写成 `page.run_task(协程对象)` 或 `page.run_task(同步函数)`：`run_task` 要求 `inspect.iscoroutinefunction(handler)` 为真，否则抛 `TypeError`——该异常只在日志里出现，用户看到的是「点了没反应」。控制器统一走 `_schedule(fn, *args)` / `_spawn(op, make_coro)`（只读，不占忙碌态）/ `_run(op, make_coro)`（写仓库，占忙碌态并在 `finally` 释放）三件套。
+- 禁止让只读任务占用 `git_busy`：刷新 / 读历史 / 读提交详情不写仓库（不抢 `index.lock`），若也占忙碌态，切标签触发的自动刷新会闪出「正在执行 Git 操作…」并误拦用户紧接着的暂存/提交。只读一律 `_spawn`。
+- 禁止把「丢弃更改」简化成单一路径：必须按状态条目三分支——已跟踪 → `discard_working`（`git restore --worktree`）；未跟踪 → `delete_untracked`（删盘，带仓库内 / 仅文件 / 内部路径保护）；**已暂存的新增文件** → `unstage_and_delete`（HEAD 里本就没有它）。写成「已跟踪 / 未跟踪」两分支时，`git rm --cached` 对纯未跟踪文件只会报 `did not match` 而什么都不删，用户会以为「丢弃没生效」（`tests/test_git_controller.py` 守护）。
+- 禁止用 `os.path.relpath` 的异常来判定「文件是否在仓库内」：它对仓库外路径**不会抛错**，只返回 `..\..\x` 这类相对路径，判定会全部漏过（`open_file_history` 曾因此把仓库外文件当作仓库内文件）。必须用 `GitRepository.contains(abs_path)`。
+- 禁止在 `main`/`views` 层直接拼 `git` 命令：命令构造、非交互环境变量、超时、错误分类（网络/权限/冲突/损坏/无仓库）全部收敛在 `services/git/`（`runner`/`porcelain`/`repository`/`errors`），控制器只做「调度 + 状态映射 + 用户可读提示」。
+- 必须给 `git log` / `git status` 这类列表结果保留分页与上限：`porcelain.LOG_FORMAT` 输出由 `GitRepository.log(limit, offset, ...)` 分页消费（`DEFAULT_PAGE_SIZE=50`），diff 解析另有 `difftext.MAX_DIFF_LINES` 与渲染预算三层保护；去掉任何一层都会让「万行 diff 不卡顿」的要求失效。
+
 ## 5. 标准验证流程
 
 按顺序执行（工作目录 = 项目根）：
@@ -241,9 +253,14 @@ pid / cwd / 实际日志路径 / 级别），任何一条日志都能据此回�
 
 ## 7. 重构基线（当前进度）
 
-**验证基线**：`python -m pytest tests/ -q -p no:cacheprovider` → **1492 passed**。
-受限会话下（`%TEMP%` 不可写、或宿主删除守卫拦截测试内的批量删除）会有若干 `tmp_path` 类用例
-报 `PermissionError` / `SystemExit: 1`，属环境性、非代码缺陷，见第 5 节「受限环境注意事项」。
+**验证基线**：`python -m pytest tests/ -q -p no:cacheprovider` → **1629 collected**。
+较上一基线 1492 净增 137 = Git 服务层 97（`tests/test_git_porcelain` 18 / `test_git_difftext` 13 /
+`test_git_errors` 24 / `test_git_repository` 42）+ Git 装配与交互 40（`test_git_controller` 23 /
+`test_git_render` 7 / `test_key_bindings` 内 Git 快捷键 10）。
+受限会话下（`%TEMP%` 不可写、或宿主删除守卫拦截测试内的批量删除、或**同一轮工具调用里反复跑全量**）
+会有若干 `tmp_path` 类用例报 `PermissionError` / `SystemExit: 1` / 夹具 `AssertionError`，
+属环境性、非代码缺陷，见第 5 节「受限环境注意事项」。判别方法：**以该轮最早的摘要为准**，
+把报错模块单独重跑一次——全部通过即确认是环境性。
 
 **已完成**：
 

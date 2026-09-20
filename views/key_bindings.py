@@ -29,6 +29,7 @@ from services.html_to_markdown import html_to_markdown
 from services.shortcuts import ShortcutManager, matches
 from views._combo import extract_printable_char
 from views._combo import combo as key_combo
+from views.native_scope import DOMAIN_GIT_COMMIT
 
 
 # 不应触发"打字替换 outward 选区"的按键（修饰/导航/功能键等）
@@ -71,6 +72,8 @@ _GLOBAL_ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("toggle_replace_bar", "ctrl+h", "cb"),
     ("replace_current", "alt+enter", "cb"),
     ("replace_all", "ctrl+alt+enter", "cb"),
+    # 源代码管理面板（VSCode workbench.view.scm 的 Ctrl+Shift+G）
+    ("git_panel", "ctrl+shift+g", "cb"),
 )
 
 
@@ -473,6 +476,16 @@ class KeyDispatcher:
 
         self._sync_modifier_keys(e, actions)
 
+        # Git 覆盖层（内嵌差异视图 / 分支管理面板）的 Escape 关闭：必须早于
+        # 外来输入域门控与多光标分支。覆盖层是全窗口遮蔽式面板，此刻置顶的是
+        # 它而非编辑器；分支面板内的「新建分支」输入框也挂在外来输入域，若走到
+        # 下方门控会被原生输入框静默吞掉（面板关不掉）。回调返回 False 表示当前
+        # 没有覆盖层打开，按键继续走常规分发。
+        if norm == "escape" and not (e.ctrl or e.meta or e.alt or e.shift):
+            _git_esc = self._app_callbacks.get("git_escape")
+            if _git_esc is not None and _git_esc():
+                return
+
         # 文档内搜索浮层键盘：浮层打开且其输入框聚焦时，Enter=下一个匹配、
         # Shift+Enter=上一个匹配、Esc=关闭浮层（都不落入文档/其他快捷键）。
         # 浮层输入框经 native_focus_hooks 接入外来输入域，这里前置消费避免
@@ -681,6 +694,52 @@ class KeyDispatcher:
         self._handle_shortcuts(page, actions, combo, shortcuts, layer)
 
     # ---- 外部输入焦点域：仅放行全局窗口级快捷键（不触碰文档文本/光标/选区）----
+    def _focused_domain(self) -> str | None:
+        """当前外部输入框的具名域（未用具名 token 时返回 None）。
+
+        ``views/native_scope.native_focus_hooks(ref, name)`` 在传入 name 时把
+        ``ref.current`` 设为该字符串；未传 name 的输入框设的是匿名 object()，
+        此处按非字符串过滤掉，只暴露具名域。
+        """
+        ref = self._native_input_ref
+        value = ref.current if ref is not None else None
+        return value if isinstance(value, str) else None
+
+    def _git_commit_combo(self, action_id: str, fallback: str) -> str:
+        """提交动作的有效键位：设置里的自定义值优先，未设置时用 VSCode 默认。
+
+        ``git_commit`` / ``git_commit_all`` 在 ACTION_REGISTRY 里**刻意不声明默认
+        键位**（声明了就会把它们塞进 `_global_targets` 的并集，从而在编辑器里抢走
+        Ctrl+Enter——那里它是「切换原文模式」）。默认值只在此焦点域分支内兜底，
+        用户一旦在设置面板改键，以自定义值为准。
+        """
+        configured = (
+            self._shortcut_mgr.shortcut("browse", action_id)
+            or self._shortcut_mgr.shortcut("edit", action_id)
+        )
+        return configured or fallback
+
+    def _handle_git_commit_box(self, combo: str, cb: dict) -> bool:
+        """提交框内的提交快捷键（VSCode：Ctrl+Enter 提交 / Ctrl+Shift+Enter 全提交）。
+
+        必须是独立的焦点域分支而非 `_GLOBAL_ACTIONS` 表项：表内 ``toggle_raw``
+        在编辑层也配置为 Ctrl+Enter，外部输入域路径下它先命中并 `return`（其
+        callback 为 None 的 raw 分支直接空转），提交快捷键会被静默吞掉。
+        """
+        if self._focused_domain() != DOMAIN_GIT_COMMIT:
+            return False
+        if matches(combo, self._git_commit_combo("git_commit_all", "ctrl+shift+enter")):
+            fn = cb.get("git_commit_all")
+            if fn is not None:
+                fn()
+            return True
+        if matches(combo, self._git_commit_combo("git_commit", "ctrl+enter")):
+            fn = cb.get("git_commit")
+            if fn is not None:
+                fn()
+            return True
+        return False
+
     def _handle_foreign_only(self, combo: str, cb: dict) -> None:
         """键盘焦点在非编辑器原生输入框时只放行全局窗口级快捷键。
 
@@ -694,6 +753,9 @@ class KeyDispatcher:
         软换行/缩放/拆分/侧边栏/主题、聚焦搜索、替换栏与替换动作。
         """
         browse_sc = self._shortcut_mgr.get("browse")
+        # Git 提交框内的提交快捷键：必须早于动作表（原因见 _handle_git_commit_box）
+        if self._handle_git_commit_box(combo, cb):
+            return
         # Ctrl+F / Ctrl+Shift+F 的浮层优先分支：必须早于动作表，否则会被表内
         # focus_search 抢先命中。浮层自身的输入框也在外来输入域内，
         # 因此这里必须与编辑器内路径保持同样的优先级。

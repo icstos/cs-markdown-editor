@@ -312,3 +312,114 @@ class AppContext:
     set_recovery_list: Callable = field(default=lambda *a: None)
     # 状态栏轻量消息：(msg, kind, ts) -> None，由 set_status_message 写入 state
     status_message: Any = field(default=None)  # (msg, kind) | None
+
+    # ============ Git 版本管理组（状态快照区）============
+    # 状态分层与 Git 面板 / 差异视图 / 状态栏 / 分支面板共享：
+    # - 探测结果（available/version/workspace/root）与 status/branches/history
+    #   都是异步任务产物，必须由 App 持有，否则状态栏角标与面板会各读各的。
+    # - diff_* 是内嵌差异视图的状态（当前文件、元信息、统一/分栏模式）。
+    git_available: bool = field(default=False)
+    git_version: str = field(default="")
+    git_workspace: str | None = field(default=None)  # 工作区目录（探测输入）
+    git_root: str | None = field(default=None)  # 仓库根（None = 非仓库）
+    git_status: Any = field(default=None)  # GitStatus | None
+    git_error: str | None = field(default=None)  # 最近一次失败的用户可读消息
+    git_busy: bool = field(default=False)  # 是否有 Git 操作在执行（渲染用快照）
+    git_view: str = field(default="changes")  # changes | history
+    git_branches: Any = field(default=None)  # list[BranchInfo]
+    git_history: Any = field(default=None)  # list[CommitInfo]
+    git_history_has_more: bool = field(default=False)
+    git_history_loading: bool = field(default=False)
+    git_history_filter: Any = field(default=None)  # {author, keyword, path}
+    git_commit_details: Any = field(default=None)  # {sha: list[FileChange]}
+    git_expanded_commits: frozenset = field(default_factory=frozenset)
+    git_commit_push: bool = field(default=False)  # 提交后自动推送
+    git_commit_seq: int = field(default=0)  # 提交成功序号（驱动提交框清空）
+    git_active_path: str | None = field(default=None)  # 差异视图当前文件的仓库相对路径
+    git_diff_open: bool = field(default=False)
+    git_diff: Any = field(default=None)  # FileDiff | None
+    git_diff_meta: Any = field(default=None)  # {path,title,label,kind,staged,history,jump_path}
+    git_diff_mode: str = field(default="unified")  # unified | split
+    git_branch_menu_open: bool = field(default=False)
+
+    # 稳定区：Git 状态 setter（身份跨渲染不变）
+    set_git_available: Callable = field(default=lambda *a: None)
+    set_git_version: Callable = field(default=lambda *a: None)
+    set_git_workspace: Callable = field(default=lambda *a: None)
+    set_git_root: Callable = field(default=lambda *a: None)
+    set_git_status: Callable = field(default=lambda *a: None)
+    set_git_error: Callable = field(default=lambda *a: None)
+    set_git_busy: Callable = field(default=lambda *a: None)
+    set_git_view: Callable = field(default=lambda *a: None)
+    set_git_branches: Callable = field(default=lambda *a: None)
+    set_git_history: Callable = field(default=lambda *a: None)
+    set_git_history_has_more: Callable = field(default=lambda *a: None)
+    set_git_history_loading: Callable = field(default=lambda *a: None)
+    set_git_history_filter: Callable = field(default=lambda *a: None)
+    set_git_commit_details: Callable = field(default=lambda *a: None)
+    set_git_expanded_commits: Callable = field(default=lambda *a: None)
+    set_git_commit_push: Callable = field(default=lambda *a: None)
+    set_git_commit_seq: Callable = field(default=lambda *a: None)
+    set_git_active_path: Callable = field(default=lambda *a: None)
+    set_git_diff_open: Callable = field(default=lambda *a: None)
+    set_git_diff: Callable = field(default=lambda *a: None)
+    set_git_diff_meta: Callable = field(default=lambda *a: None)
+    set_git_diff_mode: Callable = field(default=lambda *a: None)
+    set_git_branch_menu_open: Callable = field(default=lambda *a: None)
+
+    # 稳定区：Git ref（异步回调读最新值，避开渲染快照的过期问题）
+    # - service_ref：GitService 实例（按仓库根缓存 GitRepository）
+    # - busy_ref：并发保护真源（state 快照回流有延迟，拦不住同一事件里的连点）
+    # - refresh_token：刷新去抖令牌（只让最后一次刷新真正执行 git 调用）
+    # - dialog_seq_ref：确认对话框实例序号（key 变化驱动弹窗重挂载）
+    # - commit_message_ref：提交框草稿镜像（面板局部 state 的只读副本，
+    #   供 Ctrl+Enter / 按钮在组件外读取最新文本）
+    git_service_ref: Any = field(default=None)
+    git_busy_ref: Any = field(default=None)
+    git_refresh_token: Any = field(default=None)
+    git_dialog_seq_ref: Any = field(default=None)
+    git_commit_message_ref: Any = field(default=None)
+
+    # 装配槽：Git 控制器产物（命名与控制器返回键一致，循环自动装配）
+    git_refresh: Callable = field(default=lambda *a, **kw: None)
+    git_escape: Callable = field(default=lambda *a: False)
+    git_open_panel: Callable = field(default=lambda *a: None)
+    git_init_repo: Callable = field(default=lambda *a: None)
+    git_set_view: Callable = field(default=lambda *a: None)
+    git_confirm_dialog_action: Callable = field(default=lambda *a: None)
+    git_stage: Callable = field(default=lambda *a: None)
+    git_unstage: Callable = field(default=lambda *a: None)
+    git_stage_all: Callable = field(default=lambda *a: None)
+    git_unstage_all: Callable = field(default=lambda *a: None)
+    git_discard: Callable = field(default=lambda *a: None)
+    git_discard_all: Callable = field(default=lambda *a: None)
+    git_open_diff: Callable = field(default=lambda *a, **kw: None)
+    git_close_diff: Callable = field(default=lambda *a: None)
+    git_set_diff_mode: Callable = field(default=lambda *a: None)
+    git_diff_jump: Callable = field(default=lambda *a: None)
+    git_diff_stage: Callable = field(default=lambda *a: None)
+    git_diff_unstage: Callable = field(default=lambda *a: None)
+    git_diff_discard: Callable = field(default=lambda *a: None)
+    git_open_in_editor: Callable = field(default=lambda *a: None)
+    git_commit: Callable = field(default=lambda *a: None)
+    git_toggle_commit_push: Callable = field(default=lambda *a: None)
+    git_undo_commit: Callable = field(default=lambda *a: None)
+    git_fetch: Callable = field(default=lambda *a: None)
+    git_pull: Callable = field(default=lambda *a: None)
+    git_push: Callable = field(default=lambda *a: None)
+    git_abort_operation: Callable = field(default=lambda *a: None)
+    git_open_branch_dialog: Callable = field(default=lambda *a: None)
+    git_close_branch_menu: Callable = field(default=lambda *a: None)
+    git_refresh_branches: Callable = field(default=lambda *a: None)
+    git_switch_branch: Callable = field(default=lambda *a: None)
+    git_create_branch: Callable = field(default=lambda *a: None)
+    git_delete_branch: Callable = field(default=lambda *a: None)
+    git_merge_branch: Callable = field(default=lambda *a: None)
+    git_jump_to_conflict: Callable = field(default=lambda *a: None)
+    git_load_history: Callable = field(default=lambda *a: None)
+    git_load_more_history: Callable = field(default=lambda *a: None)
+    git_toggle_commit: Callable = field(default=lambda *a: None)
+    git_set_history_filter: Callable = field(default=lambda *a: None)
+    git_clear_history_filter: Callable = field(default=lambda *a: None)
+    git_history_file_diff: Callable = field(default=lambda *a: None)
+    git_open_file_history: Callable = field(default=lambda *a: None)

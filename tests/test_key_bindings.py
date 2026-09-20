@@ -18,7 +18,8 @@ from core.actions import EditorActions  # noqa: E402
 from models.document import BlockType, Line  # noqa: E402
 from services.shortcuts import DEFAULT_SHORTCUTS, ShortcutManager  # noqa: E402
 from views._combo import combo, extract_printable_char
-from views.key_bindings import KeyDispatcher  # noqa: E402
+from views.key_bindings import KeyDispatcher
+from views.native_scope import DOMAIN_GIT_COMMIT  # noqa: E402
 
 
 # ---------------- 测试助手 ----------------
@@ -176,6 +177,8 @@ def make_dispatcher(
     on_cancel_capture=None,
     shortcuts: dict | None = None,
     foreign: bool = False,
+    foreign_token=None,
+    git_escape_ret: bool | None = None,
 ) -> tuple[KeyDispatcher, list, FakePage]:
     """构造 KeyDispatcher + 配套 refs。返回 (dispatcher, app_calls记录列表, fake_page)。
 
@@ -183,6 +186,10 @@ def make_dispatcher(
     用于让特定快捷键以规范化形式（如 ctrl+,）命中 matches。
     foreign：模拟「非编辑器原生输入框（搜索/替换/过滤/对话框输入）聚焦」，
     使 dispatcher 进入外部输入焦点域（文档编辑快捷键不消费、仅放行窗口级键）。
+    foreign_token：显式指定焦点域 token（如 ``DOMAIN_GIT_COMMIT``）——用于让
+    dispatcher 分辨「焦点在 Git 提交框」这一具名域；为 None 时沿用 ``foreign``。
+    git_escape_ret：``git_escape`` 回调的返回值（True = 已关闭覆盖层）。None 表示
+    不注册该回调（等价于 App 未接线的场景）。
     """
     settings: dict = {}
     if shortcuts is not None:
@@ -194,7 +201,8 @@ def make_dispatcher(
     page_ref = FakeRef(fake_page)
     paste_old_draft = FakeRef("")
     # 外部输入焦点域 ref：foreign=True 时置 token（非 None）
-    native_input_ref = FakeRef(object() if foreign else None)
+    token = foreign_token if foreign_token is not None else (object() if foreign else None)
+    native_input_ref = FakeRef(token)
 
     def make_cb(name):
         def fn():
@@ -219,7 +227,17 @@ def make_dispatcher(
         "toggle_replace_bar": make_cb("toggle_replace_bar"),
         "replace_current": make_cb("replace_current"),
         "replace_all": make_cb("replace_all"),
+        # Git：面板入口 + 提交框动作 + 覆盖层 Escape 关闭
+        "git_panel": make_cb("git_panel"),
+        "git_commit": make_cb("git_commit"),
+        "git_commit_all": make_cb("git_commit_all"),
     }
+    if git_escape_ret is not None:
+        def _git_escape():
+            app_calls.append("git_escape")
+            return git_escape_ret
+
+        app_callbacks["git_escape"] = _git_escape
     d = KeyDispatcher(
         shortcut_mgr=shortcut_mgr,
         actions_ref=actions_ref,
@@ -1213,6 +1231,116 @@ def test_ctrl_shift_f_routes_global_search_when_available():
     d.handle(evt("f", ctrl=True, shift=True))
     assert "global_search" in app_calls
     assert "focus_search" not in app_calls
+
+
+# ---------------- Git 快捷键（面板入口 / 提交框焦点域 / 覆盖层 Escape）----------------
+def test_git_panel_shortcut_from_editor():
+    """编辑器焦点下 Ctrl+Shift+G 打开源代码管理面板（两层统一键位）。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls)
+    d.handle(evt("g", ctrl=True, shift=True))
+    assert "git_panel" in app_calls
+
+
+def test_git_panel_shortcut_from_foreign_input():
+    """焦点在其他原生输入框（搜索框等）时仍应放行 Ctrl+Shift+G（窗口级动作）。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=None)
+    d, app_calls, _ = make_dispatcher(actions, app_calls, foreign=True)
+    d.handle(evt("g", ctrl=True, shift=True))
+    assert "git_panel" in app_calls
+
+
+def test_git_commit_box_ctrl_enter_commits_staged():
+    """提交框焦点域内 Ctrl+Enter = 提交暂存区。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=None)
+    d, app_calls, _ = make_dispatcher(
+        actions, app_calls, foreign_token=DOMAIN_GIT_COMMIT
+    )
+    d.handle(evt("enter", ctrl=True))
+    assert app_calls == ["git_commit"]
+
+
+def test_git_commit_box_ctrl_shift_enter_commits_all():
+    """提交框焦点域内 Ctrl+Shift+Enter = 提交所有更改。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=None)
+    d, app_calls, _ = make_dispatcher(
+        actions, app_calls, foreign_token=DOMAIN_GIT_COMMIT
+    )
+    d.handle(evt("enter", ctrl=True, shift=True))
+    assert app_calls == ["git_commit_all"]
+
+
+def test_ctrl_enter_in_other_foreign_field_does_not_commit():
+    """焦点在匿名外来域（非提交框）时 Ctrl+Enter 不得触发提交。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=None)
+    d, app_calls, _ = make_dispatcher(actions, app_calls, foreign=True)
+    d.handle(evt("enter", ctrl=True))
+    assert "git_commit" not in app_calls
+    assert "git_commit_all" not in app_calls
+
+
+def test_ctrl_enter_in_editor_keeps_toggle_raw():
+    """编辑器里 Ctrl+Enter 仍是「切换原文模式」：提交动作刻意不设全局默认键位。"""
+    calls: list = []
+    actions = make_actions(calls, cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, [])
+    d.handle(evt("enter", ctrl=True))
+    assert "toggle_raw" in calls
+    assert "git_commit" not in app_calls
+
+
+def test_git_commit_box_honors_custom_shortcut():
+    """提交框快捷键可在设置里改：改后旧键位不再触发、新键位生效。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=None)
+    shortcuts = {"edit": {"git_commit": "ctrl+alt+enter"}}
+    d, app_calls, _ = make_dispatcher(
+        actions, app_calls, foreign_token=DOMAIN_GIT_COMMIT, shortcuts=shortcuts
+    )
+    d.handle(evt("enter", ctrl=True))
+    assert app_calls == []
+    d.handle(evt("enter", ctrl=True, alt=True))
+    assert app_calls == ["git_commit"]
+
+
+def test_git_escape_consumes_escape_before_multi_cursor():
+    """有 Git 覆盖层打开时 Escape 交给覆盖层，不再顺带清空多光标。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=0)
+    actions.has_secondary_cursors = lambda: True
+    cleared: list = []
+    actions.clear_secondary_cursors = lambda: cleared.append(True)
+    d, app_calls, _ = make_dispatcher(actions, app_calls, git_escape_ret=True)
+    d.handle(evt("escape"))
+    assert app_calls == ["git_escape"]
+    assert cleared == []
+
+
+def test_git_escape_false_falls_through_to_editor():
+    """没有覆盖层时 Escape 必须照旧走编辑器路径（返回 False 不消费）。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=0)
+    actions.has_secondary_cursors = lambda: True
+    cleared: list = []
+    actions.clear_secondary_cursors = lambda: cleared.append(True)
+    d, app_calls, _ = make_dispatcher(actions, app_calls, git_escape_ret=False)
+    d.handle(evt("escape"))
+    assert app_calls == ["git_escape"]  # 被问过一次
+    assert cleared == [True]  # 但按键继续走到多光标分支
+
+
+def test_git_escape_ignores_modified_escape():
+    """Ctrl/Alt/Shift+Escape 不是「关闭覆盖层」语义，不得被吃掉。"""
+    app_calls: list = []
+    actions = make_actions([], cursor_li=0)
+    d, app_calls, _ = make_dispatcher(actions, app_calls, git_escape_ret=True)
+    d.handle(evt("escape", ctrl=True))
+    assert "git_escape" not in app_calls
 
 
 if __name__ == "__main__":

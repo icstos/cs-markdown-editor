@@ -58,6 +58,8 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "zoom_in": "ctrl+shift+=",
         "zoom_out": "ctrl+shift+-",
         "zoom_reset": "ctrl+shift+0",
+        # 源代码管理面板（VSCode workbench.view.scm 的默认键位；两层均生效）
+        "git_panel": "ctrl+shift+g",
     },
     "edit": {
         "save": "ctrl+s",
@@ -99,6 +101,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "zoom_in": "ctrl+shift+=",
         "zoom_out": "ctrl+shift+-",
         "zoom_reset": "ctrl+shift+0",
+        "git_panel": "ctrl+shift+g",
     },
 }
 
@@ -225,6 +228,22 @@ ACTION_REGISTRY: list[ActionDef] = [
               {"browse": "ctrl+shift+-", "edit": "ctrl+shift+-"}),
     ActionDef("zoom_reset", "实际大小", "both", "视图", "重置缩放为 100%（Ctrl+Shift+0）。",
               {"browse": "ctrl+shift+0", "edit": "ctrl+shift+0"}),
+    # ---- Git（源代码管理）----
+    # VSCode 兼容：Ctrl+Shift+G 打开源代码管理视图（workbench.view.scm）。
+    ActionDef("git_panel", "源代码管理面板", "both", "Git",
+              "展开侧边栏并打开源代码管理面板（VSCode 的 Ctrl+Shift+G）。",
+              {"browse": "ctrl+shift+g", "edit": "ctrl+shift+g"}),
+    # 提交两个动作**不设默认键位**：VSCode 的 Ctrl+Enter 只在源代码管理的提交
+    # 输入框内生效（同一组合键在编辑器里是「切换原文模式」）。默认键由
+    # KeyDispatcher 在「提交框焦点域」内解析（见 views/key_bindings.py），
+    # 这里留空是为了不把 Ctrl+Enter 从其它焦点域抢走；用户在设置面板自定义的
+    # 键位会覆盖该默认值。
+    ActionDef("git_commit", "提交（暂存区）", "both", "Git",
+              "提交已暂存的更改（提交框内默认 Ctrl+Enter，VSCode 同款）。",
+              {}),
+    ActionDef("git_commit_all", "提交所有更改", "both", "Git",
+              "提交所有更改，含未暂存（提交框内默认 Ctrl+Shift+Enter）。",
+              {}),
 ]
 
 _LAYERS = ("browse", "edit")

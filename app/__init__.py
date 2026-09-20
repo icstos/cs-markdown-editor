@@ -44,6 +44,7 @@ from app._diff_controller import build_diff_controller
 from app._file_dialogs import build_file_dialogs
 from app._file_io_ops import build_file_io_ops
 from app._focus_router import build_focus_router
+from app._git_controller import build_git_controller
 from app._keyboard import build_keyboard
 from app._render import build_render
 from app._settings_controller import build_settings_controller
@@ -235,6 +236,54 @@ def App():
     recovery_list, set_recovery_list = ft.use_state(None)
     # backup_started_ref: 防止 use_effect 严格模式下重复启动备份循环
     backup_started_ref = ft.use_ref(False)
+
+    # ============ Git 版本管理 状态 ============
+    # 分层原则（见 views/git_panel.py 模块 docstring）：
+    # - App 持有「异步任务产物」与「跨面板共享状态」（探测结果 / status / 分支 /
+    #   历史 / 差异视图 / 分支面板开关），以便状态栏角标、活动栏角标、Git 面板、
+    #   分支面板读同一份数据。
+    # - 面板局部状态（提交信息草稿、过滤词、分区折叠）留在组件内，避免每敲一个字
+    #   都触发 App 全量重渲染（编辑器控件树很重）。
+    git_available, set_git_available = ft.use_state(False)
+    git_version, set_git_version = ft.use_state("")
+    git_workspace, set_git_workspace = ft.use_state(None)
+    git_root, set_git_root = ft.use_state(None)
+    git_status, set_git_status = ft.use_state(None)
+    git_error, set_git_error = ft.use_state(None)
+    git_busy, set_git_busy = ft.use_state(False)
+    git_view, set_git_view = ft.use_state("changes")
+    git_branches, set_git_branches = ft.use_state(None)
+    git_history, set_git_history = ft.use_state(None)
+    git_history_has_more, set_git_history_has_more = ft.use_state(False)
+    git_history_loading, set_git_history_loading = ft.use_state(False)
+    git_history_filter, set_git_history_filter = ft.use_state(None)
+    git_commit_details, set_git_commit_details = ft.use_state(None)
+    git_expanded_commits, set_git_expanded_commits = ft.use_state(frozenset())
+    git_commit_push, set_git_commit_push = ft.use_state(
+        bool(settings.get("git_commit_push", False))
+    )
+    git_commit_seq, set_git_commit_seq = ft.use_state(0)
+    git_active_path, set_git_active_path = ft.use_state(None)
+    git_diff_open, set_git_diff_open = ft.use_state(False)
+    git_diff, set_git_diff = ft.use_state(None)
+    git_diff_meta, set_git_diff_meta = ft.use_state(None)
+    git_diff_mode, set_git_diff_mode = ft.use_state(
+        settings.get("git_diff_mode", "unified")
+    )
+    git_branch_menu_open, set_git_branch_menu_open = ft.use_state(False)
+
+    # Git ref：异步任务读最新值（渲染快照在异步回调里已经过期）
+    # - service_ref：GitService（按仓库根缓存 GitRepository；每次渲染重建会丢掉缓存）
+    # - busy_ref：并发保护真源（state 回流有延迟，拦不住同一事件内的连点）
+    # - refresh_token：刷新去抖令牌（切标签连点只执行最后一次 git 调用）
+    # - dialog_seq_ref：确认对话框实例序号（key 变化驱动 FileActionDialog 重挂载）
+    # - commit_message_ref：提交框草稿镜像（面板局部 state 的只读副本，供面板外的
+    #   Ctrl+Enter / 「提交」按钮读取最新文本）
+    git_service_ref = ft.use_ref(None)
+    git_busy_ref = ft.use_ref(False)
+    git_refresh_token = ft.use_ref(0)
+    git_dialog_seq_ref = ft.use_ref(0)
+    git_commit_message_ref = ft.use_ref("")
 
     # ============ 派生值 ============
     # 当前激活标签的派生值（供下游闭包与渲染使用）
@@ -429,6 +478,58 @@ def App():
         recovery_list=recovery_list,
         set_recovery_list=set_recovery_list,
         status_message=status_message,
+        # Git 版本管理（状态 / setter / ref）
+        git_available=git_available,
+        git_version=git_version,
+        git_workspace=git_workspace,
+        git_root=git_root,
+        git_status=git_status,
+        git_error=git_error,
+        git_busy=git_busy,
+        git_view=git_view,
+        git_branches=git_branches,
+        git_history=git_history,
+        git_history_has_more=git_history_has_more,
+        git_history_loading=git_history_loading,
+        git_history_filter=git_history_filter,
+        git_commit_details=git_commit_details,
+        git_expanded_commits=git_expanded_commits,
+        git_commit_push=git_commit_push,
+        git_commit_seq=git_commit_seq,
+        git_active_path=git_active_path,
+        git_diff_open=git_diff_open,
+        git_diff=git_diff,
+        git_diff_meta=git_diff_meta,
+        git_diff_mode=git_diff_mode,
+        git_branch_menu_open=git_branch_menu_open,
+        set_git_available=set_git_available,
+        set_git_version=set_git_version,
+        set_git_workspace=set_git_workspace,
+        set_git_root=set_git_root,
+        set_git_status=set_git_status,
+        set_git_error=set_git_error,
+        set_git_busy=set_git_busy,
+        set_git_view=set_git_view,
+        set_git_branches=set_git_branches,
+        set_git_history=set_git_history,
+        set_git_history_has_more=set_git_history_has_more,
+        set_git_history_loading=set_git_history_loading,
+        set_git_history_filter=set_git_history_filter,
+        set_git_commit_details=set_git_commit_details,
+        set_git_expanded_commits=set_git_expanded_commits,
+        set_git_commit_push=set_git_commit_push,
+        set_git_commit_seq=set_git_commit_seq,
+        set_git_active_path=set_git_active_path,
+        set_git_diff_open=set_git_diff_open,
+        set_git_diff=set_git_diff,
+        set_git_diff_meta=set_git_diff_meta,
+        set_git_diff_mode=set_git_diff_mode,
+        set_git_branch_menu_open=set_git_branch_menu_open,
+        git_service_ref=git_service_ref,
+        git_busy_ref=git_busy_ref,
+        git_refresh_token=git_refresh_token,
+        git_dialog_seq_ref=git_dialog_seq_ref,
+        git_commit_message_ref=git_commit_message_ref,
     )
 
     # ============ 文档内搜索（浮层）控制器与装配槽 ============
@@ -606,6 +707,12 @@ def App():
 
     settings_cbs = build_settings_controller(ctx)
 
+    # ============ Git 版本管理控制器 ============
+    # 依赖均为「调用时读取」的装配槽（update_setting / show_snack /
+    # set_status_message / open_file_and_jump / set_file_dialog），故装配顺序
+    # 只需早于 build_keyboard（KeyDispatcher 构造期立即求值 app_callbacks）。
+    git_cbs = build_git_controller(ctx)
+
     split_cbs = build_split_editor(ctx)
 
     focus_cbs = build_focus_router(ctx)
@@ -630,7 +737,7 @@ def App():
     _UNSTORED = ['autosave_on_exit', 'bind_keyboard', 'dispatcher']
     _HAND_WIRED = ('active_index', 'bump_fs_version', 'close_current_tab', 'close_doc_search', 'doc_search_active', 'doc_search_active_ref', 'doc_search_case', 'doc_search_doc', 'doc_search_focus_seq', 'doc_search_map', 'doc_search_map_version', 'doc_search_matches_ref', 'doc_search_next', 'doc_search_open', 'doc_search_open_ref', 'doc_search_prev', 'doc_search_query', 'doc_search_regex', 'doc_search_total', 'focus_search', 'global_search', 'native_input_ref', 'open_doc_search', 'open_external', 'open_file_and_jump', 'page_ref', 'push_cursor_to_status', 'replace_all', 'replace_current', 'schedule_status_count_update', 'set_doc_search_case', 'set_doc_search_query', 'set_doc_search_regex', 'set_status_message', 'toggle_replace_bar')
     for _group in (tab_cbs, file_cbs, dialog_cbs, diff_cbs, backup_cbs,
-                   settings_cbs, split_cbs, focus_cbs):
+                   settings_cbs, git_cbs, split_cbs, focus_cbs):
         for _slot, _fn in _group.items():
             if _slot in _RENAMED or _slot in _UNSTORED or _slot in _HAND_WIRED:
                 continue
@@ -926,6 +1033,21 @@ def App():
             us("sample_shown", True)
 
     ft.use_effect(_mark_sample_shown, [])
+
+    # ============ Git：工作区 / 文件系统变化时自动刷新 ============
+    # 对齐 VS Code 的行为：打开文件夹、切换工作区（workspace_folder 设置变化）、
+    # 文件增删改（fs_version 递增）、文档保存（dirty 由 True 翻回 False）都重新
+    # 探测仓库根并刷新状态；首次挂载即完成一次启动探测（未安装 Git / 不是仓库时
+    # 控制器自身会降级成"可用但未初始化"的提示态，不会抛错）。
+    # 依赖里只放"脏标记元组"而不是整个 tabs：内容编辑期间 dirty 只翻转一次，
+    # 因此不会每次击键都触发 git 子进程；控制器内部另有 0.12s 去抖兜底。
+    _git_ws_key = (settings or {}).get("workspace_folder") or ""
+    _git_dirty_sig = tuple(bool(t.get("dirty")) for t in tabs)
+
+    def _sync_git_state():
+        ctx.git_refresh()
+
+    ft.use_effect(_sync_git_state, [_git_ws_key, fs_version, _git_dirty_sig])
 
     # ============ 渲染树 ============
     return build_render(ctx)

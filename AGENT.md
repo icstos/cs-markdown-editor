@@ -38,7 +38,7 @@
 | 侧边栏文件树/拖拽/右键菜单/大纲/搜索 | `views/sidebar.py`、`app/_file_dialogs.py` | `.trae/documents/vscode-style-file-tree.md`、`.trae/documents/sidebar-search-enhancement.md`、`.trae/documents/sidebar-drag-resize-fix.md` |
 | 文件 IO/打开/保存/导出/最近文件 | `app/_file_io_ops.py`、`services/file_io.py`、`services/export.py`、`services/clipboard_html.py`、`services/html_to_markdown.py` | `README.md`「文件与导出」 |
 | 自动保存/备份/崩溃恢复 | `app/autosave.py`、`services/backup.py`、`services/recovery.py`、`app/_backup_controller.py`、`views/recovery_dialog.py` | `config/settings.py` 注释、`README.md` |
-| 设置面板/配置项增删 | `views/settings_dialog.py`、`config/settings.py`、`app/_settings_controller.py` | `README.md`、`config/settings.py` 模块文档字符串 |
+| 设置面板/配置项增删 | `views/settings_dialog.py`、`config/settings.py`、`app/_settings_controller.py`、`config/app_meta.py`（关于页的版本与外链唯一来源） | `README.md`、`config/settings.py` 模块文档字符串、`tests/test_settings_dialog.py` |
 | 主题配色/字号阶梯/间距常量 | `styles.py` | `README.md`「样式系统」 |
 | 搜索替换 | `views/editor/_replace.py` | `.trae/documents/搜索替换功能实现计划.md` |
 | 性能优化（大文档/重渲染） | `views/editor/_render.py`、`views/line_view.py`（`@ft.memo`）、`parser/reparse.py` | `.trae/documents/性能优化-响应卡顿与大文档假死.md`、`.trae/documents/incremental-rendering-optimization.md` |
@@ -124,6 +124,22 @@
 - 标题文字的取色口唯一：编辑区、侧栏大纲（`views/toc.py`）、文档内 `[toc]` 卡片（`views/line_view.py` 的 `BlockType.TOC` 分支）都必须走 `styles.heading_text_color(level, c)`，字重走 `block_weight(BlockType.HEADING, level)`（编辑区）/ `styles.outline_heading_weight(level)`（大纲与目录卡片）。禁止在任何一处另写 `c.heading_colors.get(...)`、另起一套字重分级（如「H1/H2 加粗、其余常规」）或写死颜色值。后果：大纲条目与正文标题不再逐级对应（改前大纲文字统一为正文灰 `#1F2329`，只靠 3px 色条区分级别，扫一眼认不出条目是哪一级），且切主题时四处各自漂移。另：`styles.heading_text_color` 的取色口**不得**替换为「渲染时把当时的颜色字符串存进 prop」之类的快照方案——`_current_colors()` 在渲染期读取 `page.theme_mode`，快照会让切主题后大纲停在旧色。`tests/test_outline_color.py` 直接比对「大纲渲染出的色/重」与「编辑区**真渲染输出**（`raw_to_visible_spans`）」，并锁定大纲字重 == 编辑区字重整体降一档（12px 紧凑列表的档位换算，不产生同重级别）。
 - 禁止让侧栏大纲与文档内 `[toc]` 卡片出现第二套视觉规则：条目的缩进步长、色条宽度可以按容器密度不同（侧栏 14px/3px、卡片 16px/2px，因为卡片本身有边框与内边距），但**颜色与字重必须同源**（见上一条），否则两者会逐渐漂移成两个组件（`test_toc_card_matches_outline` 守护）。
 
+- 禁止把设置面板的头部（标题 / 说明 / **关闭按钮**）放进内容滚动区：右列必须是
+  `[固定头部, 分隔线, 唯一滚动区]` 三段，头部与分隔线在滚动区**之外**。后果：快捷键 tab 有近百行，
+  往下滚一点关闭按钮就滚出视口，用户必须滚回顶部才能关窗（本轮改动前即是如此）。
+  `tests/test_settings_dialog.py` 对**五个 tab** 参数化守护「关闭按钮不是滚动容器的子孙」。
+- 必须给设置面板右列的**外层 `Column` 与内层滚动 `Column` 都写 `expand=True`**：父级 `Row` 的
+  交叉轴约束是「至多 740」（不是紧约束），外层列不加 `expand` 就按内容取高，内层滚动列拿不到
+  **有界高度**——内容被卡片裁掉**且滚轮完全无效**（真机实测滚 6 次内容零位移，肉眼却看不出
+  与「滚到顶」的区别）。后果：设置页在长内容下静默失去滚动能力。
+- 禁止在设置面板使用 `ft.IconButton`（含关闭按钮）：Material 固有高 40、`visual_density=COMPACT`
+  也只降到 32，**压内边距无效**，会把头部与行高顶开。统一用固定尺寸的
+  `Container(ink=True, width/height=..., tooltip=...)`（`views/settings_dialog.py::_icon_button`），
+  与顶栏 / 状态栏同一惯例。
+- 禁止把设置面板的「关于」页与全局「帮助」菜单的 URL / 版本号各写一份：必须取自
+  `config/app_meta.py`（唯一来源）。后果：外链或版本改了但某个入口忘了改，两处静默漂移，
+  没有任何测试能发现不一致。
+
 - 禁止延迟 `utils.log.setup()` 的安装位置：必须在 `main.py` 顶部、**早于 `import flet` / `import app`** 执行（`LOG = setup()`）。这是「最早安装」原则——项目自己的模块在导入期就可能抛异常，日志装晚了这些异常就没有任何痕迹。后果：启动即崩时零现场，只能靠逐段注释代码二分。
 - 禁止移除 `utils/log.py::attach_flet` 对 `page.run_task` 的异常现场包装（`_instrument_run_task` / `_report_task_failure`）：flet 的 `page.run_task` 把协程异常 **re-raise 在 `concurrent.futures` 的完成回调里**（该模块只打一行 ERROR，既不写现场文件、logger 名字也不含 crash），而这是本项目最常用的异步入口（打开/保存/导出/自动保存全走它）。后果：所有 `page.run_task` 内的异常重新退化成「只有一行日志、无线索」。
 - 禁止在热路径（逐字符输入 / 每行渲染 / 滚动回调 / 光标移动）打重活日志：日志虽走 `QueueHandler` 入队（写盘在后台线程、调用方 O(1)），但**入队之前的参数求值在调用方线程执行**。因此热路径禁止 `log.debug(f"...")` 形式的 f-string（**无条件先求值**，即使级别过滤掉了也白算）、禁止 `repr(document)` / `json.dumps(...)` 这类为了打日志而遍历大对象、禁止逐行/逐段打日志。需要时用惰性参数形式 `log.debug("x=%s", x)`，并只在排查期临时调 `DEBUG`。
@@ -148,6 +164,15 @@
    的用例会在 setup 阶段报 `PermissionError: [WinError 5]`（属环境问题，非代码缺陷）。
    此时改用工作区内临时目录：`python -m pytest tests/ -q --basetemp=tests/.tmp
    -p no:cacheprovider`，并把 `tests/.tmp` 加入忽略。
+
+   ⚠️ 另一类**更容易误判为回归**的环境性失败：Agent 宿主若注入了删除守卫
+   （`sitecustomize.py` 劫持 `Path.unlink` / `os.remove` 并在同一次工具调用内累计删除计数），
+   那么**测试自身调用 `unlink()` 清沙箱文件的用例会直接抛 `SystemExit: 1`**
+   （如 `tests/test_first_run_sample.py`）。报错栈里能看到 `[safe-delete]` 前缀 —— 见到它
+   就说明是环境拦截，不要去改测试。判断方法：单独跑该文件仍失败、且失败点是 `unlink()`
+   而非断言。同理，一次工具调用里连续跑多轮全量回归会累积删除计数，越往后越容易整体失败，
+   此时以**最早那一轮的摘要**为准。
+
 3. **进程内集成冒烟**（`tests/test_boot_smoke.py`，无需 Flutter 前端）：
    ```bash
    python -m pytest tests/test_boot_smoke.py tests/test_harness.py -q -p no:cacheprovider
@@ -216,8 +241,9 @@ pid / cwd / 实际日志路径 / 级别），任何一条日志都能据此回�
 
 ## 7. 重构基线（当前进度）
 
-**验证基线**：`python -m pytest tests/ -q -p no:cacheprovider` → 1002 passed +
-182 环境性 `tmp_path` 报错（受限环境专属，非代码缺陷）。
+**验证基线**：`python -m pytest tests/ -q -p no:cacheprovider` → **1492 passed**。
+受限会话下（`%TEMP%` 不可写、或宿主删除守卫拦截测试内的批量删除）会有若干 `tmp_path` 类用例
+报 `PermissionError` / `SystemExit: 1`，属环境性、非代码缺陷，见第 5 节「受限环境注意事项」。
 
 **已完成**：
 

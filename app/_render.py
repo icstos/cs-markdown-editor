@@ -37,6 +37,7 @@ body 根据 is_diff_tab / split_editor 分三种模式：
 跳过头部控件树重建，避免 App 重渲染（侧边栏切换 / 焦点视口切换）重建头部。
 """
 
+import logging
 import os
 
 import flet as ft
@@ -57,6 +58,8 @@ from views.settings_dialog import SettingsDialog
 from views.sidebar import Sidebar
 from views.status_bar import StatusBar
 from views.tab_bar import ConfirmCloseDialog, TabBar
+
+log = logging.getLogger(__name__)
 
 
 def _editor_search_props(ctx, doc):
@@ -135,6 +138,30 @@ def build_render(ctx) -> ft.Control:
         return 0
 
     # ============ 设置弹层 ============
+
+    def _open_settings_url(url: str):
+        """「关于」页外链：交给系统浏览器打开（与帮助菜单同一路径）。"""
+        page = ctx.page_ref.current
+        if page is None or not url:
+            return
+        try:
+            page.launch_url(url, web_popup_window_name=ft.UrlTarget.BLANK)
+        except Exception:
+            log.debug("打开外链失败 url=%s", url, exc_info=True)
+
+    def _copy_settings_text(text: str):
+        """「关于」页复制（邮箱 / 版本号 / 运行环境）。"""
+        page = ctx.page_ref.current
+        clip = ctx.clipboard_holder.current
+        if page is None or clip is None or not text:
+            return
+        try:
+            page.run_task(clip.set, text)
+        except Exception:
+            log.debug("复制到剪贴板失败 text=%s", text, exc_info=True)
+            return
+        ctx.show_snack(f"已复制：{text}")
+
     settings_view = SettingsDialog(
         open_state=ctx.settings_open,
         tab=ctx.settings_tab,
@@ -154,6 +181,8 @@ def build_render(ctx) -> ft.Control:
         on_cancel_capture_click=lambda: ctx.set_capturing((None, None)),
         on_open_recovery=ctx.open_recovery_panel,
         on_pick_backup_dir=lambda: ctx.page_ref.current.run_task(ctx.pick_backup_dir),
+        on_open_url=_open_settings_url,
+        on_copy=_copy_settings_text,
     )
 
     # ============ 侧边栏（第二列：管理面板）+ 功能栏（第一列）+ 大纲列（第四列）============

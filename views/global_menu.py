@@ -20,6 +20,7 @@ import os
 
 import flet as ft
 
+from config import app_meta
 from models.document import BlockType
 from styles import FONT_MAIN, Radius, Spacing, get_colors
 
@@ -277,12 +278,14 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
             page_ref.current.launch_url(url, web_popup_window_name=ft.UrlTarget.BLANK)
 
     # TODO: 替换为实际网址
-    _URL_OFFICIAL = "https://example.com"  # TODO: 官方网站
-    _URL_CHANGELOG = "https://example.com/changelog"  # TODO: 更新日志
-    _URL_PRIVACY = "https://example.com/privacy"  # TODO: 隐私条款
-    _URL_FEEDBACK = "https://example.com/feedback"  # TODO: 反馈
-    _URL_CREDITS = "https://example.com/credits"  # TODO: 鸣谢
-    _URL_ABOUT = "https://example.com/about"  # TODO: 关于
+    # 外链统一来自 config/app_meta（设置「关于」页与这里共用同一来源，
+    # 避免两处各写一份 URL 后悄悄漂移成不一致）。
+    _URL_OFFICIAL = app_meta.URL_OFFICIAL
+    _URL_CHANGELOG = app_meta.URL_CHANGELOG
+    _URL_PRIVACY = app_meta.URL_PRIVACY
+    _URL_FEEDBACK = app_meta.URL_FEEDBACK
+    _URL_CREDITS = app_meta.URL_CREDITS
+    _URL_ABOUT = app_meta.URL_OFFICIAL
 
     help_controls = [
         _menu_item("官方网站", on_click=lambda e: _open_url(e, _URL_OFFICIAL), c=c),

@@ -38,12 +38,11 @@ import json
 
 import flet as ft
 
+from app._contracts import SettingsEnv
 from app.autosave import AutosaveContext, schedule_autosave
 from config.settings import DEFAULT_SETTINGS, save_settings
 from services.file_io import read_text, write_text
 from styles import get_colors
-
-from app._contracts import SettingsEnv
 
 
 def build_settings_controller(ctx: SettingsEnv):
@@ -184,7 +183,9 @@ def build_settings_controller(ctx: SettingsEnv):
         ctx.set_settings(next_settings)
         save_settings(next_settings)
         ctx.set_shortcut_focus((None, None))
-        select_settings_tab("advanced")
+        # 停在「快捷键」页：原实现指向的是已删除的「高级」占位 tab，
+        # 面板会回退到「编辑」页，用户看不到刚恢复的键位。
+        select_settings_tab("shortcuts")
         open_settings()
 
     async def export_shortcuts():

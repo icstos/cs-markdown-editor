@@ -54,6 +54,8 @@ state，从而不扰动既有的 `code_focus_ref` 路由与 `ft.memo` 依赖。
 - services.code_highlight（分词，惰性 Pygments，未知语言回退纯文本）
 - services.clipboard（复制代码到系统剪贴板）
 - styles（FONT_MONO / Radius / Spacing / Elevation / card_shadow / code_syntax）
+  —— FONT_MONO 是随包分发的 Noto Sans Mono CJK SC（含 CJK 字形、拉丁 0.5em /
+  CJK 1.0em 严格等宽），故代码块里的中文注释不会触发字体回退、也不会破坏列对齐。
 - utils.code_indent（Tab / Shift+Tab 的缩进变换，纯函数）
 - utils.text_layout（`_FLET_DEFAULT_LETTER_SPACING`：与渲染层一致的字距，
   高亮层与编辑层必须同值，否则折行点与光标随字数线性漂移）
@@ -211,8 +213,10 @@ def _edit_strut(size: int) -> ft.StrutStyle:
 def _measure_mono_width(text: str, size: int) -> float:
     """等宽字体下单行文本的像素宽度（不换行模式用于撑开编辑框）。
 
-    优先用项目自带的 HarfBuzz 精确测量；测量不可用时退化为"字符数 × 0.6 字号"
-    的等宽估算（Consolas 实测比例约 0.55，留余量避免低估导致折行）。
+    优先用项目自带的 HarfBuzz 精确测量；测量不可用时退化为"字符数 × 0.5 字号"
+    的等宽估算。0.5 是 FONT_MONO（Noto Sans Mono CJK SC）的实测拉丁字宽比
+    （upem=1000 下拉丁恒 0.5em；CJK 恒 1.0em，估算因此偏窄，但只影响"不换行"
+    模式下的横向撑开量，偏窄由后续的显式 4 空格余量吸收）。
     """
     if not text:
         return 0.0
@@ -221,7 +225,7 @@ def _measure_mono_width(text: str, size: int) -> float:
 
         return float(measure_text_width(text, FONT_MONO, size))
     except Exception:
-        return len(text) * size * 0.6
+        return len(text) * size * 0.5
 
 
 def render_code_block(
@@ -291,8 +295,9 @@ def render_code_block(
     text_h = round(code_size * _CODE_LINE_HEIGHT)
     line_count = max(1, code.count("\n") + 1)
     digits = len(str(line_count))
-    # 行号列宽 = 位数 × 单字宽 + 与代码的间距（等宽字体单字宽 ≈ 0.62 字号）
-    gutter_w = max(26, round(digits * code_size * 0.62) + Spacing.LG)
+    # 行号列宽 = 位数 × 单字宽 + 与代码的间距。单字宽取 0.5 字号：FONT_MONO
+    # （Noto Sans Mono CJK SC）的拉丁字宽实测恒为 0.5em，行号是纯数字故适用。
+    gutter_w = max(26, round(digits * code_size * 0.5) + Spacing.LG)
     gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.04, c.text)
     border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
 

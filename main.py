@@ -99,7 +99,13 @@ async def main(page: ft.Page):
 
     with diagnostics.timed("启动 · 页面配置", slow_ms=500):
         page.title = "Markdown 编辑器"
-        page.fonts = {"Alibaba": "fonts/AlibabaPuHuiTi-3-55-Regular.otf"}
+        # 随包字体的注册表：key 即 `font_family` 的取值（styles.FONT_MAIN / FONT_MONO），
+        # value 是相对 `assets/` 的路径。两个字体文件都随包分发（`pyproject.toml`
+        # 的 `[tool.flet.app]` 未排除 `assets/`），打包后同样可用。
+        page.fonts = {
+            "Alibaba": "fonts/AlibabaPuHuiTi-3-55-Regular.otf",
+            "NotoSansMonoCJKsc": "fonts/NotoSansMonoCJKsc-Regular.otf",
+        }
         # 亮/暗两套主题，由 App 的 theme_mode state 切换
         # 背景色由 App.apply_theme 通过 page.bgcolor 单独设置，不放在 ColorScheme
         # ColorScheme.surface 与 styles._LIGHT/_DARK.bg 对齐，保证 Flet 原生控件

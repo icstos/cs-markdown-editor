@@ -23,9 +23,19 @@ from models.document import (
     Segment,
 )
 
-# 字体族
+# 字体族。两者都是**随包分发**的本地字体（`assets/fonts/`），在 `main.py` 里经
+# `page.fonts` 注册——不依赖用户机器上装了什么。
+# - FONT_MAIN：正文（AlibabaPuHuiTi-3-55-Regular.otf），含完整 CJK 字形。
+# - FONT_MONO：代码块 / 行内代码 / 公式 / 行号（NotoSansMonoCJKsc-Regular.otf）。
+#   **必须用这个含 CJK 的等宽字体，不能用 Consolas 之类的系统等宽字体**：
+#   后者不含 CJK 字形，中文注释与全角标点会走 Skia 的字体回退链，落到一个**非等宽**
+#   的 CJK 字体上——代码块里"中文注释比英文代码宽"、制表对齐错位，且回退字体的
+#   行盒更高（中文行 25px vs 纯 ASCII 24px），叠层编辑框的光标会逐行漂移。
+#   Noto Sans Mono CJK SC 实测（HarfBuzz，upem=1000）：拉丁恒 0.5em、CJK 恒 1.0em
+#   （`a`=8.0 / `abc`=24.0 / `中文`=32.0 @ 字号 16），全角与半角严格 2:1，
+#   中英混排也不破栅格；且自带 CJK 字形，回退链不再被触发。
 FONT_MAIN = "Alibaba"
-FONT_MONO = "Consolas"  # 代码块的等宽回退，提升可读性
+FONT_MONO = "NotoSansMonoCJKsc"
 
 # 顶栏行高（逻辑像素）：标签行与大纲头部共用同一高度，使两列顶栏连成**同一条水平带**
 # ——底边线重合、下方内容区（编辑区 / 大纲列表）顶部齐平。

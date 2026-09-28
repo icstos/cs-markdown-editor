@@ -17,7 +17,8 @@
   否则光标偏移随字符数线性累积（10 位数字累积 2.5px）。渲染层未显式设置 letter_spacing，
   全部使用默认值 0.25，故测量端统一按 0.25/字形补偿。
 - CJK 回退：主字体不含 CJK 字形时按 CJK 边界切分，CJK 片段改用主中文字体测量，
-  贴合 Skia 渲染回退行为。
+  贴合 Skia 渲染回退行为。（当前 FONT_MAIN / FONT_MONO 都自带 CJK 字形，
+  该分支仅在字体缺失或换用不含 CJK 的等宽字体时兜底。）
 - 单字符宽度缓存（_char_width_cache）：行内 X 偏移逐字符累加时高频调用，缓存后
   首次测量外均为 O(1) 查表。
 - 图片尺寸按 src 缓存，避免重复 IO / 网络请求。
@@ -36,14 +37,15 @@ import uharfbuzz as _hb
 
 # 字体族常量（与 styles.py 保持一致，避免循环依赖）
 FONT_MAIN = "Alibaba"
-FONT_MONO = "Consolas"
+FONT_MONO = "NotoSansMonoCJKsc"
+
+_ASSETS_FONTS = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "assets", "fonts"
+)
 
 _FONT_FILES: dict[str, str] = {
-    FONT_MAIN: os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        "assets", "fonts", "AlibabaPuHuiTi-3-55-Regular.otf",
-    ),
-    FONT_MONO: r"C:\Windows\Fonts\consola.ttf",
+    FONT_MAIN: os.path.join(_ASSETS_FONTS, "AlibabaPuHuiTi-3-55-Regular.otf"),
+    FONT_MONO: os.path.join(_ASSETS_FONTS, "NotoSansMonoCJKsc-Regular.otf"),
 }
 
 # CJK 与全角字符范围：主字体（如 Consolas）不含这些字形时需回退到主中文字体
@@ -144,6 +146,7 @@ def _get_hb_font(font_family: str, size: int) -> tuple[_hb.Font, int] | None:
         blob = _hb.Blob.from_file_path(path)
         face = _hb.Face(blob)
         _hb_faces[font_family] = face
+        _has_cjk_cache[font_family] = _face_has_cjk_glyphs(face)
     font = _hb.Font(face)
     upem = face.upem
     # scale = size × upem：使 x_advance 为「设计单位 × size」整数，消除 26.6 定点舍入
@@ -152,6 +155,47 @@ def _get_hb_font(font_family: str, size: int) -> tuple[_hb.Font, int] | None:
     _hb.ot_font_set_funcs(font)
     _hb_fonts[key] = (font, upem)
     return (font, upem)
+
+
+# 字体族 -> 该 Face 是否自带常用 CJK 字形（**必须逐个 Face 探测，不能按字体族硬编码**：
+# `_FONT_FILES` 的路径是可被外部替换的，判定要跟着真实文件走）
+_has_cjk_cache: dict[str, bool] = {}
+
+# CJK 覆盖探测样本：常用汉字 + 全角标点 + 全角字母。
+# 取"最常用"字，因为字体裁掉 CJK 时裁的正是这些；只要有一个查不到字形就认为该
+# 字体不足以直接承担中文排版，需要回退。
+_CJK_PROBE = "中文的了是国汉字"
+
+
+def _face_has_cjk_glyphs(face: _hb.Face) -> bool:
+    """探测 Face 是否自带 _CJK_PROBE 里每个字的字形（缺任意一个即视为不自足）。
+
+    用 `Font.get_nominal_glyph(codepoint)` 查 cmap：返回 None / 0（.notdef）即缺字形。
+    探测结果按字体族缓存，每个字体文件只查一次。
+    """
+    font = _hb.Font(face)
+    try:
+        for ch in set(_CJK_PROBE):
+            gid = font.get_nominal_glyph(ord(ch))
+            if not gid:  # None 或 0（.notdef）
+                return False
+    except Exception:  # 老版本 uharfbuzz 无该 API：保守起见按"需回退"处理
+        return False
+    return True
+
+
+def _font_covers_cjk(font_family: str) -> bool:
+    """该字体族是否自带 CJK 字形（可独立承担中文排版，无需回退）。
+
+    仅在字体文件可加载且探测为"覆盖"时返回 True；文件缺失时返回 False，
+    让调用方走"回退到 FONT_MAIN 测量"的保守分支。
+    """
+    if font_family in _has_cjk_cache:
+        return _has_cjk_cache[font_family]
+    # 触发 Face 解析（`_get_hb_font` 内会顺带填缓存）；用字号 1 只是为了拿到 Face，
+    # 探测与字号无关。
+    _get_hb_font(font_family, 1)
+    return _has_cjk_cache.get(font_family, False)
 
 
 def _hb_shape_width(text: str, font_family: str, size: int) -> float:
@@ -188,9 +232,9 @@ def _measure_uncached(text: str, font_family: str, size: int) -> float:
     """无缓存测量：FONT_MAIN 或无 CJK 时直接整形；否则按 CJK 边界切分回退主中文字体。
 
     核心算法原理（CJK 回退）：
-    - 缺字现象：请求字体（如 Consolas）不含 CJK 字形时，HarfBuzz 输出 .notdef
-      （glyph id=0），其 advance 通常为字体 cmap 中 .notdef 的宽度（多为 0 或
-      一固定值），与实际渲染宽度严重不符。
+    - 缺字现象：请求字体不含 CJK 字形时，HarfBuzz 输出 .notdef（glyph id=0），
+      其 advance 通常为字体 cmap 中 .notdef 的宽度（多为 0 或一固定值），与实际
+      渲染宽度严重不符。
     - Skia 渲染回退：Flutter 的 TextPainter 在 FontCollection 中查找字形时，若
       主字体缺失会按 fallback 链回退到系统 CJK 字体（Microsoft YaHei 等），
       CJK 字符实际渲染宽度约 1em（size px）。
@@ -199,8 +243,17 @@ def _measure_uncached(text: str, font_family: str, size: int) -> float:
       （Alibaba，含完整 CJK 字形）测量，模拟 Skia 回退行为。
     - 段间 kerning 损失：CJK 与拉丁字符之间通常无 GPOS kerning 表，实验验证
       '中1文2' HB 切分累加 = Flet 渲染（差 4×0.25 letter_spacing 补偿后归零）。
+
+    ⚠️ 触发条件已从"字体族 == FONT_MAIN"改为**逐字体探测 CJK 覆盖率**
+    （`_face_has_cjk_glyphs`）：当前两个字体族都自带 CJK 字形（FONT_MONO 用的
+    NotoSansMonoCJKsc 含完整 CJK 且严格等宽），本回退分支**在正常路径上不触发**。
+    这一步是必须的——若仍按字体族判定，中文会被强行送去 FONT_MAIN（Alibaba，
+    比例字体：中文 15.744px / 拉丁 9.792px @16）测量，而实际渲染用的是
+    NotoSansMonoCJKsc（中文 16.0 / 拉丁 8.0）→ 测量比渲染**宽 0.256px/汉字**，
+    代码块的光标会随中文注释长度累积右偏，同时等宽栅格被破坏。
+    保留该分支是为了兜住"字体文件缺失 / 外部替换成不含 CJK 的等宽字体"这类退化情形。
     """
-    if font_family == FONT_MAIN or not _CJK_RE.search(text):
+    if not _CJK_RE.search(text) or _font_covers_cjk(font_family):
         return _hb_shape_width(text, font_family, size)
     total = 0.0
     pos = 0
@@ -296,8 +349,9 @@ def _compute_offsets(text: str, font_family: str, size: int) -> list[float]:
 
     被 measure_text_offsets 调用，独立出来便于 LRU 缓存包裹。
     """
-    # CJK 回退：FONT_MAIN 直接整形；其它字体按 CJK 边界切分，CJK 片段换主中文字体
-    if font_family == FONT_MAIN or not _CJK_RE.search(text):
+    # CJK 回退：字体自带 CJK 字形（或文本无 CJK）时直接整形；
+    # 否则按 CJK 边界切分，CJK 片段换主中文字体（与 _measure_uncached 同一判据）。
+    if not _CJK_RE.search(text) or _font_covers_cjk(font_family):
         return _hb_cluster_offsets(text, font_family, size)
     # 混合 CJK：逐段整形后按段拼接偏移（CJK 段用 FONT_MAIN，非 CJK 段用原字体）
     # 各段独立整形，段间累计 acc 拼接，模拟 Skia 分段回退渲染

@@ -41,10 +41,21 @@ class _StubConn:
 
 
 class _HarnessSession(Session):
-    """无传输会话：保留挂载语义与调度队列，丢弃所有出站消息。"""
+    """无传输会话：保留挂载语义与调度队列，丢弃所有出站消息（但留档）。
+
+    `sent` 里按发送顺序留下每条出站消息。夹具本身不需要它，但**协议层的不变量只能
+    在这里验证**——例如"编辑框的 `value` 有没有被回灌"：组件内部拿到的是自己算的
+    渲染参数，而真正决定客户端行为的是 flet 差分出来的补丁（属性相同就不发补丁，
+    发了才会让客户端重设文本、光标跳走）。留档让这类断言不必去猜。
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.sent: list[Any] = []
 
     def _Session__send_message(self, message: Any) -> None:
-        """吞掉出站消息：夹具没有前端可发。"""
+        """吞掉出站消息（夹具没有前端可发），同时记进 `sent` 供协议层断言。"""
+        self.sent.append(message)
 
     async def invoke_method(
         self,

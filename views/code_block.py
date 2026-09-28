@@ -26,6 +26,31 @@
   会把含中文/emoji（字体回退字形）的行压到 24px，而高亮层同一行是 25px，
   光标因此**逐行累积上飘**（详见 `_edit_strut` 的实测数据）。
 
+第四个约束（真机实测 + flet 源码，症状很会骗人）：**编辑框的 `value` 属性必须以
+"客户端此刻手里的文本"为准，绝不能取我方上次传进去的那个字符串**。
+症状：在代码块里连打回车，光标异常跳到代码块末端、刚敲的回车一起丢失。真机探针实测
+（连打 6 次回车、光标在正文中段）：前 3 个落在光标处，第 4 个落到代码块末尾，之后输入
+的字符也跟着落在末尾。
+
+机制（三层，缺一层就推不出正确写法）：
+1. flet 的补丁是**差分**出来的：拿本次渲染的控件对象与上一次渲染的控件对象逐属性比，
+   不同才发补丁（`Session.patch_control` → `ObjectPatch.from_diff`）。
+2. 客户端上报的 `UPDATE_CONTROL_PROPS` 会被 `Session.apply_patch` → `patch_dataclass`
+   **直接写回上一次渲染的那个控件对象**；`patch_dataclass` 的 docstring 明说它绕过
+   frozen 检查（"avoids ... frozen-checks ... when applying patches that originate
+   *from Dart*"）。于是"上一次渲染的编辑框"里躺着的是**客户端手里的文本**（可能比文档
+   还新），而不是我们上次传给它的字符串。
+3. 重渲染时若把文档文本当 `value` 发下去，就等于"服务端命令客户端把文本改成这样"。
+   慢速输入时它恰好等于客户端手里的文本（差分不出补丁，看不出问题）；**连打回车**时
+   客户端已经跑到前面、服务端手里还是旧文本 → 差分出一条把旧文本推回去的补丁 →
+   Flutter 重设文本后光标落到末尾。
+
+结论：只有**我方**改写文本时才下发 `value`（Tab 缩进 / 撤销 / 外部改写），判据是"文档
+文本 != 我们最后确知客户端手里有的文本"（`client_text_ref`，客户端回报与我方下发两个
+来源都写它）；而**不下发时该传什么**，必须取上一次渲染那个编辑框对象的 `value`
+（`edit_field_ref.current`）——它才是客户端手里的那份。两条合起来见
+`_build_edit_body` 的 `field_value`。
+
 头部行高 = **最高子项**，故紧凑与否由子项的固有高度决定（不是内边距）：
 - `ft.Dropdown` 恒为 48px（即使 `dense` / `text_size=12` / 内边距归零——内部
   `InputDecorator` 的固有高度），且用 `height=` 强压会裁切其文字（压到 24px 时
@@ -410,12 +435,17 @@ def render_code_block(
     # tap_pos_ref：行级点击位置快照 (行号, 代码文本内 x, 行内 y)。由 on_tap_down 写、
     #   由 on_click 读——坐标只在 TapEvent 上，而 on_click 收的是不带坐标的 ControlEvent
     #   （见模块 docstring「点击定位 · 坐标从哪来」）。
+    # client_text_ref：客户端最近一次回报的编辑框文本。它是"这段文本是不是客户端自己
+    #   敲的"的判据（与文档文本比对），见 `_build_edit_body` 里的下发规则。
+    #   注意它**不是**"待下发的文本"：不下发时要传的是 `edit_field_ref.current.value`
+    #   （客户端手里的那份），见该处注释——两者差一层 flet 的差分语义，混用即回灌。
     caret_ref = ft.use_ref(None)
     shift_ref = ft.use_ref(False)
     ctrl_ref = ft.use_ref(False)
     tab_pending_ref = ft.use_ref(False)
     pending_caret_ref = ft.use_ref(None)
     tap_pos_ref = ft.use_ref(None)
+    client_text_ref = ft.use_ref(None)
     tab_epoch, set_tab_epoch = ft.use_state(0)
     # 编辑框是否已真正取得焦点（进入编辑态时复位）。
     # 待写入的光标只能在**聚焦之后**下发，原因见 `_build_edit_body`：
@@ -837,6 +867,39 @@ def render_code_block(
         if edit_focused:
             pending_caret = pending_caret_ref.current
             pending_caret_ref.current = None
+
+        # ---- 本次要下发的 `value`：客户端自己敲的文本**绝不回灌** ----
+        # 机制与真机症状见模块 docstring「第四个约束」；这里只说写法为什么是这样。
+        #
+        # `prev_field` 是**上一次渲染构造的那个编辑框对象**。它同时是两个角色：
+        #   · flet 算补丁时的 prev 快照（差分基准）；
+        #   · 客户端上报 `UPDATE_CONTROL_PROPS` 的落点（`patch_dataclass` 直接写进它的
+        #     `_values`，绕过 frozen 检查）。
+        # 所以 `prev_field.value` 是**客户端此刻手里的文本**（可能比文档还新——连打回车
+        # 时正是如此），而不是我们上次传给它的那个字符串。
+        #
+        # `client_text_ref` 的语义 = **我们最后确知客户端手里有的文本**，两个来源：
+        # 客户端每次回报（`_on_field_change`）、我方每次下发（本处末尾）。它天然覆盖
+        # "客户端敲了字但回报还没到"的窗口——那时它仍等于上一次下发的文本。
+        # 注意**只有真正下发时才更新它**：冻结分支里客户端手里那份可能已经抢跑到文档
+        # 前面（这正是需要冻结的场景），若把"已知文本"跟着改成那份，下一轮渲染就会觉得
+        # "文档 != 已知文本"而把旧文档推回去——等于绕一圈又回到本缺陷。
+        #
+        # 于是判据只有一条：**文档文本是否还等于这份已知文本**。
+        #   相等 ⇒ 这段是客户端自己敲的（可能已抢跑到更前面）⇒ 沿用 `prev_field.value`，
+        #          不下发：差分结果为空，客户端手里的文本与光标都不被打扰。
+        #          （若改成"沿用我们上次传进去的值"，就会差分出一条把旧文本推回去的补丁、
+        #          把客户端的抢跑内容覆盖掉——这正是本缺陷的成因，勿改。）
+        #   不等 ⇒ 文档被我方改写（Tab 缩进 / 撤销 / 外部改写）⇒ 下发 `code`，
+        #          否则客户端手里的旧文本会与文档脱节。
+        # 首次渲染 `prev_field` 为空：新挂载的编辑框必须先拿到当前文本，无条件下发。
+        prev_field = edit_field_ref.current
+        prev_value = prev_field.value if prev_field is not None else None
+        if prev_value is not None and code == client_text_ref.current:
+            field_value = prev_value
+        else:
+            field_value = code
+            client_text_ref.current = code
         field = ft.TextField(
             # key 稳定（不含 is_editing）：on_change 触发的全量重渲染按 key 复用控件，
             # 不重挂载，从而不打断 IME 组合态与原生撤销栈。
@@ -845,7 +908,7 @@ def render_code_block(
             # （BaseControl.__post_init__ 的 `ref.current = self`），事后 `field.ref = x`
             # 不会绑定，ref 会一直是 None（聚焦 / 回写光标全部失效）。
             ref=edit_field_ref,
-            value=code,
+            value=field_value,
             selection=(
                 ft.TextSelection(base_offset=pending_caret[0], extent_offset=pending_caret[1])
                 if pending_caret is not None
@@ -881,11 +944,7 @@ def render_code_block(
             content_padding=ft.Padding.only(
                 left=gutter_w + Spacing.MD, right=0, top=0, bottom=0
             ),
-            on_change=lambda e: (
-                on_change_code(line_idx, e.control.value)
-                if on_change_code is not None
-                else None
-            ),
+            on_change=_on_field_change,
             # 取得焦点：既转发给编辑器（撤销会话分组），也是"Tab 焦点往返已结束"的信号。
             on_focus=_on_edit_focus,
             on_blur=lambda e: _exit_edit(),
@@ -942,6 +1001,21 @@ def render_code_block(
         )
 
     # ============================ 交互 ============================
+
+    def _on_field_change(e) -> None:
+        """编辑框内容变化：先记下"客户端手里的文本"，再交给编辑器写回文档。
+
+        记 `client_text_ref` 是**下发规则的判据输入**（见 `_build_edit_body`）：这次变化
+        由客户端敲出，故此刻文档里的文本与它同源，重渲染时**不得**再把文本回灌给
+        客户端——回灌会把客户端"抢跑"输入的内容覆盖掉、光标甩到代码块末尾。
+        写回文档仍走既有链路（撤销历史 / 标脏 / 重渲染语义完全不变）。
+        """
+        # 文本按空白兜底：`TextField.value` 的类型是 str，None 只可能来自异常事件，
+        # 而 `on_change_code` 会把它原样写进文档（`segments[0].text = None`）。
+        value = e.control.value or ""
+        client_text_ref.current = value
+        if on_change_code is not None:
+            on_change_code(line_idx, value)
 
     def _remember_caret(e) -> None:
         """编辑框光标/选区变化：组件内留一份选区快照（Tab 缩进定位用），再转发给编辑器。
@@ -1025,6 +1099,12 @@ def render_code_block(
         文本改写走 `on_change_code`（入撤销历史、标脏、重渲染等与手工输入完全一致），
         缩进后的光标位置记进 pending_caret_ref，随这次重渲染下发给客户端。
 
+        这里**不需要**维护 `client_text_ref`：下发判据是"文档文本 != 我们最后确知客户端
+        手里有的文本"，而缩进是一次真正的改写（`new_value != value`），两种情况都会
+        判定为"我方文本"并下发——要么已知文本还是缩进前那份（不同），要么尚未确知
+        （空值，也不同）。刻意不写一行"看起来更严谨"的基线更新：变异验证证实它不可观测
+        （写不写都过），留着只会让人以为它承担了判据的一部分。
+
         Tab 一定会让 Flutter 把焦点遍历走（原生编辑框不消费 Tab），所以无论文本是否
         变化都要走一遍"重渲染 → 收回焦点"；文本无变化时不写文档，避免产生空撤销条目。
         """
@@ -1081,6 +1161,11 @@ def render_code_block(
             caret_ref.current = None
             shift_ref.current = False
             ctrl_ref.current = False
+            # 文本来源判据也随会话重置：新挂载的编辑框必须**无条件**拿到当前文本。
+            # client_text 置空即可满足——下发规则是"文档文本 != 客户端回报的文本 ⇒
+            # 下发"，空值必然不等于文档文本，故第一次渲染一定走下发分支
+            # （`edit_field_ref` 里那份是上一会话的旧对象，不会被误当成"客户端手里的"）。
+            client_text_ref.current = None
             set_edit_focused(False)
             # 清掉上一次会话的行号高亮，避免"重进编辑态时先闪一下旧行"
             set_caret_line(-1)
@@ -1097,6 +1182,8 @@ def render_code_block(
             return
         if on_code_blur is not None:
             on_code_blur(line_idx)
+        # 编辑框即将卸载，文本来源判据不再有意义（下次进入在 `_enter_edit` 里重建）
+        client_text_ref.current = None
         if is_editing:
             set_editing(False)
 

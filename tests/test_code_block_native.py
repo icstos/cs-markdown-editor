@@ -32,11 +32,14 @@
 
 import sys
 import types
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import flet as ft
+
+# flet 自己就是用它把 Dart 侧上报的属性写回服务端控件的（见 `Session.apply_patch`）。
+from flet.utils.object_model import patch_dataclass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -107,9 +110,17 @@ def _rendered(
     enter_seq: int = 0,
     enter_off: int | None = None,
     consumed=None,
+    on_line=None,
 ):
-    """在组件渲染上下文内渲染代码块（`ft.use_state` / `use_effect` 需要宿主）。"""
+    """在组件渲染上下文内渲染代码块（`ft.use_state` / `use_effect` 需要宿主）。
+
+    `on_line`：把**被渲染的那个 `Line` 对象**交给调用方。需要"像编辑器那样改写文档"
+    的用例（写回输入、模拟撤销/外部改写）必须拿到同一个对象——自己再解析一次得到的是
+    另一份副本，组件读的是被渲染的那份，改副本等于什么都没做。
+    """
     line = _code_line(raw)
+    if on_line is not None:
+        on_line(line)
 
     @ft.component
     def _Probe():
@@ -1402,3 +1413,260 @@ def test_gutter_highlight_absent_in_browse_mode():
     with _rendered() as h:
         nums = _gutter_texts(h)
     assert all(n.color != light.link for n in nums), "浏览态不应有提亮的行号"
+
+
+# ==================== 8. 编辑框文本"谁写的"（回灌缺陷） ====================
+#
+# 真机缺陷：**在代码块里连打回车，光标会异常跳到代码块末端**（用户报告）。
+# 真机探针复现（连打 6 次回车、光标在正文中段）：前 3 个回车落在光标处，第 4 个落到
+# 代码块末尾，之后输入的字符也跟着落在末尾 —— 那几次回车同时丢失。
+#
+# 机制有三层，缺一层就写不对（详见 views/code_block.py 模块 docstring「第四个约束」）：
+#   1. flet 的补丁是**差分**出来的：本次渲染的控件对象 vs 上一次渲染的控件对象。
+#   2. 客户端上报的 `UPDATE_CONTROL_PROPS` 会被 `Session.apply_patch` →
+#      `patch_dataclass` **直接写回上一次渲染的那个控件对象**（绕过 frozen 检查，其
+#      docstring 原话是 applying patches that originate "from Dart"）。于是"上一次
+#      渲染的编辑框"里躺着的是**客户端手里的文本**，可能比文档还新。
+#   3. 重渲染时把文档文本当 `value` 发下去 = 命令客户端改成这样；慢速输入时它恰好
+#      等于客户端手里的文本（差分不出补丁，看不出来），连打回车时文档落后于客户端，
+#      这一下就把客户端抢跑的内容覆盖回去、光标甩到末尾。
+#
+# 规则（`_build_edit_body` 的 `field_value`）：文档文本 == 我们最后确知客户端手里有的
+# 文本（`client_text_ref`）⇒ 这段是客户端自己敲的 ⇒ **沿用上一次渲染那个编辑框对象的
+# `value`**（差分结果为空，客户端不受打扰）；不等 ⇒ 文档被我方改写（Tab 缩进 / 撤销 /
+# 外部改写）⇒ 下发文档文本。
+# 本节锁两个方向，缺一不可：`value` 既不能回灌（A/C），也不能永远冻住（B/D）。
+
+
+def _value_pushes(h: RenderHarness) -> list[str]:
+    """上一次排空调度以来，**下发到客户端的 `value` 文本**（协议层，非渲染参数）。
+
+    补丁条目形如 `[Operation, <路径节点号>, "<属性>", <值>]`——路径被编码进共享路径表
+    （`ObjectPatch.to_message` 的 `encode_path`），故第二个元素不是控件 id。这里只要
+    把 `属性 == "value"` 且值为 str 的条目挑出来：编辑框被回灌时，文档文本正是以这种
+    形式发出去的。
+
+    为什么必须看协议层：组件内部能看到的只是"我这轮打算传什么"，而**属性相同就不产生
+    补丁**——真正打扰客户端的是补丁，不是参数。只断言参数会漏掉本缺陷。
+    """
+    out: list[str] = []
+    for message in h.session.sent:
+        body = getattr(message, "body", None)
+        stack = list(getattr(body, "patch", None) or [])
+        while stack:
+            item = stack.pop()
+            if isinstance(item, (list, tuple)):
+                if (
+                    len(item) == 4
+                    and isinstance(item[1], int)
+                    and isinstance(item[2], str)
+                ):
+                    if item[2] == "value" and isinstance(item[3], str):
+                        out.append(item[3])
+                    continue
+                stack.extend(item)
+            elif isinstance(item, dict):
+                stack.extend(item.values())
+    return out
+
+
+def _client_wrote_back(h: RenderHarness, text: str) -> None:
+    """复现"客户端上报的文本落到上一次渲染的编辑框对象上"。
+
+    真机上这一步由 `Session.apply_patch` → `patch_dataclass` 完成，且**绕过 frozen 检查**
+    （Dart 来的补丁不需要 dirty-tracking）。夹具没有前端，故直接用 flet 自己的
+    `patch_dataclass` 调一遍——而不是手工改属性，免得测试模拟的行为与框架不一致。
+    """
+    field = _edit_fields(h)[0]
+    patch_dataclass(field, {"value": text})
+
+
+def _doc_editor(line) -> Callable[[int, str], None]:
+    """返回一个"像 `_fence.on_change_code` 那样把文本写回文档"的回调。
+
+    必须写进**被渲染的那个 Line**（`on_line` 交出来的），因此用闭包持有。
+    """
+
+    def _write(_li: int, value: str) -> None:
+        line.segments[0].text = value
+        line.segments[0].raw = value
+
+    return _write
+
+
+def _edit_doc(h: RenderHarness) -> str:
+    """当前编辑框所在的代码文本（以编辑框自己的 value 为准，即客户端手里那份）。"""
+    fields = _edit_fields(h)
+    assert fields, "未进入编辑态"
+    return fields[0].value
+
+
+def test_client_typed_text_is_not_echoed_back():
+    """客户端自己敲的文本不得回灌到编辑框（回灌会把光标甩到代码块末尾）。
+
+    复现真机链路的关键一步：客户端上报的文本会落到**上一次渲染的那个编辑框对象**上
+    （真机由 `Session.apply_patch` → `patch_dataclass` 完成，夹具用 flet 同一个函数
+    复现，见 `_client_wrote_back`）。此后任何一次**与文本无关**的重渲染都不得把文档
+    文本推给客户端——此刻文档正落后于客户端，一推就把它抢跑输入的内容覆盖回去。
+    真机上连打回车正是这条路径：光标跨逻辑行 → 行号高亮更新 → 重渲染。
+    """
+    holder: list = []
+    with _rendered(change=lambda li, v: _doc_editor(holder[0])(li, v), on_line=holder.append) as h:
+        field = _enter_edit(h)
+        v0 = field.value
+        ahead = v0 + "\n\n"  # 客户端本地连打两个回车（还没写回文档）
+        _client_wrote_back(h, ahead)
+
+        del h.session.sent[:]  # 从这里开始只看协议层
+        # **两次**跨逻辑行的重渲染（真机上连打回车就是一串这样的重渲染）。要两次是因为
+        # "本轮冻结、下一轮却把过期文档推回去"这类漂移只在第二次才显形。
+        _caret(h, _edit_fields(h)[0], v0.index("\n") + 1, v0.index("\n") + 1)
+        _caret(h, _edit_fields(h)[0], 0, 0)
+
+        pushes = _value_pushes(h)
+        assert v0 not in pushes, (
+            "文档文本被回灌给了客户端 —— 真机上这一下会把客户端已经输入的内容覆盖回去、"
+            f"光标甩到代码块末尾（本次下发过 {pushes!r}）"
+        )
+
+
+def test_client_ahead_of_document_keeps_its_own_text():
+    """客户端跑在文档前面时，编辑框被喂的是**客户端手里那份**，而不是文档文本。
+
+    上一个用例锁"不许推"，这里锁"喂什么"：都推不出去的前提下，若把 `value` 传成别的
+    东西（例如 None），差分照样会生成补丁、把客户端刚敲的字符抹掉——防回灌必须落在
+    "沿用客户端手里的文本"上，而不是"随便冻一个值"。
+    """
+    holder: list = []
+    with _rendered(change=lambda li, v: _doc_editor(holder[0])(li, v), on_line=holder.append) as h:
+        field = _enter_edit(h)
+        v0 = field.value
+        ahead = v0 + "\n\n"
+        _client_wrote_back(h, ahead)
+
+        _caret(h, _edit_fields(h)[0], v0.index("\n") + 1, v0.index("\n") + 1)
+
+        assert _edit_doc(h) == ahead, (
+            "重渲染后编辑框拿到的不是客户端手里的文本，客户端刚敲的回车会被覆盖"
+            f"（实得 {_edit_doc(h)!r}，应为 {ahead!r}）"
+        )
+        assert _edit_fields(h)[0].selection is None, (
+            "顺带下发了 selection：光标会被显式挪走（本缺陷里表现为跳到末尾）"
+        )
+
+
+def test_push_updates_the_known_client_text():
+    """我方下发新文本后，"已知客户端文本"必须跟着更新——否则下一轮会把上一版推回去。
+
+    场景（真机上很常见）：Tab 缩进（我方下发）→ 客户端接着往下敲（本地文本又往前跑了，
+    回报还在路上）→ 又一次无关重渲染。
+    判据里的"已知文本"若停在缩进前那一版，这一轮就会觉得"文档 != 已知文本"、把缩进后
+    那一版重新推给客户端，客户端刚敲的字符被覆盖——和原始缺陷同一个后果。
+    """
+    holder: list = []
+    with _rendered(change=lambda li, v: _doc_editor(holder[0])(li, v), on_line=holder.append) as h:
+        _enter_edit(h)
+        _caret(h, _edit_fields(h)[0], 0, 0)
+        _press(h, _edit_listener(h), "tab")
+        indented = holder[0].segments[0].text
+        assert _edit_doc(h) == indented, "前置条件：缩进后应已下发给客户端"
+
+        # 客户端在缩进后的文本上继续敲字（尚未回报）
+        typed_on = indented + "  # note"
+        _client_wrote_back(h, typed_on)
+
+        del h.session.sent[:]
+        _caret(h, _edit_fields(h)[0], indented.index("\n") + 1, indented.index("\n") + 1)
+        _caret(h, _edit_fields(h)[0], 0, 0)
+
+        assert _edit_doc(h) == typed_on, (
+            "重渲染后编辑框拿到的不是客户端手里的文本（它刚敲的字会被覆盖）"
+            f"（实得 {_edit_doc(h)!r}）"
+        )
+        assert indented not in _value_pushes(h), (
+            f"把上一版文本又推给了客户端（下发过 {_value_pushes(h)!r}）"
+        )
+
+
+def test_app_rewritten_text_is_echoed_to_client():
+    """我方改写的文本必须下发（否则客户端手里的旧文本会与文档脱节）。
+
+    冻结 `value` 属性只是"防回灌"，不能变成"永不更新"：Tab 缩进、撤销、外部改写都要
+    把新文本送到客户端——否则编辑框里（不可见地）还是缩进前的文本，后续光标的偏移
+    与文档对不上。
+    """
+    holder: list = []
+    with _rendered(change=lambda li, v: _doc_editor(holder[0])(li, v), on_line=holder.append) as h:
+        _enter_edit(h)
+        _caret(h, _edit_fields(h)[0], 0, 0)
+        before = _edit_doc(h)
+        del h.session.sent[:]
+        # Tab 缩进：改写由组件发起（我方），必须下发到客户端
+        _press(h, _edit_listener(h), "tab")
+        after = holder[0].segments[0].text
+        assert after != before, "前置条件：Tab 应改写文档文本"
+        assert after in _value_pushes(h), (
+            "我方改写后没把新文本发给客户端（协议层没有对应补丁）：客户端手里的旧文本会"
+            f"与文档脱节（下发过 {_value_pushes(h)!r}，应含 {after!r}）"
+        )
+        assert _edit_doc(h) == after, (
+            f"我方改写后编辑框仍是 {_edit_doc(h)!r}（文档已是 {after!r}）"
+        )
+        # 顺带守住"光标随改写一起下发"（否则缩进后光标会落回 Flutter 默认的文末）
+        assert _edit_fields(h)[0].selection is not None, "缩进后未下发光标位置"
+
+
+def test_document_changed_elsewhere_is_echoed_to_client():
+    """文档被"别人"改写（撤销 / 外部修改）时也要下发。
+
+    判据是"文档文本 != 客户端回报的文本"，因此这里不需要谁显式打标记：直接把文本改掉
+    再制造一次重渲染，编辑框就该跟上。
+    """
+    holder: list = []
+    with _rendered(on_line=holder.append) as h:
+        _enter_edit(h)
+        v0 = _edit_doc(h)
+        holder[0].segments[0].text = v0 + "\nUNDO"  # 模拟撤销/外部改写
+        _caret(h, _edit_fields(h)[0], 0, 0)  # 触发一次重渲染
+        assert _edit_doc(h) == v0 + "\nUNDO", (
+            "文档被外部改写后未下发给编辑框，客户端会拿着过期文本继续编辑"
+        )
+        assert _edit_fields(h)[0].selection is None, (
+            "外部改写只该更新文本，不该动光标（光标由客户端自己维护）"
+        )
+
+
+def test_reentering_edit_starts_from_current_document_text():
+    """再次进入编辑态必须从"当前文档文本"起步（上一会话的文本基线不得残留）。
+
+    场景：会话里敲了字 → 折叠（折叠是直接退出编辑态，不走失焦钩子）→ 展开 → 再点进来。
+    若进入时不复位下发基线，判据会认为"文档 == 客户端手里那份"而**跳过首次下发**，
+    新挂载的编辑框就拿着上一会话的旧文本 —— 可见字符来自高亮层（看着没问题），
+    但光标的偏移全落在一份不存在的文本上。
+    """
+    holder: list = []
+    with _rendered(
+        change=lambda li, v: _doc_editor(holder[0])(li, v), on_line=holder.append
+    ) as h:
+        field = _enter_edit(h)
+        typed = field.value + "\nNEW"
+        h.interact(
+            field.on_change,
+            types.SimpleNamespace(control=types.SimpleNamespace(value=typed)),
+        )
+        assert holder[0].segments[0].text == typed, "前置条件：写回后文档应等于客户端文本"
+
+        # 折叠（直接退出编辑态，不经过 on_blur）→ 展开
+        h.interact(
+            next(n for n in _header_icon_btns(h) if n.tooltip == "折叠").on_click, None
+        )
+        h.interact(
+            next(n for n in _header_icon_btns(h) if n.tooltip == "展开").on_click, None
+        )
+        assert not _edit_fields(h), "前置条件：折叠后不应有编辑框"
+
+        again = _enter_edit(h)
+        assert again.value == typed, (
+            "重新进入编辑态时编辑框拿到的是上一会话的旧文本 "
+            f"（实得 {again.value!r}，应为 {typed!r}）"
+        )

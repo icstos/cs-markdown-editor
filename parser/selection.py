@@ -118,15 +118,59 @@ def compute_markdown_from_selections(
     return "".join(parts)
 
 
+def _match_on_projection(
+    line_texts: list[str], text: str
+) -> dict[int, tuple[int, int]]:
+    """把纯文本匹配到"去掉换行后的投影"上，再映射回 (行号, 展示偏移) 选区。
+
+    为什么需要这一层（代码块跨行复制）：Flutter 的 `SelectionArea` 跨行拼接时
+    **不插入换行符**，而代码块在文档里是**一个 Line 承载多行文本**（该 Line 的展示
+    文本自身含 `\\n`）。于是两侧的换行分布不一致：
+    - 选中的纯文本 = 代码各行直接拼接（无换行）；
+    - 文档侧 `"".join(line_texts)` 含换行 → `find()` 必然失败。
+    结果是"跨行选中代码块再复制"什么都还原不出来，剪贴板只留下无换行的拼接串。
+    把文档文本投影成"忽略换行的字符序列"再匹配即可精确还原选区位置：投影只删除了
+    换行位，匹配到的那一段仍是**同一段连续文本**（换行还原自原始偏移），因此得到的
+    Markdown 片段天然带换行。
+
+    歧义保护：同一段文本在投影里出现多次时不敢猜，直接返回 {}（维持原行为——
+    剪贴板保留 SelectionArea 的原始结果）。能走到本函数的前提是"选区跨了换行"
+    （无换行的选区在前两个策略里就命中了），这种选区足够长，歧义概率极低；
+    加这道闸是为了"最坏情况不比现状更差"。
+
+    段落之间本来就没有换行可删，投影与直接拼接等价，故本函数不改变既有段落选区行为。
+    浏览态的删除路径不走这里（`views/editor/_clipboard.handle_delete_selection`
+    对无偏移选区只清空选区文本），所以删除语义不变。
+    """
+    proj_chars: list[tuple[int, int]] = []  # 投影下标 → (行号, 该行展示文本内偏移)
+    for li, lt in enumerate(line_texts):
+        for off, ch in enumerate(lt):
+            if ch != "\n":
+                proj_chars.append((li, off))
+    proj = "".join(line_texts[li][off] for li, off in proj_chars)
+    pos = proj.find(text)
+    if pos == -1 or proj.find(text, pos + 1) != -1:
+        return {}
+
+    per_line: dict[int, list[int]] = {}
+    for idx in range(pos, pos + len(text)):
+        li, off = proj_chars[idx]
+        per_line.setdefault(li, []).append(off)
+    # 每行取 [min, max+1)：与 compute_markdown_from_selections 的半开区间一致
+    return {li: (min(offs), max(offs) + 1) for li, offs in per_line.items()}
+
+
 def match_text_to_selections(
     lines: list[Line], plain_text: str
 ) -> dict[int, tuple[int, int]]:
     """将 SelectionArea 复制的纯文本匹配回文档行，返回选区字典。
 
     SelectionArea 跨行复制时不插入换行符，多行文本被直接拼接。
-    因此分两种策略：
+    因此分三种策略：
     1. 若剪贴板含 \\n → 按行逐段匹配
     2. 若无 \\n → 在全部行显示文本的拼接中查找，再映射回各行偏移
+    3. 仍匹配不到 → 回退单行匹配；单行也不中且文档侧含换行（代码块）时，
+       改走"去换行投影"匹配（见 `_match_on_projection`）
     """
     if not plain_text:
         return {}
@@ -164,7 +208,10 @@ def match_text_to_selections(
             if p != -1:
                 selections[li] = (p, p + len(text))
                 break
-        return selections
+        if selections:
+            return selections
+        # 回退 2：跨行选中代码块（文档侧含换行、选择侧不含）→ 投影匹配
+        return _match_on_projection(line_texts, text)
 
     # 将拼接位置映射回各行偏移
     end_pos = pos + len(text)

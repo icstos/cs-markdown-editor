@@ -158,6 +158,10 @@ def build_fence(ctx: FenceEnv):
         - →：光标在最后一行行尾 → 跳出到下一行行首（换行回绕）
         若代码块前/后无行（或相邻行同为岛屿块），则创建新空段落行承接光标。
 
+        反向（代码块外 → 内）在 views/editor/_navigation.py 的 `_move_vline`：
+        ↓ 在代码块上一行、↑ 在代码块下一行时，光标直接进入代码块。两个方向
+        都只负责"算出行与偏移"，进入编辑态由 code_block 组件自己完成。
+
         返回 True 已处理（消费按键），False 未处理（非边界 / 有选区 / 表格 / 公式聚焦，
         继续放行原生编辑框导航）。
         """
@@ -174,9 +178,12 @@ def build_fence(ctx: FenceEnv):
         caret = ctx.code_caret_ref.current
         if not caret:
             return False
-        value, base, extent = caret
-        if value is None:
-            value = ""
+        _value, base, extent = caret
+        # 文本以**文档**为唯一真相：`code_caret_ref[0]` 是编辑框控件上一个渲染周期的
+        # value，flet 不会把客户端输入回写进控件属性；用它分行会拿到偏旧的行结构，
+        # 光标恰好落在刚输入/删除的换行附近时就会误判"是否在首行/末行"。
+        # 偏移仍来自客户端事件（那是唯一来源），越界一律钳制。
+        value = line.segments[0].text if line.segments else ""
         # 有选区（Shift+方向键扩展中）：交给原生控件处理，不拦截
         if base != extent:
             return False

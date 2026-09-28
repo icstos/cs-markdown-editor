@@ -142,7 +142,7 @@ class ScrollEnv(Protocol):
 
 
 class NavigationEnv(Protocol):
-    """光标移动（视觉行 / 垂直导航） 的依赖契约（build_navigation 实际读取的 16 个字段）。"""
+    """光标移动（视觉行 / 垂直导航） 的依赖契约（build_navigation 实际读取的 17 个字段）。"""
 
     body_font_size: float
     broadcast_move_left: Callable[..., Any]
@@ -157,6 +157,7 @@ class NavigationEnv(Protocol):
     line_height: float
     preferred_col_ref: ft.Ref
     secondary_cursors_ref: ft.Ref
+    set_code_enter: Callable[..., None]
     set_cursor: Callable[..., None]
     set_cursor_li: Callable[..., None]
     set_cursor_line: Callable[..., None]

@@ -59,7 +59,61 @@ state，从而不扰动既有的 `code_focus_ref` 路由与 `ft.memo` 依赖。
 - utils.code_indent（Tab / Shift+Tab 的缩进变换，纯函数）
 - utils.text_layout（`_FLET_DEFAULT_LETTER_SPACING`：与渲染层一致的字距，
   高亮层与编辑层必须同值，否则折行点与光标随字数线性漂移）
+- views.pixel_layout（`_wrap_offsets_into_visual_lines` / `hit_test_line_x_raw`：
+  与正文共用的换行与 X 命中算法，见下）
 - views._block_frame（块级包裹：缩进 / diff / 当前行高亮 / 高度上报）
+
+点击定位（`_caret_offset_in_code`）：
+点击进入编辑时，光标必须落在**鼠标实际点击的位置**，而不是 Flutter 给新建
+`TextField` 的默认位置（文末）——后者正是"点哪都跳到代码块最后一行"的根因。
+映射分两级，逐级都只用确定信息：
+1. **行**：每个逻辑行的 `Row` 各自套一层点击容器，因此回调的 `local_position`
+   天然相对**本行**（行容器左缘 = 行号列左缘），行号由闭包直接给出，不需要按累计
+   高度反推（累计高度依赖"我们算出的折行数 == Flutter 实际折行数"，一旦不符就会
+   整块错位）。
+2. **行内**：`y // 行高` 得到视觉行序号，再用与正文同源的
+   `_wrap_offsets_into_visual_lines` 切出该视觉行，最后用 `hit_test_line_x_raw`
+   （中点吸附）把 x 映射为行内字符偏移。
+
+坐标从哪来（真机实测 + 类型契约，勿想当然）：
+`ft.Container.on_click` 的声明是 `ControlEventHandler["Container"]`，收到的是
+`ControlEvent`（只有 `name` / `data` / `control` / `page`），**没有 `local_position`**；
+带坐标的是 `on_tap_down: EventHandler[TapEvent["Container"]]`（`TapEvent.local_position`
+是 `Optional[Offset]`）。真机探针实测确认：点击落在行容器上时 `on_click` 确实触发，
+但 `e.local_position is None` → 映射拿不到输入 → 只能退化为"进编辑态"，Flutter
+于是把光标甩到文末（`SEL base=38`）——这就是本缺陷的形状。
+故位置与动作**分成两个 handler**：
+- `on_tap_down` → `_record_tap`：只把 `(行号, x, y)` 写进 `tap_pos_ref` 快照；
+- `on_click` → `_click_row`：取快照算偏移、派发 `selection`、进入编辑态。
+这样拆还能顺带修掉一个副作用——`on_tap_down` 在"按下后被判为拖动"时也会触发，
+若在那儿直接进编辑态，用户在代码块上拖动滚动文档就会误入编辑；而 `on_click`
+只在真正的点击（抬起且未被取消）时触发，语义正是我们要的。
+一次点击必然先经过同一行的 `on_tap_down`，故快照必是本次手势的、且行号相符。
+
+第 2 级依赖"本项目的折行算法与 Flutter 一致"——这正是 `views/pixel_layout` 换行
+函数对自己的定位（渲染与光标共用、模拟 Skia/Flutter CJK 换行）。**不折行的行
+（占绝大多数，且"关闭换行"模式下恒成立）第 2 级退化为恒等映射，完全精确**；
+只有"开启换行 + 该行确实折行了"时，列位置才存在项目的折行算法与 Flutter
+之间的理论偏差。第 1 级的行定位在任何情况下都是精确的。
+
+三个"进得去、出得来、选得对"的交互（桌面编辑器直觉，全部有测试与真机探针守护）：
+
+**出得来**（代码块内 → 外）：编辑框聚焦时按 ↑/←/↓/→ 到边界即跳出到相邻行，
+由 `views/editor/_fence.py` 的 `handle_code_exit` 负责（本组件只上报光标的
+(value, base, extent)，不参与判定）。左右键与本组件无关，由原生编辑框处理行内
+移动；Tab 见下。
+
+**进得去**（代码块外 → 内）：光标在代码块上一行按 ↓、下一行按 ↑ 时直接进入代码块
+（↓ 落首行行首、↑ 落末行行尾），由 `views/editor/_navigation.py` 的 `_move_vline`
+发起。发起方只交出 `(行号, 初始光标偏移)`，经编辑器 state 透传成本组件的
+`enter_seq/enter_off`，由 `_consume_enter_request` 消费一次并切到编辑态——
+`is_editing` 是组件内部状态，外部只"请求"，不直接改。
+
+**Esc**：编辑态按 Esc 回到浏览态（Typora 同款）。在组件内嵌的 `KeyboardListener`
+里处理，不需要新增全局动作、也不需要把 `is_editing` 暴露给外部。
+
+**选得对**：行号必须是 `selectable=True`，否则跨行拖选代码会把行号一起选进剪贴板
+（见 `_gutter_cell` 的真机实测表）。
 """
 
 import contextlib
@@ -80,8 +134,9 @@ from styles import (
     only_border,
 )
 from utils.code_indent import apply_indent
-from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING
+from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING, measure_text_offsets
 from views import _block_frame
+from views.pixel_layout import _wrap_offsets_into_visual_lines, hit_test_line_x_raw
 
 # 代码块行高倍数：等宽字体下 1.5 倍行距，紧凑与可读的平衡点。
 # 浏览态（TextStyle.height）与编辑态（TextField.text_style.height）共用同一常量，
@@ -210,6 +265,65 @@ def _edit_strut(size: int) -> ft.StrutStyle:
     )
 
 
+def _code_line_h(size: int) -> int:
+    """单个视觉行的像素高度（浏览态行盒 / 编辑态 strut 下限共用同一值）。"""
+    return max(1, round(size * _CODE_LINE_HEIGHT))
+
+
+def _caret_offset_in_code(
+    code: str,
+    row_idx: int,
+    x: float,
+    y: float,
+    size: int,
+    text_width: float,
+) -> int:
+    """把「代码文本区内的点击坐标」映射为代码全文的字符偏移（纯函数，便于单测）。
+
+    Args:
+        code: 代码块全文（`line.segments[0].text`，与编辑框 value 同一坐标系）。
+        row_idx: 被点击的逻辑行序号（由行级点击容器闭包给出，精确）。
+        x: 点击点到**代码文本左缘**的水平距离（负值=落在行号列上）。
+        y: 点击点到**本逻辑行顶部**的垂直距离。
+        size: 代码字号。
+        text_width: 代码文本的可用宽度（换行宽度）；`inf` 表示不折行。
+
+    算法（见模块 docstring「点击定位」）：
+    - 行内视觉行序号 v = y // 行高，越界钳制到 [0, N-1]；
+    - 用 `_wrap_offsets_into_visual_lines` 把该逻辑行按 text_width 切成 N 个视觉行
+      —— 与正文渲染/光标测量同一函数，保证折行点同源；
+    - 视觉行内用 `hit_test_line_x_raw`（中点吸附）把 x 映射为字符偏移：
+      点在一字的前半 → 落在该字之前，后半 → 落在该字之后，符合文本编辑直觉；
+    - x 超出该视觉行右端 → 落在**该视觉行**末尾（不是全文末尾）；
+    - 空行恒有 1 个视觉行（与浏览态"空格占位撑行盒"一致），偏移恒为 0。
+
+    返回值为 [0, len(code)] 内的绝对偏移，可直接用于 `ft.TextSelection`。
+    """
+    lines = code.split("\n")
+    if not lines:
+        return 0
+    row_idx = max(0, min(int(row_idx), len(lines) - 1))
+    row_text = lines[row_idx]
+    # 该逻辑行在全文中的起点：前面每行都要额外算上一个换行符
+    base_off = sum(len(t) + 1 for t in lines[:row_idx])
+
+    if not row_text:
+        # 空行：浏览态用空格 span 撑行盒，光标只能落在偏移 0
+        return min(base_off, len(code))
+
+    offsets = measure_text_offsets(row_text, FONT_MONO, size)
+    vlines = _wrap_offsets_into_visual_lines(offsets, row_text, text_width)
+    vline_idx = max(0, min(int(y // _code_line_h(size)), len(vlines) - 1))
+    vline = vlines[vline_idx]
+    # 该视觉行内的局部 X 数组（rebased 到 0，长度 = 该视觉行字符数 + 1）
+    local_x = [
+        offsets[j] - offsets[vline.start_raw]
+        for j in range(vline.start_raw, vline.end_raw + 1)
+    ]
+    local_off = hit_test_line_x_raw(local_x, x)
+    return max(0, min(base_off + vline.start_raw + local_off, len(code)))
+
+
 def _measure_mono_width(text: str, size: int) -> float:
     """等宽字体下单行文本的像素宽度（不换行模式用于撑开编辑框）。
 
@@ -245,6 +359,9 @@ def render_code_block(
     on_line_size_change: Callable[[int, float], None] | None = None,
     diff_mark: str | None = None,
     word_wrap: bool = True,
+    enter_seq: int = 0,
+    enter_off: int | None = None,
+    on_enter_consumed: Callable[[int], None] | None = None,
 ) -> ft.Control:
     """渲染代码块（CODE 围栏岛屿）：浏览态语法高亮 + 点击进入原生编辑。
 
@@ -260,6 +377,15 @@ def render_code_block(
         base: 段落左侧基准内边距（块级容器的必填位置参数，勿漏传）。
         code_field_ref: 编辑器共享的编辑框 ref（保留契约；聚焦改用组件内 ref，
             因为该 ref 被文档内每个代码块依次赋值，多块共存时指向最后渲染者）。
+        enter_seq: 外部"进入编辑态"请求的序号（0 = 未请求）。方向键把光标从相邻行
+            送进代码块时由导航层递增；组件只在发现序号非 0 时消费一次，见
+            `_consume_enter_request`。
+        enter_off: 随本次请求一并给出的初始光标偏移（↓ 进入取 0=首行行首、
+            ↑ 进入取 len(code)=末行行尾），与"跳出"两侧对称。
+        on_enter_consumed: 兑现请求后回报给请求方（编辑器），由它作废那条一次性待办。
+            **不回报的后果**：请求永远挂在父层 state 上，本行组件一旦因滚出/滚回渲染
+            窗口而重建，挂载期 effect 会拿同一个序号再消费一次 —— 代码块自己跳进编辑
+            态。组件内部记不住这条信息（重建时标记一起重生），所以必须回报父层。
     """
     c = _current_colors()
     code = line.segments[0].text if line.segments else ""
@@ -281,12 +407,57 @@ def render_code_block(
     #   Ctrl+Tab（全局标签切换，不能当缩进）都只能靠跟踪修饰键自身按键判定。
     # tab_pending_ref：本次失焦是否由 Tab 的焦点遍历副作用引起（见 _exit_edit）。
     # pending_caret_ref：渲染时待写入编辑框的光标 (起点, 终点)。
+    # tap_pos_ref：行级点击位置快照 (行号, 代码文本内 x, 行内 y)。由 on_tap_down 写、
+    #   由 on_click 读——坐标只在 TapEvent 上，而 on_click 收的是不带坐标的 ControlEvent
+    #   （见模块 docstring「点击定位 · 坐标从哪来」）。
     caret_ref = ft.use_ref(None)
     shift_ref = ft.use_ref(False)
     ctrl_ref = ft.use_ref(False)
     tab_pending_ref = ft.use_ref(False)
     pending_caret_ref = ft.use_ref(None)
+    tap_pos_ref = ft.use_ref(None)
     tab_epoch, set_tab_epoch = ft.use_state(0)
+    # 编辑框是否已真正取得焦点（进入编辑态时复位）。
+    # 待写入的光标只能在**聚焦之后**下发，原因见 `_build_edit_body`：
+    # 挂载当次带 selection，Flutter 会在随后聚焦时把光标重置到文末。
+    edit_focused, set_edit_focused = ft.use_state(False)
+    # 编辑态光标所在逻辑行（行号高亮用）。
+    # 必须是 state 而不是渲染期现算：`on_selection_change` 只写 ref、不触发重渲染，
+    # 用 ref 现算的话，在代码块内按 ↑/↓ 移动光标时行号高亮会停在旧行——比不做更糟。
+    # 成本受控：只在**折叠光标跨了逻辑行**时才 set_state（见 `_remember_caret`），
+    # 所以正常打字（行号不变）与拖选（base != extent）都不产生额外渲染。
+    caret_line, set_caret_line = ft.use_state(-1)
+
+    def _consume_enter_request() -> None:
+        """方向键把光标从相邻行送进本代码块 → 切到编辑态并把光标放到请求位置。
+
+        触发时机：`enter_seq` 非 0。挂载当次 effect 也会执行，但父层没发请求时
+        `enter_seq` 恒为 0，因此不会把用户刚点开文档时的代码块直接拽进编辑态。
+
+        **不要在这里用"已消费序号"去重**：effect 只在 `enter_seq` 变化时重跑，
+        序号没变就不会再进来，去重判断永远命中不了（曾写过一版，变异验证证明是
+        死代码）；而真正会重复消费的路径是**组件重建后重新挂载**，那种情况下组件
+        自己的任何标记都已重生，同样拦不住。所以"只消费一次"由父层作废请求来保证
+        （`on_enter_consumed` → 编辑器清空 state），见 `render_code_block` 的 Args。
+
+        放在 `use_effect`（提交渲染后）里而不是渲染期：渲染期调 set_state 会破坏
+        flet 的单向数据流（控件在渲染后才解冻），这也正是 `_enter_edit` 只能在
+        事件回调里调用的原因。
+        """
+        if not enter_seq:
+            return
+        # 先回报再动手：请求在"即将被兑现"的这一刻就作废，后续渲染（包括本行可能因
+        # 滚动被卸载重建）都不再看到它。
+        if on_enter_consumed is not None:
+            on_enter_consumed(line_idx)
+        if enter_off is not None:
+            off = max(0, min(int(enter_off), len(code)))
+            pending_caret_ref.current = (off, off)
+        # 复用点击进入的同一条路径（折叠态先展开、复位过期光标与修饰键状态）；
+        # 光标本身照旧等"聚焦之后"再下发，理由见 _build_edit_body。
+        _enter_edit()
+
+    ft.use_effect(_consume_enter_request, [enter_seq])
 
     # 软换行开关：word_wrap=False 时 content_width 为 inf（编辑器侧不变量）
     wrap = bool(word_wrap) and content_width != float("inf")
@@ -301,6 +472,16 @@ def render_code_block(
     gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.04, c.text)
     border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
 
+    # 代码文本的可用宽度（点击定位算折行点用，与浏览态的实际排版宽度同源）：
+    # 块容器左右各留 Spacing.MD（见下方 Container 的 padding），行号列占 gutter_w，
+    # 行号与代码之间再留 Spacing.MD（Row 的 spacing）。
+    # 不折行模式给 inf —— 此时每逻辑行恒为 1 个视觉行，映射退化为恒等。
+    text_area_w: float = (
+        max(1.0, float(content_width) - 3 * Spacing.MD - gutter_w)
+        if wrap and content_width is not None
+        else float("inf")
+    )
+
     # ---- 头部交互元素 ----
     # 两者都必须显式压到 _HEADER_H，否则头部会被它们的固有尺寸顶高：
     # - 不用 `ft.Dropdown`：它即使 `dense=True` / `text_size=12` / 内边距归零，
@@ -312,12 +493,21 @@ def render_code_block(
     #   （`visual_density=COMPACT` 也只降到 32）。改用固定尺寸的
     #   `Container(ink=True)` —— 与 `views/status_bar.py` 的紧凑按钮同一套做法，
     #   点击有水波反馈、悬停有 tooltip，全局观感一致。
-    def _header_icon(icon: str, tooltip: str, color: str, on_click) -> ft.Control:
-        """固定 _HEADER_H 见方的头部图标按钮。"""
+    def _header_icon(
+        icon: str, tooltip: str, color: str, on_click, bgcolor: str | None = None
+    ) -> ft.Control:
+        """固定 _HEADER_H 见方的头部图标按钮。
+
+        bgcolor 用于"已复制"这类一次性的状态反馈：静态赋值，不引入 on_hover
+        ——悬停反馈如果走 on_hover 就必须 set_state，而一次 set_state 会把整块
+        代码（含每一行高亮 span）重建一遍，几十行以上的代码块在快速划过时会明显
+        掉帧。头部按钮自带水波（ink=True），已经够表达"可按"。
+        """
         return ft.Container(
             width=_HEADER_H,
             height=_HEADER_H,
             border_radius=Radius.SM,
+            bgcolor=bgcolor,
             alignment=ft.Alignment.CENTER,
             ink=True,
             tooltip=tooltip,
@@ -338,7 +528,11 @@ def render_code_block(
         style=ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=Radius.SM),
             padding=ft.Padding.all(0),
-            overlay_color=ft.Colors.with_opacity(0.08, c.text),
+            # 淡底 pill：让"当前语言"在紧凑头部里成为一个可点的实体，而不是一段
+            # 悬空的文字（VSCode 的 language mode 指示器同理）；hover 叠一层更亮的
+            # overlay，按钮的悬停反馈由客户端完成，不产生任何服务端往返。
+            bgcolor=ft.Colors.with_opacity(0.05, c.text),
+            overlay_color=ft.Colors.with_opacity(0.10, c.text),
         ),
         content=ft.Row(
             controls=[
@@ -383,6 +577,10 @@ def render_code_block(
             if page is not None and not copied
             else None
         ),
+        # "已复制"给一个静态底色，比只换图标颜色更容易被余光捕捉到
+        bgcolor=(
+            ft.Colors.with_opacity(0.14, ft.Colors.GREEN) if copied else None
+        ),
     )
 
     # ---- 折叠按钮 ----
@@ -420,7 +618,7 @@ def render_code_block(
 
     # ============================ 浏览态 ============================
 
-    def _gutter_cell(n: int) -> ft.Container:
+    def _gutter_cell(n: int, active: bool = False) -> ft.Container:
         """行号单元格：固定列宽 + 顶右对齐 + 行号底色（同列拼接成"装订线"色带）。
 
         height=text_h 固定为**一个视觉行**的高度，不由交叉轴拉伸决定：
@@ -429,22 +627,115 @@ def render_code_block(
         （真机探针实测：`on_size_change` 上报 height=inf，块体不渲染、后续行被挤走）。
         折行行的行号只落在首视觉行，色带在续行处自然留白——视觉上仍是行号，
         但绝不牺牲布局正确性。
+
+        **行号必须 `selectable=True`：这是"跨行选中代码不连带行号"的唯一开关。**
+        外层 `SelectionArea` 会把子树里所有 `RenderParagraph` 都纳入选区，
+        `selectable=False` **不是**"退出选区"的意思（项目里正文/公式早就在用
+        `selectable=False`，它们照样能被拖选）。真机探针实测（同一 SelectionArea 里
+        并列 6 种渲染方式，真实拖选后读 `on_change` 的纯文本）：
+
+        | 行号渲染方式 | 出现在选区文本里 |
+        |---|---|
+        | `ft.Text(...)`（默认/`selectable=False`） | **是**（缺陷本身） |
+        | `selectable=True` | 否 |
+        | `selectable=True, enable_interactive_selection=False` | 否 |
+        | `ft.canvas.Text`（CustomPaint） | 否 |
+        | 内嵌 `ft.SelectionArea` | 否 |
+
+        `selectable=True` 之所以能"脱选"，是因为 Flet 会把它渲染成自带选区容器的
+        `SelectableText`——与外层 `SelectionArea` 是两个互不包含的选区容器，外层
+        拖选因此收集不到它。再加 `enable_interactive_selection=False` 关掉它自身的
+        拖选/长按能力，行号于是**既摘得出去、也点不出选区**，而文字渲染（字体/字号/
+        字色/对齐）与普通 `ft.Text` 完全一致（探针截图逐项比对过）。
+
+        行号不参与选区的直接收益：跨行复制得到的是**纯代码**，而不是把 "1 2 3"
+        混进剪贴板——`parser.selection` 的"选区文本 → 文档行"匹配也因此不会被打偏。
+
+        active=True（编辑态里光标所在逻辑行）时行号提亮成强调色：VSCode/Typora
+        都有的"当前行行号高亮"，编辑时不必数行数。纯静态渲染，无额外事件。
         """
+        num_color = c.link if active else ft.Colors.with_opacity(0.55, c.muted)
         return ft.Container(
             content=ft.Text(
                 value=str(n),
                 size=max(9, round(code_size * 0.78)),
-                color=ft.Colors.with_opacity(0.55, c.muted),
+                color=num_color,
                 font_family=FONT_MONO,
+                weight=ft.FontWeight.W_500 if active else ft.FontWeight.NORMAL,
                 text_align=ft.TextAlign.RIGHT,
                 height=text_h,
+                # 见上方 docstring：行号摘出外层 SelectionArea 的唯一办法
+                selectable=True,
+                enable_interactive_selection=False,
             ),
             width=gutter_w,
             height=text_h,
-            bgcolor=gutter_bg,
+            bgcolor=ft.Colors.with_opacity(0.26, c.link) if active else gutter_bg,
+            # 装订线：行号列与代码之间一条 1px 竖线，桌面编辑器惯用的分栏提示
+            border=only_border(right=ft.BorderSide(1, border_color)),
             alignment=ft.Alignment.TOP_RIGHT,
             padding=ft.Padding.only(top=Spacing.XS, right=Spacing.MD),
         )
+
+    def _record_tap(row_idx: int, e) -> None:
+        """记下本行这次按压的位置（`on_tap_down` 的 `TapEvent` 才带坐标）。
+
+        与 `_click_row` 分成两个 handler（原因见模块 docstring「坐标从哪来」）：
+        `on_tap_down` 在按下瞬间就触发，"按下后被判为拖动"（在代码块上拖动滚动文档）
+        同样会触发，所以这里**只记位置、不进编辑态**；进编辑态交给 `on_click`。
+
+        坐标换算：`local_position` 相对**本行容器**左缘（= 行号列左缘），减去行号列宽
+        与行号-代码间距才落到代码文本坐标系；y 相对本行顶部，无需换算。
+        """
+        pos = getattr(e, "local_position", None)
+        if pos is None:
+            tap_pos_ref.current = None
+            return
+        tap_pos_ref.current = (
+            row_idx,
+            float(getattr(pos, "x", 0.0) or 0.0) - gutter_w - Spacing.MD,
+            float(getattr(pos, "y", 0.0) or 0.0),
+        )
+
+    def _click_row(row_idx: int, e) -> None:
+        """点击某一行代码 → 光标落在**点击处**，再进入编辑态。
+
+        位置取同一手势里 `on_tap_down` 记下的快照（`tap_pos_ref`）：`on_click` 的事件
+        负载是**不带坐标**的 `ControlEvent`，不能指望它给出位置。一次点击必然先经过
+        本行的 `on_tap_down`，所以快照一定是本次手势的、且行号相符。
+
+        若事件源恰好直接给了 `local_position`（测试直接调 `on_click(e)` 造事件时用得上），
+        优先采用它；两条路都拿不到就退化为"只进入编辑态"，不猜位置。
+        """
+        recorded = tap_pos_ref.current
+        tap_pos_ref.current = None
+        pos = getattr(e, "local_position", None)
+        if pos is not None:
+            x = float(getattr(pos, "x", 0.0) or 0.0) - gutter_w - Spacing.MD
+            y = float(getattr(pos, "y", 0.0) or 0.0)
+        elif recorded is not None and recorded[0] == row_idx:
+            _, x, y = recorded
+        else:
+            _enter_edit()
+            return
+        off = _caret_offset_in_code(code, row_idx, x, y, code_size, text_area_w)
+        pending_caret_ref.current = (off, off)
+        _enter_edit()
+
+    def _caret_logical_line() -> int:
+        """编辑态光标所在的**逻辑行**序号（0-based），无光标快照时返回 -1。
+
+        文本取**文档**（`line.segments[0].text`）而不是渲染期闭包里的 `code`：
+        文档是唯一真相且总是最新，用它算行号就不会出现"刚敲了一个回车、行号高亮
+        还差一行"的时序问题（`on_selection_change` 与 `on_change_code` 的到达顺序
+        由客户端决定）。偏移越界一律钳制——装饰性判断不该因为一次异常事件让整块渲染失败。
+        """
+        caret = caret_ref.current
+        if not caret:
+            return -1
+        text = line.segments[0].text if line.segments else ""
+        base = max(0, min(int(caret[0]), len(text)))
+        return text.count("\n", 0, base)
 
     def _read_column() -> ft.Column:
         """高亮正文列：逐逻辑行高亮渲染，折行由 Flutter 按容器宽度原生完成。
@@ -452,7 +743,14 @@ def render_code_block(
         浏览态与编辑态**共用本层**：编辑态把它作为底层高亮，上面叠一个文字透明的
         原生编辑框。两层吃同一份容器约束、同一套字体度量，因此宽度、折行点、行高
         严格一致——这是"编辑态与渲染状态保持一致"的实现基础。
+
+        每行外面再套一层点击容器（浏览态用它把光标落到点击处）；编辑态该层被上层
+        编辑框遮住，收不到点击，因此两种状态下不会互相干扰。
+
+        行号列在编辑态额外高亮光标所在逻辑行（见 `_gutter_cell`）——本层是两态
+        共用的，所以"当前行"信息只能在这里算，不能在两处各写一份。
         """
+        active_line = caret_line if is_editing else -1
         rows: list[ft.Control] = []
         for i, spec in enumerate(highlight_lines(code, lang)):
             spans = [
@@ -469,24 +767,32 @@ def render_code_block(
                     )
                 ]
             rows.append(
-                ft.Row(
-                    controls=[
-                        _gutter_cell(i + 1),
-                        ft.Text(
-                            spans=spans,
-                            style=_span_style(c.code_block_fg, code_size),
-                            text_align=ft.TextAlign.LEFT,
-                            # 折行模式用 expand 占满行号列右侧、由框架按宽度折行；
-                            # 不折行模式必须关掉 expand（父 Row 在横向滚动容器内宽度
-                            # 无界，Expanded 在无界约束下会报错），并显式 no_wrap。
-                            expand=wrap,
-                            no_wrap=not wrap,
-                        ),
-                    ],
-                    spacing=Spacing.MD,
-                    # 必须 START 而非 STRETCH：本行位于滚动 Column 内、交叉轴约束无界，
-                    # STRETCH 会把子控件高度约束成 infinity（整行高度 inf）。
-                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            _gutter_cell(i + 1, active=(i == active_line)),
+                            ft.Text(
+                                spans=spans,
+                                style=_span_style(c.code_block_fg, code_size),
+                                text_align=ft.TextAlign.LEFT,
+                                # 折行模式用 expand 占满行号列右侧、由框架按宽度折行；
+                                # 不折行模式必须关掉 expand（父 Row 在横向滚动容器内宽度
+                                # 无界，Expanded 在无界约束下会报错），并显式 no_wrap。
+                                expand=wrap,
+                                no_wrap=not wrap,
+                            ),
+                        ],
+                        spacing=Spacing.MD,
+                        # 必须 START 而非 STRETCH：本行位于滚动 Column 内、交叉轴约束无界，
+                        # STRETCH 会把子控件高度约束成 infinity（整行高度 inf）。
+                        vertical_alignment=ft.CrossAxisAlignment.START,
+                    ),
+                    # ink=False：行内不要水波（配合 SelectionArea 拖选，保持"文本"观感）
+                    ink=False,
+                    # 位置与动作分两个 handler：坐标只在 TapEvent（on_tap_down）上，
+                    # 而 on_click 收的是不带坐标的 ControlEvent（见 _record_tap/_click_row）。
+                    on_tap_down=lambda e, i=i: _record_tap(i, e),
+                    on_click=lambda e, i=i: _click_row(i, e),
                 )
             )
         return ft.Column(controls=rows, spacing=0, tight=True)
@@ -514,10 +820,23 @@ def render_code_block(
         # Tab 缩进后的光标位置：只能经渲染参数给客户端——渲染后的控件是冻结的，
         # 在 effect 里改 `field.selection` 会抛 "Frozen controls cannot be updated."
         # （flet 1.0 用冻结标记保证"控件状态只从渲染流入"，事后改属性不会被 diff 采纳）。
-        # 取用即消费：下一次渲染不再显式指定 selection（`selection=None` 在客户端是
-        # 空操作，不会把光标甩回文末），此后光标由客户端自身维护。
-        pending_caret = pending_caret_ref.current
-        pending_caret_ref.current = None
+        #
+        # 但**挂载当次不能下发**：新建的编辑框在本帧末尾才拿到焦点，Flutter 在取得
+        # 焦点时会把光标重置到文末，挂载时带的 selection 会被它覆盖掉。真机探针实测：
+        # 点击第 3 行得到 `CLICKMAP ... off=14` 且 `TF selection=base_offset=14`（确实
+        # 发给了客户端），但随后客户端回报 `SEL base=38 extent=38`——即被聚焦覆盖。
+        # 因此拆成两次渲染：
+        #   ① 挂载（edit_focused=False）：selection 留空；
+        #   ② `_on_edit_focus` 把 edit_focused 置真触发重渲染，此时编辑框已聚焦，
+        #      再以**属性更新**下发 selection，客户端就会采纳。
+        # 这条"更新到已聚焦编辑框"的路径是既有能力——Tab 缩进（`_apply_indent_edit`
+        # → `set_tab_epoch`）本来就走它，光标列位一直保持得住的。
+        # 取用即消费：一旦下发就不再显式指定（`selection=None` 在客户端是空操作，
+        # 不会把光标甩回文末），此后光标由客户端自身维护。
+        pending_caret = None
+        if edit_focused:
+            pending_caret = pending_caret_ref.current
+            pending_caret_ref.current = None
         field = ft.TextField(
             # key 稳定（不含 is_editing）：on_change 触发的全量重渲染按 key 复用控件，
             # 不重挂载，从而不打断 IME 组合态与原生撤销栈。
@@ -633,10 +952,15 @@ def render_code_block(
         106 被裁剪到 105，末尾字符连同缩进一起写回文档）。
         """
         sel = getattr(e, "selection", None)
-        caret_ref.current = (
-            int(getattr(sel, "base_offset", 0) or 0),
-            int(getattr(sel, "extent_offset", 0) or 0),
-        )
+        base = int(getattr(sel, "base_offset", 0) or 0)
+        extent = int(getattr(sel, "extent_offset", 0) or 0)
+        caret_ref.current = (base, extent)
+        # 折叠光标跨了逻辑行 → 更新"当前行"（行号高亮），这一次 set_state 同时充当
+        # 重渲染的触发源；拖选（base != extent）不更新，避免拖过 N 行就重渲染 N 次。
+        if base == extent:
+            new_line = _caret_logical_line()
+            if new_line != caret_line:
+                set_caret_line(new_line)
         if on_code_selection is not None:
             on_code_selection(line_idx, e)
 
@@ -657,11 +981,17 @@ def render_code_block(
         return (text, caret[0], caret[1])
 
     def _on_edit_key_down(e) -> None:
-        """编辑态按键：跟踪修饰键，并把 Tab / Shift+Tab 变成缩进。
+        """编辑态按键：Esc 退出编辑、跟踪修饰键、把 Tab / Shift+Tab 变成缩进。
 
         Tab 必须自己处理（原因见模块 docstring）：插入缩进后标记 tab_pending，
         把随之而来的焦点遍历失焦当作副作用处理，而不是"用户离开了代码块"。
         Ctrl+Tab 是全局标签切换快捷键，不插入缩进（与表格缩进/标签切换同一取舍）。
+
+        Esc 是本组件处理的（而不是交给全局面键盘分发器）：Tab 能被这里收到，
+        说明原生多行 TextField 并不吞掉"非文本编辑类"按键，全局面包分发器又没有
+        任何动作绑定 Esc——放这里既不需要新增全局动作，也不用把组件内部状态
+        （`is_editing`）暴露给外部。行为与 Typora 一致：Esc 关闭代码块的编辑态，
+        回到高亮浏览态；文档光标不挪动（代码块是岛屿，光标本来也落不进去）。
         """
         key = (getattr(e, "key", "") or "").lower()
         if key.startswith("shift"):
@@ -669,6 +999,10 @@ def render_code_block(
             return
         if key.startswith("control"):
             ctrl_ref.current = True
+            return
+        if key == "escape":
+            if is_editing and not is_collapsed:
+                _exit_edit()
             return
         if key != "tab":
             return
@@ -725,8 +1059,14 @@ def render_code_block(
     ft.use_effect(_focus_edit_field, [is_editing, tab_epoch])
 
     def _on_edit_focus(e) -> None:
-        """编辑框取得焦点：Tab 的焦点往返结束，之后的失焦都按真实失焦处理。"""
+        """编辑框取得焦点：Tab 的焦点往返结束，之后的失焦都按真实失焦处理。
+
+        同时把 `edit_focused` 置真——它触发的那次重渲染才是**下发光标**的时机
+        （挂载当次下发会被聚焦动作覆盖，见 `_build_edit_body`）。
+        """
         tab_pending_ref.current = False
+        if not edit_focused:
+            set_edit_focused(True)
         if on_code_focus is not None:
             on_code_focus(line_idx)
 
@@ -736,10 +1076,14 @@ def render_code_block(
             set_collapsed(False)
         if not is_editing:
             # 上一次会话的光标快照与修饰键状态都已失效，避免 Tab 落在过期位置
-            # 或被上一次会话残留的 Shift/Ctrl 状态误判
+            # 或被上一次会话残留的 Shift/Ctrl 状态误判；edit_focused 复位，新挂载的
+            # 编辑框要走一遍"先聚焦、后下发光标"的两段式（见 _build_edit_body）。
             caret_ref.current = None
             shift_ref.current = False
             ctrl_ref.current = False
+            set_edit_focused(False)
+            # 清掉上一次会话的行号高亮，避免"重进编辑态时先闪一下旧行"
+            set_caret_line(-1)
             set_editing(True)
 
     def _exit_edit() -> None:
@@ -792,6 +1136,9 @@ def render_code_block(
         padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
         bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
         border_radius=Radius.MD,
+        # 左侧强调条：折叠态只剩一行摘要，靠它把自己和普通段落区分开
+        # （border 画在盒子内，不改变宽度，也就不影响任何基于宽度的测量）
+        border=only_border(left=ft.BorderSide(2, ft.Colors.with_opacity(0.45, c.link))),
     )
 
     if is_collapsed:
@@ -800,6 +1147,11 @@ def render_code_block(
         body = ft.Container(
             content=_build_edit_body() if is_editing else _build_read_body(),
             padding=ft.Padding.only(top=Spacing.SM, bottom=Spacing.SM),
+            # 头部与正文之间的细分隔线：只画上边（横向 1px，不改变文本区宽度），
+            # 让"工具栏 / 代码"两段在视觉上分开——桌面编辑器里这两个区域是不同层的
+            # 东西，靠间距区分不够。刻意不用 ft.Divider：它会给自己加高度，
+            # 而头部行高是硬锁 22px 的（子项超高会被静默裁切）。
+            border=only_border(top=ft.BorderSide(1, border_color)),
         )
 
     content = ft.Container(

@@ -132,6 +132,80 @@ def test_compute_markdown_from_text_delegates():
 
 
 # ---------------------------------------------------------------------------
+# match_text_to_selections：代码块跨行复制（去换行投影匹配）
+#
+# 背景：Flutter 的 SelectionArea 跨行拼接**不插入换行符**，而代码块在文档里是
+# **一个 Line 承载多行文本**（该 Line 的展示文本自身含 \n）。两侧换行分布不一致，
+# `find()` 必然失败 → 复制代码块还原不出任何东西。回退策略见 `_match_on_projection`。
+# ---------------------------------------------------------------------------
+_CODE_DOC = """前言
+
+```python
+def f(x):
+    return x + 1
+```
+
+结尾"""
+
+
+def _code_lines():
+    return parse_markdown(_CODE_DOC).lines
+
+
+def test_match_code_block_layout_precondition():
+    """前置条件：代码块是**一个** Line，其展示文本自带 \\n（其余测试默认此结构）。"""
+    lines = _code_lines()
+    assert _line_display(lines[2]) == "def f(x):\n    return x + 1"
+
+
+def test_match_code_block_cross_line_copy_restores_newline():
+    """整块选中代码（剪贴板无换行）→ 命中投影匹配，Markdown 还原出换行。"""
+    lines = _code_lines()
+    # SelectionArea 的跨行拼接结果：两个源码行直接相连，中间的 \n 被丢弃
+    clip = "def f(x):    return x + 1"
+    sel = match_text_to_selections(lines, clip)
+    assert sel == {2: (0, 26)}, f"got {sel!r}"
+    assert compute_markdown_from_text(lines, clip) == "def f(x):\n    return x + 1"
+
+
+def test_match_code_block_partial_copy_restores_newline():
+    """只选中代码块中段（两端都不贴边）→ 同样还原换行。"""
+    lines = _code_lines()
+    clip = "f(x):    return x"
+    sel = match_text_to_selections(lines, clip)
+    assert sel == {2: (4, 22)}, f"got {sel!r}"
+    assert compute_markdown_from_text(lines, clip) == "f(x):\n    return x"
+
+
+def test_match_projection_spans_paragraph_and_code_block():
+    """从段落中间拖到代码块内：投影匹配跨两个文档行，逐行给出偏移。"""
+    lines = parse_markdown("ab\n\n```\ncd\nef\n```").lines
+    # 文档侧行文本为 ["ab", "", "cd\nef"]；投影 = "abcdef"
+    # 剪贴板 "bcde" 在投影里唯一命中于下标 1：'b'→(0,1)、'c'→(2,0)、'd'→(2,1)、'e'→(2,3)
+    # 每行取 [min, max+1)：行0 = [1,2)，行2 = [0,4)——区间跨过行2 内部的 \n(偏移2)，
+    # 这正是切片时能把换行带回来的原因。
+    assert match_text_to_selections(lines, "bcde") == {0: (1, 2), 2: (0, 4)}
+
+
+def test_match_projection_ambiguous_returns_empty():
+    """投影里出现多次 → 不猜，返回 {}（最坏情况不比改造前更差）。"""
+    lines = parse_markdown("```\nA\nA\nA\n```").lines
+    # 展示文本 "A\nA\nA" → 投影 "AAA"，"AA" 有两个位置
+    assert match_text_to_selections(lines, "AA") == {}
+
+
+def test_match_projection_keeps_single_line_code_block_on_old_path():
+    """单行代码块没有内部换行 → 走既有的单行匹配，不经过投影回退。"""
+    lines = parse_markdown("```\ncode\n```").lines
+    assert match_text_to_selections(lines, "code") == {0: (0, 4)}
+
+
+def test_match_projection_not_found_returns_empty():
+    """投影里也没有 → 仍是 {}。"""
+    assert match_text_to_selections(_code_lines(), "完全不存在的片段") == {}
+
+
+# ---------------------------------------------------------------------------
 # apply_inline_format_to_selections
 # ---------------------------------------------------------------------------
 def test_apply_format_wrap_bold_single_line():

@@ -22,7 +22,7 @@ move_up / move_down
   _line_visual_layout / _find_vline_for_raw —— 函数内惰性导入，避免循环依赖）
 """
 
-from models.document import SegType
+from models.document import BlockType, Line, SegType
 from styles import block_text_size
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
@@ -208,6 +208,34 @@ def build_navigation(ctx: NavigationEnv):
         current_x = vline.offsets_x[local_off]
         return (visual_lines, vline, current_x)
 
+    def _request_enter_code(target_li: int, off: int) -> None:
+        """把光标"送进"相邻的代码块：置当前行 + 请求组件切到编辑态并落位光标。
+
+        这是"方向键从代码块外进入代码块内"的唯一入口（跳出方向在
+        views/editor/_fence.py 的 handle_code_exit）。两处都只做**一件事**：
+        算出目标行与目标偏移交出去；真正"进入编辑态"由组件自己完成
+        （`is_editing` 是组件内部状态，外部不该也不能直接改）。
+
+        为什么要 `set_cursor_line` + `set_cursor_li(None)`：
+        - `cursor_line` 让工具栏/块级操作知道当前落在代码块这一行；
+        - `cursor_li` 必须清空，否则编辑器同时渲染一个文本行光标——而代码块
+          聚焦后 `on_code_focus` 本来也会把 cursor_li 清掉，这里提前一步只是为了
+          让"请求 → 渲染 → 聚焦"这一帧内不出现两个光标。
+        `set_code_enter` 走 state（而非 ref），因此即使 cursor_li 与 cursor_line
+        恰好没变化，也一定会触发一次重渲染把请求送到组件。
+        """
+        ctx.set_cursor_li(None)
+        ctx.set_cursor_line(target_li)
+        ctx.set_code_enter(target_li, off)
+
+    def _code_body_len(line: Line) -> int:
+        """代码块的**代码正文**长度（不是 line.raw —— 那含 ``` 围栏标记）。
+
+        方向键从下方进入代码块时把光标落在正文末尾，所以必须是正文字长；
+        用 line.raw 会把光标送到围栏标记之后。
+        """
+        return len(line.segments[0].text) if line.segments else 0
+
     def _move_vline(direction: int, steps: int = 1):
         """视觉行导航：移动 steps 个视觉行（direction: -1=上, +1=下）。
 
@@ -215,6 +243,11 @@ def build_navigation(ctx: NavigationEnv):
         - 越界：跨逻辑行（跳过围栏块），目标行用浏览态视觉行取末行/首行
         - preferred_col_ref 存储 X 像素（跨视觉行一致列定位，比 raw 偏移更准）
         - 围栏块：进入编辑态（set_cursor_line + set_cursor_li(None)）
+        - **代码块例外**：紧邻的下一/上一行是代码块时，光标直接进入代码块
+          （↓ 落首行行首、↑ 落末行行尾），而不是把它当普通岛屿跳过。
+          Typora 同款直觉——否则"段落 → 代码块 → 段落"这类最常见结构里，
+          ↑/↓ 会"穿过"代码块却永远进不去，用户只能改用手去点。
+          其它岛屿（公式/表格/TOC/HR）仍走跳过逻辑，本次不动。
         """
         if ctx.cursor_li is None:
             return
@@ -254,6 +287,14 @@ def build_navigation(ctx: NavigationEnv):
                     target_vline_idx += 1
                     remaining -= 1
                 else:
+                    # 向下越界前先看紧邻的下一行：是代码块就让光标进去（Typora 式）。
+                    # 只在"已走到本行最后一个视觉行"才可能到这儿，因此不会打断行内折行导航。
+                    _nxt = target_li + 1
+                    if _nxt < len(ctx.document.lines) and (
+                        ctx.document.lines[_nxt].block_type == BlockType.CODE
+                    ):
+                        _request_enter_code(_nxt, 0)
+                        return
                     # 跨到下一非围栏逻辑行
                     nxt_li = target_li + 1
                     while nxt_li < len(ctx.document.lines) and _is_fence(ctx.document.lines[nxt_li]):
@@ -283,6 +324,13 @@ def build_navigation(ctx: NavigationEnv):
                     target_vline_idx -= 1
                     remaining -= 1
                 else:
+                    # 向上越界前同理：紧邻的上一行是代码块 → 光标进入其末行行尾
+                    _prev = target_li - 1
+                    if _prev >= 0 and (
+                        ctx.document.lines[_prev].block_type == BlockType.CODE
+                    ):
+                        _request_enter_code(_prev, _code_body_len(ctx.document.lines[_prev]))
+                        return
                     # 跨到上一非围栏逻辑行
                     prev_li = target_li - 1
                     while prev_li >= 0 and _is_fence(ctx.document.lines[prev_li]):

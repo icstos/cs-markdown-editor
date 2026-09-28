@@ -100,6 +100,10 @@ class EditorContext:
     secondary_cursors: list[tuple[int, int, int]]
     # 多光标版本号：每次 _sync 递增，传给 LineView 强制 ft.memo 失效
     secondary_cursors_version: int
+    # 代码块"外部请求进入编辑态"：(目标行, 序号, 初始光标偏移) | None。
+    # 方向键在代码块相邻行按到边界时由 _navigation 写入，LineView 透传给 code_block，
+    # 组件按"序号变化即新请求"消费一次。
+    code_enter_state: tuple[int, int, int] | None
 
     # ============ Setters（稳定区，跨渲染身份不变）============
     set_cursor_li: Callable[[int | None], None]
@@ -118,6 +122,8 @@ class EditorContext:
     set_math_focus_li: Callable[[int | None], None]
     set_secondary_cursors: Callable[[list[tuple[int, int, int]]], None]
     set_secondary_cursors_version: Callable[[int], None]
+    # 请求 li 行的代码块进入编辑态并把光标放在 off（方向键跨界进入）
+    set_code_enter: Callable[[int, int], None]
 
     # ============ Refs（稳定区，跨渲染身份不变）============
     cursor_field_ref: ft.Ref

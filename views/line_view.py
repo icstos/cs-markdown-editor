@@ -433,6 +433,14 @@ def LineView(
     # （ft.memo 对 list 走身份比较，list comprehension 每次生成新对象虽能触发
     # 重渲染，但状态批处理可能导致部分行未及时刷新，版本号兜底确保所有行同步）
     secondary_cursors_version: int = 0,
+    # 代码块"外部请求进入编辑态"：序号（0=未请求）+ 初始光标偏移。
+    # 由导航层（方向键跨界）递增序号产生，透传给 code_block 组件消费一次。
+    # 只有目标行会拿到非 0 序号 / 非 None 偏移，其余行恒为 0/None → 不invalidate memo。
+    code_enter_seq: int = 0,
+    code_enter_off: int | None = None,
+    # 代码块兑现"进入编辑态"请求后的回报（编辑器据此作废那条一次性待办；
+    # 不作废的话，本行滚出/滚回渲染窗口重建时会拿旧序号再进一次编辑态）。
+    code_enter_consumed: Callable[[int], None] | None = None,
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
@@ -482,6 +490,9 @@ def LineView(
             on_line_size_change,
             diff_mark=diff_mark,
             word_wrap=word_wrap,
+            enter_seq=code_enter_seq,
+            enter_off=code_enter_off,
+            on_enter_consumed=code_enter_consumed,
         )
 
     # ============ YAML 前置元数据（Obsidian 风格属性卡片）============

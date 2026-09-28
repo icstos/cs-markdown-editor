@@ -70,6 +70,31 @@ from views.line_view import LineView
 from views.table_view import TableView
 
 
+def code_enter_props(
+    state: tuple[int, int, int] | None, li: int
+) -> tuple[int, int | None]:
+    """本行该拿到的「进入代码块编辑态」请求：(序号, 初始偏移)。
+
+    规则两条，都直接对应一个真机上会复现的缺陷：
+
+    1. **只有目标行拿到非 0 序号**，其余行恒为 `(0, None)`。`LineView` 是
+       `ft.memo` 的，序号是它的 prop：给无关行也塞非 0 值会逐行击穿 memo，
+       一次方向键就重渲染整个代码块（高亮 span 全部重建）。
+    2. **请求已作废（`state is None`）时必须恒为 `(0, None)`**。这是"重建的行不得
+       幽灵进入编辑态"的最后一道闸：编辑器只物化视口附近的行，滚出视口的行其控件
+       会被卸载；只要请求还挂在 state 上，滚回来重建的行就会拿同一个序号**再消费
+       一次** —— 用户视角是"我什么都没点，它自己开始编辑了"。父层在兑现后立即把
+       请求置 `None`（`views/editor/__init__.py::_code_enter_after_consumed`），
+       本节把 `None` 翻译成"没有请求"，两道一起才成立。
+
+    抽成模块级纯函数是为了可测：这两条都只在渲染期成立，纯函数 + 单测比
+    "渲染整棵编辑器再断言控件属性"直接得多。
+    """
+    if state is not None and state[0] == li:
+        return state[1], state[2]
+    return 0, None
+
+
 def _snap_window(
     lines: list, lo: int, hi: int
 ) -> tuple[int, int]:
@@ -237,6 +262,10 @@ def build_line_controls(
                     body_font_size=ctx.body_font_size,
                     is_current_line=is_act,
                     is_flash=flash_li == i,
+                    # 代码块"外部请求进入编辑态"：只有目标行拿到非 0 序号 / 非 None 偏移，
+                    # 其余行恒为 0/None（理由与两条闸门见 `code_enter_props`）。
+                    code_enter_seq=code_enter_props(ctx.code_enter_state, i)[0],
+                    code_enter_off=code_enter_props(ctx.code_enter_state, i)[1],
                     # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，
                     # ft.memo 浅比较 line 引用未变会误判未刷新。通过 raw 长度 + 段数
                     # 两个值变化触发 memo 检测，让屏幕刷新。
@@ -256,6 +285,8 @@ def build_line_controls(
                     on_code_focus=stable_cbs["on_code_focus"],
                     on_code_blur=stable_cbs["on_code_blur"],
                     on_code_selection=stable_cbs["on_code_selection"],
+                    # 代码块兑现"进入编辑"请求后的回报：父层据此作废那条一次性待办
+                    code_enter_consumed=stable_cbs["code_enter_consumed"],
                     on_change_lang=stable_cbs["on_change_lang"],
                     # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态 TextField
                     is_math_editing=(math_focus_li == i),

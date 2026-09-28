@@ -96,6 +96,23 @@ _WINDOW_MARGIN = 40      # 视口外上下各预留的行数（滚动时提前�
 _WINDOW_CHUNK = 120      # 每次外扩的最少行数（迟滞：避免逐行跨越边界时频繁重渲染）
 
 
+def _code_enter_after_consumed(
+    state: tuple[int, int, int] | None, li: int
+) -> tuple[int, int, int] | None:
+    """代码块兑现"进入编辑态"请求后，请求状态该变成什么。
+
+    - 兑现的就是当前这条（`state[0] == li`）→ 作废（返回 None）。
+    - 不是当前这条 → **原样返回同一个对象**（调用方据此跳过 set_state，不做无意义
+      重渲染）：晚到的兑现回报不能误伤后来发出的新请求。
+
+    抽成模块级纯函数是为了可测：它守护的规则（"请求只消费一次、且不会被重建的行
+    重复消费"）在组件里只能靠"重建整行"才能触发，纯函数 + 单测比渲染级测试更直接。
+    """
+    if state is not None and state[0] == li:
+        return None
+    return state
+
+
 @ft.component
 def MarkdownEditor(
     document: Document,
@@ -234,6 +251,39 @@ def MarkdownEditor(
     # 代码块编辑框光标/选区跟踪：on_code_selection 写入 (value, base, extent)，
     # 供 KeyDispatcher 代码块边界方向键跳出（↑/←/↓/→）判定边界
     code_caret_ref = ft.use_ref(None)
+    # 代码块"外部请求进入编辑态"：(目标行, 序号, 初始光标偏移) | None。
+    # 方向键在代码块上/下一行按到边界时由 _navigation 写入，经 _render → LineView
+    # 传给 code_block 组件消费一次。
+    # 用 state 而不是 ref：导航层设置它的那次按键必须**确保触发一次重渲染**，
+    # 否则组件根本读不到请求（ref 变化不产生渲染）。
+    # **请求必须被兑现后立刻作废**（见 `_clear_code_enter`）——它是"一次性待办"，
+    # 不是"当前状态"。
+    code_enter_state, set_code_enter_state = ft.use_state(None)
+    code_enter_seq_ref = ft.use_ref(0)
+
+    def _request_code_enter(li: int, off: int) -> None:
+        """请求让 li 行的代码块进入编辑态并把光标放在 off。"""
+        code_enter_seq_ref.current += 1
+        set_code_enter_state((li, code_enter_seq_ref.current, off))
+
+    def _clear_code_enter(li: int) -> None:
+        """组件已兑现 li 行的进入请求 → 立刻作废它。
+
+        **为什么请求必须被清掉**（不清的后果是真机上会复现的缺陷）：
+        编辑器按 `window` 只物化视口附近的行，滚动出窗口的行其控件会被卸载。若请求
+        一直挂在 state 上，目标行就会**永久**带着非 0 的 `enter_seq`；等它重新滚回
+        窗口、组件重建时，挂载期 effect 会拿同一个序号再消费一次 —— 代码块自己跳进
+        编辑态并抢走焦点（用户视角是"我什么都没点，它自己开始编辑了"）。
+
+        为什么让**父层**作废、而不是让组件自己记"已消费"：组件一旦重建，它自己的
+        标记也跟着重生，拦不住上面那条路径。请求的生命周期只能由持有它的那一层管。
+
+        规则本体见 `_code_enter_after_consumed`（含"不误伤别人的新请求"）。
+        """
+        new_state = _code_enter_after_consumed(code_enter_state, li)
+        if new_state is not code_enter_state:
+            set_code_enter_state(new_state)
+
     table_focus_ref = ft.use_ref(None)
     table_nav_ref = ft.use_ref(None)
     # 表格聚焦 state(修复 table_focus_ref 从未赋值 Bug)
@@ -354,6 +404,8 @@ def MarkdownEditor(
         math_focus_li=math_focus_li,
         secondary_cursors=secondary_cursors,
         secondary_cursors_version=secondary_cursors_version,
+        # 代码块外部进入请求 (目标行, 序号, 初始光标偏移) | None
+        code_enter_state=code_enter_state,
         # 文档内搜索（浮层）：{li: [(s, e, is_current)]} + 数据版本号
         search_hits=search_hits,
         search_hits_version=search_hits_version,
@@ -374,6 +426,7 @@ def MarkdownEditor(
         set_math_focus_li=set_math_focus_li,
         set_secondary_cursors=set_secondary_cursors,
         set_secondary_cursors_version=set_secondary_cursors_version,
+        set_code_enter=_request_code_enter,
         # Refs
         cursor_field_ref=cursor_field_ref,
         input_session_ref=input_session_ref,
@@ -640,6 +693,8 @@ def MarkdownEditor(
         "on_code_focus": fence_cbs["on_code_focus"],
         "on_code_blur": fence_cbs["on_code_blur"],
         "on_code_selection": fence_cbs["on_code_selection"],
+        # 代码块兑现进入请求后的回报（清掉一次性待办，见 _clear_code_enter）
+        "code_enter_consumed": _clear_code_enter,
         "on_change_lang": blocks_cbs["change_lang"],
         "on_change_math": fence_cbs["on_change_math"],
         "on_math_focus": fence_cbs["on_math_focus"],
@@ -656,6 +711,7 @@ def MarkdownEditor(
     _STABLE_CB_KEYS = (
         "on_tap", "on_pan_start", "on_pan_update", "on_toggle_task",
         "on_change_code", "on_code_focus", "on_code_blur", "on_code_selection",
+        "code_enter_consumed",
         "on_change_lang",
         "on_change_math", "on_math_focus", "on_math_blur", "on_jump_to",
         "on_line_size_change", "on_extend_outward", "on_clear_outward",

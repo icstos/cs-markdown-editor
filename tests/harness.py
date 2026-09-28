@@ -89,8 +89,9 @@ class RenderHarness:
         又要求组件已挂载，两者互相依赖。因此这里手工展开：
         1. ``did_mount()`` 标记挂载（子树的挂载由 ``patch_control`` 递归负责）；
         2. ``update()`` 执行组件体，填充 hook 表并生成渲染体；
-        3. 补登记 ``deps=[]`` 的挂载期 effect——它们只在 ``did_mount`` 时刻被登记，
+        3. 补登记**全部**挂载期 effect——它们只在 ``did_mount`` 时刻被登记，
            而那时 hook 表还是空的（首次渲染才产生 hook），故需在组件体执行后补一次。
+           详见 ``_schedule_mount_effects()`` 对真实时序的说明。
         """
         token = _context_page.set(self.page)
         try:
@@ -106,20 +107,37 @@ class RenderHarness:
             _context_page.reset(token)
 
     def _schedule_mount_effects(self) -> None:
-        """补登记渲染树中所有 ``deps=[]`` 的 effect（首次渲染的挂载语义）。"""
+        """补登记挂在首次渲染上的全部 effect（对齐 ``Component._run_mount_effects``）。
+
+        真实运行时的时序是「**先跑组件体，再挂载**」——补丁遍历
+        （``controls/object_patch.py`` → ``_before_update_safe()``）里执行组件体，
+        此时 ``_state.mounted`` 仍为 ``False``，``_run_render_effects()`` 会在第一行
+        直接返回；遍历结束后 ``patch_control`` 才调 ``did_mount()``，把 ``mounted``
+        置 True 并调 ``_run_mount_effects()``，其源码注释原话是
+        "all effects are running on mount"——**不区分 deps**。也就是说
+        ``use_effect(fn, [x])`` 在挂载那一次同样会执行（这正是 React 的
+        ``useEffect`` 语义），只有**后续**重渲染才按 deps 比较决定是否重跑。
+
+        夹具为了绕开「``update()`` 要求组件已挂载」的死锁，顺序被改成了
+        ``did_mount()`` → ``update()``：组件体执行时 ``mounted`` 已经是 True，
+        于是 ``deps=None`` 的 effect 会被 ``_run_render_effects`` 抢跑一次
+        （真实运行时不会，那时 mounted 还是 False）。所以这里按 **hook 身份去重**，
+        只补登记尚未进队列的那些，避免 ``deps=None`` 的 effect 首渲染跑两遍。
+        """
         from flet.components.hooks.use_effect import EffectHook
 
         for control in walk(self.page.views[0].controls):
             if not isinstance(control, Component):
                 continue
             for hook in control._state.hooks:
-                if (
-                    isinstance(hook, EffectHook)
-                    and hook.deps == []
-                    and not getattr(hook, "_harness_queued", False)
-                ):
-                    hook._harness_queued = True  # type: ignore[attr-defined]
-                    self._effects.append((hook, False))
+                if not isinstance(hook, EffectHook):
+                    continue
+                if getattr(hook, "_harness_queued", False):
+                    continue
+                if any(queued is hook for queued, _ in self._effects):
+                    continue
+                hook._harness_queued = True  # type: ignore[attr-defined]
+                self._effects.append((hook, False))
 
     @property
     def tree(self) -> Any:

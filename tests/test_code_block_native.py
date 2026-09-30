@@ -20,8 +20,11 @@
    尺寸控件（IconButton 40 / Dropdown 48）——它们是"顶部行过高"的唯一成因，
    比内边距的影响大一个量级。锁定时同时守住"每个子项都显式声明了高度"，
    因为头部高度是硬锁的，超高子项会被静默裁切。
+6. **横向几何**：卡片容器不留水平内边距 → 行号色带贴齐块的左右边框、头部细分隔线
+   两端对齐到边框；水平缩进下移到内容自身（工具栏在 header 的容器上、代码列右缘在
+   行容器 / 编辑框的 `content_padding` 上），故编辑态与浏览态的文本区仍同 x 同宽。
 
-第 6 节「点击定位」另锁两条真机时序（都是先有真机探针实测、再写进测试的）：
+第 7 节「点击定位」另锁两条真机时序（都是先有真机探针实测、再写进测试的）：
 - **坐标只在 `on_tap_down` 上**：`Container.on_click` 的声明是 `ControlEventHandler`，
   收到的是不带 `local_position` 的 `ControlEvent`（真机实测 `local=None`）。
   故位置与动作分两个 handler：`on_tap_down` → 记位置快照，`on_click` → 用快照定位。
@@ -65,6 +68,9 @@ PARSED_CODE = parse_markdown(FENCE).lines[0].segments[0].text
 LOGICAL_LINES = PARSED_CODE.split("\n")
 
 ROOT = Path(__file__).resolve().parent.parent
+# 夹具给代码块的内容宽度（渲染参数）。点击定位的折行宽度必须由它减去实测内边距推出，
+# 故提为常量：改这里就等于改夹具的画布宽度。
+_CONTENT_WIDTH = 800.0
 
 
 def _ref(value=None):
@@ -129,7 +135,7 @@ def _rendered(
                 line,
                 0,
                 16,
-                800.0,
+                _CONTENT_WIDTH,
                 _ref(None),
                 change or _noop,
                 focus or _noop,
@@ -173,6 +179,48 @@ def _gutter_numbers(h: RenderHarness) -> list[str]:
         if isinstance(value, str) and value.isdigit():
             out.append(value)
     return out
+
+
+def _gutter_cell(h: RenderHarness) -> ft.Container:
+    """行号单元格：内容为纯数字文本的 `Container`（行号 / 行数标签靠这条判据区分）。"""
+    cells = [
+        n
+        for n in h.find(lambda n: isinstance(n, ft.Container))
+        if isinstance(n.content, ft.Text) and str(n.content.value or "").isdigit()
+    ]
+    assert cells, "未找到行号单元格"
+    return cells[0]
+
+
+def _gutter_row(h: RenderHarness) -> ft.Container:
+    """承载行号的**行容器**（content 是 Row，且首项正是行号单元格）。
+
+    横向几何都挂在这一层与卡片容器上：行号色带的左缘 = 行容器的左内边距之后，
+    代码列的右缘 = 行容器的右内边距之前。故"色带是否贴边"必须连它一起断言。
+    """
+    cell = _gutter_cell(h)
+    for node in h.find(lambda n: isinstance(n, ft.Container)):
+        row = node.content
+        if isinstance(row, ft.Row) and row.controls and row.controls[0] is cell:
+            return node
+    raise AssertionError("未找到承载行号的行容器")
+
+
+def _card(h: RenderHarness) -> ft.Container:
+    """代码块卡片容器：块底色 + 圆角 + 四周细边框的那一层（content 是 Column）。
+
+    判据取"content 是 Column 且带 bgcolor"：正文列（Column）本身不是 Container、
+    折叠态摘要（Row）与卡片里的各层容器都不满足；块级包裹层（wrap_block）的
+    content 是卡片自身，也不满足。
+    """
+    cards = [
+        n
+        for n in h.find(lambda n: isinstance(n, ft.Container))
+        if isinstance(getattr(n, "content", None), ft.Column)
+        and getattr(n, "bgcolor", None) is not None
+    ]
+    assert cards, "未找到代码块卡片容器"
+    return cards[0]
 
 
 def _edit_fields(h: RenderHarness) -> list[ft.TextField]:
@@ -242,7 +290,7 @@ def test_highlight_cache_returns_same_object():
     assert highlight_lines(RAW_CODE, "python") is first
 
 
-# ==================== 2. 软换行开关 ====================
+# ==================== 2. 软换行开关与横向几何 ====================
 
 
 def test_word_wrap_on_uses_expanding_text_and_no_hscroll():
@@ -279,6 +327,41 @@ def test_gutter_numbers_cover_every_logical_line():
     """行号列覆盖全部逻辑行（含空行），编号从 1 连续递增。"""
     with _rendered() as h:
         assert _gutter_numbers(h) == [str(i) for i in range(1, len(LOGICAL_LINES) + 1)]
+
+
+def test_gutter_band_is_flush_with_block_frame():
+    """行号色带**贴齐块边框**：卡片容器不留水平内边距，行容器不留左内边距。
+
+    原先卡片容器左右各留一个 `Spacing.MD`，行号色带被推开 6px —— 真机上是"行号左侧
+    还有一条与代码块同色的空隙"，既浪费横向空间，也让"行号列 + 装订线"不像一条贴边的
+    导轨。现在水平内边距下移到各内容自身（工具栏在 header 上、代码列右缘在行容器与
+    编辑框上），色带与头部细分隔线因此两端都对齐到块边框。
+
+    这里逐层断言，是因为"贴边"由两层相乘决定：任一层的左内边距非 0，色带就又被推离。
+    """
+    with _rendered() as h:
+        card = _card(h)
+        pad = card.padding
+        assert not (pad.left or 0), f"卡片容器仍有左内边距 {pad.left}：行号色带被推离边框"
+        assert not (pad.right or 0), f"卡片容器仍有右内边距 {pad.right}：会与行内边距叠加"
+        row = _gutter_row(h)
+        assert not (row.padding.left or 0), "行容器左内边距会再次把行号色带推离块边框"
+        # 右缘的留白仍归行容器（代码列不与边框贴死），与编辑态的 content_padding.right 对齐
+        assert row.padding.right == Spacing.MD, "代码列右缘的行内边距丢了"
+
+
+def test_toolbar_keeps_its_own_inset_after_padding_moved_in():
+    """卡片不留水平内边距后，工具栏的左右缩进改由自身承担（否则图标贴到边框上）。"""
+    with _rendered() as h:
+        holders = [
+            n
+            for n in h.find(lambda n: isinstance(n, ft.Container))
+            if isinstance(n.content, ft.Row)
+            and getattr(n.content, "height", None) == blk._HEADER_H
+        ]
+        assert holders, f"定高 {blk._HEADER_H} 的工具栏未被容器承载，水平内边距无处安放"
+        assert holders[0].padding.left == Spacing.MD
+        assert holders[0].padding.right == Spacing.MD
 
 
 def test_empty_line_keeps_line_box():
@@ -448,14 +531,7 @@ def _overlay(h: RenderHarness) -> ft.Stack:
 
 def _gutter_cell_w(h: RenderHarness) -> float:
     """行号列宽（从渲染出的行号单元格反推，避免在测试里复制宽度公式）。"""
-    cells = [
-        n
-        for n in h.find(lambda n: isinstance(n, ft.Container))
-        if isinstance(n.content, ft.Text)
-        and str(getattr(n.content, "value", "")).isdigit()
-    ]
-    assert cells, "未找到行号单元格"
-    return cells[0].width
+    return _gutter_cell(h).width
 
 
 def _caret(h: RenderHarness, field: ft.TextField, base: int, extent: int) -> None:
@@ -566,16 +642,35 @@ def test_edit_strut_helper_shape():
 
 
 def test_edit_field_text_area_aligns_with_highlight_column():
-    """编辑框文本区左缘与高亮层代码列同 x，右侧不再额外留白。
+    """编辑框文本区与浏览态代码列**同 x 同宽** —— 两层折行点一致的前提。
 
-    右侧若也留一个间距，编辑框每行可用宽度就比浏览态少一个 `Spacing.MD`，折行点
-    会比浏览态提前——真机探针实测两侧文本区同为 728px 时折行点才完全一致。
+    两层是各自独立构造的：浏览态的左缘来自"行号列宽 + Row spacing"、右缘来自行容器的
+    右内边距；编辑态两侧都由编辑框自己的 `content_padding` 一次给出。卡片容器**不留
+    水平内边距**（行号色带要贴块边框，见 `test_gutter_band_is_flush_with_block_frame`），
+    故这些留白只能落在上面两处；任一层少给一段，两层的可用宽度就差一个 `Spacing.MD`，
+    折行点随之提前/推后——真机探针实测两侧文本区同为 728px 时折行点才完全一致。
+
+    断言的是**两层的对齐关系本身**（而不是"右侧必须是 0"这类单侧实现细节）：
+    任一层改了内边距而没同步另一层，本条立即变红。
     """
     with _rendered() as h:
         field = _enter_edit(h)
         pad = field.content_padding
-        assert pad.left == _gutter_cell_w(h) + Spacing.MD, "左内边距应等于行号列宽 + 间距"
-        assert pad.right == 0, "右侧留白会让可用宽度比浏览态少一个间距"
+        row = _gutter_row(h)
+        gutter = _gutter_cell_w(h)
+
+        # 左缘：浏览态 = 行号列宽 + Row spacing；编辑态 = 编辑框的左内边距
+        assert row.content.spacing == Spacing.MD, "行号与代码之间的间距已变，两层左缘不再同 x"
+        expected_left = gutter + row.content.spacing
+        assert pad.left == expected_left, (
+            f"编辑框左内边距 {pad.left} ≠ 浏览态代码列左缘 {expected_left}"
+        )
+
+        # 右缘：浏览态 = 行容器右内边距；编辑态 = 编辑框右内边距
+        assert pad.right == (row.padding.right or 0), (
+            f"两层右缘留白不一致（编辑态 {pad.right} vs 浏览态 {row.padding.right}）"
+            "→ 可用宽度差一个间距，折行点对不上"
+        )
 
 
 def test_word_wrap_off_edit_shares_scroll_with_highlight():
@@ -909,16 +1004,29 @@ def test_lang_entries_appends_unknown_current_only():
 
 
 def test_collapse_button_switches_to_preview():
-    """折叠按钮切到首行预览：正文（高亮层 / 编辑框）卸载。"""
+    """折叠按钮切到首行预览：正文（高亮层 / 编辑框）卸载。
+
+    顺带锁定折叠态的横向缩进：预览是一张嵌在块里的圆角卡片（自带底色 + 圆角），
+    缩进靠 **margin** 自己留——卡片容器已不留水平内边距（折叠态不是代码窗格，
+    见 `test_gutter_band_is_flush_with_block_frame`），漏掉就会与框架线叠成双层边。
+    """
     with _rendered() as h:
         collapse = [n for n in _header_icon_btns(h) if n.tooltip == "折叠"]
         assert collapse, "未找到折叠按钮"
         h.interact(collapse[0].on_click, None)
         assert _code_text(h) is None, "折叠后仍渲染了正文高亮层"
         assert not _edit_fields(h), "折叠后不应有编辑框"
+        inset = [
+            n
+            for n in h.find(lambda n: isinstance(n, ft.Container))
+            if n.margin is not None
+            and (n.margin.left or 0) == Spacing.MD
+            and (n.margin.right or 0) == Spacing.MD
+        ]
+        assert inset, "折叠态摘要未自带水平缩进 → 会贴到块边框（框架线叠双层边）"
 
 
-# ==================== 6. 点击定位（光标落在点击处，而非代码块末尾） ====================
+# ==================== 7. 点击定位（光标落在点击处，而非代码块末尾） ====================
 #
 # 缺陷背景：点击任意位置进入编辑态时，编辑框以 `selection=None` 新建，Flutter 给
 # 新建且将获焦的 TextField 的默认选区是**文末** —— 表现为"点哪都跳到代码块最后
@@ -1069,6 +1177,56 @@ def _tap_row_eventless(h: RenderHarness) -> None:
     """以 `None` 事件触发行级点击（模拟无坐标来源）。"""
     rows = _row_click_containers(h)
     h.interact(rows[0].on_click, None)
+
+
+# 一行 300 个字符：在夹具宽度（800）下必然折成多条视觉行，折行点对宽度敏感
+LONG_FENCE = "```python\n" + "x" * 300 + "\n```"
+
+
+def test_click_wrap_width_matches_rendered_insets():
+    """点击定位用的折行宽度必须与**渲染出来的内边距**同源。
+
+    `text_area_w` 是渲染期的局部量：算错一个 `Spacing.MD`，任何控件都不会长得不一样，
+    只有"点在有折行的行上、光标落错列"才会暴露（那要真机才能看见）。故这里把它钉死：
+    用渲染树里**实测**的内边距（卡片左右内边距 / 行号列宽 / Row spacing / 行容器右内边距）
+    反推出文本区宽度，喂给同一套映射，再与真实点击下发的偏移比对——两者必须落到同一字符。
+
+    换行开关、卡片内边距、行容器内边距任一处改动而没同步 `text_area_w`，本条即红。
+    """
+    with _rendered(raw=LONG_FENCE) as h:
+        card = _card(h)
+        row = _gutter_row(h)
+        layout_w = (
+            _CONTENT_WIDTH
+            - (card.padding.left or 0)
+            - (card.padding.right or 0)
+            - _gutter_cell_w(h)
+            - row.content.spacing
+            - (row.padding.right or 0)
+        )
+        code = parse_markdown(LONG_FENCE).lines[0].segments[0].text
+        # 落在**折行后的第二视觉行**上：偏移量由折行宽度决定
+        y = 16 * blk._CODE_LINE_HEIGHT + 1.0
+        expected = blk._caret_offset_in_code(code, 0, 0.0, y, 16, layout_w)
+        assert expected > 0, "该文档在夹具宽度下没有折行，测不到折行宽度"
+
+        # 逐字复现真机序列：on_tap_down 带坐标 → on_click 不带坐标
+        # （不用 `_tap_row`：它按默认文档的逻辑行数做断言，本文档只有 1 行）
+        rows = _row_click_containers(h)
+        assert len(rows) == 1, f"本文档应只有 1 条逻辑行，实得 {len(rows)}"
+        h.interact(
+            rows[0].on_tap_down,
+            types.SimpleNamespace(local_position=ft.Offset(_text_x(h, 0.0), y)),
+        )
+        h.interact(rows[0].on_click, types.SimpleNamespace(name="click"))
+        _settle_edit_focus(h)
+        fields = _edit_fields(h)
+        assert fields and fields[0].selection is not None, "点击后未下发光标位置"
+        off = int(fields[0].selection.base_offset)
+        assert off == expected, (
+            f"点击定位的折行宽度与渲染内边距不同源：实得 {off}，"
+            f"按实测内边距应得 {expected}（文本区宽 {layout_w}）"
+        )
 
 
 # ---------- 纯函数：_caret_offset_in_code ----------
@@ -1223,7 +1381,7 @@ def test_stale_tap_position_is_not_reused_by_another_row():
 
 
 
-# ==================== 7. 桌面编辑器交互强化 ====================
+# ==================== 8. 桌面编辑器交互强化 ====================
 #
 # 本节锁三件"只有真机能问出答案"的事（都先有探针实测，再写成测试）：
 #
@@ -1415,7 +1573,7 @@ def test_gutter_highlight_absent_in_browse_mode():
     assert all(n.color != light.link for n in nums), "浏览态不应有提亮的行号"
 
 
-# ==================== 8. 编辑框文本"谁写的"（回灌缺陷） ====================
+# ==================== 9. 编辑框文本"谁写的"（回灌缺陷） ====================
 #
 # 真机缺陷：**在代码块里连打回车，光标会异常跳到代码块末端**（用户报告）。
 # 真机探针复现（连打 6 次回车、光标在正文中段）：前 3 个回车落在光标处，第 4 个落到

@@ -502,12 +502,14 @@ def render_code_block(
     gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.04, c.text)
     border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
 
-    # 代码文本的可用宽度（点击定位算折行点用，与浏览态的实际排版宽度同源）：
-    # 块容器左右各留 Spacing.MD（见下方 Container 的 padding），行号列占 gutter_w，
-    # 行号与代码之间再留 Spacing.MD（Row 的 spacing）。
+    # 代码文本的可用宽度（点击定位算折行点用，与浏览态的实际排版宽度同源）。
+    # 减去的两段 Spacing.MD 是：行号列与代码之间的 Row spacing、代码列右缘的行内边距。
+    # **块容器不留左右内边距**了——行号色带与头部细分隔线要贴到块边框上（见组装处
+    # Container 的说明），原先左侧那段 Spacing.MD 已还给代码列，所以这里是 2 段而不是
+    # 3 段；右侧那段改由行内边距承担（浏览态在行容器上、编辑态在编辑框的 content_padding）。
     # 不折行模式给 inf —— 此时每逻辑行恒为 1 个视觉行，映射退化为恒等。
     text_area_w: float = (
-        max(1.0, float(content_width) - 3 * Spacing.MD - gutter_w)
+        max(1.0, float(content_width) - 2 * Spacing.MD - gutter_w)
         if wrap and content_width is not None
         else float("inf")
     )
@@ -628,22 +630,28 @@ def render_code_block(
     # 行高不会悄悄膨胀（tests/test_code_block_native.py 有用例守住每个子项的高度）。
     # 左侧刻意不放装饰性图标（原 DATA_OBJECT）：语言标签紧邻其右，语义重复，
     # 紧凑头部里多一个字形只会让起点更乱。
-    header = ft.Row(
-        controls=[
-            collapse_btn,
-            lang_button,
-            ft.Container(expand=True),
-            ft.Text(
-                value=f"{line_count} 行",
-                size=11,
-                color=c.muted,
-                font_family=FONT_MONO,
-            ),
-            copy_btn,
-        ],
-        spacing=Spacing.SM,
-        height=_HEADER_H,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    header = ft.Container(
+        content=ft.Row(
+            controls=[
+                collapse_btn,
+                lang_button,
+                ft.Container(expand=True),
+                ft.Text(
+                    value=f"{line_count} 行",
+                    size=11,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                ),
+                copy_btn,
+            ],
+            spacing=Spacing.SM,
+            height=_HEADER_H,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        # 工具栏的左右缩进由本层承担：块容器不再留水平内边距（见下方组装的说明），
+        # 否则图标会贴到块边框上。行号色带与细分隔线要贴边，工具栏不需要——
+        # 这正是"内边距按内容分工"的落点。
+        padding=ft.Padding.only(left=Spacing.MD, right=Spacing.MD),
     )
 
     # ============================ 浏览态 ============================
@@ -819,6 +827,10 @@ def render_code_block(
                     ),
                     # ink=False：行内不要水波（配合 SelectionArea 拖选，保持"文本"观感）
                     ink=False,
+                    # 代码列右缘的行内边距：块容器已不留水平内边距（行号色带要贴左边框），
+                    # 故右侧留白改由本层承担——它不动左缘，行号色带依旧从块内缘开始，
+                    # 点击坐标原点是本容器左缘这一点也不变（padding 只是右缘）。
+                    padding=ft.Padding.only(right=Spacing.MD),
                     # 位置与动作分两个 handler：坐标只在 TapEvent（on_tap_down）上，
                     # 而 on_click 收的是不带坐标的 ControlEvent（见 _record_tap/_click_row）。
                     on_tap_down=lambda e, i=i: _record_tap(i, e),
@@ -938,11 +950,14 @@ def render_code_block(
             cursor_color=c.link,
             cursor_width=2,
             selection_color=ft.Colors.with_opacity(0.25, c.link),
-            # 左内边距 = 行号列宽 + 间距、右侧留 0：让编辑框的**文本区**与浏览态代码列
-            # 严格同 x 同宽（右侧若也留间距，每行可用宽度少一个 Spacing.MD，折行点会
-            # 比浏览态提前）。真机探针实测：两侧文本区同为 728px 时折行点完全一致。
+            # 左内边距 = 行号列宽 + 间距，让编辑框的**文本区**与浏览态代码列严格同 x；
+            # 右内边距 = 代码列右缘的行内边距，让两侧**可用宽度**也相等（浏览态由行容器
+            # 的 padding 承担）。块容器已不留水平内边距（行号色带贴左边框），编辑框的
+            # 外框因此与块内缘同宽，这段右内边距必须由它自己给——漏掉的话每行可用宽度
+            # 比浏览态多一个 Spacing.MD，折行点会比浏览态靠后。
+            # 真机探针实测：两侧文本区同为 728px 时折行点完全一致。
             content_padding=ft.Padding.only(
-                left=gutter_w + Spacing.MD, right=0, top=0, bottom=0
+                left=gutter_w + Spacing.MD, right=Spacing.MD, top=0, bottom=0
             ),
             on_change=_on_field_change,
             # 取得焦点：既转发给编辑器（撤销会话分组），也是"Tab 焦点往返已结束"的信号。
@@ -969,10 +984,18 @@ def render_code_block(
         else:
             # 不换行：按最长行给编辑框固定宽度（无界约束下不能用 flex），与浏览态
             # 的"单行不折 + 横向滚动"一致。
+            # 宽度 = 左内边距 + 文本区 + 右内边距：右侧那段内边距现在由编辑框自己
+            # 承担（见 content_padding），故末尾要**多留一个 Spacing.MD** 才能让文本区
+            # 与原先一样是「最长行 + 一个 Spacing.MD」。那个余量不是凑数：`_measure_mono_width`
+            # 在 HarfBuzz 不可用时退化为"字符数 × 0.5 字号"，对 CJK 偏窄（实为 1.0em），
+            # 余量被吃掉后最长行会在编辑框里折行 → 透明文字折行、光标与可见字形错位。
             longest = max(code.split("\n"), key=len, default="")
             field.width = max(
-                _EDIT_MIN_WIDTH + gutter_w + Spacing.MD,
-                gutter_w + Spacing.MD + _measure_mono_width(longest, code_size) + Spacing.MD,
+                _EDIT_MIN_WIDTH + gutter_w + 2 * Spacing.MD,
+                gutter_w
+                + 2 * Spacing.MD
+                + _measure_mono_width(longest, code_size)
+                + Spacing.MD,
             )
             field_layer = ft.Row(
                 controls=[field], vertical_alignment=ft.CrossAxisAlignment.START
@@ -1223,6 +1246,10 @@ def render_code_block(
         padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
         bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
         border_radius=Radius.MD,
+        # 折叠态**不是**代码窗格：它是一张嵌在块里的圆角卡片（自带底色 + 圆角），
+        # 直接贴到块边框会与框架线叠成双层边。块容器已不留水平内边距（见下方组装的
+        # 说明），故这里用 margin 把原先那圈 Spacing.MD 补回来，折叠态外观保持不变。
+        margin=ft.Margin.symmetric(horizontal=Spacing.MD),
         # 左侧强调条：折叠态只剩一行摘要，靠它把自己和普通段落区分开
         # （border 画在盒子内，不改变宽度，也就不影响任何基于宽度的测量）
         border=only_border(left=ft.BorderSide(2, ft.Colors.with_opacity(0.45, c.link))),
@@ -1238,6 +1265,8 @@ def render_code_block(
             # 让"工具栏 / 代码"两段在视觉上分开——桌面编辑器里这两个区域是不同层的
             # 东西，靠间距区分不够。刻意不用 ft.Divider：它会给自己加高度，
             # 而头部行高是硬锁 22px 的（子项超高会被静默裁切）。
+            # 块容器不留水平内边距 → 这条线两端都与块边框对齐（左右都不缩进），
+            # 与行号色带贴左边框同属一套规则：**代码窗格贴边，工具栏与文本内缩**。
             border=only_border(top=ft.BorderSide(1, border_color)),
         )
 
@@ -1245,9 +1274,13 @@ def render_code_block(
         content=ft.Column(controls=[header, body], spacing=Spacing.XS),
         bgcolor=c.code_block_bg,
         border_radius=Radius.MD,
-        padding=ft.Padding.only(
-            left=Spacing.MD, right=Spacing.MD, top=Spacing.XS, bottom=Spacing.SM
-        ),
+        # **左右不留内边距**：行号色带与头部细分隔线因此直接贴到块的左右边框，
+        # 框架与行号列之间不再有一条背景色空隙。左右缩进改由各自的内容承担——
+        # 工具栏在 header 上、代码列右缘在行容器（浏览态）与编辑框的 content_padding
+        # （编辑态）上。原先左侧那段 Spacing.MD 不再被浪费：代码列整体左移一个
+        # Spacing.MD、可用宽度也随之多出一个 Spacing.MD（两层依旧严格同 x 同宽）。
+        # 上下内边距照旧。
+        padding=ft.Padding.only(top=Spacing.XS, bottom=Spacing.SM),
         shadow=card_shadow(Elevation.LOW, is_dark),
         border=only_border(
             top=ft.BorderSide(1, border_color),

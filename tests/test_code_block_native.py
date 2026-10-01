@@ -20,9 +20,11 @@
    尺寸控件（IconButton 40 / Dropdown 48）——它们是"顶部行过高"的唯一成因，
    比内边距的影响大一个量级。锁定时同时守住"每个子项都显式声明了高度"，
    因为头部高度是硬锁的，超高子项会被静默裁切。
-6. **横向几何**：卡片容器不留水平内边距 → 行号色带贴齐块的左右边框、头部细分隔线
-   两端对齐到边框；水平缩进下移到内容自身（工具栏在 header 的容器上、代码列右缘在
-   行容器 / 编辑框的 `content_padding` 上），故编辑态与浏览态的文本区仍同 x 同宽。
+6. **块几何（横 + 纵）**：卡片容器不留水平内边距、下边也不留 → 行号色带贴齐块的
+   左右边框与下边框，上端贴住头部细分隔线（即"通高"），细分隔线两端也对齐到边框；
+   留白下移到内容自身（工具栏在 header 的容器上、代码列右缘在行容器 / 编辑框的
+   `content_padding` 上、文本的纵向留白靠 1.5 倍行盒的 leading），故编辑态与浏览态
+   的文本区仍同 x 同宽。
 
 第 7 节「点击定位」另锁两条真机时序（都是先有真机探针实测、再写进测试的）：
 - **坐标只在 `on_tap_down` 上**：`Container.on_click` 的声明是 `ControlEventHandler`，
@@ -206,6 +208,21 @@ def _gutter_row(h: RenderHarness) -> ft.Container:
     raise AssertionError("未找到承载行号的行容器")
 
 
+def _pane(h: RenderHarness) -> ft.Container:
+    """承载正文列的那一层容器（本文档里的"代码窗格"）：细分隔线画在它的上边。
+
+    判据取"content 是 Column 且行容器就在其中"，而不是"border 只画了上边"：
+    `only_border` 会把没画的那三边填成 `BorderSide.none()`，那种判据得比到
+    `.width` 才成立，读起来反而绕。
+    """
+    row = _gutter_row(h)
+    for node in h.find(lambda n: isinstance(n, ft.Container)):
+        col = node.content
+        if isinstance(col, ft.Column) and row in col.controls:
+            return node
+    raise AssertionError("未找到承载正文列的窗格容器")
+
+
 def _card(h: RenderHarness) -> ft.Container:
     """代码块卡片容器：块底色 + 圆角 + 四周细边框的那一层（content 是 Column）。
 
@@ -290,7 +307,7 @@ def test_highlight_cache_returns_same_object():
     assert highlight_lines(RAW_CODE, "python") is first
 
 
-# ==================== 2. 软换行开关与横向几何 ====================
+# ==================== 2. 软换行开关与块几何（横 + 纵） ====================
 
 
 def test_word_wrap_on_uses_expanding_text_and_no_hscroll():
@@ -362,6 +379,33 @@ def test_toolbar_keeps_its_own_inset_after_padding_moved_in():
         assert holders, f"定高 {blk._HEADER_H} 的工具栏未被容器承载，水平内边距无处安放"
         assert holders[0].padding.left == Spacing.MD
         assert holders[0].padding.right == Spacing.MD
+
+
+def test_code_pane_is_flush_with_divider_and_bottom_frame():
+    """行号色带**通高**：上端贴住细分隔线、下端贴住块下边框，两头都不悬空。
+
+    这是横向贴边在纵轴上的同类缺陷：窗格原先上下各留一个 `Spacing.SM`，真机上就是
+    "灰色行号条上下各悬空一截" —— 上缺口 8 物理 px（分隔线切开的），下缺口 16 物理
+    px（窗格的那 4px 与卡片自己的 `Spacing.SM` 叠出来的）。修法与横向一致：把留白
+    从容器下移到内容自身，而这里的内容**自带留白** —— 行盒是「字号 × 1.5」，字形只
+    占约 1em，上下各有约 0.25em 的 leading，故窗格内边距可以直接归零。
+
+    下缺口由两层相乘（窗格 + 卡片），任一非 0 色带就悬空，故必须一并断言；
+    上边距则**不能**归零 —— 工具栏是 22px 定高的图标行，顶到上边框会显得局促。
+    """
+    with _rendered() as h:
+        pane = _pane(h)
+        assert not (pane.padding.top or 0), (
+            f"窗格仍有上内边距 {pane.padding.top}：色带顶端与细分隔线之间留着缺口"
+        )
+        assert not (pane.padding.bottom or 0), (
+            f"窗格仍有下内边距 {pane.padding.bottom}：色带下端悬空"
+        )
+        card = _card(h)
+        assert not (card.padding.bottom or 0), (
+            "卡片下内边距会让色带离开块下边框（下缺口由这两层相乘）"
+        )
+        assert card.padding.top == Spacing.XS, "工具栏的上呼吸位被拿掉了"
 
 
 def test_empty_line_keeps_line_box():
@@ -1006,9 +1050,11 @@ def test_lang_entries_appends_unknown_current_only():
 def test_collapse_button_switches_to_preview():
     """折叠按钮切到首行预览：正文（高亮层 / 编辑框）卸载。
 
-    顺带锁定折叠态的横向缩进：预览是一张嵌在块里的圆角卡片（自带底色 + 圆角），
-    缩进靠 **margin** 自己留——卡片容器已不留水平内边距（折叠态不是代码窗格，
-    见 `test_gutter_band_is_flush_with_block_frame`），漏掉就会与框架线叠成双层边。
+    顺带锁定折叠态的横向与下方缩进：预览是一张嵌在块里的圆角卡片（自带底色 +
+    圆角），缩进靠 **margin** 自己留——卡片容器已不留水平内边距、下边也不留
+    （折叠态不是代码窗格，见 `test_gutter_band_is_flush_with_block_frame` 与
+    `test_code_pane_is_flush_with_divider_and_bottom_frame`），漏掉就会与框架线
+    叠成双层边。
     """
     with _rendered() as h:
         collapse = [n for n in _header_icon_btns(h) if n.tooltip == "折叠"]
@@ -1024,6 +1070,9 @@ def test_collapse_button_switches_to_preview():
             and (n.margin.right or 0) == Spacing.MD
         ]
         assert inset, "折叠态摘要未自带水平缩进 → 会贴到块边框（框架线叠双层边）"
+        assert inset[0].margin.bottom == Spacing.SM, (
+            "折叠态摘要未留下边距 → 圆角卡片压到块下边框上（卡片下内边距已归零）"
+        )
 
 
 # ==================== 7. 点击定位（光标落在点击处，而非代码块末尾） ====================

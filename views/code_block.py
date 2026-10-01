@@ -1247,9 +1247,11 @@ def render_code_block(
         bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
         border_radius=Radius.MD,
         # 折叠态**不是**代码窗格：它是一张嵌在块里的圆角卡片（自带底色 + 圆角），
-        # 直接贴到块边框会与框架线叠成双层边。块容器已不留水平内边距（见下方组装的
-        # 说明），故这里用 margin 把原先那圈 Spacing.MD 补回来，折叠态外观保持不变。
-        margin=ft.Margin.symmetric(horizontal=Spacing.MD),
+        # 直接贴到块边框会与框架线叠成双层边。块容器已不留水平内边距、下边也不再留
+        # 内边距（见下方组装的说明），故这里用 margin 把原先那圈留白补回来
+        # （左右各 Spacing.MD；下方补一个 Spacing.SM —— 卡片容器下边已归零，
+        # 不补的话圆角会压在下边框上。上方不用补：Column 的 spacing 已隔开头部）。
+        margin=ft.Margin.only(left=Spacing.MD, right=Spacing.MD, bottom=Spacing.SM),
         # 左侧强调条：折叠态只剩一行摘要，靠它把自己和普通段落区分开
         # （border 画在盒子内，不改变宽度，也就不影响任何基于宽度的测量）
         border=only_border(left=ft.BorderSide(2, ft.Colors.with_opacity(0.45, c.link))),
@@ -1260,13 +1262,26 @@ def render_code_block(
     else:
         body = ft.Container(
             content=_build_edit_body() if is_editing else _build_read_body(),
-            padding=ft.Padding.only(top=Spacing.SM, bottom=Spacing.SM),
+            # **上下也不留内边距**：行号色带是紧贴窗格的装饰条，而窗格的上界就是这条
+            # 细分隔线、下界就是块的下边框 —— 所以色带要**通高**，从分隔线一路铺到
+            # 块下边框，中间不再被底色切断。原先上下各留一个 Spacing.SM，真机上就是
+            # "灰色行号条上下各悬空一截"（上方被分隔线切开 8px、下方离下边框 16px，
+            # 物理像素）—— 与上一轮"色带左侧悬空"同一类缺陷，只是换了根轴。
+            #
+            # 文本的纵向留白**不靠这一层**：行盒高度是「字号 × 1.5」，字形只占其中
+            # 约 1em，上下各有约 0.25em 的 leading —— 真机实测行盒顶到字形顶 11 物理
+            # px（= 5.5 逻辑 px）。去掉本层那 4px 之后，这段 leading 就是字形与分隔线
+            # 之间的全部留白（5px 左右，够用且不局促）。所以去掉的是**重复留白**：
+            # 与左缘"色带贴边、文字靠行内边距内缩"是同一条规则在纵轴上的落实。
+            padding=ft.Padding.all(0),
             # 头部与正文之间的细分隔线：只画上边（横向 1px，不改变文本区宽度），
             # 让"工具栏 / 代码"两段在视觉上分开——桌面编辑器里这两个区域是不同层的
             # 东西，靠间距区分不够。刻意不用 ft.Divider：它会给自己加高度，
             # 而头部行高是硬锁 22px 的（子项超高会被静默裁切）。
-            # 块容器不留水平内边距 → 这条线两端都与块边框对齐（左右都不缩进），
-            # 与行号色带贴左边框同属一套规则：**代码窗格贴边，工具栏与文本内缩**。
+            # 块容器不留水平内边距 → 这条线两端都与块边框对齐（左右都不缩进）；
+            # 它同时是**代码窗格的上界**：本层的内边距上边已归零，行号色带从这里
+            # 起铺。合起来即那条规则：**代码窗格贴边（上贴分隔线、左右贴边框、
+            # 下贴下边框），工具栏与文本各自内缩**。
             border=only_border(top=ft.BorderSide(1, border_color)),
         )
 
@@ -1279,8 +1294,11 @@ def render_code_block(
         # 工具栏在 header 上、代码列右缘在行容器（浏览态）与编辑框的 content_padding
         # （编辑态）上。原先左侧那段 Spacing.MD 不再被浪费：代码列整体左移一个
         # Spacing.MD、可用宽度也随之多出一个 Spacing.MD（两层依旧严格同 x 同宽）。
-        # 上下内边距照旧。
-        padding=ft.Padding.only(top=Spacing.XS, bottom=Spacing.SM),
+        # 上下方向同族处理：**上留一个 Spacing.XS 给工具栏**（头部图标是 22px 定高，
+        # 顶到上边框会显得局促；它与 Column 的 spacing 一起构成工具栏上下各 2px 的
+        # 呼吸位），**下不留** —— 代码窗格的下界就是块的下边框，行号色带要通到那条
+        # 线上（见 body 的说明）。
+        padding=ft.Padding.only(top=Spacing.XS),
         shadow=card_shadow(Elevation.LOW, is_dark),
         border=only_border(
             top=ft.BorderSide(1, border_color),

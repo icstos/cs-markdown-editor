@@ -36,8 +36,28 @@ class _StubConn:
         self._thread.start()
 
     def close(self) -> None:
+        # 收尾要同时避开两条噪声（噪声里很容易藏住真正的回归信号）：
+        # 1. **不** close → loop 被 GC 时抛 `ResourceWarning: unclosed event loop`；
+        # 2. 直接 close → 仍挂着的任务让 asyncio 逐个打 "Task was destroyed but it is
+        #    pending!"。
+        # 故先把未完成任务**取消并等它们真正结束**（`cancel()` 只是打标记，必须让
+        # 循环再跑一拍才会落地），再停循环、再 close。
+        async def _drain() -> None:
+            me = asyncio.current_task()
+            tasks = [t for t in asyncio.all_tasks() if t is not me]
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_drain(), self.loop).result(timeout=2)
+        except Exception:  # noqa: BLE001 - 收尾阶段尽力而为：超时/循环已停都直接继续
+            pass
         self.loop.call_soon_threadsafe(self.loop.stop)
         self._thread.join(timeout=2)
+        if not self.loop.is_running():
+            self.loop.close()
 
 
 class _HarnessSession(Session):

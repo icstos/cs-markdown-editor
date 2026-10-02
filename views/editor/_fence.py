@@ -462,6 +462,25 @@ def build_fence(ctx: FenceEnv):
             _rebuild_table_line(sep_li, join_row(cells))
             ctx.document.lines = lines
             ctx.mark_dirty()
+        elif op == "delete_table":
+            # 整表删除（工具栏垃圾桶 / 右键菜单「删除表格」）。
+            # 表格是**多行**结构：直接删干净会让原位置没有任何可落光标的块 ——
+            # 光标行、滚动定位、`_snap_window` 都会指向一个不存在的行。故与
+            # `handle_code_backspace` 删空代码块同款：替换为一行空段落承接光标。
+            ts2, te2 = _find_table_range(ts)
+            blank = Line(block_type=BlockType.PARAGRAPH, raw="")
+            blank.segments = [Segment(SegType.TEXT, "", "")]
+            lines[ts2 : te2 + 1] = [blank]
+            ctx.document.lines = lines
+            ctx.mark_dirty()
+            # 清理表格聚焦状态：`table_focus_li` 若仍指向已消失的表，KeyDispatcher
+            # 会继续把 Tab / 方向键路由给不存在的表格（`table_nav_ref` 闭包读过期
+            # 的行号），表现为"按 Tab 没反应"。
+            ctx.set_table_focus_li(None)
+            # 进入段落编辑态（光标落在承接行行首）；suppress_blur 防表格编辑框
+            # 卸载时级联 blur 干扰新聚焦的光标框（与删空代码块同一处收尾）。
+            ctx.suppress_blur.current = True
+            ctx.set_cursor(ts2, 0)
 
     def on_table_focus() -> None:
         ctx.maybe_push_history()

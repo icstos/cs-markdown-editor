@@ -3,10 +3,30 @@
 表格作为独立可编辑岛屿（与代码块的 Flet 原生编辑框同构）：
 - 单击单元格进入编辑模式（TextField 替换 Text）
 - Tab/Shift+Tab/Enter 单元格间导航（Tab 在末格新增行）
-- 工具栏 + 右键菜单支持行列增删、对齐设置
+- 工具栏 + 右键菜单支持行列增删、对齐设置、删除整表
 - on_change_cell 原地更新行模型（不触发 observable 重渲染，避免光标跳动）
 - on_table_op 结构操作触发重渲染
 - table_nav_ref 供 editor.py _on_key_down 调用 Tab/Escape 导航
+
+四条几何/交互不变量（由 tests/test_table_view_native.py 逐条钉死）：
+
+1. **三态文字同 x**：表头 / 数据格 / 编辑框的**字形左缘必须落在同一条竖线上**。
+   表头与数据格共用 `_CELL_PAD_H`；编辑框用 `_CELL_EDIT_PAD_H`（= 前者减去
+   `ft.TextField` 的固有行首内缩 `_EDIT_LEAD_INSET`），三者才真正对齐——"padding
+   同值"本身并不够。**表头内不得放常驻装饰控件**——曾经放过一个对齐图标，它把
+   表头文字右推 16 逻辑 px，进编辑态又跳回来（真机实测表头墨迹左缘比数据格右移
+   21 物理 px）。列对齐状态改由工具栏承载。
+2. **网格行高恒定**：数据行恒为 `_DATA_ROW_H`，单元格文本**单行 + 省略号**，
+   完整内容走 tooltip。行高随内容浮动会让"进出编辑"产生高度跳动（读态两行、
+   编辑框只有一行），也让表格总高失估（`views/editor/_scroll.py` 按行偏移前缀和
+   算滚动范围）。
+3. **工具栏行高 = `_TB_H`**：行高由**最高子项**决定，压内边距无效，故工具栏内
+   不得出现 Material 固有尺寸控件（`ft.IconButton` 40 / `ft.TextButton` 36 /
+   `ft.Dropdown` 48）。统一用固定高度的 `Container(ink=True)` 与自绘触发器，
+   与 `views/code_block.py` 的头部、`views/status_bar.py` 同一套做法。
+4. **操作目标显式**：行/列级操作（删行、删列、列对齐）在**没有活动单元格**时
+   置灰——原先无选区时默认作用在"最后一个数据行的最后一列"，点一下就删掉一列，
+   与用户意图无关。
 """
 
 import asyncio
@@ -45,6 +65,45 @@ def _data_table2_cls():
             from flet import DataTable as DataTable2
         _DataTable2 = DataTable2
     return _DataTable2
+
+
+# ---------------------------------------------------------------------------
+# 几何常量（单元格三态共用，禁止各处另写数字）
+# ---------------------------------------------------------------------------
+
+# 单元格内边距：表头 / 数据格 / 编辑框**文字左缘必须同 x**，否则点击进编辑时文字会
+# 横向跳动，表头也会与数据列错位。刻意保留 10（不是 4px 网格上的 Spacing.LG=8）：
+# 8 会让单元格在视觉上过分局促，而列间距（column_spacing=12）是按 10 调的。
+_CELL_PAD_H = 10
+_CELL_PAD_V = 6
+_CELL_FONT = 14  # 单元格字号（表头 / 数据 / 编辑框同值）
+
+# 编辑框的**固有行首内缩**：`ft.TextField` 即使 `content_padding` 与浏览态同值，
+# 文字仍会再往右让开一截（真机实测 DPR 1.5：编辑框填充左缘 458、字形左缘 480，
+# 而 content_padding.left=10 只解释得了 15 物理 px）。量出来共比浏览态右移
+# **6 物理 px**，且与列、行无关 —— 是文本框自身的固定行首留白。
+#
+# 所以"三态 padding 同值"并不等于"三态文字同 x"：编辑框要把这段内缩**减掉**，
+# 文字才会与浏览态落在同一条竖线上（点进去不跳字）。4 是实测反解值（6 物理 px
+# ÷ 1.5），逻辑像素口径，与 DPR 无关。改动此处必须重新在真机上量墨迹左缘。
+_EDIT_LEAD_INSET = 4
+_CELL_EDIT_PAD_H = _CELL_PAD_H - _EDIT_LEAD_INSET
+
+# 行高：数据行固定 40（网格化、紧凑、行高恒定）；表头 36，比数据行略矮，
+# 让表头像"标题条"而不是又一行数据。
+_DATA_ROW_H = 40
+_HEAD_ROW_H = 36
+
+# 工具栏行高：与 views/code_block.py 的 _HEADER_H 同一量级。工具栏内出现
+# Material 固有尺寸控件时会被顶到 36~48（真机实测改前 67 物理 px / DPR1.5 ≈ 45
+# 逻辑 px），故所有子项都必须显式定高。
+_TB_H = 22
+
+# 单元格 tooltip 的触发门槛（可见字符数）。表头的单元格宽度由 DataTable2 在
+# 客户端按内容分配，Python 侧拿不到真实列宽，无法精确判断"是否会被省略号裁掉"；
+# 故取一个**偏保守**的字符数门槛：宁可多挂一个 tooltip（用户不悬停就没有成本），
+# 也不要漏掉真正被裁掉的单元格。20 个 CJK 字 ≈ 280px，已超过多数文档表格的列宽。
+_TOOLTIP_MIN_CHARS = 20
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +171,20 @@ def _render_cell_spans(cell_text: str, base_size: int = 14) -> list[ft.TextSpan]
     for i, seg in enumerate(segs):
         spans.append(segment_to_span(seg, i, on_activate=None, base_size=base_size))
     return spans or [ft.TextSpan(text=text, style=ft.TextStyle(size=base_size))]
+
+
+def _cell_tooltip(spans: list[ft.TextSpan]) -> str | None:
+    """单元格被省略号裁切时的悬停提示文本；内容短到不会裁切时返回 None。
+
+    取**渲染后**的可见文本（markdown 标记已折叠、链接显示 label），与用户看到的
+    一致；不换行空格（空单元格的占位符）要剥掉，否则空单元格也会挂一个 tooltip。
+
+    门槛见 `_TOOLTIP_MIN_CHARS`：这是刻意的**启发式**（真实列宽只在客户端才知道），
+    方向是"宁可多挂"——挂上而没被悬停零成本，漏挂则用户再也看不到被裁掉的内容。
+    不挂 tooltip 的单元格也不丢内容：点击进编辑态后编辑框里有完整文本。
+    """
+    visible = "".join(s.text or "" for s in spans).replace("\u00a0", "").strip()
+    return visible if len(visible) >= _TOOLTIP_MIN_CHARS else None
 
 
 def _safe_color(color: str, opacity: float) -> str:
@@ -419,6 +492,14 @@ def TableView(
     sel = edit_cell or ((row_indices[-1] if row_indices else header_idx, col_count - 1))
     sel_li, sel_ci = sel
 
+    # ---- 活动单元格（定位高亮用）----
+    # 与 `sel` 刻意分开：`sel` 是"工具栏的操作目标"（无选区时兜底到最后一行/列），
+    # 而定位高亮**只在真的有活动单元格时**出现。若共用 `sel`，表格没被点过也会
+    # 出现"最后一行最后一列"的高亮，等于向用户谎报选区。
+    active_li = edit_cell[0] if edit_cell is not None else None
+    active_ci = edit_cell[1] if edit_cell is not None else None
+    has_active = edit_cell is not None
+
     # ---- 工具栏操作 ----
     def _do_add_row():
         _commit_current()
@@ -465,6 +546,17 @@ def TableView(
                     "align": align,
                 },
             )
+
+    def _do_delete_table():
+        """删除整张表（多行结构，交给 on_table_op 一处处理）。
+
+        表格是**多行**结构，删掉后原位置没有任何可落光标的块，故 op 里会用一行
+        空段落替换（见 views/editor/_fence.py 的 delete_table 分支）。
+        撤销：on_table_op 开头统一 `push_history()`，Ctrl+Z 可整体还原。
+        """
+        if on_table_op is not None:
+            on_table_op("delete_table", {"table_start": line_idx})
+        set_edit_cell(None)
 
     # ---- 右键菜单 ----
     def _cell_context_items(li: int, ci: int, is_header: bool) -> list:
@@ -579,6 +671,18 @@ def TableView(
                         else None
                     ),
                 ),
+                ft.PopupMenuItem(),
+                # 删除整表：与工具栏的垃圾桶按钮同一入口。放在**最末**并用分隔线
+                # 隔开——它是唯一会一次删掉整块内容的菜单项，不能与"删一行/删一列"
+                # 混在相邻位置（误点代价最大）。
+                ft.PopupMenuItem(
+                    content="删除表格",
+                    on_click=lambda e: (
+                        on_table_op("delete_table", {"table_start": line_idx})
+                        if on_table_op
+                        else None
+                    ),
+                ),
             ]
         )
         return items
@@ -597,11 +701,15 @@ def TableView(
                     filled=True,
                     fill_color=_safe_color(c.link, 0.10),
                     dense=True,
-                    content_padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+                    # 横向内边距用 `_CELL_EDIT_PAD_H`：扣掉文本框的固有行首内缩，
+                    # 字形左缘才与表头/数据格的浏览态严格同 x（见常量处说明）。
+                    content_padding=ft.Padding.symmetric(
+                        horizontal=_CELL_EDIT_PAD_H, vertical=_CELL_PAD_V
+                    ),
                     text_style=ft.TextStyle(
                         font_family=FONT_MAIN,
                         color=c.text,
-                        size=14,
+                        size=_CELL_FONT,
                         weight=ft.FontWeight.W_600,
                     ),
                     text_align=_align_text_align(aligns[ci]),
@@ -613,36 +721,39 @@ def TableView(
                     on_focus=lambda e: on_table_focus() if on_table_focus else None,
                 ),
                 bgcolor=_safe_color(c.link, 0.06),
-                border_radius=6,
+                border_radius=Radius.MD,
                 padding=0,
             )
         else:
             inner = ft.Container(
-                content=ft.Row(
-                    controls=[
-                        ft.Icon(
-                            _align_icon(aligns[ci]),
-                            size=12,
-                            color=c.muted,
-                            tooltip=f"对齐: {aligns[ci]}",
-                        ),
-                        ft.Text(
-                            value=_cell_text(header_row[ci]),
-                            style=ft.TextStyle(
-                                font_family=FONT_MAIN,
-                                weight=ft.FontWeight.W_600,
-                                color=c.text,
-                                size=14,
-                            ),
-                            text_align=_align_text_align(aligns[ci]),
-                            expand=True,
-                        ),
-                    ],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                # 表头**只有文字**：曾经此处前置了一个常驻对齐图标（12px + 4px 间距），
+                # 它把表头文字右推 16 逻辑 px，而数据格只缩进 `_CELL_PAD_H` —— 真机
+                # 实测表头"名称"的墨迹左缘比数据"Alpha"右移 21 物理 px（14 逻辑 px），
+                # 点击进编辑（编辑框按 `_CELL_PAD_H` 缩进）时又跳回来，三态两处错位。
+                # 列对齐状态改由工具栏承载：当前列的图标 + 下拉都在那条 22px 的行上。
+                content=ft.Text(
+                    value=_cell_text(header_row[ci]),
+                    style=ft.TextStyle(
+                        font_family=FONT_MAIN,
+                        weight=ft.FontWeight.W_600,
+                        color=c.text,
+                        size=_CELL_FONT,
+                    ),
+                    text_align=_align_text_align(aligns[ci]),
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
                 ),
-                padding=ft.Padding.symmetric(vertical=6, horizontal=8),
-                border_radius=6,
+                # 与数据格同一套对齐方式（Container.alignment）：Text 无 expand 时
+                # text_align 无空间生效，数据行靠这一层做左/中/右。
+                alignment=_align_container(aligns[ci]),
+                padding=ft.Padding.symmetric(
+                    horizontal=_CELL_PAD_H, vertical=_CELL_PAD_V
+                ),
+                border_radius=Radius.MD,
+                # 活动列的表头 = 一颗色片：宽表里"我在哪一列"由它回答（"在哪一行"
+                # 由整行底色回答，见 data_rows 的 color）。列头不做逐格底色——单元格
+                # 之间有 column_spacing 的缝隙，逐格铺色会断成一串小方块，看不出是一列。
+                bgcolor=_safe_color(c.link, 0.10) if ci == active_ci else None,
             )
             label = ft.ContextMenu(
                 content=ft.GestureDetector(
@@ -671,11 +782,13 @@ def TableView(
                         filled=True,
                         fill_color=_safe_color(c.link, 0.10),
                         dense=True,
-                        content_padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+                        content_padding=ft.Padding.symmetric(
+                            horizontal=_CELL_EDIT_PAD_H, vertical=_CELL_PAD_V
+                        ),
                         text_style=ft.TextStyle(
                             font_family=FONT_MAIN,
                             color=c.text,
-                            size=14,
+                            size=_CELL_FONT,
                         ),
                         text_align=_align_text_align(aligns[ci]),
                         cursor_color=c.link,
@@ -685,34 +798,45 @@ def TableView(
                         on_blur=lambda e: _on_blur(),
                         on_focus=lambda e: on_table_focus() if on_table_focus else None,
                     ),
-                    border_radius=6,
+                    border_radius=Radius.MD,
                     bgcolor=_safe_color(c.link, 0.05),
                     padding=0,
                 )
             else:
+                spans = _render_cell_spans(row[ci], base_size=_CELL_FONT)
                 inner = ft.Container(
                     content=ft.Text(
                         # 行内 markdown 渲染：**bold** *italic* `code` ~~strike~~
                         # ==hl== [link](url) 等语法渲染为带样式 TextSpan，标记折叠
                         # 仅显示内容（Typora 式）。外层 style 作为基础样式兜底，
                         # segment_style 对 TEXT 段仅设 size+color，font_family 由此继承。
-                        spans=_render_cell_spans(row[ci], base_size=14),
+                        spans=spans,
                         style=ft.TextStyle(
                             font_family=FONT_MAIN,
                             color=c.text,
-                            size=14,
+                            size=_CELL_FONT,
                         ),
                         text_align=_align_text_align(aligns[ci]),
-                        max_lines=4,
+                        # **单行 + 省略号**：行高恒定（= _DATA_ROW_H），进出编辑态不产生
+                        # 高度跳动。曾经是 max_lines=4 —— 40px 的行只放得下一行半，第二行
+                        # 被横向切半（真机截图里"请求分发"只剩上半个字），既不是完整内容
+                        # 也没有省略号，比直接裁掉更难看。完整内容由 tooltip 承载。
+                        max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
                     ),
                     # Container.alignment：控制 Text 块在单元格内的水平位置。
                     # Text 无 expand=True 只占内容宽度，text_align 无空间生效，
-                    # 仅靠 text_align 数据行永远左对齐（表头用 Row+expand=True
-                    # 能生效，数据行无 Row 需通过 Container.alignment 补齐）。
+                    # 仅靠 text_align 数据行永远左对齐。表头与数据格都走这一层，
+                    # 两者的文字左缘才会在同一条竖线上。
                     alignment=_align_container(aligns[ci]),
-                    padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-                    border_radius=6,
+                    padding=ft.Padding.symmetric(
+                        horizontal=_CELL_PAD_H, vertical=_CELL_PAD_V
+                    ),
+                    border_radius=Radius.MD,
+                    bgcolor=_safe_color(c.link, 0.04) if ci == active_ci else None,
+                    # 被省略号裁掉的单元格靠悬停看全文（不破坏网格、不改行高，
+                    # 也比"点进去才能看"更符合数据网格的直觉）。
+                    tooltip=_cell_tooltip(spans),
                 )
                 # 用 DataCell.on_tap 而非 GestureDetector 包裹：DataCell 的 on_tap
                 # 由 Flutter InkWell 拦截，命中区域覆盖整个单元格（不受 content
@@ -735,55 +859,138 @@ def TableView(
         data_rows.append(
             ft.DataRow(
                 cells=cells,
-                color=_safe_color(c.text, 0.015 if ri % 2 == 0 else 0.0),
+                # **行底色用状态映射**，不是单一颜色：
+                # `ft.DataRow.color` 是 `ControlStateValue`，Flutter 侧按状态取值，
+                # 且它**优先于** DataTable 的 `data_row_color`——原先这里给的是单一
+                # 颜色（奇数行 1.5% 斑马、偶数行 0% 而非 None），恒为非 None，把
+                # `data_row_color` 里的 HOVERED / PRESSED 整个遮住了：悬停高亮从来没
+                # 生效过（死配置）。现在斑马纹 + 悬停 + 当前行三种语义都写在这一处，
+                # 单一来源，不再依赖被遮住的表级配置。
+                color={
+                    # 当前行（光标所在行）：整条行带染淡蓝 —— 宽表里"我在哪一行"
+                    # 由它回答，"在哪一列"由表头色片回答。
+                    ft.ControlState.DEFAULT: (
+                        _safe_color(c.link, 0.07)
+                        if source_li == active_li
+                        else _safe_color(
+                            c.text, 0.015 if ri % 2 == 0 else 0.0
+                        )
+                    ),
+                    ft.ControlState.HOVERED: _safe_color(
+                        c.link, 0.11 if source_li == active_li else 0.05
+                    ),
+                    ft.ControlState.PRESSED: _safe_color(
+                        c.link, 0.14 if source_li == active_li else 0.08
+                    ),
+                },
             )
         )
 
     # ---- 工具栏 ----
-    # visual_density=COMPACT 收缩 Material 默认最小触摸目标（TextButton ~36px → ~28px），
-    # 配合 padding 垂直 2px 让工具栏行高与 Dropdown(28) 对齐，整体顶部操作区紧凑。
-    def _tb_btn(label: str, on_click, icon: str | None = None, tooltip: str = ""):
-        ctrl = ft.TextButton(
-            label,
-            on_click=on_click,
-            icon=icon,
+    # 行高硬锁 `_TB_H`：`Row` 的高度 = **最高子项**，而 Material 的固有尺寸压不动
+    # （`ft.TextButton` 36 / `ft.IconButton` 40 / `ft.Dropdown` 48，`visual_density`、
+    # 内边距、`height=` 都只能改外框不能改固有高，强压还会裁切内部文字）。改前这里
+    # 是 4×`TextButton` + `Dropdown` + `IconButton`，真机实测整条工具栏 **67 物理 px**
+    # （DPR 1.5）≈ 45 逻辑 px —— 表格卡片里最大的一块空白，也是与代码块头部（22px）
+    # 最不一致的地方。现在统一用固定高度的 `Container(ink=True)`：水波与悬停由
+    # Material 在客户端完成，不产生任何服务端往返（与 `views/code_block.py` 的
+    # `_header_icon` 同一套做法）。
+    def _tb_btn(
+        label: str,
+        on_click,
+        *,
+        icon: str | None = None,
+        tooltip: str = "",
+        enabled: bool = True,
+        color: str | None = None,
+    ) -> ft.Control:
+        """紧凑工具栏按钮（图标 / 文字 / 图标+文字 通用）。
+
+        `enabled=False`：不挂 `on_click` 且 `ink=False`（Material 的"禁用"语义 =
+        无水波、无悬停、文字降透明度），但**保留 tooltip** —— 用它解释"为什么点不了"，
+        这比一个哑掉的按钮清楚得多。
+        """
+        fg = color or c.text
+        if not enabled:
+            fg = _safe_color(c.muted, 0.55)
+        parts: list[ft.Control] = []
+        if icon is not None:
+            parts.append(ft.Icon(icon, size=13, color=fg))
+        if label:
+            parts.append(ft.Text(label, size=12, color=fg))
+        return ft.Container(
+            height=_TB_H,
+            border_radius=Radius.SM,
+            padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=0),
+            alignment=ft.Alignment.CENTER,
+            ink=enabled,
+            on_click=(lambda e: on_click()) if enabled else None,
             tooltip=tooltip or label,
-            style=ft.ButtonStyle(
-                text_style=ft.TextStyle(size=12, color=c.text),
-                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
-                bgcolor=ft.Colors.TRANSPARENT,
-                visual_density=ft.VisualDensity.COMPACT,
+            content=ft.Row(
+                controls=parts,
+                spacing=Spacing.XS,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
         )
-        return ctrl
 
+    def _tb_sep() -> ft.Control:
+        """组间细分隔条：把"加"与"减"两族分开，避免四个按钮连成一片。"""
+        return ft.Container(
+            width=1, height=12, bgcolor=_safe_color(c.border, 0.9)
+        )
+
+    # 列对齐：自绘 `PopupMenuButton` 触发器（当前列的对齐图标 + ▾）。不用
+    # `ft.Dropdown` —— 它恒为 48px，是工具栏行高的唯一决定项（见上方说明）。
+    # 无活动单元格时置灰：对齐作用于"光标所在列"，没有当前列就不该能点。
     current_align = aligns[sel_ci] if sel_ci < len(aligns) else "left"
-    # 对齐下拉框：dense + content_padding 自然紧凑，不强制 height 避免
-    # InputDecorator 内容被挤压偏下。外层 Container 包一层确保在 Row 中
-    # 垂直居中（CrossAxisAlignment.CENTER 对齐 Row baseline），bgcolor
-    # 保持透明，不影响视觉。
-    align_dropdown = ft.Container(
-        content=ft.Dropdown(
-            value=current_align,
-            options=[
-                ft.DropdownOption(key="left", text="左对齐"),
-                ft.DropdownOption(key="center", text="居中"),
-                ft.DropdownOption(key="right", text="右对齐"),
-            ],
-            width=88,
-            text_size=12,
-            dense=True,
-            content_padding=ft.Padding.symmetric(horizontal=6, vertical=0),
-            border=ft.NoInputBorder(),
-            fill_color=ft.Colors.TRANSPARENT,
-            on_select=lambda e: (
-                _do_set_align(e.control.value) if e.control.value is not None else None
-            ),
+    align_button = ft.PopupMenuButton(
+        height=_TB_H,
+        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=0),
+        tooltip=(
+            "设置当前列对齐"
+            if has_active
+            else "先点击一个单元格，再设置它所在列的对齐"
         ),
-        alignment=ft.Alignment.CENTER_LEFT,
+        disabled=not has_active,
+        # UNDER：菜单向下展开，不遮住表头本身（默认 OVER 会盖住正在看的那一行）
+        menu_position=ft.PopupMenuPosition.UNDER,
+        shape=ft.RoundedRectangleBorder(radius=Radius.MD),
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+            padding=ft.Padding.all(0),
+            # 淡底 pill：让"当前列对齐"在紧凑工具栏里成为一个可点的实体
+            # （VSCode 的 language mode 指示器同理），不是一段悬空的图标
+            bgcolor=ft.Colors.with_opacity(0.05, c.text),
+            overlay_color=ft.Colors.with_opacity(0.10, c.text),
+        ),
+        content=ft.Row(
+            controls=[
+                ft.Icon(
+                    _align_icon(current_align),
+                    size=13,
+                    color=c.text if has_active else _safe_color(c.muted, 0.55),
+                ),
+                ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=15, color=c.muted),
+            ],
+            spacing=0,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        items=[
+            ft.PopupMenuItem(
+                # 压缩项高（默认 48）：三项的菜单不必铺满一屏
+                height=28,
+                content=ft.Text(value=text, size=12),
+                # 勾选当前列的对齐：菜单一打开就能确认状态，无需记忆
+                checked=key == current_align,
+                on_click=lambda e, k=key: _do_set_align(k),
+            )
+            for key, text in (("left", "左对齐"), ("center", "居中"), ("right", "右对齐"))
+        ],
     )
 
-    # ---- 复制按钮（参考代码块复制按钮样式）----
+    # ---- 复制 / 删除整表 ----
     # 复制整张表格的 markdown 源码（连续 TABLE 行的 raw 拼接），粘贴到其他
     # markdown 编辑器可保持表格格式。复用 services.clipboard.copy_code_to_clipboard
     # 的剪贴板写入 + 图标反馈逻辑（✓ 1.2s 后复位）。
@@ -791,40 +998,80 @@ def TableView(
     while table_end < len(lines) and lines[table_end].block_type == BlockType.TABLE:
         table_end += 1
     table_md = "\n".join(lines[i].raw for i in range(line_idx, table_end))
-    copy_btn = ft.IconButton(
-        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
-        icon_size=14,
-        tooltip="已复制" if copied else "复制表格",
-        padding=ft.Padding.all(Spacing.MD),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-            color=ft.Colors.GREEN if copied else c.muted,
-        ),
-        on_click=lambda e: (
+    copy_btn = _tb_btn(
+        "",
+        lambda: (
             page.run_task(copy_code_to_clipboard, clipboard_ref, table_md, set_copied)
             if page is not None and not copied and clipboard_ref is not None
             else None
         ),
+        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+        tooltip="已复制" if copied else "复制表格 Markdown（可直接粘到别处）",
+        color=ft.Colors.GREEN if copied else c.muted,
+    )
+    # 删除整表：此前**完全没有入口** —— 只能切到原文模式手动删（工具栏只有删行/删列，
+    # 右键菜单也没有）。删掉多行后光标无处可落，故 op 里用一行空段落替换整张表。
+    delete_btn = _tb_btn(
+        "",
+        _do_delete_table,
+        icon=ft.Icons.DELETE_OUTLINE,
+        tooltip="删除整张表格（可 Ctrl+Z 撤销）",
+        color=c.muted,
     )
 
     toolbar = ft.Row(
         controls=[
             ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=14, color=c.muted),
             ft.Text(
-                f"{len(body_rows) + 1} × {col_count}",
+                # 显式标注"行/列"：原来的 `4 × 4` 两个数字同形，读者无法判断哪个是
+                # 行、哪个是列；行数**含表头行**（tooltip 里说明）。
+                f"{len(body_rows) + 1} 行 × {col_count} 列",
                 size=11,
                 color=c.muted,
                 font_family=FONT_MONO,
+                tooltip="表格尺寸（行数含表头行）",
             ),
             ft.Container(expand=True),
-            _tb_btn("+ 行", lambda e: _do_add_row(), tooltip="新增行"),
-            _tb_btn("+ 列", lambda e: _do_add_col(), tooltip="新增列"),
-            _tb_btn("删行", lambda e: _do_delete_row(), tooltip="删除行"),
-            _tb_btn("删列", lambda e: _do_delete_col(), tooltip="删除列"),
-            align_dropdown,
+            _tb_btn(
+                "行", _do_add_row, icon=ft.Icons.ADD, tooltip="在表格末尾新增一行"
+            ),
+            _tb_btn(
+                "列",
+                _do_add_col,
+                icon=ft.Icons.ADD,
+                tooltip="在当前列右侧插入一列（未选中单元格时追加到末尾）",
+            ),
+            _tb_sep(),
+            _tb_btn(
+                "行",
+                _do_delete_row,
+                icon=ft.Icons.REMOVE,
+                tooltip="删除光标所在行（仅剩一行数据时清空其内容）"
+                if has_active
+                else "先点击一个单元格，再删除它所在的行",
+                enabled=has_active,
+            ),
+            _tb_btn(
+                "列",
+                _do_delete_col,
+                icon=ft.Icons.REMOVE,
+                tooltip="删除光标所在列"
+                if has_active and col_count > 1
+                else (
+                    "表格至少保留一列"
+                    if col_count <= 1
+                    else "先点击一个单元格，再删除它所在的列"
+                ),
+                enabled=has_active and col_count > 1,
+            ),
+            _tb_sep(),
+            align_button,
+            ft.Container(expand=True),
             copy_btn,
+            delete_btn,
         ],
-        spacing=4,
+        spacing=Spacing.XS,
+        height=_TB_H,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
@@ -840,8 +1087,8 @@ def TableView(
         rows=data_rows,
         column_spacing=12,
         horizontal_margin=8,
-        data_row_height=40,
-        heading_row_height=36,
+        data_row_height=_DATA_ROW_H,
+        heading_row_height=_HEAD_ROW_H,
         divider_thickness=1,
         horizontal_lines=ft.BorderSide(1, _safe_color(c.border, 0.08)),
         vertical_lines=ft.BorderSide(1, _safe_color(c.border, 0.06)),
@@ -856,11 +1103,15 @@ def TableView(
         ),
         border_radius=12,
         show_bottom_border=True,
-        heading_row_color=_safe_color(c.link, 0.04),
-        data_row_color={
-            ft.ControlState.HOVERED: _safe_color(c.link, 0.04),
-            ft.ControlState.PRESSED: _safe_color(c.link, 0.08),
-        },
+        # 表头底色：4% → 6%。4% 时表头与数据行的色差只有 (245,249,254) vs
+        # (254,254,254)，真机缩略图里几乎看不出这是"表头"；6% 让表头读起来是一条
+        # 标题带，而不是碰巧颜色略深的一行数据。
+        heading_row_color=_safe_color(c.link, 0.06),
+        # 刻意**不设** `data_row_color`：`ft.DataRow.color` 恒为非 None（斑马纹），
+        # Flutter 侧它的优先级高于表级的 `data_row_color`，HOVERED / PRESSED 会被
+        # 整个遮住 —— 改前这里配了悬停色，却从未生效过（死配置）。行底的
+        # 斑马 / 悬停 / 当前行三种语义现在统一写在 `ft.DataRow.color` 的状态映射里，
+        # 单一来源（见上方 data_rows 的组装）。
         bgcolor=_safe_color(
             getattr(c, "surface", c.code_bg),
             0.96,

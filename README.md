@@ -40,7 +40,7 @@
 | 行间公式 | `$$...$$`；浏览态 ft.Markdown 渲染 LaTeX，点击进入编辑态同时显示源码编辑器与实时渲染预览（垂直堆叠） |
 | 分隔线 | `---` / `***` / `___` |
 | 目录 | `[toc]` 卡片式目录：头部图标 + 标题 + 计数，彩色细竖线区分标题级别，同级别左对齐，H1/H2 加粗；点击条目跳转对应标题（带高亮脉冲反馈） |
-| 表格 | 基于 flet-datatable2，单击单元格编辑，行列增删、对齐设置、`Tab` / `Enter` 单元格导航、右键菜单；自管理独立岛屿 |
+| 表格 | 基于 flet-datatable2，单击单元格编辑（编辑框与浏览态**文字左缘同 x**，点进去不跳字），行列增删、对齐设置、**删除整张表**、`Tab` / `Enter` 单元格导航（末格 `Tab` 新增行）、右键菜单；单元格**单行 + 省略号**（行高恒定，完整内容走 hover tooltip）；表头/当前行/当前列三重定位高亮；无活动单元格时行/列操作自动置灰；自管理独立岛屿 |
 | 图片 | `![alt](url)` 独占一行时渲染为 `ft.Image`（等比缩放，读取失败显示占位）；左键进入源码编辑，右键菜单（拷贝 Markdown / 拷贝图片 / 另存为 / 删除）；支持本地路径 / http(s) URL / data URI |
 
 ### 行内格式
@@ -253,8 +253,8 @@ cs-markdown-editor
 | `PageUp` / `PageDown` | 按视觉行向上 / 下翻页 |
 | `Backspace` | 行首与前一行合并（删除换行符，光标落在合并点）；向外选区激活时删除选区 |
 | `Delete` | 行尾与下一行合并（删除换行符，光标落在合并点）；向外选区激活时删除选区 |
-| `Tab` / `Shift+Tab` | 列表项缩进 / 降级（每级 2 空格，有序列表缩进重置为 1，顶级降级转段落）；引用行增减嵌套层级（顶级降级转段落）；表格内单元格导航 |
-| `Enter` | 提交当前段并换行（列表自动续行；标题在光标处拆分为两行）；表格内移动到下行同列 |
+| `Tab` / `Shift+Tab` | 列表项缩进 / 降级（每级 2 空格，有序列表缩进重置为 1，顶级降级转段落）；引用行增减嵌套层级（顶级降级转段落）；表格内单元格导航（**末格 `Tab` 新增一行**，Typora 式） |
+| `Enter` | 提交当前段并换行（列表自动续行；标题在光标处拆分为两行）；表格内移动到下行同列（**末行新增一行**） |
 | `Shift+Click` | 从编辑光标起始向外选区（跨段 / 跨行）；渲染态同段选中可被行内格式快捷键包裹 |
 | `Shift+←` / `Shift+→` | 向左 / 右扩展向外选区（段边界时起始选区） |
 | `Shift+↑` / `Shift+↓` | 向上 / 下扩展向外选区 |
@@ -659,7 +659,7 @@ cs-markdown-editor/
     ├── pixel_layout.py      # LineLayoutCache：像素布局缓存 + cursor_px + hit_test
     ├── segment_view.py      # 段级 TextSpan 渲染（含向外选区字符级高亮）
     ├── key_bindings.py      # KeyDispatcher：浏览/编辑两层 + outward 拦截 + 快捷键捕获 + 原生控件守卫
-    ├── table_view.py        # 表格视图：DataTable2 单元格编辑、行列增删、对齐、Tab/Enter 导航
+    ├── table_view.py        # 表格视图：DataTable2 单元格编辑、行列增删、对齐、删除整表、Tab/Enter 导航
     ├── diff_view.py         # 文件对比：compute_diff_for_editors 行级 diff 计算 + 间隙对齐
     ├── file_dialogs.py      # 文件操作对话框：新建文件/文件夹/重命名/删除确认
     ├── toolbar.py           # 格式工具栏：块级/行内按钮，tooltip 动态显示自定义键位
@@ -716,7 +716,9 @@ tests/                      # 单元测试（python -m pytest tests/ -q，共 97
 - **块级前缀也是段**：`#`、`-`、`>` 统一抽象为 `Segment`；标题在阅读态隐藏前缀、编辑态整行原文
 - **独立岛屿架构**：代码块（`views/code_block.py`，Flet 原生双态）与表格（flet-datatable2）作为自管理独立岛屿，不走 active/draft 系统；内部自管编辑状态，通过 `on_change_*` 原地更新行模型避免频繁重渲染致光标跳动，仅在行数变化时触发重渲染更新高度
 - **代码块 / 表格聚焦守卫**：`code_focus_ref` / `table_focus_ref` 跟踪聚焦状态，`KeyDispatcher` 据此跳过全局导航 / 剪贴板键，交由原生 TextField 处理 Tab / Enter / Backspace / 方向键 / 复制
-- **结构操作重建新 Line 对象**：表格 `add_col` / `delete_col` / `set_align` 等原地修改 `lines[i].raw` 时，必须创建新 `Line` 对象替换，否则 `document.lines = lines` 浅拷贝元素引用不变，observable 判定未变化不触发重渲染
+- **表格四条几何 / 交互不变量**（`views/table_view.py` 模块 docstring，逐条由 `tests/test_table_view_native.py` 钉死）：① **三态文字同 x** —— 表头 / 数据格 / 编辑框的字形左缘落在同一条竖线（表头**不放常驻装饰控件**；编辑框要扣掉 `ft.TextField` 的固有行首内缩 `_EDIT_LEAD_INSET`，"padding 同值"并不够）；② **网格行高恒定** —— 单元格单行 + 省略号，完整内容走 tooltip（行高随内容浮动会让进出编辑产生高度跳动，也让 `views/editor/_scroll.py` 按行数估的滚动范围失准）；③ **工具栏行高锁 `_TB_H`** —— 行高由最高子项决定，故内部不得出现 Material 固有尺寸控件，统一用固定高度 `Container(ink=True)` 与自绘触发器；④ **操作目标显式** —— 行/列级操作在没有活动单元格时置灰
+- **`ft.DataRow.color` 是 `ControlStateValue` 且优先于表级 `data_row_color`**：只要它恒为非 `None`，表级的 `HOVERED` / `PRESSED` 就会被整个遮住（悬停高亮沦为死配置）。表格的行底三种语义（斑马 / 悬停 / 当前行）**只写在 `DataRow.color` 的状态映射里**，表级 `data_row_color` 刻意不设，单一来源
+- **结构操作重建新 Line 对象**：表格 `add_col` / `delete_col` / `set_align` / `delete_table` 等原地修改 `lines[i].raw` 时，必须创建新 `Line` 对象替换，否则 `document.lines = lines` 浅拷贝元素引用不变，observable 判定未变化不触发重渲染
 - **渲染态选区包裹行内格式**：渲染态选中文字产生 `outward_sel` 而非 `active`，`toggle_inline` / `toggle_link` 在 `cursor_li is None` 时检查 `outward_sel_ref`，同段选区在 raw 两侧插入包裹标记并 `reparse_line`；跨段选区静默跳过
 - **段内剪切同步执行**：`handle_segment_cut_sync` 同步捕获选区 + 剪切 + 提交（不通过 `page.run_task`），在原生 TextField 剪切前完成；原生剪切产生的 `on_change` 因值相等被去重跳过，避免双份剪切竞态
 - **`EditorActions` 替代 `nav_ref` 字典**：旧 `nav_ref.current = {20+ 字符串 key}` 字典改为 `EditorActions` dataclass，必填字段构造时校验，避免 `nav.get("xxx")` 静默失败

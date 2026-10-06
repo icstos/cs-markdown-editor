@@ -10,21 +10,29 @@
 
 四条几何/交互不变量（由 tests/test_table_view_native.py 逐条钉死）：
 
-1. **三态文字同 x**：表头 / 数据格 / 编辑框的**字形左缘必须落在同一条竖线上**。
-   表头与数据格共用 `_CELL_PAD_H`；编辑框用 `_CELL_EDIT_PAD_H`（= 前者减去
-   `ft.TextField` 的固有行首内缩 `_EDIT_LEAD_INSET`），三者才真正对齐——"padding
-   同值"本身并不够。**表头内不得放常驻装饰控件**——曾经放过一个对齐图标，它把
-   表头文字右推 16 逻辑 px，进编辑态又跳回来（真机实测表头墨迹左缘比数据格右移
-   21 物理 px）。列对齐状态改由工具栏承载。
-2. **网格行高恒定**：数据行恒为 `_DATA_ROW_H`，单元格文本**单行 + 省略号**，
+1. **三态文字同 x**：表头 / 数据格 / 编辑框的**字形左缘必须落在同一条竖线上**
+   （真机复核：浏览态 474/1003 ↔ 编辑态 474/1003，物理 px，DPR 1.5）。三态共用
+   `_CELL_PAD_H` 即可 —— 注意**前提是编辑框 `filled=False`**：带填充的
+   `InputDecorator` 会自己多让出一段行首内缩（实测 4 逻辑 px），那时就得额外做补偿
+   （本模块曾为此维护过 `_EDIT_LEAD_INSET`）。**表头内不得放常驻装饰控件**——曾经
+   放过一个对齐图标，它把表头文字右推 16 逻辑 px，进编辑态又跳回来（真机实测表头
+   墨迹左缘比数据格右移 21 物理 px）。列对齐状态改由工具栏承载。
+2. **编辑态铺满整格**：进入编辑时，单元格底面必须**铺满单元格矩形**（宽、高都要），
+   不能是"格子里浮着一个小输入框"。两个条件缺一不可：① 底面 `Container` 必须显式
+   设 `alignment` —— 只有设了它才会吃满父级给的宽高，否则贴住子项，而
+   `ft.TextField` 的固有高只有 24 逻辑 px（真机实测改前填充 36 物理 px，而单元格
+   是 59 物理 px，上下各空 7.5 逻辑 px）；② 输入框自身不能再上色
+   （`filled=False`），底色由那层底面**一处**提供 —— 否则两层叠加处会重新叠出
+   一个"格中格"的小方块。
+3. **网格行高恒定**：数据行恒为 `_DATA_ROW_H`，单元格文本**单行 + 省略号**，
    完整内容走 tooltip。行高随内容浮动会让"进出编辑"产生高度跳动（读态两行、
    编辑框只有一行），也让表格总高失估（`views/editor/_scroll.py` 按行偏移前缀和
    算滚动范围）。
-3. **工具栏行高 = `_TB_H`**：行高由**最高子项**决定，压内边距无效，故工具栏内
+4. **工具栏行高 = `_TB_H`**：行高由**最高子项**决定，压内边距无效，故工具栏内
    不得出现 Material 固有尺寸控件（`ft.IconButton` 40 / `ft.TextButton` 36 /
    `ft.Dropdown` 48）。统一用固定高度的 `Container(ink=True)` 与自绘触发器，
    与 `views/code_block.py` 的头部、`views/status_bar.py` 同一套做法。
-4. **操作目标显式**：行/列级操作（删行、删列、列对齐）在**没有活动单元格**时
+5. **操作目标显式**：行/列级操作（删行、删列、列对齐）在**没有活动单元格**时
    置灰——原先无选区时默认作用在"最后一个数据行的最后一列"，点一下就删掉一列，
    与用户意图无关。
 """
@@ -71,23 +79,26 @@ def _data_table2_cls():
 # 几何常量（单元格三态共用，禁止各处另写数字）
 # ---------------------------------------------------------------------------
 
-# 单元格内边距：表头 / 数据格 / 编辑框**文字左缘必须同 x**，否则点击进编辑时文字会
-# 横向跳动，表头也会与数据列错位。刻意保留 10（不是 4px 网格上的 Spacing.LG=8）：
-# 8 会让单元格在视觉上过分局促，而列间距（column_spacing=12）是按 10 调的。
+# 单元格内边距：表头 / 数据格 / 编辑框**三态同值**，文字左缘才会落在同一条竖线上
+# （点进编辑不跳字，表头也不会与数据列错位）。刻意保留 10（不是 4px 网格上的
+# Spacing.LG=8）：8 会让单元格在视觉上过分局促，而列间距（column_spacing=12）是按
+# 10 调的。
 _CELL_PAD_H = 10
 _CELL_PAD_V = 6
 _CELL_FONT = 14  # 单元格字号（表头 / 数据 / 编辑框同值）
 
-# 编辑框的**固有行首内缩**：`ft.TextField` 即使 `content_padding` 与浏览态同值，
-# 文字仍会再往右让开一截（真机实测 DPR 1.5：编辑框填充左缘 458、字形左缘 480，
-# 而 content_padding.left=10 只解释得了 15 物理 px）。量出来共比浏览态右移
-# **6 物理 px**，且与列、行无关 —— 是文本框自身的固定行首留白。
-#
-# 所以"三态 padding 同值"并不等于"三态文字同 x"：编辑框要把这段内缩**减掉**，
-# 文字才会与浏览态落在同一条竖线上（点进去不跳字）。4 是实测反解值（6 物理 px
-# ÷ 1.5），逻辑像素口径，与 DPR 无关。改动此处必须重新在真机上量墨迹左缘。
-_EDIT_LEAD_INSET = 4
-_CELL_EDIT_PAD_H = _CELL_PAD_H - _EDIT_LEAD_INSET
+# 编辑态单元格的底色（`link` 的不透明度）。一档取自"活动单元格 0.04 / 活动行 0.07 /
+# 活动列表头 0.10"之上，让"这一格正在打字"和"我在这一行/列"一眼分得开；也与
+# `views/code_block.py` 活动行号色带（0.26）同属"焦点用浓色"的口径。
+# 底面铺满整格（见模块 docstring 不变量 2），故这个值直接决定编辑态的观感权重。
+_EDIT_CELL_TINT = 0.20
+
+# 说明：这里曾有一条 `_EDIT_LEAD_INSET = 4`（"编辑框要比浏览态少 4 逻辑 px"的补偿），
+# 因为当时输入框是 `filled=True` —— 真机实测带填充的 InputDecorator 会**自己**在行首
+# 多让出一段内缩（6 物理 px / DPR 1.5 = 4 逻辑 px）。改成"底面统一着色 + 输入框
+# `filled=False`"之后，那段内缩随之消失（同一结构下把 `filled` 改回 True 复现，
+# 文字立刻右移 6 物理 px），补偿也就必须去掉：三态内边距重新同值。
+# 结论：**行首内缩是 `filled` 的属性，不是 `TextField` 的固有几何。**
 
 # 行高：数据行固定 40（网格化、紧凑、行高恒定）；表头 36，比数据行略矮，
 # 让表头像"标题条"而不是又一行数据。
@@ -448,6 +459,66 @@ def TableView(
         """Enter 键：移动到下一行。"""
         _move_down()
 
+    # ---- 编辑态底面（表头与数据格共用一份实现）----
+    def _cell_edit_surface(ci: int, *, key: str, bold: bool = False) -> ft.Container:
+        """单元格编辑态：一张**铺满整格**的底面 + 一个透明输入框。
+
+        表头与数据格只差字重与 key 前缀，故共用一份实现 —— 三态对齐/铺满这两条
+        不变量都靠"只有一处可改"来保证，避免只修了其中一支（改前两支就是各写各的）。
+
+        底面 `alignment=ft.Alignment.CENTER` 身兼两职：
+
+        1. **铺满整格**。`Container` 只有设了 `alignment` 才会吃满父级给的宽高；
+           没有它时贴住子项，而 `ft.TextField` 的固有高只有 ~24 逻辑 px —— 真机实测
+           改前填充 y=462..497（36 物理 px），而单元格是 y=450..508（59 物理 px），
+           上下各空 7.5 逻辑 px，看起来是"单元格里嵌了个输入控件"。
+        2. **文字仍落在浏览态的那条基线上**。铺满的是底面，输入框自身只有一行高、
+           被 `alignment` 居中，且三态内边距同值（`_CELL_PAD_H`），故表头读态 /
+           数据读态 / 编辑态**同 x 同 y**。
+
+        注意 `filled=False` 同时是上面第 2 条和"三态文字同 x"的前提：`ft.TextField`
+        一旦 `filled=True`，它的 InputDecorator 会在行首**自己**多让出一段内缩
+        （真机实测 4 逻辑 px），文字立刻右移，这里就得再补一条减法。
+        """
+        return ft.Container(
+            content=ft.TextField(
+                key=key,
+                value=edit_draft,
+                autofocus=True,
+                border=ft.NoInputBorder(),
+                # **输入框自身不上色**：底色只由外层底面一处提供。这里若再叠一层
+                # fill，两层叠加处会重新变成一个"格中格"的小方块（正是本轮的 bug）。
+                # 与 views/code_block.py 的编辑框同一做法（filled=False + 透明底）。
+                filled=False,
+                bgcolor=ft.Colors.TRANSPARENT,
+                dense=True,
+                # 内边距与表头/数据格的浏览态**同值**（`_CELL_PAD_*`）：三态字形
+                # 左缘落在同一条竖线上，点进编辑不跳字。
+                content_padding=ft.Padding.symmetric(
+                    horizontal=_CELL_PAD_H, vertical=_CELL_PAD_V
+                ),
+                text_style=ft.TextStyle(
+                    font_family=FONT_MAIN,
+                    color=c.text,
+                    size=_CELL_FONT,
+                    weight=ft.FontWeight.W_600 if bold else ft.FontWeight.NORMAL,
+                ),
+                text_align=_align_text_align(aligns[ci]),
+                cursor_color=c.link,
+                selection_color=_safe_color(c.link, 0.18),
+                on_change=lambda e: _on_change_draft(e.control.value),
+                on_submit=_on_submit,
+                on_blur=lambda e: _on_blur(),
+                on_focus=lambda e: on_table_focus() if on_table_focus else None,
+            ),
+            alignment=ft.Alignment.CENTER,
+            bgcolor=_safe_color(c.link, _EDIT_CELL_TINT),
+            # 不留圆角：单元格是网格里的一格，"铺满"才是这一格的语义；圆角会在四角
+            # 露出底色，又变回"一格里的一个色块"。表格自身有 border_radius +
+            # ANTI_ALIAS 裁剪，最外侧一格的四角不会越出表格边框。
+            padding=0,
+        )
+
     # ---- 导航回调（供 editor.py _on_key_down 通过 table_nav_ref 调用）----
     def _navigate(action: str, delta: int = 0):
         if action == "tab":
@@ -692,38 +763,9 @@ def TableView(
     for ci in range(col_count):
         is_editing = edit_cell == (header_idx, ci)
         if is_editing:
-            label = ft.Container(
-                content=ft.TextField(
-                    key=f"th-edit-{nav_seq}",
-                    value=edit_draft,
-                    autofocus=True,
-                    border=ft.NoInputBorder(),
-                    filled=True,
-                    fill_color=_safe_color(c.link, 0.10),
-                    dense=True,
-                    # 横向内边距用 `_CELL_EDIT_PAD_H`：扣掉文本框的固有行首内缩，
-                    # 字形左缘才与表头/数据格的浏览态严格同 x（见常量处说明）。
-                    content_padding=ft.Padding.symmetric(
-                        horizontal=_CELL_EDIT_PAD_H, vertical=_CELL_PAD_V
-                    ),
-                    text_style=ft.TextStyle(
-                        font_family=FONT_MAIN,
-                        color=c.text,
-                        size=_CELL_FONT,
-                        weight=ft.FontWeight.W_600,
-                    ),
-                    text_align=_align_text_align(aligns[ci]),
-                    cursor_color=c.link,
-                    selection_color=_safe_color(c.link, 0.18),
-                    on_change=lambda e: _on_change_draft(e.control.value),
-                    on_submit=_on_submit,
-                    on_blur=lambda e: _on_blur(),
-                    on_focus=lambda e: on_table_focus() if on_table_focus else None,
-                ),
-                bgcolor=_safe_color(c.link, 0.06),
-                border_radius=Radius.MD,
-                padding=0,
-            )
+            # 表头编辑态与数据格共用同一张底面（只差字重），三态对齐/铺满两条
+            # 不变量因此只有一处可改。
+            label = _cell_edit_surface(ci, key=f"th-edit-{nav_seq}", bold=True)
         else:
             inner = ft.Container(
                 # 表头**只有文字**：曾经此处前置了一个常驻对齐图标（12px + 4px 间距），
@@ -773,35 +815,7 @@ def TableView(
         for ci in range(col_count):
             is_editing = edit_cell == (source_li, ci)
             if is_editing:
-                content = ft.Container(
-                    content=ft.TextField(
-                        key=f"td-edit-{nav_seq}",
-                        value=edit_draft,
-                        autofocus=True,
-                        border=ft.NoInputBorder(),
-                        filled=True,
-                        fill_color=_safe_color(c.link, 0.10),
-                        dense=True,
-                        content_padding=ft.Padding.symmetric(
-                            horizontal=_CELL_EDIT_PAD_H, vertical=_CELL_PAD_V
-                        ),
-                        text_style=ft.TextStyle(
-                            font_family=FONT_MAIN,
-                            color=c.text,
-                            size=_CELL_FONT,
-                        ),
-                        text_align=_align_text_align(aligns[ci]),
-                        cursor_color=c.link,
-                        selection_color=_safe_color(c.link, 0.18),
-                        on_change=lambda e: _on_change_draft(e.control.value),
-                        on_submit=_on_submit,
-                        on_blur=lambda e: _on_blur(),
-                        on_focus=lambda e: on_table_focus() if on_table_focus else None,
-                    ),
-                    border_radius=Radius.MD,
-                    bgcolor=_safe_color(c.link, 0.05),
-                    padding=0,
-                )
+                content = _cell_edit_surface(ci, key=f"td-edit-{nav_seq}")
             else:
                 spans = _render_cell_spans(row[ci], base_size=_CELL_FONT)
                 inner = ft.Container(

@@ -198,16 +198,35 @@ _CELL_PADDING = ft.Padding.symmetric(
 )
 
 
-def test_edit_padding_compensates_textfield_leading_inset():
-    """编辑框的横向内边距要比浏览态**少** `_EDIT_LEAD_INSET`。
+def test_three_states_share_the_same_cell_padding():
+    """表头 / 数据格 / 编辑框用**同一个** `_CELL_PAD_H`：三态字形左缘同一条竖线。
 
-    这不是"表头/padding 该是多少"的偏好问题：`ft.TextField` 在文字前有一段固有
-    行首内缩（真机实测编辑态字形左缘比浏览态右移 6 物理 px），所以"三态 padding
-    同值"反而会让文字在点进编辑时右移。护栏写成**文字位置**口径：
-    `编辑框 content_padding.left + 固有内缩 == 浏览态内边距`。
+    这里曾经需要一条"编辑框减去 4 逻辑 px"的补偿（`_EDIT_LEAD_INSET`）：那时输入框
+    是 `filled=True`，而**带填充的 `InputDecorator` 会自己多让出一段行首内缩**
+    （真机实测 6 物理 px = 4 逻辑 px）。改成"底面统一着色 + 输入框 `filled=False`"
+    后那段内缩消失，补偿也随之下线 —— 单变量复测：同一结构把 `filled` 改回 `True`，
+    编辑态文字立刻从 474/1003 右移到 480/1009。
+
+    结论：**行首内缩是 `filled` 的属性，不是 `TextField` 的固有几何**。所以这条护栏
+    写成"三态同值"的关系式，而不是某个写死的数字。
     """
-    assert tv._CELL_EDIT_PAD_H == tv._CELL_PAD_H - tv._EDIT_LEAD_INSET
-    assert tv._EDIT_LEAD_INSET > 0, "固有内缩为 0 时这条补偿规则就没有意义了"
+    assert not hasattr(tv, "_EDIT_LEAD_INSET"), (
+        "`filled=False` 之后已无行首内缩，补偿常量不该复活（复活说明某处又自绘了底色）"
+    )
+    with _rendered() as (h, _ops):
+        for ci in range(COL_COUNT):
+            assert _header_inner(h, ci).padding == _CELL_PADDING, (
+                f"表头第 {ci} 列内边距与数据格不一致 → 表头会与数据列错位"
+            )
+        for ri in range(2):
+            for ci in range(COL_COUNT):
+                assert _cell_inner(h, ri, ci).padding == _CELL_PADDING
+
+        _tap_cell(h, 1, 1)
+        pad = _cell_field(h, 1, 1).content_padding
+        assert pad == _CELL_PADDING, (
+            f"编辑框内边距 {pad} 与浏览态 {_CELL_PADDING} 不同 → 点进编辑会跳字"
+        )
 
 
 def test_header_is_text_only_no_decoration():
@@ -222,39 +241,15 @@ def test_header_is_text_only_no_decoration():
             assert content.value, "表头文字不应为空"
 
 
-def test_header_and_data_share_cell_padding():
-    """表头 / 数据格的 padding 与编辑框的 content_padding 对齐到**同一文字左缘**。"""
-    with _rendered() as (h, _ops):
-        for ci in range(COL_COUNT):
-            assert _header_inner(h, ci).padding == _CELL_PADDING, (
-                f"表头第 {ci} 列内边距与数据格不一致 → 表头会与数据列错位"
-            )
-        for ri in range(2):
-            for ci in range(COL_COUNT):
-                assert _cell_inner(h, ri, ci).padding == _CELL_PADDING
-
-        _tap_cell(h, 1, 1)
-        pad = _cell_field(h, 1, 1).content_padding
-        assert pad.left == tv._CELL_EDIT_PAD_H and pad.right == tv._CELL_EDIT_PAD_H
-        assert pad.top == tv._CELL_PAD_V and pad.bottom == tv._CELL_PAD_V, (
-            "编辑框纵向内边距与浏览态不同 → 点击进编辑会上下跳字"
-        )
-        assert pad.left + tv._EDIT_LEAD_INSET == _CELL_PADDING.left, (
-            "编辑框扣除固有行首内缩后，横向应与浏览态同一条竖线"
-        )
-
-
 def test_header_edit_field_uses_same_padding():
-    """表头进入编辑态后，文字左缘同样与数据格对齐（改前这里差 14 逻辑 px）。"""
+    """表头进入编辑态后，内边距与浏览态同值（改前这里差 14 逻辑 px）。"""
     with _rendered() as (h, _ops):
         _tap_header(h, 2)
         label = _data_table(h).columns[2].label
         assert isinstance(label, ft.Container) and isinstance(
             label.content, ft.TextField
         ), "表头未进入编辑态"
-        assert label.content.content_padding == ft.Padding.symmetric(
-            horizontal=tv._CELL_EDIT_PAD_H, vertical=tv._CELL_PAD_V
-        )
+        assert label.content.content_padding == _CELL_PADDING
 
 
 def test_header_and_data_text_have_same_alignment_rule():
@@ -552,3 +547,97 @@ def test_toolbar_renders_with_current_line_highlight():
             if n.border is not None and n.padding == ft.Padding.all(1)
         ]
         assert borders, "当前行高亮外框缺失"
+
+
+# ---------------------------------------------------------------------------
+# 8. 编辑态：底面铺满整格 + 单一着色来源
+# ---------------------------------------------------------------------------
+
+
+def _alpha(color_value) -> float:
+    """取 `ft.Colors.with_opacity` 的不透明度。
+
+    该函数的编码是 `"color,opacity"`（见其 docstring 的示例），故直接切最后一段。
+    """
+    return float(str(color_value).rsplit(",", 1)[1])
+
+
+def _surface_shape(surface: ft.Container) -> dict:
+    """编辑底面的"形状指纹"：除字重与 key 外，表头/数据格应当**完全相同**。"""
+    field = surface.content
+    return {
+        "alignment": surface.alignment,
+        "padding": surface.padding,
+        "bgcolor": surface.bgcolor,
+        "border_radius": surface.border_radius,
+        "content_padding": field.content_padding,
+        "filled": field.filled,
+        "field_bg": field.bgcolor,
+        "dense": field.dense,
+        "size": field.text_style.size,
+        "text_align": field.text_align,
+        "cursor_color": field.cursor_color,
+        "selection_color": field.selection_color,
+    }
+
+
+def test_edit_surface_covers_whole_cell_single_paint_source():
+    """编辑态底面必须**铺满单元格矩形**，且底色只有一个来源（表头/数据格各验一遍）。
+
+    这是"输入框未覆盖整个单元格"的护栏：底面 `Container` 没设 `alignment` 时它贴住
+    子项，而 `ft.TextField` 的固有高只有 24 逻辑 px → 40px 的行里输入框只占 61% 高，
+    上下各空 7.5 逻辑 px（真机实测改前填充 36 物理 px，单元格 59 物理 px）。
+    同时输入框自身不能再上色：两层叠加会重新叠出"格中格"的小方块。
+    """
+    with _rendered() as (h, _ops):
+        _tap_cell(h, 0, 1)
+        surfaces = {"数据格": _cell_inner(h, 0, 1)}
+    with _rendered() as (h, _ops):
+        _tap_header(h, 1)
+        surfaces["表头"] = _header_inner(h, 1)
+
+    for tag, surface in surfaces.items():
+        assert isinstance(surface.content, ft.TextField), f"{tag}不在编辑态"
+        assert surface.alignment is not None, (
+            f"{tag}编辑底面没有 alignment → Container 贴住子项（输入框固有高仅 24px），"
+            "行内上下会留白，看起来「输入框没覆盖整个单元格」"
+        )
+        # `padding=0` 在 flet 里不会被规范化成 Padding 对象（就是整数 0），故两种编码都收
+        pad = surface.padding
+        assert pad in (None, 0) or pad == ft.Padding.all(0), (
+            f"{tag}编辑底面有内边距（{pad}）→ 底色铺不满单元格"
+        )
+        assert surface.bgcolor is not None, f"{tag}编辑底面未上色（应作为唯一着色来源）"
+        field = surface.content
+        assert field.filled is False and field.bgcolor in (None, ft.Colors.TRANSPARENT), (
+            f"{tag}输入框自带上色 → 与底面叠加出「格中格」的小方块"
+        )
+
+
+def test_header_and_data_edit_surface_share_one_implementation():
+    """表头编辑态与数据格编辑态共用同一张底面（避免只修了其中一支）。"""
+    with _rendered() as (h, _ops):
+        _tap_cell(h, 0, 1)
+        data_shape = _surface_shape(_cell_inner(h, 0, 1))
+    with _rendered() as (h, _ops):
+        _tap_header(h, 1)
+        header_shape = _surface_shape(_header_inner(h, 1))
+    assert header_shape == data_shape, (
+        "表头与数据格的编辑底面不一致 → 三态几何只会在其中一支上成立"
+    )
+
+
+def test_edit_tint_is_heaviest_of_the_state_palette():
+    """编辑态底色必须是同族里**最重**的一档（重于活动列色片与活动行行带）。
+
+    否则"这一格正在打字"和"我在这一行/列"糊成一片，用户分不清哪一个才是输入焦点。
+    """
+    with _rendered() as (h, _ops):
+        _tap_cell(h, 0, 1)
+        edit_alpha = _alpha(_cell_inner(h, 0, 1).bgcolor)
+        chip_alpha = _alpha(_header_inner(h, 1).bgcolor)  # 活动列表头色片
+        band_alpha = _alpha(_data_table(h).rows[0].color[ft.ControlState.DEFAULT])
+        col_alpha = _alpha(_cell_inner(h, 1, 1).bgcolor)  # 同列另一行 = 活动列底色
+    assert edit_alpha > chip_alpha, f"编辑态 {edit_alpha} 不重于活动列色片 {chip_alpha}"
+    assert edit_alpha > band_alpha, f"编辑态 {edit_alpha} 不重于活动行行带 {band_alpha}"
+    assert edit_alpha > col_alpha, f"编辑态 {edit_alpha} 不重于活动列底色 {col_alpha}"

@@ -126,6 +126,7 @@ def build_actions(ctx: ActionsEnv) -> EditorActions | None:
         paste_in_progress_ref=ctx.paste_in_progress_ref,
         # ---- 滚动同步 ----
         get_scroll_state=ctx.get_scroll_state,
+        get_top_line=ctx.get_top_line,
         scroll_to_offset=ctx.scroll_to_offset,
         # ---- 替换（搜索面板触发，作用于当前文档）----
         replace_match_in_doc=ctx.replace_match_in_doc,

@@ -76,6 +76,29 @@ def _editor_search_props(ctx, doc):
     return {}, 0
 
 
+def _anchor_line(anchor, session: int) -> int | None:
+    """从「切换拆分时的浏览位置锚点」里取该组会话对应的行号（无则 None）。
+
+    锚点形如 `((session_left, 行号), (session_right, 行号))`，由
+    `app/_split_editor.py` 在切换拆分时下发。切换拆分（开/收）会让**两个**视口
+    一起重建（单编辑器 ↔ Row 内左右视口：控件树路径不同，Flutter 不复用元素），
+    不带上锚点用户就会看到"一切分就跳回文档首行"。
+
+    按会话号取（而不是"谁都给"）：组内换标签会递增该组 session → 该组锚点自动
+    失效，新标签不会被上一个标签的浏览位置拽走。未涉及拆分的重渲染值不变，
+    编辑器的 `use_effect` 依赖不变也不会重跑。
+
+    放在模块级（而不是 build_render 的闭包里）：拆分区的构造函数
+    `_build_split_area` 是模块级函数，闭包对它是不可见的——本函数曾因此变成
+    `NameError`，而那会**整棵树渲染失败**：点击"拆分"后状态已翻转，界面却纹丝
+    不动（应用日志里一声不响），看起来就像"开关坏了"。
+    """
+    for sess, line in anchor or ():
+        if sess == session:
+            return line
+    return None
+
+
 def _attach_doc_search_overlay(content: ft.Control, ctx) -> ft.Control:
     """把文档内搜索浮层叠到 editor_body 上：Stack 顶层右上角，不随内容滚动。
 
@@ -304,6 +327,8 @@ def build_render(ctx) -> ft.Control:
                 arrow_repeat_ref=ctx.arrow_repeat_ref,
                 document=ctx.document,
                 file_path=ctx.file_path,
+                # 收起拆分时单编辑器会重建 → 继承左视口浏览位置（见 _anchor_line）
+                initial_scroll_line=_anchor_line(ctx.split_scroll, ctx.session_left),
                 on_dirty_change=ctx.on_dirty_change,
                 on_cursor_move=ctx.push_cursor_to_status,
                 on_content_change=ctx.schedule_status_count_update,
@@ -796,6 +821,10 @@ def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pa
                     nav_ref=ctx.nav_ref,
                     document=left_tab.get("document"),
                     file_path=left_tab.get("file_path"),
+                    # 开启拆分时单编辑器 → 左视口是控件树路径变化，左编辑器同样会
+                    # 重建：不带上锚点，用户"读到一半按 Ctrl+\"会看到自己正在读的
+                    # 那一侧跳回文档首行（本功能要修的正是这个症状）。
+                    initial_scroll_line=_anchor_line(ctx.split_scroll, ctx.session_left),
                     on_editor_focus=lambda: ctx.set_active_pane(0),
                     on_editor_blur=ctx.trigger_autosave_now,
                     on_dirty_change=lambda d: ctx.on_dirty_change_pane(0, d),
@@ -815,6 +844,9 @@ def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pa
                     nav_ref=ctx.nav_ref_split,
                     document=right_tab.get("document"),
                     file_path=right_tab.get("file_path"),
+                    # 新视口继承源视口的浏览位置（拆分瞬间左视口顶部那一行），
+                    # 而不是停在文档首行。锚点与 session_right 绑定，换标签即失效。
+                    initial_scroll_line=_anchor_line(ctx.split_scroll, ctx.session_right),
                     on_editor_focus=lambda: ctx.set_active_pane(1),
                     on_editor_blur=ctx.trigger_autosave_now,
                     keyboard_autofocus=False,

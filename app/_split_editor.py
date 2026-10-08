@@ -9,10 +9,13 @@ r"""拆分编辑器与对比焦点视口控制器（从 main.py 闭包抽取）�
 设计要点：
 - 拆分编辑组（VSCode 风格 Ctrl+\）：左右两组各自独立标签列表（tab.group
   0=左 / 1=右），可打开不同文件；标签行与编辑区同步分左右。
-- 开启：右组追加一个空白未命名标签（用户在其上打开文件），焦点切到右组
-  （VSCode「向右拆分」聚焦新组）。
+- 开启：右组打开当前文件的副本（共享同一 document），焦点切到右组
+  （VSCode「向右拆分」聚焦新组）。**滚动位置继承**：切换拆分会让两个视口一起
+  重建，故两侧都初始停在源视口顶部那一行（`get_top_line` → `set_split_scroll`
+  带会话号下发），不回到文档首行。
 - 关闭：右组空白标签直接丢弃；非空白标签合并回左组（不丢数据），左组
-  激活与编辑器状态不变，焦点回左组。
+  激活与编辑器状态不变，焦点回左组。单编辑器同样会被重建，故收起时也继承
+  左视口的浏览位置。
 - 对比标签与拆分互斥：对比标签激活时禁用拆分切换。
 - set_active_pane / set_diff_active_pane 同值不重渲染，并同步写 ref，
   使键盘事件路由（_get_active_nav）立即读到最新焦点视口。
@@ -46,15 +49,57 @@ def build_split_editor(ctx: SplitEnv):
             _set_active_pane_state(pane)
             ctx.active_pane_ref.current = pane
 
+    def _read_top_line(pane: int) -> int | None:
+        """读「pane 号视口顶部可见行号」＝用户此刻在该窗格浏览到的位置。
+
+        视口 0 用 `nav_ref`（单编辑器与拆分左视口共用），视口 1 用
+        `nav_ref_split`。取不到（nav 未就绪 / 编辑器尚未上报滚动状态）时返回
+        None，该窗格按默认行为停在首行。
+        """
+        nav = ctx.nav_ref_split.current if pane == 1 else ctx.nav_ref.current
+        reader = getattr(nav, "get_top_line", None) if nav is not None else None
+        if reader is None:
+            return None
+        try:
+            return int(reader())
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+
+    def _anchor_pairs(line: int | None) -> tuple[tuple[int, int], ...] | None:
+        """把「浏览行号」打包成按会话过期的滚动锚点。
+
+        形如 `((session_left, line), (session_right, line))`：每个视口只认自己
+        那一组的会话号，组内换标签（递增该组 session）即自动失效——新标签不该
+        被上一个标签的浏览位置拽走，也不需要"消费后清除"的额外生命周期。
+
+        为什么**两侧都要**：切换拆分会让两个视口一起重建（单编辑器树下
+        `body → Container → 编辑器`，拆分树下 `body → Row → Container → 编辑器`，
+        Flutter 不复用元素），只给右视口下发锚点的话，用户正在读的那一侧（左）
+        照样跳回文档首行。
+        """
+        if line is None:
+            return None
+        return (
+            (ctx.session_left_ref.current, line),
+            (ctx.session_right_ref.current, line),
+        )
+
     def _split_on():
-        """开启拆分：右组打开当前文件副本，与源共享同一 Document 对象。
+        r"""开启拆分：右组打开当前文件副本，与源共享同一 Document 对象。
 
         VSCode「向右拆分」直觉：拆分即复制当前编辑上下文到右侧。两侧绑定
         同一 document（@ft.observable）——任一侧编辑实时同步到另一侧；
-        光标/滚动/撤销历史是编辑器内部状态，仍各自独立。源标签的
-        dirty / mtime 一并带入副本。无有效源标签（防御）时右组空白标签。
+        光标/撤销历史是编辑器内部状态，仍各自独立，**滚动位置则继承**（见下）。
+        源标签的 dirty / mtime 一并带入副本。无有效源标签（防御）时右组空白标签。
+
+        滚动位置继承：两个视口初始都滚到源视口顶部那行（`set_split_scroll`
+        记下带会话号的锚点，由渲染层下发给对应视口），而不是停在文档首行。
         """
         ctx.set_split_editor(True)
+        # 锚点必须在 append_and_activate 之前取——它会 bump session_right，而锚点
+        # 要配的是"新右组会话"的编辑器。拆分关闭时 active_pane 恒为 0（对 pane 1
+        # 调 set_active_pane 的路径全部带 split_editor 守卫），故这里就是左视口。
+        anchor_line = _read_top_line(ctx.active_pane_ref.current)
         ts = ctx.tabs_ref.current
         gi = (ctx.active_index_right_ref if ctx.active_pane_ref.current == 1
               else ctx.active_index_left_ref).current
@@ -75,13 +120,18 @@ def build_split_editor(ctx: SplitEnv):
                 "group": 1,
             })
         _focus_pane(1)
+        ctx.set_split_scroll(_anchor_pairs(anchor_line))
 
     def _split_off():
         """关闭拆分：右组空白丢弃、非空白合并回左组，焦点回左组。
 
+        单编辑器同样会重建（控件树路径变化），故也继承左视口的浏览位置；
         左组激活标签对象不变（合并只改右组标签的 group 字段 / 丢弃右组
-        空白），左编辑器 key 不变 → 光标/滚动不重置。
+        空白），左编辑器 key 不变 → 光标不重置。
         """
+        # 存活下来的是左组激活标签（右组标签只并入列表，不改左组激活），
+        # 所以收起后单编辑器该停的位置＝左视口当前的浏览处。
+        anchor_line = _read_top_line(0)
         old_tabs = list(ctx.tabs_ref.current)
         old_left = ctx.active_index_left_ref.current
         left_tab = old_tabs[old_left] if 0 <= old_left < len(old_tabs) else None
@@ -117,6 +167,8 @@ def build_split_editor(ctx: SplitEnv):
         ctx.active_index_ref.current = new_left
         # 左组激活未变 → 不 bump session_left；右编辑器随拆分关闭卸载
         ctx.set_session(ctx.session + 1)
+        # 单编辑器即将重建 → 把左视口的浏览位置交给它（否则收起拆分也会跳回首行）
+        ctx.set_split_scroll(_anchor_pairs(anchor_line))
 
     def toggle_split_editor():
         r"""向右拆分编辑器（VSCode 风格 Ctrl+\）：切换左右独立标签组。"""

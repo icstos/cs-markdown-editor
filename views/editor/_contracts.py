@@ -424,6 +424,7 @@ class ActionsEnv(Protocol):
     format_task: Callable[..., Any]
     get_cursor_row_col: Callable[..., tuple[int, int]]
     get_scroll_state: Callable[..., tuple[float, float, float]]
+    get_top_line: Callable[..., int]
     handle_code_backspace: Callable[..., bool]
     handle_code_exit: Callable[..., bool]
     handle_cut: Any

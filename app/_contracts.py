@@ -152,7 +152,13 @@ class SettingsEnv(Protocol):
 
 
 class SplitEnv(Protocol):
-    """拆分编辑器开合与焦点视口（build_split_editor 实际读取的 18 个字段）。"""
+    """拆分编辑器开合与焦点视口（build_split_editor 实际读取的 23 个字段）。
+
+    除标签组激活/焦点外，`_split_on` / `_split_off` 还要读**视口的浏览位置**
+    （`nav_ref` / `nav_ref_split` 的 `get_top_line`），并打包成带会话号的锚点交给
+    重建后的视口（`set_split_scroll` + `session_left_ref` / `session_right_ref`）：
+    切换拆分会让两个视口一起重建，锚点让它们停在原浏览行而非文档首行。
+    """
 
     active_index_left_ref: ft.Ref
     active_index_ref: ft.Ref
@@ -161,7 +167,11 @@ class SplitEnv(Protocol):
     append_and_activate: Callable[..., Any]
     diff_active_pane_ref: ft.Ref
     is_diff_tab_ref: ft.Ref
+    nav_ref: ft.Ref
+    nav_ref_split: ft.Ref
     session: int
+    session_left_ref: ft.Ref
+    session_right_ref: ft.Ref
     set_active_index: Callable[..., None]
     set_active_index_left: Callable[..., None]
     set_active_index_right: Callable[..., None]
@@ -169,6 +179,7 @@ class SplitEnv(Protocol):
     set_diff_active_pane: Callable[..., None]
     set_session: Callable[..., None]
     set_split_editor: Callable[..., None]
+    set_split_scroll: Callable[..., None]
     set_tabs: Callable[..., None]
     split_editor: bool
     tabs_ref: ft.Ref

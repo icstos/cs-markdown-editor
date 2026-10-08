@@ -165,6 +165,10 @@ class EditorActions:
     # scroll_to_offset：同步调度异步 scroll_to(offset, duration=0)，对外非阻塞。
     #   duration=0 保证跟随滚轮即时响应，无动画延迟。
     get_scroll_state: Callable[[], ScrollState] | None = None
+    # get_top_line：返回当前视口顶部可见行号（浏览位置锚点）。拆分编辑器开启时
+    #   由 app/_split_editor.py 读取，让新视口停在用户正在浏览处而非文档首行。
+    #   用行号而非像素偏移：拆分后窗格变窄，软换行口径变化会让像素偏移错位。
+    get_top_line: Callable[[], int] | None = None
     scroll_to_offset: Callable[[float], None] | None = None
 
     # ---- 替换（搜索面板触发，作用于当前文档；new_text 已在 Sidebar 完成反向引用展开）----

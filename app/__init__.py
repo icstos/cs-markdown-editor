@@ -161,6 +161,15 @@ def App():
     nav_ref_split = ft.use_ref(None)
     active_pane_ref = ft.use_ref(active_pane)
     active_pane_ref.current = active_pane
+    # 切换拆分时下发的「浏览位置锚点」：((session_left, 行号), (session_right, 行号)) | None。
+    # 开/收拆分都会让两个视口一起重建（单编辑器 ↔ Row 内左右视口，控件树路径不同，
+    # Flutter 不复用元素），而 ListView 默认停在文档首行——用户却在文档中部阅读，
+    # 视觉上就是"一切分就跳回开头"。锚点取源视口此刻顶部可见的那一行，由重建后的
+    # 编辑器在挂载期 effect 贴顶（views/editor 的 initial_scroll_line）。
+    # 用行号而非像素偏移：拆分后窗格宽度减半，软换行口径随之改变，像素偏移会落到
+    # 别的行上。每个视口只认自己那组的会话号 → 组内换标签（该组 session 递增）锚点
+    # 即自动失效，不需要"消费后清除"的额外生命周期。
+    split_scroll, set_split_scroll = ft.use_state(None)
 
     # FilePicker / Clipboard：service 实例，通过 ref 在事件回调中访问
     picker_holder = ft.use_ref()
@@ -414,6 +423,7 @@ def App():
         capturing=capturing,
         split_editor=split_editor,
         active_pane=active_pane,
+        split_scroll=split_scroll,
         active_index_left=active_index_left,
         active_index_right=active_index_right,
         session_left=session_left,
@@ -443,6 +453,7 @@ def App():
         set_capturing=set_capturing,
         set_split_editor=set_split_editor,
         set_active_pane=set_active_pane,
+        set_split_scroll=set_split_scroll,
         set_active_index_left=set_active_index_left,
         set_active_index_right=set_active_index_right,
         set_session_left=set_session_left,

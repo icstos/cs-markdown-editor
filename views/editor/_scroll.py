@@ -1,6 +1,6 @@
 """滚动 / 导航 / 布局命中工厂（从 views/editor.py 闭包抽取）。
 
-闭包组：_on_scroll / _get_scroll_state / _scroll_to_offset / _on_content_resize /
+闭包组：_on_scroll / _get_scroll_state / _get_top_line / _scroll_to_offset / _on_content_resize /
 on_line_size_change / _estimate_line_height / _estimate_line_offset / _safe_scroll_to /
 _ensure_visible / jump_to / _hit_test_line_x / _get_layout_cache / _hit_test_xy /
 _page_vlines / page_up / page_down / _scroll_by_page / _reset_line_heights /
@@ -111,6 +111,24 @@ def build_scroll(ctx: ScrollEnv):
             ctx.max_scroll_ref.current,
             ctx.viewport_h_ref.current,
         )
+
+    def _get_top_line() -> int:
+        """当前视口**顶部可见行号**（浏览位置）。
+
+        用途：拆分编辑器开启时，新视口要停在「用户此刻正在浏览的那一行」而不是
+        文档首行（见 app/_split_editor.py 的 `_split_on`）。行号而非像素偏移才是
+        正确锚点——拆分后窗格变窄，同一份文档的软换行口径随之改变，像素偏移会
+        落到另一行上。
+
+        快路径：未滚动（offset ≤ 0）直接返回 0，避免为「首屏取位置」白建一遍
+        行偏移前缀和（大文档下那是一次 O(n) 估算，含 HarfBuzz 测量）。
+        """
+        if ctx.scroll_offset_ref.current <= 0:
+            return 0
+        first, _ = _visible_line_range(
+            ctx.scroll_offset_ref.current, ctx.viewport_h_ref.current
+        )
+        return first
 
     def _scroll_to_offset(offset: float) -> None:
         """同步调度异步 scroll_to(offset, duration=0)。
@@ -526,6 +544,7 @@ def build_scroll(ctx: ScrollEnv):
     return {
         "on_scroll": _on_scroll,
         "get_scroll_state": _get_scroll_state,
+        "get_top_line": _get_top_line,
         "scroll_to_offset": _scroll_to_offset,
         "on_content_resize": _on_content_resize,
         "on_line_size_change": on_line_size_change,

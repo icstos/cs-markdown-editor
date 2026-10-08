@@ -53,6 +53,10 @@ class AppContext:
     capturing: tuple
     split_editor: bool
     active_pane: int
+    # 切换拆分时下发的「浏览位置锚点」：((session, 行号), ...) | None。
+    # 每个视口只认自己那组的会话号 → 组内换标签（递增该组 session）即自动失效。
+    # 开/收拆分时两个视口都会重建，锚点让它们停在原浏览行而非文档首行。
+    split_scroll: tuple[tuple[int, int], ...] | None = None
     search_focus_seq: int = 0  # Ctrl+F 聚焦搜索框序号（递增驱动 Sidebar effect）
     # 每侧编辑组的激活标签全局索引（不变式：active_index == 焦点侧组的激活索引）
     active_index_left: int
@@ -87,6 +91,7 @@ class AppContext:
     set_capturing: Callable
     set_split_editor: Callable
     set_active_pane: Callable
+    set_split_scroll: Callable = field(default=lambda *a: None)
     set_search_focus_seq: Callable = field(default=lambda *a: None)
     set_active_index_left: Callable
     set_active_index_right: Callable

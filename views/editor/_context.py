@@ -229,6 +229,7 @@ class EditorContext:
     get_scroll_state: Callable[[], tuple[float, float, float]] = field(
         default=lambda: (0.0, 0.0, 0.0)
     )
+    get_top_line: Callable[[], int] = field(default=lambda: 0)
     scroll_to_offset: Callable[[float], None] = field(default=lambda *a: None)
     on_content_resize: Callable[[Any], None] = field(default=lambda *a: None)
     on_line_size_change: Callable[[int, float], None] = field(default=lambda *a: None)
@@ -408,7 +409,7 @@ _WIRING_SLOTS: frozenset[str] = frozenset({
     "move_up", "move_down", "move_vline", "page_up", "page_down", "jump_to",
     "cursor_vline_info", "get_line_visual_lines", "link_tab_jump",
     # scroll 组
-    "on_scroll", "get_scroll_state", "scroll_to_offset", "on_content_resize",
+    "on_scroll", "get_scroll_state", "get_top_line", "scroll_to_offset", "on_content_resize",
     "on_line_size_change", "ensure_visible", "safe_scroll_to", "estimate_line_height",
     "estimate_line_offset", "hit_test_line_x", "get_layout_cache", "hit_test_xy",
     "page_vlines", "scroll_by_page", "reset_line_heights", "get_cursor_row_col",

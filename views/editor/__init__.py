@@ -26,6 +26,7 @@
 - IME 热路径必须用 reparse_line_atomic(仅 1 次 observable 通知)
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 import flet as ft
@@ -147,6 +148,11 @@ def MarkdownEditor(
     # 滚动同步回调:滚动时上报 (offset, max_scroll, viewport_h),供 diff 对比模式
     # 驱动另一侧同步滚动。None 时不同步(单编辑器 / 拆分编辑器)。
     on_scroll_change: Callable[[float, float, float], None] | None = None,
+    # 初始滚动锚点：源视口顶部可见行号。App 在开启拆分（Ctrl+\）时把左视口当前
+    # 浏览处的行号下发给右侧新挂载的编辑器，由挂载期 use_effect 贴到视口顶部，
+    # 避免新视口停在文档首行。用行号而非像素：拆分后窗格变窄，软换行口径变化
+    # 会让像素偏移落到别的行上。None = 不干预（默认停在首行）。
+    initial_scroll_line: int | None = None,
     # 状态栏命令式上报(高频局部 UI,跳过 set_state 全量重建):
     # on_cursor_move(row, col):光标位置变化时异步推送至状态栏(仅焦点视口上报)。
     # on_content_change():文档内容变化(mark_dirty)时触发,App 防抖重算字数。
@@ -584,6 +590,24 @@ def MarkdownEditor(
             set_wrap_sel_seq(0)
 
     ft.use_effect(_reset_wrap_sel_seq, [wrap_sel_seq])
+
+    # ============ use_effect:初始滚动锚点（拆分新视口继承浏览位置）============
+    # 拆分开启时右侧是全新挂载的编辑器，其 ListView 默认停在文档首行；而用户
+    # 此刻多半正在文档中部阅读，视觉上直接"跳回开头"。App 把源视口顶部可见行
+    # 作为 initial_scroll_line 下发，这里在挂载后把它贴到视口顶部——复用 jump_to
+    # 那条两步滚动骨架（先按估算滚动触发目标行构建，一帧后用实测行高精修），
+    # 长文档也一次到位。
+    # deps 非空同样在挂载期执行：正合"新编辑器落地即定位"的语义；值不变则不重跑，
+    # 故 App 重渲染（主题/面板/滚动上报）不会把已滚开的视口拽回去。
+    async def _apply_initial_scroll():
+        if initial_scroll_line is None:
+            return
+        # 先让首帧布局落地：视口宽度（content_width，决定软换行）与行高缓存都要
+        # 等 on_content_resize / on_size_change 回报，否则估算会偏出去一屏。
+        await asyncio.sleep(0.08)
+        await scroll_cbs["safe_scroll_to"](initial_scroll_line, to_top=True)
+
+    ft.use_effect(_apply_initial_scroll, [initial_scroll_line])
 
     # ============ use_effect:聚焦 cursor TextField ============
     # 依赖 cursor_li + nav_seq + focus_seq + word_wrap + viewport_w:

@@ -5,12 +5,12 @@
 - **定位**：对标 Typora 的光标级所见即所得（WYSIWYG）Markdown 桌面编辑器。核心能力：Stack 双层架构（底层渲染层 + 顶层透明 TextField 光标层）、像素级光标对齐（HarfBuzz）、IME 友好输入、软换行 2D 视觉行布局、多文档标签、文件对比 diff、拆分编辑器（左右独立标签组，同文件副本共享 document 实时同步）、侧边栏文件树（.lnk 快捷方式支持 + 外部变化实时监测）/大纲/搜索、快捷键自定义、自动保存与崩溃恢复。
 - **技术栈与版本**：
   - Python ≥ 3.12（`requires-python`，模型层用 `StrEnum`）
-  - Flet ≥ 1.0.0（声明式组件：`@ft.component` + `use_state`/`use_effect` + `@ft.observable`/`@ft.memo`，启动 `ft.run(main)` + `page.render(App)`）
+  - Flet ≥ 1.0.4（声明式组件：`@ft.component` + `use_state`/`use_effect` + `@ft.observable`/`@ft.memo`，启动 `ft.run(main)` + `page.render(App)`）
   - mistune ≥ 3.3.4（行内 AST 解析 + HTML 导出）
   - uharfbuzz ≥ 0.40.0（文本整形测量，与 Skia/Flutter 同引擎）
   - Pillow ≥ 12.3.0（图片尺寸读取）
   - Pygments ≥ 2.19.0（代码块语法分词，`services/code_highlight.py`；惰性导入）
-  - flet-datatable2 ≥ 1.0.0（表格编辑岛屿）
+  - flet-datatable2 ≥ 1.0.4（表格编辑岛屿）
   - watchdog ≥ 4.0.0（外部修改检测，原生文件通知）
 - **运行环境与前提**：Windows 优先的桌面应用；字体 `assets/fonts/AlibabaPuHuiTi-3-55-Regular.otf`（注册名 "Alibaba"）；用户设置持久化于项目根 `settings.json`（由 `config/settings.py` 深合并管理，非源码，禁止提交改动假设）；备份目录由 `services/backup.py` 管理。
 

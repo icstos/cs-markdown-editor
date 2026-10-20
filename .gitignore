@@ -5,7 +5,6 @@
 
 # custom path
 output
-docs
 
 # custom file
 *.pt

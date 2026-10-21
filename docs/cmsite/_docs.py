@@ -82,8 +82,7 @@ def DocsSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
         section_header(
             "03 / 文档",
             "装、用、配、键、结构、FAQ",
-            "六页覆盖从第一次启动到排查问题。键位页直接读程序里的注册表，"
-            "不会出现「文档说 Ctrl+D、程序绑 Ctrl+U」这种事。",
+            "键位那页读的是程序里的注册表，不会出现文档写 Ctrl+D、程序绑 Ctrl+U。",
             accent=c.heading_colors.get(4, c.link),
             width=width,
         ),

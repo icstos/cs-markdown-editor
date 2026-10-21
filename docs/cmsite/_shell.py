@@ -135,22 +135,40 @@ def SiteShell() -> ft.Control:
                 on_home=go_home,
                 c=c,
             ),
+            # 滚动容器必须**铺满视口**，不能只在中间那块内容宽度里滚：
+            # Flutter 的滚动条贴在 ScrollView 自己的右边缘上。之前这里用
+            # `Container(alignment=...)` 居中，`Align` 会放松约束，Column 收缩到
+            # 内容宽度（1120），滚动条停在 1120 处、离窗口右边还差一截。
+            #
+            # 但 `Container(expand=True)` 也不够：`Expanded` 只约束**主轴**，
+            # 交叉轴依旧是松的，Column 仍然会缩到最宽子项的宽度（试过，整页左对齐）。
+            # 真正能给满宽紧约束的是 Row + STRETCH + 一个 Expanded 子项——
+            # 高度由 STRETCH 顶紧，宽度由 Expanded 顶紧，Column 才真的铺满。
             ft.Container(
                 expand=True,
-                alignment=ft.Alignment.TOP_CENTER,
-                content=ft.Column(
-                    ref=scroll_ref,
+                content=ft.Row(
                     spacing=0,
-                    tight=True,
-                    scroll=ft.ScrollMode.AUTO,
+                    vertical_alignment=ft.CrossAxisAlignment.STRETCH,
                     controls=[
-                        hero_section(width, jump, clipboard_ref),
-                        features_section(width),
-                        DemoSection(width, clipboard_ref),
-                        DocsSection(width, clipboard_ref),
-                        architecture_section(width),
-                        about_section(width, clipboard_ref),
-                        _footer(width, c),
+                        ft.Container(
+                            expand=True,
+                            content=ft.Column(
+                                ref=scroll_ref,
+                                spacing=0,
+                                tight=True,
+                                scroll=ft.ScrollMode.AUTO,
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    hero_section(width, jump, clipboard_ref),
+                                    features_section(width),
+                                    DemoSection(width, clipboard_ref),
+                                    DocsSection(width, clipboard_ref),
+                                    architecture_section(width),
+                                    about_section(width, clipboard_ref),
+                                    _footer(width, c),
+                                ],
+                            ),
+                        )
                     ],
                 ),
             ),

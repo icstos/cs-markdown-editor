@@ -86,6 +86,21 @@ flet**——可以在没有 Flutter 的环境里直接断言内容。运行时�
 不需要自己累加高度。同时 `page.scroll` 必须设为 `None`：只要页面级滚动还开着，
 内容区就变成「整页一起滚」，顶栏会跟着滚出去，`scroll_to` 也会落到外层容器上。
 
+**滚动容器铺满视口，内容自己居中。** Flutter 的滚动条贴在 ScrollView 自己的
+右边缘上，所以「内容块居中」和「滚动条靠右」是两件事：如果让外层
+`Container(alignment=TOP_CENTER)` 去居中，`Align` 会把约束放松，Column 收缩到
+内容宽度（1120），滚动条就停在 1120 处、离窗口右边还差一截。正确写法是
+
+```python
+Container(expand=True, content=Row(
+    vertical_alignment=STRETCH,          # 高度顶紧
+    controls=[Container(expand=True,     # 宽度顶紧
+        content=Column(scroll=AUTO, horizontal_alignment=CENTER, controls=[...]))]))
+```
+
+——先让滚动容器拿到满宽**紧约束**，再让它自己把定宽区块居中。注意
+`Container(expand=True)` 单独用不够：`Expanded` 只约束主轴，交叉轴依旧是松的。
+
 **顶栏不用 Material 固有尺寸控件。** 主题开关是固定 30 见方的 `Container(ink=True)`，
 不是 `ft.IconButton`（后者固有高 40，压内边距无效，会顶破定高 60 的顶栏）。
 同一条红线也用于紧凑工具栏，与主程序一致。
@@ -101,11 +116,13 @@ flet**——可以在没有 Flutter 的环境里直接断言内容。运行时�
 | 图标全空白 | 字符串图标名不渲染字形 | 统一走 `_ui.icon()` → `getattr(ft.Icons, NAME)` |
 | 首屏泛桃色 | 渐变取了 `heading_colors[5]`（暖棕 #B54708） | `hero_gradient()` 只取蓝与紫 |
 | 点页签 / 目录报 `int() argument must be ... not 'Event'` | Flet 派发事件时**必定传一个 `Event`**，规则是 `get_param_count(fn) == 0 ? fn() : fn(event)`；`get_param_count` 数的是**声明参数个数（含默认值）**，所以 `lambda k=key: ...` 会被 Event 顶掉 | 带参回调写成 `lambda _e=None, k=key: on_select(k)`；无参回调交给 `_ui.on_event()` 统一吞掉事件 |
+| 滚动条停在内容右缘，不在窗口最右 | 外层 `Container(alignment=...)` 的 `Align` 放松了约束，滚动 Column 收缩到 1120 | 用 `Row(vertical_alignment=STRETCH)` + `Container(expand=True)` 给满宽紧约束，居中交给 Column 的 `horizontal_alignment` |
+| 条形图九行一样长 | `Container(width="43%")` 在 1.0.4 里**不解析成父级比例**，填充条缩成 0，只剩灰色轨道 | 比例自己乘成像素：`width=int(ratio * bar_space)` |
 
 ## 验证
 
 站点不在 `tests/` 下留自动化用例——`docs/` 在 `.gitignore` 模板里，克隆出去的仓库
-没有这个目录，放进去的用例会直接 import 失败。验证靠五个探针（在
+没有这个目录，放进去的用例会直接 import 失败。验证靠六个探针（在
 `.workbuddy/probe/`，同为忽略目录），除视觉探针外都返回 0/1：
 
 ```bash
@@ -121,7 +138,10 @@ python .workbuddy/probe/events_smoke.py
 # 4) 真机点击：真实鼠标点一次主题开关，整页亮度必须翻转（端到端）
 python .workbuddy/probe/click_e2e.py
 
-# 5) 视觉：起桌面窗口 + PrintWindow 截图 + 多帧择优
+# 5) 滚动条位置：滚一下滚轮，两帧相减量出滚动条的真实 x 区间
+python .workbuddy/probe/scrollbar_pos.py
+
+# 6) 视觉：起桌面窗口 + PrintWindow 截图 + 多帧择优
 python .workbuddy/probe/site_shot.py --start features --theme dark
 python .workbuddy/probe/site_shot.py --width 430 --height 1800 --tag mobile
 ```
@@ -151,6 +171,14 @@ python .workbuddy/probe/site_shot.py --width 430 --height 1800 --tag mobile
 **一步都不投递**，注入是全局的会点到用户别的窗口上）；**几何要在抢完前台之后重读**
 （应用会自己对 FOCUS 做 `ensure_window_on_screen`，窗口真的会走）；**切换类交互只点一次**
 （点两次互相抵消，看起来像没反应）。
+
+`scrollbar_pos.py` 为什么必须两帧相减：Flutter 桌面滚动条只在滚动时出现，
+停手 0.6 s 后淡出、0.3 s 消失——**静止截图里根本没有滚动条**，于是「拍一张看看」
+要么拍到空白、要么把内容边缘当成滚动条。做法是滚一下滚轮 → 立刻抓帧（内容已停住、
+滚动条还在）→ 等它淡出再抓一帧，两帧之差就只剩滚动条本身。判据三条：差异是细长
+竖条、右缘贴客户区右缘、左缘**不在**内容右缘（内容右缘 = 客户宽 − (客户宽 − 1120·dpr)/2）。
+第三条是这次改动的关键：修复前滚动条正好停在内容右缘。变异验证过——把
+`Container(alignment=TOP_CENTER)` 加回去，三条判据全 FAIL。
 
 视觉探针只改窗口尺寸不够，必须配合 `--width/--height` 让 Flet 内部窗口一起变，
 否则拍到的还是 1280 布局。另一个更隐蔽的坑：**只按标题找窗口会抓到浏览器**——

@@ -106,8 +106,7 @@ def DemoSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
         section_header(
             "02 / 演示",
             "源码与结果，同屏对照",
-            "切换样例看不同语法块的表现。编辑器里没有「预览」按钮，"
-            "下面这两栏在编辑时是同一栏。",
+            "切换样例看各类语法块。编辑器里没有预览按钮，编辑时这两栏其实是同一栏。",
             width=width,
         ),
         _tabs_row(tabs, sample.desc, c, narrow),
@@ -193,8 +192,8 @@ def _caption(c) -> ft.Control:
                 ft.Container(
                     expand=True,
                     content=text(
-                        "右侧由 Flutter 的 Markdown 渲染器呈现（与编辑器同源的语法规则）；"
-                        "左侧源码可选中复制，改完粘回编辑器就是最终效果。",
+                        "右侧由 Flutter 渲染，语法规则与编辑器同源。"
+                        "左边源码能选中复制，改完粘回去就是结果。",
                         size=Type.TINY,
                         color=c.muted,
                     ),

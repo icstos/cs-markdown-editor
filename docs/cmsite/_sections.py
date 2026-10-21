@@ -34,6 +34,7 @@ from cmsite._ui import (
     icon,
     inset_panel,
     primary_button,
+    rich,
     section,
     section_header,
     stat,
@@ -281,8 +282,8 @@ def features_section(width: int) -> ft.Control:
         width,
         section_header(
             "01 / 特性",
-            "为「写」打磨的每一个细节",
-            "下面每一条都对应仓库里可运行、有测试的实现——没有展望，也没有「即将支持」。",
+            "细节决定写得顺不顺",
+            "九项都已实现，也都有测试。",
             width=width,
         ),
         grid(
@@ -331,7 +332,7 @@ def _blocks_and_inline(width: int, c) -> ft.Control:
                             spacing=10,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
-                                ft.Container(width=56, content=tag(b.syntax)),
+                                ft.Container(width=56, content=tag(b.syntax, plain=True)),
                                 ft.Container(width=84, content=text(b.name, size=Type.TINY)),
                                 ft.Container(
                                     expand=True,
@@ -355,8 +356,8 @@ def _blocks_and_inline(width: int, c) -> ft.Control:
                 text("行内格式", size=Type.H4, weight=ft.FontWeight.W_600),
             ],
         ),
-        text("十种语法可自由组合，例如 ***加粗斜体***。选中文字按快捷键即包裹并保持选区，"
-             "再按一次取消。", size=Type.SMALL, color=c.muted),
+        text("十种能自由组合。选中文字按快捷键包上标记，再按一次取消。",
+             size=Type.SMALL, color=c.muted),
         ft.Column(
             spacing=6,
             tight=True,
@@ -366,7 +367,7 @@ def _blocks_and_inline(width: int, c) -> ft.Control:
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
                         ft.Container(width=64, content=text(name, size=Type.TINY)),
-                        tag(syntax),
+                        tag(syntax, plain=True),
                         ft.Container(expand=True),
                         text(hint, size=Type.TINY, color=c.muted),
                     ],
@@ -405,9 +406,8 @@ def architecture_section(width: int) -> ft.Control:
         width,
         section_header(
             "04 / 架构",
-            "九层单向依赖，数据只朝一个方向流",
-            "上层可以调用下层，下层不知道上层的存在。这条约束让每个模块都能被单独测试，"
-            "也让「界面只由状态驱动」在结构上成为必然。",
+            "九层，数据只往下走",
+            "上层能调用下层，下层不知道上层存在。模块因此能单独测，界面也只能跟着状态走。",
             accent=c.heading_colors.get(6, c.link),
             width=width,
         ),
@@ -481,7 +481,7 @@ def _decisions(width: int, c) -> ft.Control:
                 [
                     card(
                         text(d.title, size=Type.H4, weight=ft.FontWeight.W_600),
-                        text(d.body, size=Type.SMALL, color=c.muted),
+                        rich(d.body, size=Type.SMALL, color=c.muted),
                         pad=16,
                     )
                     for d in K.ARCH_DECISIONS
@@ -496,7 +496,16 @@ def _scale_chart(width: int, c) -> ft.Control:
 
     线性刻度下 tests/（26,878 行）会把其余八层压成一条线；对数让数量级差异
     可见，同时保证每层都读得出来。
+
+    两条经验：
+    - 条宽用**像素**算，不要给百分比字符串。Flet 1.0.4 里 `width="43%"`
+      不会解析成父级比例，填充条会缩成 0，九行看起来一样长（等于没有图）。
+    - 图宽封顶 760：横条拉到 1120 只会让「更长的更厉害」这种错觉更强，
+      而这里读的是数量级。
     """
+    chart_w = min(width, 760)
+    # 74 层名 + 112 读数 + 两侧各 10 的间距
+    bar_space = max(chart_w - 206, 60)
     peak = math.log10(max(lines for _, _, lines in K.LAYER_STATS) + 1)
     rows: list[ft.Control] = []
     for name, files, lines in K.LAYER_STATS:
@@ -508,12 +517,12 @@ def _scale_chart(width: int, c) -> ft.Control:
                 controls=[
                     ft.Container(width=74, content=text(name, size=Type.TINY, mono=True)),
                     ft.Container(
-                        expand=True,
+                        width=bar_space,
                         height=8,
                         bgcolor=tint(c.border, 0.45),
                         border_radius=4,
                         content=ft.Container(
-                            width=f"{max(ratio * 100, 2):.1f}%",
+                            width=int(max(ratio * bar_space, 3)),
                             height=8,
                             border_radius=4,
                             bgcolor=c.link,
@@ -526,14 +535,17 @@ def _scale_chart(width: int, c) -> ft.Control:
                 ],
             )
         )
-    return ft.Column(
-        spacing=10,
-        tight=True,
-        controls=[
-            text("工程规模", size=Type.H3, weight=ft.FontWeight.W_600),
-            text("按层统计的 Python 行数与文件数（对数刻度，不含构建产物）。", size=Type.SMALL, color=c.muted),
-            *rows,
-        ],
+    return ft.Container(
+        width=chart_w,
+        content=ft.Column(
+            spacing=10,
+            tight=True,
+            controls=[
+                text("工程规模", size=Type.H3, weight=ft.FontWeight.W_600),
+                text("各层代码量，对数刻度，不含构建产物。", size=Type.SMALL, color=c.muted),
+                *rows,
+            ],
+        ),
     )
 
 
@@ -547,7 +559,7 @@ def _rules(width: int, c) -> ft.Control:
                 text("架构红线", size=Type.H4, weight=ft.FontWeight.W_600),
             ],
         ),
-        text("下面几条写在仓库的 AGENT.md 里，是这个项目不腐化的真正原因。", size=Type.SMALL, color=c.muted),
+        text("写在仓库的 AGENT.md 里，改代码之前对一遍。", size=Type.SMALL, color=c.muted),
         *[
             ft.Row(
                 spacing=8,
@@ -617,7 +629,7 @@ def about_section(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control
         width,
         section_header(
             "05 / 关于",
-            "一个「先把基础操作做对」的编辑器",
+            "先把基础操作做对",
             "",
             width=width,
         ),

@@ -271,7 +271,11 @@ def icon_tile(name: str, tone: str, size: int = 36, glyph: int = 19) -> ft.Contr
 
 
 def feature_card(feature: K.Feature, tone: str | None = None) -> ft.Control:
-    """特性卡片：图标 + 标题 + 一句话 + 要点。"""
+    """特性卡片：图标 + 标题 + 一句重点 + 细节。
+
+    层级刻意拉开：标题最重（16 / W600），重点句用正文色（不是灰），细节才压灰。
+    之前整卡都是灰的，九张并排看过去没有落点。
+    """
     c = current_colors()
     accent = tone or c.link
     return card(
@@ -286,11 +290,18 @@ def feature_card(feature: K.Feature, tone: str | None = None) -> ft.Control:
                 ),
             ],
         ),
-        ft.Container(content=rich(feature.summary, size=Type.SMALL, color=c.muted)),
+        ft.Container(
+            content=rich(
+                feature.summary,
+                size=Type.SMALL + 0.5,
+                color=c.text,
+                weight=ft.FontWeight.W_500,
+            )
+        ),
         *(
             [
                 ft.Column(
-                    spacing=6,
+                    spacing=5,
                     tight=True,
                     controls=[_bullet(point, c) for point in feature.points],
                 )
@@ -298,6 +309,7 @@ def feature_card(feature: K.Feature, tone: str | None = None) -> ft.Control:
             if feature.points
             else []
         ),
+        spacing=12,
     )
 
 
@@ -342,14 +354,18 @@ def badge(label: str, tone: str | None = None, filled: bool = False) -> ft.Contr
     )
 
 
-def tag(label: str) -> ft.Control:
-    """等宽小标签（语法片段、模块名）。"""
+def tag(label: str, plain: bool = False) -> ft.Control:
+    """等宽小标签（语法片段、模块名）。
+
+    `plain=True` 走中性色：像块级类型表那样十行连排时，代码风格的红底会连成
+    一条色带，把「说明」这一列压下去。红色只该出现在真正需要被注意的少数位置。
+    """
     c = current_colors()
     return ft.Container(
         padding=ft.Padding.symmetric(horizontal=6, vertical=2),
         border_radius=Radius.SM,
-        bgcolor=c.code_bg,
-        content=text(label, size=Type.TINY, color=c.code_fg, mono=True),
+        bgcolor=tint(c.text, 0.045) if plain else c.code_bg,
+        content=text(label, size=Type.TINY, color=c.text if plain else c.code_fg, mono=True),
     )
 
 

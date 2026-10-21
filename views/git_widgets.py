@@ -20,7 +20,7 @@ from collections.abc import Callable
 import flet as ft
 
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, git_status_color
-from views._widgets import _empty_hint
+from views._widgets import _empty_hint, _search_box
 from views.native_scope import DOMAIN_GIT_COMMIT, native_focus_hooks
 
 __all__ = [
@@ -294,25 +294,21 @@ def filter_box(
     native_ref: ft.Ref | None = None,
     on_submit: Callable[[], None] | None = None,
 ) -> ft.Control:
-    """面板内过滤输入框（下划线紧凑样式，与侧边栏搜索框一致）。
+    """面板内过滤输入框（与侧边栏搜索框同一款外壳：圆角填底 + 聚焦描边）。
 
     ``on_submit`` 非空时回车触发（历史筛选「回车生效」）；
     ``native_ref`` 非空时挂 on_focus/on_blur：焦点在本输入框期间
     KeyDispatcher 不把文档编辑快捷键作用到编辑器（焦点域门控）。
     """
-    focus_h, blur_h = native_focus_hooks(native_ref)
-    return ft.TextField(
-        value=value,
-        hint_text=placeholder,
-        dense=True,
-        border=ft.InputBorder.UNDERLINE,
-        text_size=12,
-        content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.LG),
-        on_change=lambda e: on_change(e.control.value or ""),
-        on_focus=focus_h,
-        on_blur=blur_h,
-        on_submit=(lambda e: on_submit()) if on_submit else None,
+    return _search_box(
+        value,
+        on_change,
+        placeholder,
+        c,
         ref=ref,
+        native_ref=native_ref,
+        icon=None,
+        on_submit=on_submit,
     )
 
 

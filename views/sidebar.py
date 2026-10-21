@@ -51,11 +51,12 @@ from services.search import (
     search_in_file,
 )
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors
-from views.native_scope import native_focus_hooks
 from views._widgets import (
+    _compact_btn,
     _drag_feedback,
     _empty_hint,
     _list_item,
+    _option_pill,
     _search_box,
     _wrap_blank_context_menu,
     _wrap_context_menu,
@@ -539,41 +540,16 @@ def _render_files_panel(
 def _option_toggle_text(
     label: str, tooltip: str, active: bool, on_toggle: Callable[[bool], None], c,
 ) -> ft.Control:
-    """文本切换按钮（Aa / ab / .*），active 时主题色半透明背景。
-
-    VSCode 风格：3 个文本选项用 Text-based toggle（避免图标歧义），
-    active 时 c.link 半透明背景 + c.link 文字，与 _panel_tab 风格一致。
-    """
-    return ft.Container(
-        bgcolor=ft.Colors.with_opacity(0.15, c.link) if active else None,
-        border_radius=Radius.SM,
-        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
-        content=ft.Text(
-            label, size=11, weight=ft.FontWeight.W_600,
-            color=c.link if active else c.muted,
-            font_family=FONT_MONO,
-        ),
-        on_click=lambda e: on_toggle(not active),
-        ink=True,
-        tooltip=tooltip,
-    )
+    """文本切换按钮（Aa / ab / .*）：与浮动搜索条共用同一款 pill。"""
+    return _option_pill(label, tooltip, active, on_toggle, c)
 
 
 def _option_toggle_icon(
     icon: str, tooltip: str, active: bool, on_toggle: Callable[[bool], None], c,
 ) -> ft.Control:
-    """图标切换按钮（文件夹范围），active 时主题色半透明背景。"""
-    return ft.IconButton(
-        icon=icon,
-        tooltip=tooltip,
-        icon_size=14,
-        on_click=lambda e: on_toggle(not active),
-        style=ft.ButtonStyle(
-            color=c.link if active else c.muted,
-            bgcolor=ft.Colors.with_opacity(0.15, c.link) if active else None,
-            padding=Spacing.XS,
-            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
-        ),
+    """图标切换按钮（文件夹范围），与文本 pill 同高同圆角。"""
+    return _option_pill(
+        "", tooltip, active, on_toggle, c, icon=icon,
     )
 
 
@@ -595,22 +571,26 @@ def _render_search_toolbar(
     ]
     if on_prev is not None:
         right_controls.append(
-            ft.IconButton(
-                icon=ft.Icons.KEYBOARD_ARROW_UP,
-                tooltip="上一个匹配 (Shift+Enter)",
+            _compact_btn(
+                ft.Icons.KEYBOARD_ARROW_UP,
+                "上一个匹配 (Shift+Enter)",
+                lambda e: on_prev(),
+                c,
                 icon_size=14,
-                on_click=lambda e: on_prev(),
-                style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
+                box=22,
+                radius=Radius.SM,
             )
         )
     if on_next is not None:
         right_controls.append(
-            ft.IconButton(
-                icon=ft.Icons.KEYBOARD_ARROW_DOWN,
-                tooltip="下一个匹配 (Enter)",
+            _compact_btn(
+                ft.Icons.KEYBOARD_ARROW_DOWN,
+                "下一个匹配 (Enter)",
+                lambda e: on_next(),
+                c,
                 icon_size=14,
-                on_click=lambda e: on_next(),
-                style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
+                box=22,
+                radius=Radius.SM,
             )
         )
     return ft.Container(
@@ -637,6 +617,7 @@ def _render_search_toolbar(
                 *right_controls,
             ],
             spacing=Spacing.XS,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )
 
@@ -659,52 +640,44 @@ def _render_replace_bar(
     """
     if not replace_expanded:
         return ft.Container(height=0)
-    focus_h, blur_h = native_focus_hooks(native_ref)
     return ft.Container(
         padding=ft.Padding.only(
-            left=Spacing.XL + 28,  # 对齐搜索框（减去 chevron 宽度）
+            # 与搜索框左缘对齐：外壳左内边距 8 + chevron 20 + 行间距 4
+            left=Spacing.LG + 20 + Spacing.SM,
             right=Spacing.LG,
-            top=Spacing.XS,
-            bottom=Spacing.XS,
+            top=Spacing.SM,
+            bottom=0,
         ),
         content=ft.Row(
             controls=[
-                ft.TextField(
-                    value=replace_text,
-                    hint_text="替换为…",
-                    dense=True,
-                    border=ft.InputBorder.UNDERLINE,
-                    text_size=12,
-                    content_padding=ft.Padding.symmetric(
-                        horizontal=Spacing.SM, vertical=Spacing.LG
-                    ),
-                    on_change=lambda e: set_replace_text(e.control.value or ""),
-                    on_focus=focus_h,
-                    on_blur=blur_h,
+                ft.Container(
                     expand=True,
-                ),
-                ft.IconButton(
-                    icon=ft.Icons.FIND_REPLACE,
-                    tooltip="替换当前 (Alt+Enter)",
-                    icon_size=14,
-                    on_click=lambda e: on_replace_current(),
-                    style=ft.ButtonStyle(
-                        color=c.link if has_query else c.muted,
-                        padding=Spacing.XS,
+                    content=_search_box(
+                        replace_text,
+                        lambda v: set_replace_text(v),
+                        "替换为…",
+                        c,
+                        native_ref=native_ref,
+                        icon=None,
                     ),
                 ),
-                ft.IconButton(
-                    icon=ft.Icons.AUTORENEW_OUTLINED,
-                    tooltip="全部替换 (Ctrl+Alt+Enter)",
-                    icon_size=14,
-                    on_click=lambda e: on_replace_all(),
-                    style=ft.ButtonStyle(
-                        color=c.link if has_query else c.muted,
-                        padding=Spacing.XS,
-                    ),
+                _compact_btn(
+                    ft.Icons.FIND_REPLACE,
+                    "替换当前 (Alt+Enter)",
+                    lambda e: on_replace_current(),
+                    c,
+                    disabled=not has_query,
+                ),
+                _compact_btn(
+                    ft.Icons.AUTORENEW_OUTLINED,
+                    "全部替换 (Ctrl+Alt+Enter)",
+                    lambda e: on_replace_all(),
+                    c,
+                    disabled=not has_query,
                 ),
             ],
-            spacing=Spacing.XS,
+            spacing=Spacing.SM,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )
 
@@ -755,25 +728,35 @@ def _render_search_panel(
     _on_toggle_replace = on_set_replace_expanded or (lambda v: None)
     search_row = ft.Row(
         controls=[
-            ft.IconButton(
-                icon=_chevron,
-                tooltip="展开/收起替换栏 (Ctrl+H)",
+            _compact_btn(
+                _chevron,
+                "展开/收起替换栏 (Ctrl+H)",
+                lambda e: _on_toggle_replace(not replace_expanded),
+                c,
                 icon_size=16,
-                on_click=lambda e: _on_toggle_replace(not replace_expanded),
-                style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
+                box=20,
+                radius=Radius.SM,
             ),
-            _search_box(
-                search_query, set_search_query, placeholder, c,
-                ref=search_field_ref, native_ref=native_ref,
+            ft.Container(
+                expand=True,
+                content=_search_box(
+                    search_query, set_search_query, placeholder, c,
+                    ref=search_field_ref, native_ref=native_ref,
+                ),
             ),
         ],
-        spacing=Spacing.XS,
+        spacing=Spacing.SM,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
     # 头部：搜索框 + 替换栏 + 选项工具栏
     header = [
         ft.Container(
-            padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+            # 搜索框与下方的选项行属于同一组：贴紧一点（bottom=0），
+            # 与结果列表之间靠选项行自己的 padding 拉开留白。
+            padding=ft.Padding.only(
+                left=Spacing.LG, right=Spacing.LG, top=Spacing.SM, bottom=0
+            ),
             content=search_row,
         ),
         _render_replace_bar(

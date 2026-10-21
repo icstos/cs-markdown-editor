@@ -1,12 +1,17 @@
-"""文档内搜索浮层（悬浮于编辑区右上角的小尺寸紧凑搜索条）。
+"""文档内搜索浮层（悬浮于编辑区右上角的搜索条）。
 
 Ctrl+F 唤起的「当前文档搜索」UI：固定悬浮、不遮挡编辑主体、不阻塞编辑器输入。
 面板内容（自左向右）：
 - 搜索输入框（自动聚焦，可直接打字）
 - 大小写开关（Aa） / 正则开关（.*）
+- 计数：实时「当前 / 总数」，无匹配显示「无匹配」
 - 上一个 / 下一个按钮（循环跳转，Enter / Shift+Enter 等价）
-- 计数文本：实时「当前第 N / 共 M 个匹配」，无匹配显示「0/0 未找到结果」
 - 关闭按钮（Esc 等价）
+
+视觉：整条面板**就是一个搜索框**（填底 + 细边 + 大圆角 + 悬浮阴影），聚焦时
+外框与放大镜一起转主题色并加一圈 focus ring —— 内部不再套第二层描边，避免
+「框里还有框」的碎片感。侧边栏搜索框（views/_widgets._search_box）复用同一套
+外壳与紧凑按钮（_search_shell / _compact_btn / _option_pill）。
 
 设计约束：
 - 纯受控组件（props 驱动），不持有业务状态；
@@ -24,12 +29,24 @@ import flet as ft
 from styles import (
     FONT_MAIN,
     FONT_MONO,
+    Elevation,
     Radius,
     Spacing,
     _current_colors,
     card_shadow,
+    focus_ring,
 )
+from views._widgets import _compact_btn, _option_pill
 from views.native_scope import native_focus_hooks
+
+# 输入区宽度（含放大镜）：搜索词通常不长，留够一行可见即可；再宽就会把
+# 计数与导航挤到面板边缘以外。
+_FIELD_W = 190
+# 计数区固定宽度：结果数变化时不改变面板宽度（否则整条搜索结果一亮一暗地抖）
+_COUNT_W = 58
+# 面板高度（逻辑 px）：比侧边栏搜索框（30）高一档，因为它是浮层主角，
+# 也需要容下 22px 的选项 pill 与 24px 的图标按钮。
+_PANEL_H = 40
 
 
 @ft.component
@@ -55,6 +72,7 @@ def FloatingSearch(
     c = _current_colors()
     is_dark = theme_mode == ft.ThemeMode.DARK
     field_ref = ft.use_ref(None)
+    focused, set_focused = ft.use_state(False)
 
     # 唤起后自动聚焦搜索输入框（open 变化或 focus_seq 递增时触发）
     async def _focus_field():
@@ -67,97 +85,143 @@ def FloatingSearch(
 
     ft.use_effect(_focus_field, [open, focus_seq])
 
-    def _text_toggle(label: str, tooltip: str, active: bool, on_toggle) -> ft.Control:
-        """文本切换按钮（Aa / .*），active 时主题色半透明背景。"""
-        return ft.Container(
-            bgcolor=ft.Colors.with_opacity(0.15, c.link) if active else None,
-            border_radius=Radius.SM,
-            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
-            content=ft.Text(
-                label,
-                size=11,
-                weight=ft.FontWeight.W_600,
-                color=c.link if active else c.muted,
-                font_family=FONT_MONO,
-            ),
-            on_click=lambda e: on_toggle(not active),
-            ink=True,
-            tooltip=tooltip,
-        )
-
-    def _nav_btn(icon: str, tooltip: str, on_click, disabled: bool) -> ft.Control:
-        return ft.IconButton(
-            icon=icon,
-            tooltip=tooltip,
-            icon_size=14,
-            disabled=disabled,
-            on_click=on_click,
-            style=ft.ButtonStyle(color=c.muted, padding=Spacing.XS),
-        )
-
-    # 计数文本：有匹配「当前第 N / 共 M 个匹配」，无匹配「0/0 未找到结果」
-    if total > 0:
-        count_label = f"第 {current_idx + 1} / 共 {total} 个匹配"
-        count_color = c.text
-    else:
-        count_label = "0/0 未找到结果"
-        count_color = c.muted
-
     focus_h, blur_h = native_focus_hooks(native_input_ref)
+
+    def _on_focus(e=None):
+        set_focused(True)
+        if focus_h is not None:
+            focus_h(e)
+
+    def _on_blur(e=None):
+        set_focused(False)
+        if blur_h is not None:
+            blur_h(e)
+
+    def _divider() -> ft.Control:
+        """组间分隔：1px 细线，比边框更弱，只切断节奏不制造格子。"""
+        return ft.Container(
+            width=1,
+            height=18,
+            bgcolor=ft.Colors.with_opacity(0.8, c.border),
+        )
+
+    def _count() -> ft.Control:
+        """计数区：数字用等宽体（跳动不抖），无匹配时才出现中文提示。"""
+        if not query.strip():
+            body: ft.Control = ft.Container()
+        elif total > 0:
+            body = ft.Row(
+                controls=[
+                    ft.Text(
+                        str(current_idx + 1),
+                        size=12,
+                        weight=ft.FontWeight.W_600,
+                        color=c.text,
+                        font_family=FONT_MONO,
+                        max_lines=1,
+                    ),
+                    ft.Text(
+                        f"/ {total}",
+                        size=11,
+                        color=c.muted,
+                        font_family=FONT_MONO,
+                        max_lines=1,
+                    ),
+                ],
+                spacing=Spacing.SM,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        else:
+            body = ft.Text(
+                "无匹配",
+                size=11,
+                color=c.muted,
+                font_family=FONT_MAIN,
+                max_lines=1,
+            )
+        return ft.Container(
+            width=_COUNT_W,
+            alignment=ft.Alignment.CENTER_RIGHT,
+            content=body,
+        )
+
+    has_nav = total > 0
 
     return ft.Container(
         visible=open,
-        bgcolor=ft.Colors.with_opacity(0.96, c.toolbar_bg),
-        border=ft.Border.all(1, c.border),
-        border_radius=Radius.LG,
-        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
-        shadow=card_shadow(2, is_dark=is_dark),  # 面板悬浮层次
+        height=_PANEL_H,
+        bgcolor=c.surface,
+        border=ft.Border.all(1, c.link if focused else c.border),
+        border_radius=Radius.XL,
+        padding=ft.Padding.symmetric(horizontal=14, vertical=0),
+        shadow=card_shadow(Elevation.MEDIUM, is_dark=is_dark)
+        + (focus_ring(c.link, is_dark) if focused else []),
+        alignment=ft.Alignment.CENTER_LEFT,
         content=ft.Row(
             controls=[
-                ft.TextField(
-                    ref=field_ref,
-                    value=query,
-                    hint_text="搜索当前文档…",
-                    prefix_icon=ft.Icons.SEARCH,
-                    dense=True,
-                    border=ft.NoInputBorder(),
-                    text_size=13,
-                    text_style=ft.TextStyle(font_family=FONT_MAIN),
-                    content_padding=ft.Padding.symmetric(
-                        horizontal=Spacing.SM, vertical=Spacing.LG
+                # 输入区：放大镜 + 无边框输入框（底色/描边一律由外壳给）
+                ft.Container(
+                    width=_FIELD_W,
+                    content=ft.Row(
+                        controls=[
+                            ft.Icon(
+                                ft.Icons.SEARCH,
+                                size=15,
+                                color=c.link if focused else c.muted,
+                            ),
+                            ft.TextField(
+                                ref=field_ref,
+                                value=query,
+                                hint_text="搜索当前文档…",
+                                hint_style=ft.TextStyle(
+                                    size=13, color=c.muted, font_family=FONT_MAIN
+                                ),
+                                dense=True,
+                                border=ft.NoInputBorder(),
+                                filled=False,
+                                text_size=13,
+                                text_style=ft.TextStyle(
+                                    size=13, color=c.text, font_family=FONT_MAIN
+                                ),
+                                content_padding=ft.Padding.symmetric(
+                                    horizontal=0, vertical=Spacing.LG
+                                ),
+                                cursor_color=c.link,
+                                on_change=lambda e: set_query(e.control.value or ""),
+                                on_focus=_on_focus,
+                                on_blur=_on_blur,
+                                expand=True,
+                            ),
+                        ],
+                        spacing=Spacing.MD,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    on_change=lambda e: set_query(e.control.value or ""),
-                    on_focus=focus_h,
-                    on_blur=blur_h,
-                    width=200,
                 ),
-                ft.Container(width=1, height=18, bgcolor=c.border),
-                _text_toggle("Aa", "区分大小写", case_on, on_toggle_case),
-                _text_toggle(".*", "正则表达式", regex_on, on_toggle_regex),
-                ft.Container(width=1, height=18, bgcolor=c.border),
-                _nav_btn(
+                _divider(),
+                _option_pill("Aa", "区分大小写", case_on, on_toggle_case, c),
+                _option_pill(".*", "正则表达式", regex_on, on_toggle_regex, c),
+                _divider(),
+                _count(),
+                _compact_btn(
                     ft.Icons.KEYBOARD_ARROW_UP,
                     "上一个 (Shift+Enter)",
                     lambda e: on_prev(),
-                    disabled=total == 0,
+                    c,
+                    box=24,
+                    disabled=not has_nav,
                 ),
-                _nav_btn(
+                _compact_btn(
                     ft.Icons.KEYBOARD_ARROW_DOWN,
                     "下一个 (Enter)",
                     lambda e: on_next(),
-                    disabled=total == 0,
+                    c,
+                    box=24,
+                    disabled=not has_nav,
                 ),
-                ft.Text(
-                    count_label,
-                    size=11,
-                    color=count_color,
-                    font_family=FONT_MONO,
-                    max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                    width=118,
-                ),
-                _nav_btn(
-                    ft.Icons.CLOSE, "关闭 (Esc)", lambda e: on_close(), disabled=False
+                _divider(),
+                _compact_btn(
+                    ft.Icons.CLOSE, "关闭 (Esc)", lambda e: on_close(), c, box=24
                 ),
             ],
             spacing=Spacing.SM,

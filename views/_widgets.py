@@ -10,10 +10,8 @@ from collections.abc import Callable
 
 import flet as ft
 
-from styles import FONT_MAIN, Radius, Spacing
+from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, focus_ring
 from views.native_scope import native_focus_hooks
-
-
 
 # ---- 通用控件工厂 ----
 
@@ -380,6 +378,112 @@ def _wrap_row_gesture(row: ft.Control, key: str | None = None) -> ft.GestureDete
     )
 
 
+def _search_shell(
+    content: ft.Control,
+    c,
+    *,
+    focused: bool = False,
+    radius: int = Radius.LG,
+    height: int | None = None,
+    bgcolor: str | None = None,
+    shadow: list[ft.BoxShadow] | None = None,
+    padding: ft.Padding | None = None,
+) -> ft.Container:
+    """搜索框外壳（全应用统一）：填底 + 1px 细边 + 圆角，聚焦时整体换主题色。
+
+    **单一着色来源**：输入框自身 `border=None`、`filled=False`，底色与描边只
+    由这一层 `Container` 给 —— 否则内层 Material 描边会多出一圈深浅不一的线，
+    与外壳的圆角对不上（本项目表头/输入框一贯如此，见 views/table_view.py）。
+    """
+    border_color = c.link if focused else c.border
+    # 常态用略深的填充底（在白色面板里"立"起来），聚焦时提亮到 surface：
+    # 底色 + 描边 + focus ring 三者同时变化，焦点位置一眼可见。
+    fill = bgcolor if bgcolor is not None else (
+        c.surface if focused else c.input_bg
+    )
+    return ft.Container(
+        height=height,
+        bgcolor=fill,
+        border=ft.Border.all(1, border_color),
+        border_radius=radius,
+        padding=padding or ft.Padding.symmetric(horizontal=Spacing.LG),
+        shadow=(shadow or []) + (focus_ring(c.link) if focused else []),
+        alignment=ft.Alignment.CENTER_LEFT,
+        content=content,
+    )
+
+
+def _compact_btn(
+    icon: str,
+    tooltip: str,
+    on_click: Callable | None,
+    c,
+    *,
+    icon_size: int = 15,
+    box: int = 26,
+    disabled: bool = False,
+    active: bool = False,
+    radius: int = Radius.MD,
+) -> ft.Control:
+    """紧凑图标按钮（搜索条 / 选项行专用）。
+
+    不用 `ft.IconButton`：Material 的最小点击区 40×40 压不动，会把所在行顶高
+    一圈（本项目顶栏、工具栏已因它踩过多次）。固定 `box` 见方的
+    `Container(ink=True)` 才有确定的行高。
+    """
+    color = c.link if active else c.muted
+    if disabled:
+        color = ft.Colors.with_opacity(0.38, c.muted)
+    return ft.Container(
+        width=box,
+        height=box,
+        border_radius=radius,
+        bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
+        alignment=ft.Alignment.CENTER,
+        tooltip=tooltip,
+        ink=not disabled,
+        on_click=None if disabled else on_click,
+        content=ft.Icon(icon, size=icon_size, color=color),
+    )
+
+
+def _option_pill(
+    label: str,
+    tooltip: str,
+    active: bool,
+    on_toggle: Callable[[bool], None],
+    c,
+    *,
+    height: int = 22,
+    icon: str | None = None,
+) -> ft.Control:
+    """搜索选项开关（Aa / ab / .* / 文件夹）：激活时主题色淡底 + 主题色文字。"""
+    color = c.link if active else c.muted
+    child = (
+        ft.Icon(icon, size=13, color=color)
+        if icon is not None
+        else ft.Text(
+            label,
+            size=11,
+            weight=ft.FontWeight.W_600,
+            color=color,
+            font_family=FONT_MONO,
+        )
+    )
+    return ft.Container(
+        height=height,
+        border_radius=Radius.SM,
+        padding=ft.Padding.symmetric(horizontal=Spacing.MD),
+        bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
+        alignment=ft.Alignment.CENTER,
+        ink=True,
+        tooltip=tooltip,
+        on_click=lambda e: on_toggle(not active),
+        content=child,
+    )
+
+
+@ft.component
 def _search_box(
     value: str,
     on_change: Callable[[str], None],
@@ -387,26 +491,76 @@ def _search_box(
     c,
     ref: ft.Ref | None = None,
     native_ref: ft.Ref | None = None,
+    *,
+    icon: str | None = ft.Icons.SEARCH,
+    height: int = 30,
+    on_submit: Callable[[], None] | None = None,
 ) -> ft.Control:
-    """侧边栏搜索/过滤输入框（下划线边框，紧凑）。
+    """侧边栏搜索 / 过滤 / 替换输入框（圆角填底 + 聚焦描边，全应用同一语言）。
 
     ref：外部持有输入框控件引用，供 Ctrl+F 聚焦（App → Sidebar 桥接）。
     native_ref：外部输入焦点域 ref（非 None 时挂 on_focus/on_blur 跟踪，
     让 KeyDispatcher 把焦点在本输入框期间的按键与编辑器隔离）。
+    icon：左侧前置图标；替换框传 None（不需要放大镜，图标会误导为"再搜一次"）。
+    height：外壳高度。替换框与搜索框同高（30），保持同一个面板里的两条输入对齐。
+    on_submit：回车回调（Git 面板的「回车生效」筛选需要）。
+
+    组件化的原因：聚焦态需要重渲染（外壳描边 + 图标转主题色），普通工厂
+    函数没有 hook 上下文。对外签名向后兼容，调用点无需改动。
     """
+    focused, set_focused = ft.use_state(False)
     focus_h, blur_h = native_focus_hooks(native_ref)
-    return ft.TextField(
+
+    def _on_focus(e=None):
+        set_focused(True)
+        if focus_h is not None:
+            focus_h(e)
+
+    def _on_blur(e=None):
+        set_focused(False)
+        if blur_h is not None:
+            blur_h(e)
+
+    field = ft.TextField(
         value=value,
         hint_text=placeholder,
-        prefix_icon=ft.Icons.SEARCH,
+        hint_style=ft.TextStyle(size=12, color=c.muted, font_family=FONT_MAIN),
         dense=True,
-        border=ft.InputBorder.UNDERLINE,
+        border=ft.NoInputBorder(),
+        filled=False,
         text_size=12,
-        content_padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+        text_style=ft.TextStyle(size=12, color=c.text, font_family=FONT_MAIN),
+        # 行首内缩由外壳的 padding 统一给：`filled=True` 会自带约 4 逻辑 px 的
+        # 额外内缩（Material 属性），这里保持 filled=False + 0 内边距。
+        content_padding=ft.Padding.symmetric(horizontal=0, vertical=Spacing.SM),
+        cursor_color=c.link,
         on_change=lambda e: on_change(e.control.value or ""),
-        on_focus=focus_h,
-        on_blur=blur_h,
+        on_focus=_on_focus,
+        on_blur=_on_blur,
+        on_submit=(lambda e: on_submit()) if on_submit is not None else None,
         ref=ref,
+        expand=True,
+    )
+
+    controls: list[ft.Control] = []
+    if icon is not None:
+        controls.append(
+            ft.Icon(icon, size=14, color=c.link if focused else c.muted)
+        )
+    controls.append(field)
+
+    return _search_shell(
+        ft.Row(
+            controls=controls,
+            spacing=Spacing.MD,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        c,
+        focused=focused,
+        height=height,
+        padding=ft.Padding.only(
+            left=Spacing.LG, right=Spacing.MD, top=0, bottom=0
+        ),
     )
 
 

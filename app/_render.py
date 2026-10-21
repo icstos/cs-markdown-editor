@@ -133,8 +133,10 @@ def _attach_doc_search_overlay(content: ft.Control, ctx) -> ft.Control:
             content,
             ft.Container(
                 content=overlay,
-                right=14,
-                top=8,
+                # 浮层与编辑区右上角留出一档呼吸间距（14/8 → 18/12）：太贴边会
+                # 像"贴在标签栏下的一条工具带"，而不是浮在画布上的搜索框。
+                right=18,
+                top=12,
             ),
         ],
         expand=True,

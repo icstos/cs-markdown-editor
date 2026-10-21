@@ -19,8 +19,8 @@ import flet as ft
 
 from models.document import (
     BlockType,
-    SegType,
     Segment,
+    SegType,
 )
 
 # 字体族。两者都是**随包分发**的本地字体（`assets/fonts/`），在 `main.py` 里经
@@ -77,6 +77,10 @@ class Colors:
     active_bg: str  # 正在编辑的段淡黄底
     toolbar_bg: str
     border: str
+    # 输入框填充底（侧边栏搜索 / 替换 / 过滤框）：比 surface 略深一档，
+    # 让"可输入"这块在自己的面板里立起来；不能直接用 bg —— 亮色下 #FAFBFC
+    # 与侧栏的 #FFFFFF 几乎同色，输入框会显得"虚"，只剩一圈淡边框。
+    input_bg: str = "#F2F4F7"
     highlight_bg: str = "#FBF2A8"  # ==高亮== 背景（Typora 式柔和荧光笔黄）
     supsub_fg: str = "#8A919E"  # 上下标文字色
     # 搜索匹配段高亮（区别于 ==高亮== 语法，独立 token 便于单独调色）
@@ -190,6 +194,7 @@ _DARK = Colors(
     active_bg="#3A2F1A",     # 暗琥珀激活态
     toolbar_bg="#1A1D22",    # 工具栏底
     border="#2F353D",        # 偏暖边框
+    input_bg="#22262E",      # 输入框填充底（略亮于 surface，暗底上才看得出）
     search_active_bg="#A67B12",  # 激活匹配：暗底上的琥珀橙黄（比普通匹配 #5D4E1A 醒目）
     highlight_bg="#5D4E1A",  # 暗琥珀高亮（Typora 式，与 search_match_bg 一致更鲜明）
     search_match_bg="#5D4E1A",  # 暗琥珀搜索匹配
@@ -540,6 +545,23 @@ def card_shadow(
 def hairline_border(color: str, opacity: float = 1.0) -> ft.BorderSide:
     """1px 细线边框（表格分割线、弱化边框）。"""
     return ft.BorderSide(1, ft.Colors.with_opacity(opacity, color))
+
+
+def focus_ring(color: str, is_dark: bool = False) -> list[ft.BoxShadow]:
+    """输入框聚焦时的外扩描边（focus ring）。
+
+    用 `spread_radius` 的**实心**外扩而不是模糊光晕：模糊光晕在浅色底上会糊成
+    一团灰，实心 1.5~2px 外扩读起来就是"多了一圈描边"，与 1px 边框同色系，
+    层次清楚又不喧哗。暗色底需要更高的不透明度才看得见。
+    """
+    return [
+        ft.BoxShadow(
+            spread_radius=2,
+            blur_radius=0,
+            color=ft.Colors.with_opacity(0.45 if is_dark else 0.18, color),
+            offset=ft.Offset(0, 0),
+        )
+    ]
 
 
 def accent_border(color: str, width: int = 2) -> ft.BorderSide:

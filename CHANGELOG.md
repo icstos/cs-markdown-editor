@@ -4,6 +4,47 @@
 
 ## [未发布]
 
+### 2026-10-21 新增：任意文本文件（.txt / .py / .cpp …）按代码块渲染
+
+诉求原文：「增加对所有文本文档格式（.txt、.py、.C++等）的支持，基于Markdown的代码块语法形式渲染」。
+
+#### 做法：整篇 = 一个代码块（复用代码块岛屿，而不是另开一条渲染路径）
+
+| 环节 | 落点 | 关键决定 |
+|---|---|---|
+| 类型判定 | `utils/text_formats.py`（新增，叶子层） | 扩展名表 ~90 条 + 固定文件名表（Makefile/Dockerfile…）；`lang_for_path` 用 `None`/`""` 区分「不支持」与「纯文本无分词」 |
+| 装载 | `services/document_loader.py`（新增） | 三个打开入口（Ctrl+O / 文件树 / 外部修改重载）共用**同一条**装载规则，避免"重载后 .py 变回 Markdown 行" |
+| 解析 | `parser/plain.py`（新增） | `Document.plain=True` + 单行 `BlockType.CODE`，`line.raw` **就是文件正文**（不套 ``` 围栏） |
+| 渲染 | `views/code_block.py` | 纯文本隐藏折叠入口；行数 > 80 时编辑态改用**单层可见编辑框**（见下） |
+| 写回 | `app/_file_io_ops.py` + `services/file_io.py` | 按 `Document.encoding` / `eol` 还原；原子写入改为**字节级**校验 |
+
+#### 六处会被静默破坏数据的坑（每处都补了守卫 + 变异用例）
+
+1. `on_change_code` 照常套围栏 → 保存把 ``` 写进源码文件；`change_lang` 同理（重建围栏）。
+2. 空块 Backspace 整体删块 → 唯一的块被换成空段落，文件结构没了；边界方向键跳出 → 往源码里插空段落行。
+3. `set_block`（Ctrl+1~6）→ 整篇变成一个标题。
+4. 原版模式 / 撤销重放的草稿重解析走 `parse_markdown` → `#include` 变 H1、`---` 变分隔线（改用 `views/_editor_helpers.parse_draft_lines` 按文档类型分流）。
+5. 保存按 UTF-8 写回 → GBK 的 `.py` 里 `# -*- coding: gbk -*-` 当场语法错误（新增 `Document.encoding` 贯通 7 个写盘点）。
+6. 保存按 `\n` 写回 → CRLF 文件 git diff 全红（`_text_for_write` 还原）。
+
+#### 性能：两个阈值（实测数据）
+
+把 N 行源码装进一个代码块，控件构造耗时 500 行 398ms / 1500 行 1226ms / 3000 行 2632ms
+（`.workbuddy/probe/perf_code_doc.py`）；且该块**每次击键都会整块重渲染**，叠层方案要逐行
+重建高亮（约 0.8ms/行）→ 1000 行 ≈ 0.8s/键。故：
+
+- `_PLAIN_SOURCE_MAX_LINES = 1500`：超过则退回原文模式（单个原生 TextField）；
+- `uses_simple_edit()`（`_PLAIN_SIMPLE_EDIT_LINES = 80`）：编辑态不再叠高亮层，击键成本与行数无关。
+
+#### 验收
+
+- `tests/test_plain_text_docs.py`（64 条）：类型映射 / 编码与换行 / 解析形态 / 装载 / 写回字节往返 /
+  草稿分流 / 五处结构操作守卫 / 折叠隐藏 / 阈值 / 侧边栏点击分流。
+- 变异验证 `.workbuddy/probe/mutation_check.py` n=76–89，**13 条全部 KILLED**（无 SKIP）。
+- 真机探针 `.workbuddy/probe/plain_doc_shot.py verify`：真实 `open_file_by_path` 打开 .py（标签名、
+  逐字节序列化）+ 同一内容 `lang=python` / `lang=""` 两帧的像素对照（彩色种类 35 vs 2，差值 ≥ 3 判定高亮生效）。
+- 全量 `pytest` 1820 通过；改动文件 `ruff check` 无新增。
+
 ### 2026-10-08 修复：开启 / 收起拆分时视口跳回文档首行
 
 诉求原文：「切换拆分时不自动滚动至第一行，而是自动滚动至当前在浏览的内容处的行，优化

@@ -20,14 +20,23 @@
 """
 
 from models.document import BlockType, Document, SegType
-
 from parser._engine import _get_html_md
 from parser.block import parse_markdown
 
 
 def serialize(doc: Document) -> str:
-    """文档序列化为 Markdown 文本。"""
+    """文档序列化为 Markdown 文本。
+
+    **纯文本文档（`Document.plain`）不需要特例**：它只有一个 CODE 行，且
+    `line.raw` 存的就是正文本身（见 `parser.plain`），拼接结果即文件内容。
+    反过来，任何"给纯文本套 ``` 围栏"的写法都会把围栏写进 .py / .txt 文件。
+
+    换行符：恒为 "\\n"（模型层的规范形态）。原文件的 CRLF 由保存路径负责
+    还原（`app._file_io_ops._text_for_write`），这样撤销快照 / 字数统计 / 导出
+    都只面对一种换行，不会出现"快照里带 \\r、再解析回来变成可见字符"。
+    """
     return "\n".join(line.raw for line in doc.lines)
+
 
 
 def to_html(text: str) -> str:

@@ -70,6 +70,14 @@ from views.tool_area import ToolArea
 # 阈值抬高会让「每击键重建 N 个 LineView 对象」的开销线性增长。
 _LARGE_DOC_LINES = 3000
 
+# 纯文本文档（.py/.txt/…，整篇一个代码块）的行数上限：超过则直接进源码模式。
+# 与 _LARGE_DOC_LINES 是同一类保护，但阈值更低——Markdown 大文件有行视图窗口化
+# 兜底，而代码块内部没有窗口化（它自己就是"一行"），每多一行就多一组
+# 「行号单元格 + 高亮行」控件。实测（`.workbuddy/probe/perf_code_doc.py`，
+# 只量 Python 侧控件构造）：500 行 ≈ 0.4s、1500 行 ≈ 1.2s、3000 行 ≈ 2.6s。
+# 取 1500 行 ≈ 1.2s 的"一次性打开成本"，再高的文件请用源码模式（可以立刻编辑）。
+_PLAIN_SOURCE_MAX_LINES = 1500
+
 # ---------- 行视图窗口化（大文件首屏优化）----------
 # 背景：flet 的 ListView.build_controls_on_demand 只让 Flutter 客户端懒建
 # widget，Python 侧 controls 里的控件对象仍是全量构造的。实测 3 千行文档构造
@@ -560,11 +568,23 @@ def MarkdownEditor(
     # _large_doc_draft 缓存 serialize 结果:首次加载时计算,后续编辑通过
     # set_raw_draft 更新(_on_raw_change),行数不变则不重算。
     _doc_line_count = len(document.lines)
-    is_large_doc = _doc_line_count > _LARGE_DOC_LINES
+
+    # 纯文本文档(.py/.txt…):整篇是**一个** CODE 行,看不见"行数",但代码块内部
+    # 是逐逻辑行构造控件的(含行号单元格 + 高亮 span,实测约 0.8ms/行)。上万行的
+    # 源码文件若按代码块渲染,一次渲染就是 8 秒级 —— 与 Markdown 大文件同一类
+    # 问题、同一道防线:超限直接进源码模式(RawEditor 是单个 TextField,与行数无关)。
+    _plain_body = (
+        document.lines[0].segments[0].text
+        if getattr(document, "plain", False) and document.lines and document.lines[0].segments
+        else None
+    )
+    _plain_line_count = (_plain_body.count("\n") + 1) if _plain_body is not None else 0
+    is_plain_too_long = _plain_line_count > _PLAIN_SOURCE_MAX_LINES
+    is_large_doc = _doc_line_count > _LARGE_DOC_LINES or is_plain_too_long
 
     def _build_large_doc_draft() -> str:
         """大文件 serialize 缓存:仅大文件时执行,小文件返回空串。"""
-        if _doc_line_count > _LARGE_DOC_LINES:
+        if is_large_doc:
             return parser.serialize(document)
         return ""
 

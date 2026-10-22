@@ -19,7 +19,7 @@ on_diff_dirty_change
 
 依赖项：
 - os / parser（解析/序列化）
-- services.file_io.read_text
+- services.file_io.read_text_auto（编码探测：比较的可能是 GBK 的 .txt/.py）
 - app._tab_helpers（is_blank_untitled / tab_paths）
 """
 
@@ -27,7 +27,7 @@ import os
 
 import parser
 from app._tab_helpers import is_blank_untitled, tab_paths
-from services.file_io import read_text
+from services.file_io import read_text_auto
 
 from app._contracts import DiffEnv
 
@@ -44,6 +44,9 @@ def build_diff_controller(ctx: DiffEnv):
         """获取用于比较的文本：优先用已打开标签的内存内容（含未保存修改），否则读磁盘。
 
         这样比较未保存的草稿也能反映最新编辑结果，与 VSCode 行为一致。
+
+        读盘走 `read_text_auto`（BOM / utf-8 / gb18030）：比较对象不再限定
+        Markdown，.txt / .py 在中文 Windows 上常常是 GBK，硬读会直接报"读取失败"。
         """
         for t in ctx.tabs_ref.current:
             if path in tab_paths(t):
@@ -54,7 +57,8 @@ def build_diff_controller(ctx: DiffEnv):
                     return parser.serialize(t["right_doc"])
                 return parser.serialize(t["document"])
         try:
-            return read_text(path)
+            text, _eol = read_text_auto(path)
+            return text
         except Exception as e:
             ctx.show_snack(f"读取失败：{e}")
             return ""

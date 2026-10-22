@@ -23,7 +23,7 @@ open_delete_dialog / on_tab_context_action / on_sidebar_context_action
 - parser（外部修改重载时解析磁盘内容）
 - services.file_ops（reveal_in_explorer / create_file / create_folder /
   rename_path / delete_path / duplicate_file）
-- services.file_io.read_text（外部修改重载时读取磁盘最新内容）
+- services.document_loader.load_document（外部修改重载：按类型重新装载）
 - services.ui_feedback.show_snack
 - app._tab_helpers.tab_paths
 """
@@ -32,12 +32,10 @@ import os
 
 import flet as ft
 
-import parser
+from app._contracts import FileDialogsEnv
 from app._tab_helpers import tab_group, tab_paths
 from services import file_ops, shortcut
-from services.file_io import read_text
-
-from app._contracts import FileDialogsEnv
+from services.document_loader import load_document
 
 # 对话框实例计数器：每次弹窗递增。作为 FileActionDialog 的 key 触发重挂载，
 # 使输入框 use_state 重新以 input_value 初始化（新建文件/文件夹不再保留上次
@@ -179,9 +177,9 @@ def build_file_dialogs(ctx: FileDialogsEnv):
             if tab_index is None:
                 return
             try:
-                text = read_text(target)
-                doc = parser.parse_markdown(text)
-                doc.file_path = target
+                # 与打开路径共用装载器：纯文本文件重载后仍是「整篇一个代码块」，
+                # 不会退化成 Markdown 行结构（否则重载即改变文档形态）
+                doc = load_document(target)
                 try:
                     last_mtime = os.path.getmtime(target)
                 except OSError:

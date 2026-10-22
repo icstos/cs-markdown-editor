@@ -441,6 +441,10 @@ def LineView(
     # 代码块兑现"进入编辑态"请求后的回报（编辑器据此作废那条一次性待办；
     # 不作废的话，本行滚出/滚回渲染窗口重建时会拿旧序号再进一次编辑态）。
     code_enter_consumed: Callable[[int], None] | None = None,
+    # 纯文本文档（.py/.txt…，整篇一个代码块）：代码块据此隐藏"折叠"入口、
+    # 大文件改用单层可见编辑框（见 views/code_block 的说明）。
+    # 它是文档级常量，同一文档内不变 → 不破坏 @ft.memo 的 prop 稳定性约定。
+    plain_document: bool = False,
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
@@ -493,6 +497,7 @@ def LineView(
             enter_seq=code_enter_seq,
             enter_off=code_enter_off,
             on_enter_consumed=code_enter_consumed,
+            is_plain_doc=plain_document,
         )
 
     # ============ YAML 前置元数据（Obsidian 风格属性卡片）============

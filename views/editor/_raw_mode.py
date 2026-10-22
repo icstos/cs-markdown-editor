@@ -19,6 +19,7 @@ suppress_blur_for_click / _on_raw_change
 import flet as ft
 
 import parser
+from views._editor_helpers import parse_draft_lines
 from views.editor._contracts import RawModeEnv
 
 
@@ -39,8 +40,9 @@ def build_raw_mode(ctx: RawModeEnv):
             ctx.set_cursor_li(None)
             ctx.set_raw_mode(True)
         else:
-            new_doc = parser.parse_markdown(ctx.raw_draft)
-            ctx.document.lines = new_doc.lines
+            # 纯文本文档（.py/.txt…）回写时仍是「整篇一个代码块」，不能按
+            # Markdown 解析（详见 views._editor_helpers.parse_draft_lines）
+            ctx.document.lines = parse_draft_lines(ctx.document, ctx.raw_draft)
             ctx.mark_dirty()
             ctx.set_raw_mode(False)
 
@@ -79,7 +81,8 @@ def build_raw_mode(ctx: RawModeEnv):
         RawEditor 仅负责受控 TextField 的声明式构建。
         """
         ctx.set_raw_draft(value)
-        ctx.document.lines = parser.parse_markdown(value).lines
+        # 按文档类型解析：纯文本文档 → 单代码块（行源码即正文），Markdown → 行结构
+        ctx.document.lines = parse_draft_lines(ctx.document, value)
         ctx.mark_dirty()
 
     return {

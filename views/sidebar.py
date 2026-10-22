@@ -1,6 +1,7 @@
 """左侧侧边栏：文件 / 大纲 / 搜索三面板。
 
-- 文件面板：.md/.markdown 文件树 + 搜索过滤。根目录优先级：
+- 文件面板：全类型文件树 + 搜索过滤（可点开的范围见 `utils.text_formats`：
+  Markdown 走行结构编辑，.txt/.py 等纯文本按代码块渲染）。根目录优先级：
   settings.workspace_folder（显式「打开文件夹」锚定的工作区）>
   当前打开文件所在目录 > 最近文件列表（settings.recent_files）。
   工作区模式下打开子目录文件时文件树仍以工作区根排布，不随当前文件目录漂移；
@@ -24,10 +25,10 @@ import flet as ft
 
 from models.document import Document
 from services import shortcut
+from services.file_io import read_text_auto, read_text_detailed
 from services.file_tree import (
-    MD_EXTS,
     WATCH_INTERVAL,
-    collect_md_paths,
+    collect_text_paths,
     file_icon,
     file_row_icon_data,
     filter_tree,
@@ -51,6 +52,7 @@ from services.search import (
     search_in_file,
 )
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, _current_colors
+from utils import text_formats
 from views._widgets import (
     _compact_btn,
     _drag_feedback,
@@ -65,10 +67,13 @@ from views._widgets import (
     _wrap_row_gesture,
 )
 
-# 跨文件搜索性能保护
+# 跨文件搜索性能保护：见 services.search 的 MAX_* 常量。
 
-# 文件类型 → 图标映射（VSCode 风格 Seti/Material 混合：按扩展名给语义化图标，
-# 一眼区分 Markdown / 图片 / 代码 / 文档 / 压缩包 / 音视频）。颜色统一 c.muted，
+# 搜索结果预览的行文本缓存：normcase(abspath) → ((mtime_ns, size), [line, ...])
+# 一个文件分组几十条结果都读同一文件，缓存避免重复整篇解码（见 _file_lines）。
+_LINE_CACHE: dict[str, tuple[tuple[int, int], list[str]]] = {}
+
+
 def _build_preview_spans(
     raw: str,
     matches: list[tuple[int, int]],
@@ -177,8 +182,9 @@ def _render_files_panel(
     - 文件行：file_row_icon_data 按扩展名映射图标（.md=DESCRIPTION 文档图标；
       .lnk=SHORTCUT 链接图标，与 .md 在形状上一眼可分）+ chevron 占位
     - 最近文件列表同样按扩展名区分图标（不再统一一个图标）
-    - 点击分流：.md → 编辑器打开；非 .md → 系统默认程序打开（on_open_external）
-    - active 高亮仅对 .md 文件生效（非 md 不在编辑器打开，无需高亮）
+    - 点击分流：文本类（.md/.txt/.py …）→ 编辑器打开（按代码块渲染非 Markdown）；
+      其余（图片/压缩包/可执行文件…）→ 系统默认程序打开（on_open_external）
+    - active 高亮仅对文本文件生效（非文本不在编辑器打开，无需高亮）
     - 拖拽移动（on_file_drop 非空时启用）：文件/文件夹可拖到文件夹行或根空白区，
       合法目标行高亮，松手移动；拖起后原位半透明 + 指针跟随预览标签
     """
@@ -272,17 +278,21 @@ def _render_files_panel(
         for kind, name, abspath, depth in flat:
             indent = depth * 14 + Spacing.XL
             if kind == "file":
-                # 快捷方式：解析指向的 .md 目标（有 mtime/size 缓存，仅 .lnk 读盘）。
-                # 目标有效时按 .md 对待：文档图标+角标、点击进编辑器、
+                # 快捷方式：解析指向的可编辑文本目标（有 mtime/size 缓存，仅 .lnk 读盘）。
+                # 目标有效时按普通文本文件对待：文档图标+角标、点击进编辑器、
                 # active 高亮匹配目标路径（打开目标后快捷方式行亮起）
                 lnk_target = (
-                    shortcut.resolve_md_target(abspath)
+                    shortcut.resolve_text_target(abspath)
                     if abspath and shortcut.is_shortcut(name)
                     else None
                 )
-                is_md = name.lower().endswith(MD_EXTS) or lnk_target is not None
+                # 能否进编辑器：与加载器同一判定（Markdown + 纯文本 + 源码），
+                # 不在这里另立一套扩展名表
+                is_openable = (
+                    text_formats.is_supported_text_path(name) or lnk_target is not None
+                )
                 is_active = (
-                    is_md
+                    is_openable
                     and active_abs is not None
                     and abspath is not None
                     and (
@@ -296,7 +306,7 @@ def _render_files_panel(
                     )
                 )
                 # .lnk 一律 SHORTCUT 主图标（与 .md 的 DESCRIPTION 在形状上区分）；
-                # 指向 .md 的快捷方式用 link 主题色提示「可在编辑器中打开」
+                # 指向可编辑文本的快捷方式用 link 主题色提示「可在编辑器中打开」
                 if shortcut.is_shortcut(name):
                     icon_name, icon_color = ft.Icons.SHORTCUT, (
                         c.link if lnk_target is not None else c.muted
@@ -307,9 +317,9 @@ def _render_files_panel(
                 name_tooltip = (
                     f"→ {lnk_target}" if lnk_target is not None else name
                 )
-                # 点击分流：.md / 指向 .md 的快捷方式 → 编辑器打开（open_file_by_path
-                # 内部解析 .lnk）；其余快捷方式与非 md → 系统默认程序
-                if is_md:
+                # 点击分流：文本类 / 指向文本的快捷方式 → 编辑器打开（open_file_by_path
+                # 内部解析 .lnk）；图片/压缩包/可执行文件等 → 系统默认程序
+                if is_openable:
                     _file_click: Callable | None = lambda e, p=abspath: on_open_file(p)
                 elif on_open_external is not None:
                     _file_click = lambda e, p=abspath: on_open_external(p)
@@ -843,20 +853,68 @@ def _render_search_panel(
     return ft.Column(controls=[*header, body], spacing=0, expand=True)
 
 
+def _file_lines(path: str) -> list[str]:
+    """按编码探测把整篇文本读成行列表（带 (mtime, size) 缓存）。
+
+    搜索结果预览要按 **与搜索相同的解码方式** 取行文本：搜索走
+    `search_in_file`（read_text_auto / gb18030 回退），预览若另用 utf-8 硬读，
+    GBK 文件会解不出来，且高亮区间（按解码后文本算出来的 offset）会错位。
+    一个文件分组可能有几十条结果，所以缓存整篇行列表：文件内容变化时
+    (mtime, size) 签名失效，最多保留 32 个文件。
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    sig = (st.st_mtime_ns, st.st_size)
+    key = os.path.normcase(os.path.abspath(path))
+    cached = _LINE_CACHE.get(key)
+    if cached is not None and cached[0] == sig:
+        return cached[1]
+    try:
+        text, _eol = read_text_auto(path)
+    except (OSError, ValueError):
+        return []
+    lines = text.split("\n")
+    if len(_LINE_CACHE) >= 32:
+        _LINE_CACHE.clear()
+    _LINE_CACHE[key] = (sig, lines)
+    return lines
+
+
 def _read_file_line_raw(path: str, li: int) -> str:
     """读取跨文件结果行的 raw 文本（供预览高亮）。
 
-    失败时返回空串（预览退化为无高亮）。仅搜索结果点击预览时调用，
-    非热路径，简单按行读取即可。
+    失败或越界时返回空串（预览退化为无高亮）。仅搜索结果预览时调用。
+    """
+    lines = _file_lines(path)
+    return lines[li] if 0 <= li < len(lines) else ""
+
+
+def _read_edit_text(path: str) -> tuple[str, str, str] | None:
+    """跨文件替换的读入口：返回 (正文, 换行符, 编码)；失败 / 超大文件返回 None。
+
+    必须同时拿到编码与换行符：读了 GBK 文件却按 UTF-8 写回会整篇乱码，读了
+    CRLF 文件却按 \\n 写回会让 diff 全红。跨文件替换现在覆盖任意文本文件，
+    这两个坑都变成了会真实发生的事。
     """
     try:
-        with open(path, encoding="utf-8") as f:
-            for i, line in enumerate(f):
-                if i == li:
-                    return line.rstrip("\n")
-        return ""
-    except (OSError, UnicodeDecodeError):
-        return ""
+        if os.path.getsize(path) > MAX_FILE_SIZE:
+            return None
+        return read_text_detailed(path)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_edit_text(path: str, text: str, eol: str, encoding: str) -> bool:
+    """跨文件替换的写出口：按原编码 + 原换行写回。失败返回 False。"""
+    payload = text.replace("\n", eol) if eol and eol != "\n" else text
+    try:
+        with open(path, "w", encoding=encoding, newline="") as f:
+            f.write(payload)
+    except (OSError, UnicodeEncodeError):
+        return False
+    return True
 
 
 def _render_file_group_header(name: str, hit_count: int, c) -> ft.Control:
@@ -1111,7 +1169,7 @@ def Sidebar(
             tree = await asyncio.to_thread(scan_files, root_dir)
             if cross_token_ref.current != my_token:
                 return
-            files = collect_md_paths(tree)[:MAX_CROSS_FILES]
+            files = collect_text_paths(tree)[:MAX_CROSS_FILES]
             groups: list[tuple[str, str, list]] = []
             total = 0
             for fpath in files:
@@ -1278,13 +1336,10 @@ def Sidebar(
             my_token = replace_token_ref.current
 
             async def _do():
-                try:
-                    if os.path.getsize(path) > MAX_FILE_SIZE:
-                        return
-                    with open(path, encoding="utf-8") as f:
-                        text = f.read()
-                except (OSError, UnicodeDecodeError):
+                loaded = _read_edit_text(path)
+                if loaded is None:
                     return
+                text, eol, encoding = loaded
                 if replace_token_ref.current != my_token:
                     return
                 lines = text.split("\n")
@@ -1302,10 +1357,7 @@ def Sidebar(
                 lines[li] = new_raw
                 if replace_token_ref.current != my_token:
                     return
-                try:
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write("\n".join(lines))
-                except OSError:
+                if not _write_edit_text(path, "\n".join(lines), eol, encoding):
                     return
                 # 写盘后打开文件并跳转到替换位置之后
                 new_off = s + len(new_text)
@@ -1353,26 +1405,20 @@ def Sidebar(
             # 当前文档走内存替换
             if current_replacements and on_replace_all_in_doc is not None:
                 on_replace_all_in_doc(current_replacements)
-            # 其他文件逐个读→改→写
+            # 其他文件逐个读→改→写（按各文件自身的编码与换行写回）
             for fpath, hits in other_files:
                 if replace_token_ref.current != my_token:
                     return
-                try:
-                    if os.path.getsize(fpath) > MAX_FILE_SIZE:
-                        continue
-                    with open(fpath, encoding="utf-8") as f:
-                        text = f.read()
-                except (OSError, UnicodeDecodeError):
+                loaded = _read_edit_text(fpath)
+                if loaded is None:
                     continue
+                text, eol, encoding = loaded
                 if replace_token_ref.current != my_token:
                     return
                 new_text, count = replace_in_file_text(text, pattern, replace_text, _regex)
                 if count == 0:
                     continue
-                try:
-                    with open(fpath, "w", encoding="utf-8") as f:
-                        f.write(new_text)
-                except OSError:
+                if not _write_edit_text(fpath, new_text, eol, encoding):
                     continue
             # 刷新文件系统版本（触发跨文件搜索重扫）
             if on_bump_fs_version is not None:

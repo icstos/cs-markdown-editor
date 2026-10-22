@@ -177,6 +177,26 @@ _EDIT_MIN_WIDTH = 420.0
 # 这才是"顶部行过高"的真实成因——不是内边距。
 _HEADER_H = 22.0
 
+# 纯文本文档（.py/.txt…）在编辑态是否仍把高亮层垫在下面（"双态叠层"）。
+# 为什么需要这个开关：叠层方案每次重渲染都要**逐逻辑行重建**高亮行（行号单元格
+# + span 片段，实测约 0.8ms/行），而这个代码块在**每次击键**都会整块重渲染
+# （on_change_code 写回文档 → 行 observable 通知）。小文件无感，但一个 1000 行的
+# .py 就是 ~0.8s/键 —— 打字直接卡成幻灯片。
+# 阈值取 80 行（≈70ms/键，仍在"跟手"区间）：小脚本 / 片段保留"编辑时也高亮"
+# 的完整观感；更大的文件改用**单层可见编辑框**（Flutter 自己排版，击键成本与
+# 行数无关），代价是编辑期间没有语法高亮与行号，Esc 退出后立即恢复。
+_PLAIN_SIMPLE_EDIT_LINES = 80
+
+
+def uses_simple_edit(is_plain_doc: bool, line_count: int) -> bool:
+    """纯文本大文件在编辑态是否走「单层可见编辑框」（不叠高亮层）。
+
+    抽成纯函数是为了让这条**性能分支**可以被直接锁定：它是"大源码文件打字不卡"
+    的唯一来源，而它只影响编辑态的控件组装，渲染树里没有稳定的可断言特征
+    （叠层与单层都表现为一个 TextField）。
+    """
+    return bool(is_plain_doc) and line_count > _PLAIN_SIMPLE_EDIT_LINES
+
 # 代码块语言选择下拉框的常用语言清单
 # （key = Markdown 围栏语言标识，需与 Pygments get_lexer_by_name 的名称对齐）
 _COMMON_LANGS: list[tuple[str, str]] = [
@@ -387,6 +407,7 @@ def render_code_block(
     enter_seq: int = 0,
     enter_off: int | None = None,
     on_enter_consumed: Callable[[int], None] | None = None,
+    is_plain_doc: bool = False,
 ) -> ft.Control:
     """渲染代码块（CODE 围栏岛屿）：浏览态语法高亮 + 点击进入原生编辑。
 
@@ -411,6 +432,12 @@ def render_code_block(
             **不回报的后果**：请求永远挂在父层 state 上，本行组件一旦因滚出/滚回渲染
             窗口而重建，挂载期 effect 会拿同一个序号再消费一次 —— 代码块自己跳进编辑
             态。组件内部记不住这条信息（重建时标记一起重生），所以必须回报父层。
+        is_plain_doc: 本块是「纯文本文档的全部内容」（.py/.txt… 整篇一个代码块）。
+            两处行为差异，都是"整篇只有一个块"才成立的推论：
+            - 隐藏折叠入口：把整个文件折叠成一行摘要没有意义，且折叠态无法用
+              方向键/点击恢复（外面没有其它行可落光标）；
+            - 行数超过 _PLAIN_SIMPLE_EDIT_LINES 时，编辑态改用**单层可见编辑框**
+              （不再把高亮层垫在下面），见 `_build_edit_body` 的性能说明。
     """
     c = _current_colors()
     code = line.segments[0].text if line.segments else ""
@@ -618,6 +645,8 @@ def render_code_block(
     # ---- 折叠按钮 ----
     # `_toggle_collapse` 定义于下方"交互"分节，这里只能延迟绑定（lambda 内解析名字），
     # 与本文件 `_build_edit_body` 引用 `_exit_edit` 的方式一致。
+    # 纯文本文档不提供折叠：整篇就是这个块，折叠后既没有"别的行"可落光标，
+    # 也没有任何信息可读（只剩一行摘要），是一个纯粹的死路。
     collapse_btn = _header_icon(
         ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
         "展开" if is_collapsed else "折叠",
@@ -633,7 +662,7 @@ def render_code_block(
     header = ft.Container(
         content=ft.Row(
             controls=[
-                collapse_btn,
+                *([] if is_plain_doc else [collapse_btn]),
                 lang_button,
                 ft.Container(expand=True),
                 ft.Text(
@@ -858,7 +887,15 @@ def render_code_block(
 
         字符由底层高亮层呈现，编辑框只提供光标 / 选区 / IME / 撤销——因此编辑时
         语法高亮持续可见，且两层同宽同折行（见模块 docstring 的两条实测约束）。
+
+        例外（纯文本文档 + 行数超阈值）：**不叠高亮层**，编辑框自己显示文字。
+        原因见 `_PLAIN_SIMPLE_EDIT_LINES`：叠层每次重渲染都要逐行重建高亮行，
+        而代码块每次击键都会重渲染，大文件下打字会被这个重建拖死。单层态由
+        Flutter 自己排版，击键成本与行数无关；行号列宽仍由 content_padding
+        保留，进编辑时文字不会横向跳动（只是行号暂时不可见）。
         """
+        # 是否走"单层可见编辑框"（仅纯文本大文件；见 _PLAIN_SIMPLE_EDIT_LINES）
+        visible_edit = uses_simple_edit(is_plain_doc, line_count)
         # Tab 缩进后的光标位置：只能经渲染参数给客户端——渲染后的控件是冻结的，
         # 在 effect 里改 `field.selection` 会抛 "Frozen controls cannot be updated."
         # （flet 1.0 用冻结标记保证"控件状态只从渲染流入"，事后改属性不会被 diff 采纳）。
@@ -941,8 +978,9 @@ def render_code_block(
                 # 字追高亮层：字体族 / 字号 / 行高 / 字距全部同值，否则折行点与光标
                 # 会相对底层可见文字漂移（见 _span_style 的说明）。
                 letter_spacing=_FLET_DEFAULT_LETTER_SPACING,
-                # 文字透明：字符不可见，只留光标与选区——可见字符由底层高亮层负责
-                color=ft.Colors.TRANSPARENT,
+                # 叠层态：文字透明，字符不可见、只留光标与选区——可见字符由底层
+                # 高亮层负责。单层态（纯文本大文件）：这里就是唯一一层，必须可见。
+                color=c.code_block_fg if visible_edit else ft.Colors.TRANSPARENT,
             ),
             # 行盒 strut：不显式给的话 Flutter 会自造一个强制 strut，把含中文/emoji 的
             # 行压到 24px，而高亮层同一行是 25px → 光标逐行上飘（见 _edit_strut）。
@@ -999,6 +1037,23 @@ def render_code_block(
             )
             field_layer = ft.Row(
                 controls=[field], vertical_alignment=ft.CrossAxisAlignment.START
+            )
+
+        # 单层态：编辑框即所见（没有高亮层可对），直接返回，不构造 _read_column()
+        # —— 这一行的省略正是"大文件打字不卡"的全部来源。
+        if visible_edit:
+            body: ft.Control = field_layer
+            if not wrap:
+                # 不换行：与浏览态一致，整块横向滚动
+                body = ft.Row(
+                    controls=[field_layer],
+                    scroll=ft.ScrollMode.AUTO,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                )
+            return ft.KeyboardListener(
+                content=body,
+                on_key_down=_on_edit_key_down,
+                on_key_up=_on_edit_key_up,
             )
 
         # 高亮层与编辑层同处一个 Stack：Stack 用默认 LOOSE 按子项尺寸定型

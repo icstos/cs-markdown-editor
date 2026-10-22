@@ -88,7 +88,14 @@ def build_fence(ctx: FenceEnv):
         if line.block_type == BlockType.CODE:
             line.segments[0].text = value
             line.segments[0].raw = value
-            line.raw = f"```{line.lang}\n{value}\n```"
+            # 纯文本文档（.py/.txt/…）：整篇就是一个代码块，**行源码即正文本身**。
+            # 这里若照常套 ``` 围栏，保存时围栏会被写进源码文件（打开 .py 全是
+            # ``` 的那次事故就是这么来的）；行数也不会变——围栏只是 raw 的前后缀。
+            line.raw = (
+                value
+                if getattr(ctx.document, "plain", False)
+                else f"```{line.lang}\n{value}\n```"
+            )
         else:
             line.segments[0].text = value
             line.segments[0].raw = value
@@ -166,6 +173,10 @@ def build_fence(ctx: FenceEnv):
         继续放行原生编辑框导航）。
         """
         if norm not in ("arrowup", "arrowleft", "arrowdown", "arrowright"):
+            return False
+        # 纯文本文档：整篇只有这一个代码块，没有"相邻行"可跳。放行给原生编辑框
+        # （在首行按 ↑ / 末行按 ↓ 就是停在原地），也避免在文件里凭空插入空段落行。
+        if getattr(ctx.document, "plain", False):
             return False
         li = ctx.code_focus_ref.current
         if li is None or getattr(ctx, "code_caret_ref", None) is None:
@@ -270,6 +281,10 @@ def build_fence(ctx: FenceEnv):
         删除后进入段落编辑态（光标定位到行首），与 set_block 的早返回模式一致。
         """
         if not (0 <= li < len(ctx.document.lines)):
+            return False
+        # 纯文本文档：删掉这个块 = 删掉整个文档结构（没有别的行承接光标）。
+        # 清空内容由编辑框自身的删除处理，这里绝不整体替换成空段落。
+        if getattr(ctx.document, "plain", False):
             return False
         line = ctx.document.lines[li]
         if line.block_type not in (BlockType.CODE, BlockType.FRONTMATTER):

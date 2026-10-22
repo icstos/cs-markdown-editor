@@ -9,6 +9,7 @@ import os
 import re
 
 from models.document import Document
+from services.file_io import read_text_auto
 
 MAX_RESULTS = 200  # 当前文档搜索结果上限，防止超长文档卡顿
 # 跨文件搜索性能保护
@@ -89,13 +90,17 @@ def search_in_file(
     不解析成 Document：跨文件只需 line_idx + raw 做匹配，text.split("\\n") 已足够；
     parser.parse_markdown 会构建完整段树，对搜索场景是不必要开销。
     line_idx 按 \\n 切分索引，与编辑器打开后 document.lines[i].raw 一致。
+
+    解码用 `read_text_auto`（BOM → utf-8 → gb18030 → replace）：跨文件搜索现在
+    覆盖 .txt/.py 等任意文本文件，中文 Windows 上这类文件常见 GBK 编码，用
+    utf-8 硬读会把它们整体判为"读不出来"而漏掉。换行同样归一为 \\n，保证
+    line_idx 与编辑器内的行号口径一致（CRLF 文件不会多出一堆空行）。
     """
     try:
         if os.path.getsize(path) > MAX_FILE_SIZE:
             return []
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
-    except (OSError, UnicodeDecodeError):
+        text, _eol = read_text_auto(path)
+    except (OSError, ValueError):
         return []
     results: list[tuple[int, list[tuple[int, int]]]] = []
     for i, raw in enumerate(text.split("\n")):

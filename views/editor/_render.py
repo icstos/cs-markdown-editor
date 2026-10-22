@@ -319,6 +319,8 @@ def build_line_controls(
                     # 文档内搜索（浮层）：本行命中 [(s, e, is_current)]（无则 None）
                     search_hits=ctx.search_hits.get(i),
                     search_hits_version=ctx.search_hits_version,
+                    # 纯文本文档：整篇一个代码块（代码块据此调整交互与编辑路径）
+                    plain_document=bool(getattr(document, "plain", False)),
                 )
             )
         i += 1

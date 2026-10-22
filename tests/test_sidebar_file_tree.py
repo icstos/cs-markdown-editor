@@ -5,7 +5,8 @@
   深度上限 / 文件数上限 / 目录在前字母序 / 无效根返回空 / OSError 静默
 - views.sidebar._flatten_tree：expanded 集合控制递归 / force_expand 全展开 /
   expanded=None 兼容旧语义 / depth 正确 / dir_path 拼接
-- views.sidebar._collect_md_paths：混入非 md 节点只返回 md / 深度优先字母序 / 空树
+- views.sidebar._collect_md_paths → services.file_tree.collect_text_paths：
+  混入二进制节点只返回可编辑文本 / 深度优先字母序 / 空树
 - views.sidebar._file_icon：.md 返回 DESCRIPTION+link 色 / 已知扩展名映射 /
   未知兜底 / 大小写不敏感 / 非 md 用 muted 色
 - views.sidebar._file_row_icon_data：.md 委托 file_icon / .lnk 一律 SHORTCUT /
@@ -31,7 +32,7 @@ import flet as ft
 from services import shortcut
 from services.file_ops import open_external
 from services.file_tree import (
-    collect_md_paths,
+    collect_text_paths,
     file_icon,
     file_row_icon_data,
     flatten_tree,
@@ -280,11 +281,11 @@ def test_flatten_tree_dir_path_join():
     assert paths["deep"] == os.path.join("/root", "sub", "deep")
 
 
-# ---- collect_md_paths：混入非 md 过滤 ----
+# ---- collect_text_paths：混入二进制节点过滤 ----
 
 
-def test_collect_md_paths_filters_non_md():
-    """混入非 md 节点只返回 md 路径。"""
+def test_collect_text_paths_filters_binary():
+    """可编辑文本全收录（.md/.py/.json/.txt），图片/压缩包等二进制不收录。"""
     tree = [
         ("dir", "docs", [
             ("file", "a.md", "/abs/docs/a.md"),
@@ -293,19 +294,24 @@ def test_collect_md_paths_filters_non_md():
         ]),
         ("file", "d.md", "/abs/d.md"),
         ("file", "e.json", "/abs/e.json"),
+        ("file", "f.zip", "/abs/f.zip"),
     ]
-    paths = collect_md_paths(tree)
-    assert paths == ["/abs/docs/a.md", "/abs/d.md"]
+    paths = collect_text_paths(tree)
+    assert paths == [
+        "/abs/docs/a.md", "/abs/docs/c.py", "/abs/d.md", "/abs/e.json",
+    ]
 
 
-def test_collect_md_paths_markdown_extension():
-    """.markdown 扩展名也被收录。"""
+def test_collect_text_paths_plain_text_types():
+    """纯文本类型同样收录（跨文件搜索与「点击能否打开」同口径）。"""
     tree = [
         ("file", "a.markdown", "/abs/a.markdown"),
         ("file", "b.txt", "/abs/b.txt"),
+        ("file", "gen.exe", "/abs/gen.exe"),
+        ("file", "Makefile", "/abs/Makefile"),
     ]
-    paths = collect_md_paths(tree)
-    assert paths == ["/abs/a.markdown"]
+    paths = collect_text_paths(tree)
+    assert paths == ["/abs/a.markdown", "/abs/b.txt", "/abs/Makefile"]
 
 
 # ---- file_icon ----

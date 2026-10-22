@@ -29,6 +29,7 @@
 
 import re
 
+import parser
 from core.history import EditorSnapshot
 from models.document import BlockType, Line
 from utils.segment_helpers import is_fence, line_raw
@@ -389,3 +390,25 @@ def _compute_delete_result(
     merged = line_raw(lines[start_li])[:start_off] + line_raw(lines[end_li])[end_off:]
     new_lines = lines[:start_li + 1] + lines[end_li + 1:]
     return (start_li, merged, new_lines)
+
+
+# ============ 源码草稿 → 文档行（按文档类型分流）============
+def parse_draft_lines(document, text: str) -> list:
+    """把「源码草稿文本」解析成文档行，按文档类型选择解析器。
+
+    为什么必须分流：源码模式（RawEditor）/ 撤销恢复拿到的是**整篇纯文本**，
+    对 Markdown 文档要按行结构解析；而纯文本文档（.py/.txt…）整篇就是一个
+    代码块，按 Markdown 解析会把源码拆成一堆段落/标题（`#include` 变 H1、
+    `---` 变分隔线），回写文档即丢失纯文本形态。
+
+    Args:
+        document: 目标文档（只读 `plain` 与首行 lang，不修改它）。
+        text: 整篇文本（\\n 换行）。
+
+    Returns:
+        可直接赋给 `document.lines` 的行列表。
+    """
+    if getattr(document, "plain", False):
+        lang = document.lines[0].lang if document.lines else ""
+        return parser.parse_plain_text(text, lang).lines
+    return parser.parse_markdown(text).lines

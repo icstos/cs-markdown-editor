@@ -23,11 +23,13 @@ backup_tab_before_overwrite / check_external_change
 
 依赖项：
 - os / parser（解析/序列化）
-- services.file_io（read_text / write_text_atomic）
+- services.document_loader（load_document：按扩展名选 Markdown 行结构 / 纯文本单代码块）
+- services.file_io（read_text_auto / write_text_atomic）
 - services.backup（write_backup：覆盖前历史副本 + 写入失败兜底）
 - services.export（export_to_html / export_to_docx / export_to_pdf：pandoc 多格式导出）
 - app._tab_helpers（is_blank_untitled）
 - utils.file_helpers（file_name）
+- utils.text_formats（可编辑文本类型判定：.md / .txt / .py / .cpp …）
 - flet（FilePickerFileType）
 """
 
@@ -38,22 +40,61 @@ import os
 import flet as ft
 
 import parser
+from app._contracts import FileIoEnv
 from app._tab_helpers import is_blank_untitled, tab_group
 from config.settings import save_settings
 from services import shortcut
 from services.backup import write_backup
+from services.document_loader import UnsupportedFileType, load_document
 from services.export import export_to_docx, export_to_html, export_to_pdf
-from services.file_io import read_text, write_text, write_text_atomic
-from utils import diagnostics
+from services.file_io import read_text_auto, write_text, write_text_atomic
+from utils import diagnostics, text_formats
 from utils.file_helpers import file_name
-
-from app._contracts import FileIoEnv
 
 # 内存绝对保护上限：异步加载已避免 UI 卡死，但仍需防止极端大文件
 # （如误选 GB 级二进制文件）导致内存爆炸。超过此值拒绝打开。
 _MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
 
 log = logging.getLogger(__name__)
+
+
+def _text_for_write(doc) -> str:
+    """写盘文本：模型层是 "\\n"，纯文本文档按原文件换行风格还原。
+
+    为什么必须还原：代码块内部按 "\\n" 切行（行号 / 光标 / 折行都依赖它），
+    但用户磁盘上的 .py / .txt 很可能是 CRLF。直接写 "\n" 会把整个文件的换行
+    风格改掉 —— 对 git 仓库来说是"全文件重写"，diff 全红，而内容其实没变。
+    """
+    text = parser.serialize(doc)
+    eol = getattr(doc, "eol", "\n") if getattr(doc, "plain", False) else "\n"
+    if eol and eol != "\n":
+        text = text.replace("\n", eol)
+    return text
+
+
+def _is_plain(doc) -> bool:
+    """文档是否纯文本模式（整篇一个代码块）。"""
+    return bool(getattr(doc, "plain", False))
+
+
+def _encoding_for_write(doc) -> str:
+    """写盘编码：纯文本文档按原编码写回，Markdown 恒为 UTF-8。
+
+    为什么必须还原编码：中文 Windows 上的 .py / .txt 常见 GBK，而 .py 里若写着
+    `# -*- coding: gbk -*-`，按 UTF-8 写回会让 Python 解析时直接抛 SyntaxError
+    （声明与字节不符）。Markdown 保持既有"UTF-8 文档"契约不变。
+    """
+    if not _is_plain(doc):
+        return "utf-8"
+    return getattr(doc, "encoding", "utf-8") or "utf-8"
+
+
+def _save_dialog_exts(doc, path: str | None) -> list[str]:
+    """保存对话框的扩展名过滤：沿用原文件扩展名，未命名纯文本默认 txt。"""
+    if not _is_plain(doc):
+        return ["md"]
+    ext = os.path.splitext(path or "")[1].lstrip(".").lower()
+    return [ext] if ext else ["txt"]
 
 
 def build_file_io_ops(ctx: FileIoEnv):
@@ -116,7 +157,9 @@ def build_file_io_ops(ctx: FileIoEnv):
         # 快捷方式解析：统一入口分流（侧边栏点击 / 右键打开 / 最近文件 / Ctrl+O）
         if shortcut.is_shortcut(path):
             target = shortcut.resolve_shortcut_target(path)
-            if target and target.lower().endswith((".md", ".markdown")):
+            # 目标为任意可编辑文本（.md / .py / .txt…）→ 打开目标文档；
+            # 指向其它类型（图片 / 压缩包…）→ 交系统默认程序打开快捷方式本身
+            if target and text_formats.is_supported_text_path(target):
                 if not os.path.isfile(target):
                     ctx.show_snack(
                         f"快捷方式目标不存在：{os.path.basename(target)}（可能已被移动或删除）"
@@ -127,9 +170,19 @@ def build_file_io_ops(ctx: FileIoEnv):
                 display_name = os.path.basename(path)
                 path = target
             else:
-                # 非 md 目标 / 解析失败：交系统打开快捷方式本身（启动目标或提示无效）
+                # 非文本目标 / 解析失败：交系统打开快捷方式本身（启动目标或提示无效）
                 ctx.open_external(path)
                 return
+
+        # 非文本类型（图片 / 压缩包 / 二进制）不进程编辑器：交系统默认程序。
+        # 侧边栏点击已分流过，这里兜住拖拽 / 最近文件 / 快捷方式之外的其它入口，
+        # 避免把 PNG 之类当 UTF-8 硬解（结果是"打开失败"，用户却看不出原因）。
+        if not text_formats.is_supported_text_path(path):
+            if os.path.isfile(path):
+                ctx.open_external(path)
+            else:
+                ctx.show_snack(f"打开失败：文件不存在（{os.path.basename(path)}）")
+            return
 
         # 组内去重（左右标签完全独立）：目标组（焦点侧组）已打开该路径 → 激活
         # 该组标签；仅另一组打开时在目标组开独立副本——同文件左右各一份，
@@ -178,11 +231,16 @@ def build_file_io_ops(ctx: FileIoEnv):
         set_status_message(f"正在打开 {fname}...", "info")
         try:
             # 后台线程执行 IO + 解析（asyncio.to_thread 在 Python 3.9+ 可用），
-            # 不阻塞 Flet 事件循环。read_text 与 parse_markdown 均为纯函数，
-            # 线程安全（无共享可变状态）。
+            # 不阻塞 Flet 事件循环。load_document 按扩展名选解析器（Markdown
+            # 行结构 / 其它文本整篇一个代码块），并做编码探测与换行归一，
+            # 均为纯函数（无共享可变状态），线程安全。
             with diagnostics.timed("打开 · 读取解析", inflight=False, 文件=fname):
-                text = await asyncio.to_thread(read_text, path)
-                doc = await asyncio.to_thread(parser.parse_markdown, text)
+                doc = await asyncio.to_thread(load_document, path)
+        except UnsupportedFileType as e:
+            _loading_paths.discard(path)
+            ctx.show_snack(str(e))
+            set_status_message(None)
+            return
         except Exception as e:
             _loading_paths.discard(path)
             ctx.show_snack(f"打开失败：{e}")
@@ -238,8 +296,7 @@ def build_file_io_ops(ctx: FileIoEnv):
         """同步降级加载（page 未就绪时使用，启动初期极少触发）。"""
         try:
             with diagnostics.timed("打开 · 读取解析（同步降级）", 文件=os.path.basename(path)):
-                text = read_text(path)
-                doc = parser.parse_markdown(text)
+                doc = load_document(path)
         except Exception as e:
             log.warning("同步加载失败 path=%s", path, exc_info=True)
             ctx.show_snack(f"打开失败：{e}")
@@ -298,10 +355,11 @@ def build_file_io_ops(ctx: FileIoEnv):
         if picker is None:
             return
         files = await picker.pick_files(
-            dialog_title="打开 Markdown",
-            # lnk：指向 .md 的快捷方式（open_file_by_path 解析后打开目标文档）
-            allowed_extensions=["md", "markdown", "txt", "lnk"],
-            file_type=ft.FilePickerFileType.CUSTOM,
+            dialog_title="打开文件",
+            # 任意文件类型：编辑器支持 Markdown 与各类纯文本（.txt/.py/.cpp…），
+            # 逐个列扩展名会在 Windows 对话框里堆成几十项。选到非文本类型时
+            # 由 open_file_by_path 分流（交系统默认程序）并给出提示。
+            file_type=ft.FilePickerFileType.ANY,
         )
         if not files:
             return
@@ -354,8 +412,8 @@ def build_file_io_ops(ctx: FileIoEnv):
         if not path or not os.path.isfile(path):
             return
         try:
-            # 读原文件内容作为历史副本
-            original = read_text(path)
+            # 读原文件内容作为历史副本（编码探测：GBK 的 .py/.txt 也要能备份）
+            original, _eol = read_text_auto(path)
             if not original:
                 return
             # 用原文件内容 + 当前 tab 元信息生成历史备份
@@ -424,19 +482,22 @@ def build_file_io_ops(ctx: FileIoEnv):
         if doc is None:
             return False
         _is_new_file = not path  # 另存为：原 path 为空，写盘后新增文件需刷新侧边栏文件树
+        _plain = _is_plain(doc)
         if not path:
             picker = ctx.picker_holder.current
             if picker is None:
                 return False
             path = await picker.save_file(
-                dialog_title="保存 Markdown",
-                file_name="未命名.md",
-                allowed_extensions=["md"],
+                dialog_title="保存文件",
+                file_name="未命名.txt" if _plain else "未命名.md",
+                allowed_extensions=_save_dialog_exts(doc, path),
                 file_type=ft.FilePickerFileType.CUSTOM,
             )
             if not path:
                 return False
-            if not path.lower().endswith(".md"):
+            # 纯文本文档沿用用户选的扩展名（.py / .txt…）：强补 .md 会把源码存成
+            # Markdown 文件，之后打开就变成"一堆段落"而不是代码块。
+            if not _plain and not path.lower().endswith(".md"):
                 path += ".md"
         # 外部修改检测：保存前若文件被外部修改，弹出重载确认
         # force=True 时跳过（用户在对话框中选择「保留本地版本」后强制覆盖）
@@ -455,12 +516,12 @@ def build_file_io_ops(ctx: FileIoEnv):
                     "target_tab_index": tab_index,
                 })
                 return False
-        text = parser.serialize(doc)
+        text = _text_for_write(doc)
         # 覆盖前备份：原文件存在时生成历史副本
         if not _is_new_file:
             _backup_before_overwrite(path, text, tab)
         try:
-            write_text_atomic(path, text)
+            write_text_atomic(path, text, encoding=_encoding_for_write(doc))
         except Exception as e:
             # 写入失败兜底：将当前内容写入备份目录，确保数据不丢失
             write_backup(ctx.settings, tab, text)
@@ -539,10 +600,10 @@ def build_file_io_ops(ctx: FileIoEnv):
                 p = tab.get(f"{side}_path")
                 if not (tab.get(f"{side}_dirty", False) and p and doc is not None):
                     continue
-                text = parser.serialize(doc)
+                text = _text_for_write(doc)
                 _backup_before_overwrite(p, text, tab)
                 try:
-                    write_text_atomic(p, text)
+                    write_text_atomic(p, text, encoding=_encoding_for_write(doc))
                     doc.dirty = False
                 except Exception:
                     # 写入失败兜底：备份到恢复目录，不弹对话框（自动保存静默）
@@ -568,11 +629,11 @@ def build_file_io_ops(ctx: FileIoEnv):
             return False  # 未命名文档无法自动保存
         if not tab.get("dirty"):
             return True  # 已干净，无需写盘
-        text = parser.serialize(doc)
+        text = _text_for_write(doc)
         # 覆盖前备份：原文件存在时生成历史副本
         _backup_before_overwrite(path, text, tab)
         try:
-            write_text_atomic(path, text)
+            write_text_atomic(path, text, encoding=_encoding_for_write(doc))
         except Exception as e:
             # 写入失败兜底：备份到恢复目录，静默失败（自动保存不打断流程）
             log.error("自动保存失败 path=%s", path, exc_info=True)
@@ -610,14 +671,14 @@ def build_file_io_ops(ctx: FileIoEnv):
         side="left" / "right"，用于错误提示；tab_index 供失败弹窗定位标签。
         """
         # 覆盖前备份
-        _backup_before_overwrite(path, parser.serialize(doc), tab_data)
+        _backup_before_overwrite(path, _text_for_write(doc), tab_data)
         try:
-            write_text_atomic(path, parser.serialize(doc))
+            write_text_atomic(path, _text_for_write(doc), encoding=_encoding_for_write(doc))
             doc.dirty = False
             return True
         except Exception as e:
             # 写入失败兜底
-            write_backup(ctx.settings, tab_data, parser.serialize(doc))
+            write_backup(ctx.settings, tab_data, _text_for_write(doc))
             side_label = "左侧" if side == "left" else "右侧"
             set_status_message(f"{side_label}保存失败：{e}", "error")
             # 弹「强制保存」对话框（对比标签：force_save_doc 会分别处理脏侧）
@@ -661,12 +722,12 @@ def build_file_io_ops(ctx: FileIoEnv):
                 if not (tab.get(f"{side}_dirty", False) and p and doc is not None):
                     continue
                 try:
-                    write_text(p, parser.serialize(doc))
+                    write_text(p, _text_for_write(doc), encoding=_encoding_for_write(doc))
                     doc.dirty = False
                 except Exception as e:
                     all_ok = False
                     side_label = "左侧" if side == "left" else "右侧"
-                    write_backup(ctx.settings, tab, parser.serialize(doc))
+                    write_backup(ctx.settings, tab, _text_for_write(doc))
                     set_status_message(f"{side_label}强制保存失败：{e}", "error")
             if all_ok:
                 latest = list(ctx.tabs_ref.current)
@@ -685,9 +746,9 @@ def build_file_io_ops(ctx: FileIoEnv):
         path = tab.get("file_path")
         if doc is None or not path:
             return False
-        text = parser.serialize(doc)
+        text = _text_for_write(doc)
         try:
-            write_text(path, text)
+            write_text(path, text, encoding=_encoding_for_write(doc))
         except Exception as e:
             write_backup(ctx.settings, tab, text)
             set_status_message(f"强制保存失败：{e}", "error")
@@ -755,25 +816,30 @@ def build_file_io_ops(ctx: FileIoEnv):
         picker = ctx.picker_holder.current
         if picker is None:
             return False
-        # 默认文件名：原文件名 / 未命名.md
+        # 默认文件名：原文件名 / 未命名.md（纯文本未命名默认 .txt）
         cur_path = tab.get("file_path")
-        default_name = os.path.basename(cur_path) if cur_path else "未命名.md"
+        _plain = _is_plain(doc)
+        default_name = (
+            os.path.basename(cur_path) if cur_path else ("未命名.txt" if _plain else "未命名.md")
+        )
         new_path = await picker.save_file(
-            dialog_title="另存为 Markdown",
+            dialog_title="另存为",
             file_name=default_name,
-            allowed_extensions=["md"],
+            allowed_extensions=_save_dialog_exts(doc, cur_path),
             file_type=ft.FilePickerFileType.CUSTOM,
         )
         if not new_path:
             return False
-        if not new_path.lower().endswith(".md"):
+        # 纯文本文档不补 .md：沿用用户选的扩展名（.py / .txt…），
+        # 否则源码会被存成 Markdown 文件，下次打开就成了"一堆段落"
+        if not _plain and not new_path.lower().endswith(".md"):
             new_path += ".md"
         # 如果与原路径不同且新路径已存在，先做覆盖前备份
         if new_path != cur_path and os.path.isfile(new_path):
-            _backup_before_overwrite(new_path, parser.serialize(doc), tab)
-        text = parser.serialize(doc)
+            _backup_before_overwrite(new_path, _text_for_write(doc), tab)
+        text = _text_for_write(doc)
         try:
-            write_text_atomic(new_path, text)
+            write_text_atomic(new_path, text, encoding=_encoding_for_write(doc))
         except Exception as e:
             # 写入失败兜底备份
             write_backup(ctx.settings, tab, text)
@@ -816,14 +882,15 @@ def build_file_io_ops(ctx: FileIoEnv):
             fmt = "html"
 
         md_text = parser.serialize(ctx.document)
-        # 文档标题：取文件名（去 .md）或「文档」
+        # 文档标题 / 默认文件名：取文件名去扩展名（纯文本文档没有 .md 可截，
+        # 统一走 splitext，避免 "main.py.html" 这种叠扩展名）
         base_name = file_name(ctx.file_path) if ctx.file_path else "文档.md"
-        title = base_name[:-3] if base_name.lower().endswith(".md") else base_name
+        stem = os.path.splitext(base_name)[0] or base_name
+        title = stem
 
         ext_map = {"html": "html", "docx": "docx", "pdf": "pdf"}
         ext = ext_map[fmt]
-        # 默认文件名：原文件名替换扩展名
-        default_name = base_name[:-3] + f".{ext}" if base_name.lower().endswith(".md") else f"{base_name}.{ext}"
+        default_name = f"{stem}.{ext}"
 
         picker = ctx.picker_holder.current
         if picker is None:

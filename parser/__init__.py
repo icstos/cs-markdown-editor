@@ -4,12 +4,14 @@
 - _engine：mistune 实例（惰性）+ 块级正则 + 行内包裹器表（叶子，无包内依赖）
 - inline：行内解析（parse_inline）← _engine
 - block：块级解析（parse_markdown）← _engine + inline + utils.table_helpers
+- plain：纯文本 / 源码装载（parse_plain_text：整篇一个代码块）← models
 - reparse：行重解析（reparse_line / reparse_line_atomic / staging_reparse）← _engine + block
 - serialize：序列化（serialize / to_html）← _engine
 - selection：选区操作（compute/delete/apply/match/extract_outward_text）← reparse + utils.segment_helpers
 
 对外接口（保持 `import parser; parser.xxx` 与 `from parser import xxx` 兼容）：
 - parse_markdown(text) -> Document
+- parse_plain_text(text, lang="") -> Document：纯文本 / 源码 → 整篇一个代码块
 - reparse_line(line, new_raw=None) / reparse_line_atomic(line, new_raw)
 - staging_reparse(line, new_raw) / segment_raw(segments) / line_to_raw(line)
 - serialize(doc) / to_html(text)
@@ -27,6 +29,7 @@
 
 from parser.block import parse_markdown
 from parser.inline import parse_inline
+from parser.plain import is_plain_document, parse_plain_text
 from parser.reparse import (
     line_to_raw,
     reparse_line,
@@ -50,10 +53,12 @@ __all__ = [
     "compute_markdown_from_text",
     "delete_selections",
     "extract_outward_text",
+    "is_plain_document",
     "line_to_raw",
     "match_text_to_selections",
     "parse_inline",
     "parse_markdown",
+    "parse_plain_text",
     "reparse_line",
     "reparse_line_atomic",
     "segment_raw",

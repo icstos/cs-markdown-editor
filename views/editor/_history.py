@@ -18,6 +18,7 @@ import parser
 from core.history import EditorSnapshot, LineEditSnapshot
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import _make_snapshot as _make_snapshot_impl
+from views._editor_helpers import parse_draft_lines
 from views.editor._contracts import HistoryEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
@@ -100,10 +101,10 @@ def build_history(ctx: HistoryEnv):
             ctx.set_raw_mode(snap.raw_mode)
             if snap.raw_mode:
                 ctx.set_raw_draft(snap.raw_draft)
-                ctx.document.lines = parser.parse_markdown(snap.raw_draft).lines
+                ctx.document.lines = parse_draft_lines(ctx.document, snap.raw_draft)
                 ctx.set_cursor_li(None)
             else:
-                ctx.document.lines = parser.parse_markdown(snap.markdown).lines
+                ctx.document.lines = parse_draft_lines(ctx.document, snap.markdown)
                 if snap.cursor_li is not None and 0 <= snap.cursor_li < len(ctx.document.lines):
                     ctx.set_cursor_li(snap.cursor_li)
                     ctx.set_cursor_off(snap.cursor_off)

@@ -5,7 +5,7 @@
 属于「文件树如何被描述」，一并置于此。
 
 对外接口：scan_files / tree_signature / poll_fs_changes / filter_tree /
-flatten_tree / collect_md_paths / file_icon / file_row_icon_data / FILE_ICON_MAP。
+flatten_tree / collect_text_paths / file_icon / file_row_icon_data / FILE_ICON_MAP。
 """
 
 import asyncio
@@ -15,8 +15,8 @@ from collections.abc import Callable
 import flet as ft
 
 from services import shortcut
+from utils import text_formats
 
-MD_EXTS = (".md", ".markdown")
 MAX_DEPTH = 8  # 扫描最大深度（VSCode 风格全类型扫描，8 层覆盖典型项目结构）
 MAX_FILES = 5000  # 单次扫描文件数上限保护（防止 node_modules 拖慢 UI）
 WATCH_INTERVAL = 2.0  # 外部文件系统变化轮询间隔（秒）
@@ -74,14 +74,16 @@ FILE_ICON_MAP: dict[str, str] = {
 def file_icon(name: str, c) -> tuple[str, str]:
     """按文件扩展名返回 (图标名, 颜色)。
 
-    .md/.markdown 用 c.link 主题色突出可编辑文件；其余统一 c.muted 避免色彩过载。
+    .md/.markdown 用 c.link 主题色标出「一等文档类型」（行结构 + 所见即所得）。
+    其余类型统一 c.muted：编辑器现在也能打开 .py/.txt 等纯文本文件，但那样几乎
+    每个文件都算「可编辑」，全用主题色会让颜色失去区分度（色彩过载）。
     未知扩展名兜底 INSERT_DRIVE_FILE_OUTLINED。扩展名匹配大小写不敏感。
     .lnk 快捷方式用 SHORTCUT 图标，与 .md 的 DESCRIPTION 文档图标在形状上区分。
     """
     lower = name.lower()
     _, ext = os.path.splitext(lower)
     icon = FILE_ICON_MAP.get(ext, ft.Icons.INSERT_DRIVE_FILE_OUTLINED)
-    color = c.link if ext in (".md", ".markdown") else c.muted
+    color = c.link if text_formats.is_markdown_path(lower) else c.muted
     return icon, color
 
 
@@ -91,12 +93,12 @@ def file_row_icon_data(
     """按文件扩展名返回 (图标名, 颜色, tooltip)。
 
     与 file_icon 的区别：.lnk 一律用 SHORTCUT 主图标（不随目标类型变化），
-    确保链接与 .md 文档在图标形状上一眼可分；指向 .md 的快捷方式用 c.link
-    主题色提示「可在编辑器中打开」，tooltip 显示目标路径（资源管理器直觉）。
-    其余文件直接委托 file_icon，tooltip 为 None。
+    确保链接与文档在图标形状上一眼可分；指向可编辑文本（.md / .txt / .py …）
+    的快捷方式用 c.link 主题色提示「可在编辑器中打开」，tooltip 显示目标路径
+    （资源管理器直觉）。其余文件直接委托 file_icon，tooltip 为 None。
     """
     if abspath and shortcut.is_shortcut(name):
-        lnk_target = shortcut.resolve_md_target(abspath)
+        lnk_target = shortcut.resolve_text_target(abspath)
         icon = ft.Icons.SHORTCUT
         color = c.link if lnk_target is not None else c.muted
         tooltip = f"→ {lnk_target}" if lnk_target is not None else None
@@ -121,7 +123,7 @@ def scan_files(
     目录在前、字母序排序；跳过隐藏目录与常见忽略目录。失败时返回 []。
 
     与旧 _scan_markdown_files 的差异：
-    - 收录所有类型文件（不再按 MD_EXTS 过滤），让用户看到图片/代码等资源
+    - 收录所有类型文件（不再按 Markdown 扩展名过滤），让用户看到图片/代码等资源
     - 保留空目录（VSCode 显示空目录，移除旧 `if children:` 过滤）
     - max_files 上限保护：闭包计数器超限即停止追加，防止 node_modules 等巨型目录拖慢 UI
     """
@@ -264,27 +266,28 @@ def flatten_tree(
     return out
 
 
-def collect_md_paths(tree: list) -> list[str]:
-    """从嵌套文件树扁平化提取所有 .md/.markdown 文件绝对路径（深度优先，字母序）。
+def collect_text_paths(tree: list) -> list[str]:
+    """从嵌套文件树提取所有可在编辑器中打开的文本文件绝对路径（深度优先，字母序）。
 
-    复用 scan_files 产出的全类型树结构，仅供跨文件搜索使用。
-    扫描改为全类型后此处必须按 MD_EXTS 过滤，否则跨文件搜索会尝试读取
-    图片/二进制等非文本文件（search_in_file 的 UnicodeDecodeError 兜底
-    会静默跳过，但浪费 IO 且语义不符）。
-    快捷方式：指向 .md 的 .lnk 以目标路径参与搜索（搜索目标内容，点击
-    打开目标文档）；目标与树内 .md 重复时去重保序。
+    复用 scan_files 产出的全类型树结构，供跨文件搜索使用。
+    扫描是全类型的，此处必须按 `text_formats.is_supported_text_path` 过滤：
+    否则跨文件搜索会尝试读取图片/二进制（search_in_file 的解码兜底会静默
+    跳过，但浪费 IO 且语义不符）。
+    收录范围与「点击能否进编辑器」完全一致（Markdown + 纯文本 + 源码），
+    避免出现"能打开却搜不到"或"能搜到却打不开"的错位。
+    快捷方式：指向可编辑文本的 .lnk 以目标路径参与搜索（搜索目标内容，点击
+    打开目标文件）；目标与树内文件重复时去重保序。
     """
     paths: list[str] = []
 
     def _walk(node):
         if node[0] == "file":
-            name_l = node[1].lower()
-            if name_l.endswith(MD_EXTS):
-                paths.append(node[2])
-            elif name_l.endswith(".lnk"):
-                target = shortcut.resolve_md_target(node[2])
+            if shortcut.is_shortcut(node[1]):
+                target = shortcut.resolve_text_target(node[2])
                 if target:
                     paths.append(target)
+            elif text_formats.is_supported_text_path(node[2]):
+                paths.append(node[2])
         else:
             for child in node[2]:
                 _walk(child)

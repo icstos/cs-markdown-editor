@@ -1,7 +1,9 @@
 """Windows 快捷方式（.lnk）解析。
 
-支持场景：快捷方式指向 .md/.markdown 文件时，编辑器打开/编辑目标文档；
-复制/移动/重命名/删除始终只操作 .lnk 文件本身（资源管理器直觉）。
+支持场景：快捷方式指向**可编辑的文本文件**（Markdown / 纯文本 / 源码）时，
+编辑器打开/编辑目标文件；复制/移动/重命名/删除始终只操作 .lnk 文件本身
+（资源管理器直觉）。「可编辑」的判定由 `utils.text_formats` 统一给出 ——
+本模块不自己维护扩展名表，否则侧边栏判断、加载器判断、快捷方式判断会三处漂移。
 
 解析实现（无 pywin32 依赖）：
 - 主路径：纯 Python 解析 Shell Link Binary File Format（MS-SHLLINK）：
@@ -15,7 +17,8 @@
 
 对外接口：
 - resolve_shortcut_target(lnk_path) -> str | None：目标绝对路径（解析失败/文件不存在返回 None）
-- resolve_md_target(lnk_path) -> str | None：目标存在且为 .md/.markdown 时返回绝对路径
+- resolve_text_target(lnk_path) -> str | None：目标存在且为可编辑文本时返回绝对路径
+- resolve_md_target(lnk_path) -> str | None：仅 Markdown 目标（resolve_text_target 的 md 子集）
 - is_shortcut(path) -> bool：是否 .lnk 文件（扩展名判断）
 
 非 .lnk 输入：resolve_* 一律返回 None（调用方无需预判扩展名）。
@@ -26,8 +29,9 @@ import platform
 import struct
 import subprocess
 
-_MD_EXTS = (".md", ".markdown")
-_MAX_CHAIN = 5  # .lnk → .lnk → … → .md 链式展开上限（防循环/恶意深链）
+from utils import text_formats
+
+_MAX_CHAIN = 5  # .lnk → .lnk → … → 目标链式展开上限（防循环/恶意深链）
 
 # MS-SHLLINK Header：SizeOfLinkHeader(4) + LinkCLSID(16)
 _LNK_CLSID = bytes.fromhex("0114020000000000C000000000000046")
@@ -218,19 +222,33 @@ def resolve_shortcut_target(lnk_path: str | None) -> str | None:
     return target
 
 
-def resolve_md_target(lnk_path: str | None, _depth: int = 0) -> str | None:
-    """解析 .lnk 指向的 Markdown 文件绝对路径。
+def resolve_text_target(lnk_path: str | None, _depth: int = 0) -> str | None:
+    """解析 .lnk 指向的「可在编辑器中打开」的文本文件绝对路径。
 
-    目标存在且扩展名为 .md/.markdown 时返回；目标本身是 .lnk 时链式展开
-    （上限 _MAX_CHAIN 层，防循环引用）；其余情况返回 None。
+    目标存在且扩展名受支持（Markdown / 纯文本 / 源码，判定见
+    `utils.text_formats.is_supported_text_path`）时返回；目标本身是 .lnk 时
+    链式展开（上限 _MAX_CHAIN 层，防循环引用）；图片、可执行文件、失效链接
+    一律返回 None（调用方据此退回系统默认程序）。
     """
+    if _depth >= _MAX_CHAIN:
+        return None
     target = resolve_shortcut_target(lnk_path)
     if not target:
         return None
-    if _depth >= _MAX_CHAIN:
-        return None
-    if os.path.normcase(target).endswith(_MD_EXTS):
-        return target if os.path.isfile(target) else None
     if is_shortcut(target):
-        return resolve_md_target(target, _depth + 1)
-    return None
+        return resolve_text_target(target, _depth + 1)
+    if not text_formats.is_supported_text_path(target):
+        return None
+    return target if os.path.isfile(target) else None
+
+
+def resolve_md_target(lnk_path: str | None, _depth: int = 0) -> str | None:
+    """解析 .lnk 指向的 Markdown 文件绝对路径（仅 .md/.markdown）。
+
+    只关心 Markdown 的调用方（如「比较两个文档」只接受 md）用这个；需要
+    「任一可编辑目标」用 `resolve_text_target`（本函数就是它的 md 子集）。
+    """
+    target = resolve_text_target(lnk_path, _depth)
+    if target is None or not text_formats.is_markdown_path(target):
+        return None
+    return target

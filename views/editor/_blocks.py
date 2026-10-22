@@ -41,7 +41,14 @@ def build_blocks(ctx: BlocksEnv):
     """
 
     def set_block(block_type: BlockType, level: int = 0, task: bool = False):
-        """切换当前行块类型（Ctrl+0~6 / 工具栏）。"""
+        """切换当前行块类型（Ctrl+0~6 / 工具栏）。
+
+        纯文本文档（整篇一个代码块）一律忽略：文档只有这一个 CODE 行，
+        把它改成标题 / 表格 / 段落会直接摧毁纯文本形态（保存时还会写成 Markdown），
+        而用户在源码文件上按 Ctrl+1 的本意绝不是"把整个文件变成一行标题"。
+        """
+        if getattr(ctx.document, "plain", False):
+            return
         li = ctx.cursor_li if ctx.cursor_li is not None else ctx.cursor_line
         if not (0 <= li < len(ctx.document.lines)):
             return
@@ -219,6 +226,13 @@ def build_blocks(ctx: BlocksEnv):
             return
         line = ctx.document.lines[li]
         if line.block_type != BlockType.CODE:
+            return
+        if getattr(ctx.document, "plain", False):
+            # 纯文本文档：语言只影响高亮，正文（line.raw）就是文件内容，
+            # **不能**重建成围栏形式（否则保存即把 ``` 写进源码文件）。
+            ctx.maybe_push_history()
+            line.lang = new_lang
+            ctx.mark_dirty()
             return
         ctx.maybe_push_history()
         line.lang = new_lang

@@ -4,8 +4,11 @@
 - services.shortcut：纯字节解析（手工构造 MS-SHLLINK 结构，不依赖 Windows）/
   is_shortcut 扩展名判断 / resolve_md_target 类型分流（.md ✓、.txt ✗、
   失效目标 ✗）/ 真实 .lnk 解析（PowerShell WScript.Shell 创建，仅 Windows）
+- services.shortcut.resolve_text_target：可编辑文本目标（.md/.txt/.py ✓、
+  .png ✗）/ lnk → lnk 链式展开 / 与 resolve_md_target 的包含关系
 - services.file_ops.rename_path：.lnk 重命名保留扩展（防快捷方式失效）
-- views.sidebar._collect_md_paths：指向 .md 的 .lnk 以目标路径参与跨文件搜索
+- services.file_tree.collect_text_paths：指向可编辑文本的 .lnk 以目标路径
+  参与跨文件搜索
 
 纯字节解析用例手工构造最小合法 .lnk（Header + LinkInfo），不经过
 PowerShell，保证全平台可跑（mbcs 编码仅 Windows 存在，构造用 ASCII 路径）。
@@ -21,7 +24,7 @@ import pytest
 
 from services import shortcut
 from services.file_ops import rename_path
-from services.file_tree import collect_md_paths
+from services.file_tree import collect_text_paths
 
 # ---- 最小 .lnk 构造（MS-SHLLINK） ----
 
@@ -152,6 +155,55 @@ def test_cache_invalidates_on_content_change(tmp_path):
     assert shortcut.resolve_shortcut_target(p) == t2
 
 
+# ---- resolve_text_target：可编辑文本分流 ----
+
+
+def test_resolve_text_target_accepts_text_types(tmp_path):
+    """.md / .txt / .py 都算可编辑目标（能力范围与编辑器加载器一致）。"""
+    for i, name in enumerate(("doc.md", "readme.txt", "main.py", "logo.svg")):
+        target = tmp_path / name
+        target.write_text("x", encoding="utf-8")
+        lnk = str(tmp_path / f"t{i}.lnk")
+        _write_lnk(lnk, _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(target)))
+        assert shortcut.resolve_text_target(lnk) == str(target)
+
+
+def test_resolve_text_target_rejects_binary(tmp_path):
+    """图片 / 压缩包不是文本 → None（调用方退回系统默认程序）。"""
+    for i, name in enumerate(("pic.png", "archive.zip", "app.exe")):
+        target = tmp_path / name
+        target.write_bytes(b"\x00\x01")
+        lnk = str(tmp_path / f"b{i}.lnk")
+        _write_lnk(lnk, _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(target)))
+        assert shortcut.resolve_text_target(lnk) is None
+
+
+def test_resolve_text_target_chains_lnk_to_lnk(tmp_path):
+    """lnk → lnk → txt 链式展开（上限 5 层）。"""
+    txt = tmp_path / "deep.txt"
+    txt.write_text("t", encoding="utf-8")
+    inner = str(tmp_path / "inner.lnk")
+    _write_lnk(inner, _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(txt)))
+    outer = str(tmp_path / "outer.lnk")
+    _write_lnk(outer, _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(inner))
+    assert shortcut.resolve_text_target(outer) == str(txt)
+
+
+def test_resolve_md_target_is_text_subset(tmp_path):
+    """resolve_md_target 是 resolve_text_target 的 md 子集（同一目标两种口径）。"""
+    md = tmp_path / "a.md"
+    md.write_text("# a", encoding="utf-8")
+    txt = tmp_path / "b.txt"
+    txt.write_text("b", encoding="utf-8")
+    lnk_md = str(tmp_path / "a.lnk")
+    lnk_txt = str(tmp_path / "b.lnk")
+    _write_lnk(lnk_md, _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(md)))
+    _write_lnk(lnk_txt, _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(txt)))
+    assert shortcut.resolve_text_target(lnk_md) == shortcut.resolve_md_target(lnk_md) == str(md)
+    assert shortcut.resolve_text_target(lnk_txt) == str(txt)
+    assert shortcut.resolve_md_target(lnk_txt) is None
+
+
 # ---- resolve_md_target 分流 ----
 
 
@@ -260,11 +312,14 @@ def test_rename_md_still_forces_md(tmp_path):
 # ---- 侧边栏跨文件搜索：.lnk 目标参与 ----
 
 
-def test_collect_md_paths_includes_lnk_targets(tmp_path):
-    """指向 .md 的 .lnk 以目标路径参与；与树内同名 .md 去重；非 md 目标忽略。"""
+def test_collect_text_paths_includes_lnk_targets(tmp_path):
+    """指向文本的 .lnk 以目标路径参与；与树内同名文件去重；二进制目标忽略。"""
     md = tmp_path / "note.md"
     md.write_text("# n", encoding="utf-8")
-    (tmp_path / "ref.txt").write_text("t", encoding="utf-8")
+    txt = tmp_path / "ref.txt"
+    txt.write_text("t", encoding="utf-8")
+    pic = tmp_path / "pic.png"
+    pic.write_bytes(b"\x00")
     lnk_md = tmp_path / "alias.md.lnk"
     _write_lnk(
         str(lnk_md), _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(md))
@@ -272,18 +327,24 @@ def test_collect_md_paths_includes_lnk_targets(tmp_path):
     lnk_txt = tmp_path / "ref.lnk"
     _write_lnk(
         str(lnk_txt),
-        _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(tmp_path / "ref.txt")),
+        _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(txt)),
+    )
+    lnk_pic = tmp_path / "pic.lnk"
+    _write_lnk(
+        str(lnk_pic),
+        _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(pic)),
     )
     tree = [
         ("file", "note.md", str(md)),
         ("file", "alias.md.lnk", str(lnk_md)),
         ("file", "ref.lnk", str(lnk_txt)),
+        ("file", "pic.lnk", str(lnk_pic)),
     ]
-    # 去重后仅一个目标（note.md 与 alias.md.lnk 指向同一路径）
-    assert collect_md_paths(tree) == [str(md)]
+    # 去重：note.md 与 alias.md.lnk 指向同一路径；ref.lnk 目标被收录；图片目标不收录
+    assert collect_text_paths(tree) == [str(md), str(txt)]
 
 
-def test_collect_md_paths_lnk_target_outside_tree(tmp_path):
+def test_collect_text_paths_lnk_target_outside_tree(tmp_path):
     """目标在工作区外时也参与搜索（返回目标绝对路径）。"""
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -292,4 +353,4 @@ def test_collect_md_paths_lnk_target_outside_tree(tmp_path):
     lnk = tmp_path / "ext.lnk"
     _write_lnk(str(lnk), _header(shortcut._FLAG_HAS_LINK_INFO) + _link_info_ansi(str(md)))
     tree = [("file", "ext.lnk", str(lnk))]
-    assert collect_md_paths(tree) == [str(md)]
+    assert collect_text_paths(tree) == [str(md)]

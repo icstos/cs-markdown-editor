@@ -137,11 +137,22 @@ class Document:
     lines：行列表
     file_path：关联的文件绝对路径（未保存时为 None）
     dirty：是否有未保存修改
+    plain：是否为「纯文本文档」。True 时整篇文档就是 **一个 CODE 行**，
+        渲染成单个代码块（语法高亮按扩展名判定），序列化直接输出正文本身
+        （不套 ``` 围栏）——见 parser.plain 与 views.code_block。
+    eol：原文件的换行符（"\\n" / "\\r\\n"）。只用于纯文本文档保存时还原；
+        编辑器内部一律用 "\\n"。
+    encoding：原文件的字符编码（"utf-8" / "gb18030" / "utf-8-sig" / "utf-16"）。
+        同样只用于纯文本文档保存时还原：GBK 的 .py 里若写着
+        `# -*- coding: gbk -*-`，按 UTF-8 写回会让 Python 直接判语法错误。
     """
 
     lines: list[Line] = field(default_factory=list)
     file_path: str | None = None
     dirty: bool = False
+    plain: bool = False
+    eol: str = "\n"
+    encoding: str = "utf-8"
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +229,9 @@ def new_document(
     lines: list[Line] | None = None,
     file_path: str | None = None,
     dirty: bool = False,
+    plain: bool = False,
+    eol: str = "\n",
+    encoding: str = "utf-8",
 ) -> Document:
     """快速构造 Document（跳过 observable 逐字段通知，见本节说明）。
 
@@ -230,4 +244,7 @@ def new_document(
     _sa(obj, "lines", ObservableList(obj, "lines", lines or []))
     _sa(obj, "file_path", file_path)
     _sa(obj, "dirty", dirty)
+    _sa(obj, "plain", plain)
+    _sa(obj, "eol", eol)
+    _sa(obj, "encoding", encoding)
     return obj

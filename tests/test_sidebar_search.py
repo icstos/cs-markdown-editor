@@ -5,7 +5,7 @@
   （普通子串/大小写/整词/正则/无效正则）
 - views.sidebar._match_lines：行级匹配返回 offset+长度，多匹配行返回多区间
 - views.sidebar._search_in_file：单文件搜索边界（超大文件跳过/读取失败/超长行）
-- views.sidebar._collect_md_paths：嵌套树扁平化提取 .md 路径
+- services.file_tree.collect_text_paths：嵌套树扁平化提取可编辑文本路径
 - views.sidebar._build_preview_spans：高亮预览 spans 构造
 - 跳转链路向后兼容：jump_to(li, off=None) 退化为 off=0
 
@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.file_tree import collect_md_paths
+from services.file_tree import collect_text_paths
 from services.search import (
     MAX_FILE_SIZE,
     MAX_PER_FILE,
@@ -177,11 +177,11 @@ def test_search_in_file_respects_max_per_file(tmp_path):
     assert len(results) == MAX_PER_FILE
 
 
-# ---- collect_md_paths：嵌套树扁平化 ----
+# ---- collect_text_paths：嵌套树扁平化 ----
 
 
-def test_collect_md_paths_flattens_tree():
-    """嵌套树扁平化提取所有 .md 文件路径（深度优先）。"""
+def test_collect_text_paths_flattens_tree():
+    """嵌套树扁平化提取所有可编辑文本路径（深度优先）。"""
     tree = [
         ("dir", "docs", [
             ("file", "a.md", "/abs/docs/a.md"),
@@ -191,12 +191,12 @@ def test_collect_md_paths_flattens_tree():
         ]),
         ("file", "c.md", "/abs/c.md"),
     ]
-    paths = collect_md_paths(tree)
+    paths = collect_text_paths(tree)
     assert paths == ["/abs/docs/a.md", "/abs/docs/sub/b.md", "/abs/c.md"]
 
 
-def test_collect_md_paths_filters_non_md():
-    """扫描改为全类型后，collect_md_paths 必须按 .md/.markdown 过滤非 md 节点。"""
+def test_collect_text_paths_filters_binary():
+    """扫描是全类型的，collect_text_paths 必须过滤掉图片等二进制文件。"""
     tree = [
         ("dir", "docs", [
             ("file", "a.md", "/abs/docs/a.md"),
@@ -206,13 +206,14 @@ def test_collect_md_paths_filters_non_md():
         ("file", "d.md", "/abs/d.md"),
         ("file", "e.json", "/abs/e.json"),
     ]
-    paths = collect_md_paths(tree)
-    assert paths == ["/abs/docs/a.md", "/abs/d.md"]
+    paths = collect_text_paths(tree)
+    # .py / .json 现在也是可编辑文本 → 参与跨文件搜索
+    assert paths == ["/abs/docs/a.md", "/abs/docs/c.py", "/abs/d.md", "/abs/e.json"]
 
 
-def test_collect_md_paths_empty_tree():
+def test_collect_text_paths_empty_tree():
     """空树返回 []。"""
-    assert collect_md_paths([]) == []
+    assert collect_text_paths([]) == []
 
 
 # ---- _build_preview_spans：高亮预览 ----

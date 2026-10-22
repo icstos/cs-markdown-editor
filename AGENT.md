@@ -114,6 +114,7 @@
 - 禁止在纯文本文档上执行块级转换（`set_block`）或空块 Backspace 整体删除：整篇只有一个块，转换即摧毁纯文本形态、删除即清空文档结构（两处均已早返回；`handle_code_exit` 同样不许跳出，否则往源码里插入空段落行）。
 - 禁止在侧边栏 / 加载器 / 快捷方式解析三处各写一份扩展名表：「这个文件能不能当文本打开、用哪个语言高亮」只由 `utils/text_formats.py` 回答（`lang_for_path` 的 `None` 与 `""` 含义不同：前者=不支持，后者=纯文本无分词）。
 - 禁止纯文本文档保存时丢掉原编码与原换行：写盘必须带 `encoding=_encoding_for_write(doc)`，且 `Document.encoding/eol` 由装载层（`services/document_loader.py`）填。后果：GBK 的 .py 里有 `# -*- coding: gbk -*-` 时会被改成 UTF-8 而直接语法错误；CRLF 文件 diff 全红。
+- 禁止给纯文本文档的代码块套"卡片"（圆角 / 边框 / 阴影 / 头部行 / 块级留白）：源码视图**就是编辑器视口本身**，四层留白（`wrap_block(pad_v=0)`、块容器 padding、`page_padding` 返回 0、`ListView` 左右 padding）必须同时归零，编辑区底色也要用代码块底色。后果：编辑区里浮出一张卡片 + 代码下方露白像被截断，与桌面端直觉冲突（`tests/test_plain_text_docs.py` 的 `flush_with_viewport` / `has_no_header_row` 守护，变异 n=90/93/94/95）。
 - 禁止控制器闭包运行时调用与自身装配槽同名的 `ctx.set_*`（如 `ctx.set_active_pane` 在 `app/__init__.py` 装配后已被控制器函数覆盖），必须在 `build_*(ctx)` 构造期先捕获原始 state setter 再使用，后果：闭包读到自身 → 无限自调用 `RecursionError`（已踩坑，`tests/test_split_editor.py` 有装配覆盖回归测试）。
 - 必须维护拆分编辑组不变式：`active_index == 焦点侧组激活索引`（经 `app/_tab_management.py` 的 `activate_index` 统一维护）；拆分态下右组不可为空（`do_close_many` 右组清空时自动收起拆分）。后果：手写 `set_active_index` 绕过统一入口会破坏标签行 / 编辑器 / 焦点三处状态一致性。
 - 同文件多副本必须共享同一 `document` 对象（拆分开启 / 跨组打开时直接引用，非 re-parse 复制），且所有元数据变更（dirty / mtime / 路径 / 外部重载）必须按 document 身份（`is` 比较）同步所有副本、自动保存与定时备份必须按 document 身份去重。后果：副本内容与脏标记不一致——关闭确认误判、同内容双写盘、另一副本保存被误判为外部修改。

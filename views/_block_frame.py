@@ -22,6 +22,8 @@ def wrap_block(
     is_flash: bool = False,
     on_size_change: Callable[[int, float], None] | None = None,
     diff_mark: str | None = None,
+    pad_v: int | None = None,
+    highlight_current: bool = True,
 ) -> ft.Control:
     """包一层块级容器：缩进、引用边框、当前行高亮、跳转脉冲高亮、diff 背景着色。
 
@@ -33,7 +35,16 @@ def wrap_block(
         与 is_current_line 可叠加：flash 更强且 1.2s 消失，current 持续。
     diff_mark：diff 对比行标记。"added"=绿底，"removed"=红底，"modified"=浅绿底。
         作为最底层背景，与 flash/current 叠加时 diff 色在底，高亮在上。
+    pad_v：显式指定上下内边距，None = 按块类型默认（HR 用 Spacing.LG，其余
+        Spacing.XS）。源码视图（整篇一个代码块）传 0：那层留白是为段落之间
+        的呼吸位准备的，铺满编辑区的代码不需要，留着就是内容区顶部的悬空。
+    highlight_current：是否绘制"当前行"整块底色。源码视图传 False —— 它整篇
+        就是同一个逻辑行，光标在里面走动时 `is_current_line` 恒为真，整块会被
+        罩上一层选中底色（与"当前行"语义完全对不上：当前行是本行，不是整篇）。
     """
+    if pad_v is None:
+        # HR 行 padding 8+8（与 pixel_layout._block_padding HR 分支一致，保证光标 Y 对齐）
+        pad_v = Spacing.LG if line.block_type == BlockType.HR else Spacing.XS
     c = _current_colors()
     pad_left = 0
 
@@ -60,7 +71,7 @@ def wrap_block(
             animate=ft.Animation(300, ft.AnimationCurve.EASE_OUT),
         )
 
-    if is_current_line:
+    if is_current_line and highlight_current:
         # 当前行高亮：仅淡色背景，无蓝色竖条（保持界面简洁专业）
         # 左侧不再加 border 竖条，避免视觉噪声；与跳转脉冲高亮风格统一
         content = ft.Container(
@@ -93,8 +104,6 @@ def wrap_block(
                 **kwargs_bg,
             )
 
-    # HR 行 padding 8+8（与 pixel_layout._block_padding HR 分支一致，保证光标 Y 对齐）
-    pad_v = Spacing.LG if line.block_type == BlockType.HR else Spacing.XS
     kwargs: dict = {
         "key": f"line-{line_idx}" if line_idx is not None else None,
         "content": content,

@@ -105,6 +105,27 @@ _WINDOW_MARGIN = 40      # 视口外上下各预留的行数（滚动时提前�
 _WINDOW_CHUNK = 120      # 每次外扩的最少行数（迟滞：避免逐行跨越边界时频繁重渲染）
 
 
+def page_padding(settings: dict, zoom: float, *, is_plain: bool) -> tuple[int, int]:
+    """内容区的页面级留白：返回 (左右, 上下) 两个整数逻辑像素。
+
+    Markdown 文档按设置给（默认左右 36 / 上下 24，随 zoom 缩放）——那是"居中的
+    一份文档"的阅读栏宽。
+
+    纯文本文档（`.py`/`.txt`/…，整篇一个代码块）= 源码视图，两圈留白一律归零：
+    代码区**就是**编辑器的视口本身，这里的留白不再是排版，而是代码与窗口之间的
+    一圈空隙（桌面上打开 .py 期待的是 VSCode 那样铺满，而不是一张居中的卡片）。
+
+    抽成纯函数是为了能直接测这条策略：归零后四个使用点（ListView 左右 padding、
+    外层上下 padding、折行宽度、滚动贴顶偏移）读的都是同一对返回值，不存在
+    "视觉贴边、逻辑仍缩进"的错位。
+    """
+    if is_plain:
+        return 0, 0
+    pad = round(settings.get("content_padding", 36) * zoom)
+    pad_top = round(settings.get("content_padding_top", 24) * zoom)
+    return pad, pad_top
+
+
 def _code_enter_after_consumed(
     state: tuple[int, int, int] | None, li: int
 ) -> tuple[int, int, int] | None:
@@ -177,15 +198,16 @@ def MarkdownEditor(
     search_hits = search_hits or {}
     settings = settings or {}
     content_max_width = settings.get("content_max_width", 920)
-    content_padding = settings.get("content_padding", 36)
-    content_padding_top = settings.get("content_padding_top", 24)
     show_footer = settings.get("show_footer", True)
     body_font_size = settings.get("body_font_size", 16)
     # Typora 式缩放:zoom 百分比应用到正文字号和间距(50%~200%),整体视觉一致缩放
     _zoom = settings.get("zoom", 100) / 100.0
     body_font_size = max(8, round(body_font_size * _zoom))
-    content_padding = round(content_padding * _zoom)
-    content_padding_top = round(content_padding_top * _zoom)
+    # 页面级留白（源码视图归零，见 page_padding 的说明）
+    _is_plain_doc = bool(getattr(document, "plain", False))
+    content_padding, content_padding_top = page_padding(
+        settings, _zoom, is_plain=_is_plain_doc
+    )
     line_height = settings.get("line_height", 1.6)
     # show_toolbar prop:None 时回落到 settings,False 时强制隐藏(用于右侧拆分编辑器)
     show_toolbar = show_toolbar if show_toolbar is not None else settings.get("show_toolbar", True)
@@ -913,7 +935,11 @@ def MarkdownEditor(
                         ),
                         expand=True,
                         alignment=ft.Alignment.TOP_LEFT,
-                        bgcolor=c.bg,
+                        # 源码视图的编辑区底色 = 代码块底色：代码只写到文件末尾，
+                        # 下面那段"没有内容"的区域若还是页面白，视觉上就成了
+                        # "代码块被截断"（灰块 + 白块）。整片同色才像 VSCode 里
+                        # 一个铺满视口的编辑器（也顺带解释了"这里可以继续写"）。
+                        bgcolor=c.code_block_bg if _is_plain_doc else c.bg,
                         # 垂直留白固定不随内容滚动（顶部呼吸空间 + 底部结束留白）
                         padding=ft.Padding.symmetric(vertical=content_padding_top),
                         on_size_change=scroll_cbs["on_content_resize"],

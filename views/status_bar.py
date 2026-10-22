@@ -52,14 +52,23 @@ def _compute_counts(document: Document) -> tuple[int, int, int, int]:
     """从 document 计算 (word_count, char_count, para_count, reading_min)。
 
     供状态栏初值渲染与防抖异步任务复用。
+
+    `para_count` 的单位随文档类型变（见 `is_plain_document` 的调用说明）：
+    - Markdown：非空段落数 → 状态栏写「N 段」
+    - 纯文本（整篇一个 CODE 行）：非空逻辑行数 → 状态栏写「N 行」。
+      源码里数"段"没有意义，而按 `document.lines` 数出来恒为 0（整篇就一行），
+      真机上一份 35 行的 .py 会显示"0 段"—— 读数本身是错的，不只是措辞问题。
     """
     md_text = parser.serialize(document)
     char_count = len(md_text)
     word_count = len(_WORD_RE.findall(md_text))
-    para_count = sum(
-        1 for ln in document.lines
-        if ln.block_type == BlockType.PARAGRAPH and (ln.raw or "").strip()
-    )
+    if getattr(document, "plain", False):
+        para_count = sum(1 for ln in md_text.split("\n") if ln.strip())
+    else:
+        para_count = sum(
+            1 for ln in document.lines
+            if ln.block_type == BlockType.PARAGRAPH and (ln.raw or "").strip()
+        )
     reading_min = max(1, round(word_count / 300)) if word_count > 0 else 0
     return word_count, char_count, para_count, reading_min
 
@@ -158,6 +167,8 @@ def StatusBar(
     row, col = cursor_pos
     # .lnk 快捷方式打开时显示链接文件名（file_path 为目标路径）
     fname = display_name or _file_name(file_path)
+    # 计数第三段的单位：Markdown 数「段」，源码视图数「行」（见 _compute_counts）
+    count_unit = "行" if getattr(document, "plain", False) else "段"
 
     # ============ 更新器注册 ============
     # 注册进 status_ref.current 供 App 调用：update_cursor / update_counts。
@@ -389,7 +400,7 @@ def StatusBar(
                 ),
                 ft.Container(width=Spacing.LG),
                 ft.Text(
-                    value=f"{para_count} 段",
+                    value=f"{para_count} {count_unit}",
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,

@@ -453,21 +453,124 @@ def _has_tooltip(tree, text: str) -> bool:
     return any(getattr(node, "tooltip", None) == text for node in walk(tree))
 
 
-def test_plain_doc_hides_collapse_entry():
-    """纯文本文档不提供折叠：整篇一个块，折叠后没有任何行可落光标。"""
+def _block_container(tree):
+    """取代码块的"卡片"容器本身（行容器 key=line-0 的 content）。"""
+    root = next(node for node in walk(tree) if getattr(node, "key", None) == "line-0")
+    return root, root.content
+
+
+def test_plain_doc_has_no_header_row():
+    """源码视图没有头部行：语言 / 行数 / 复制 / 折叠四个入口整体不存在。
+
+    Markdown 围栏代码块照旧（对照组），否则这条用例只是在断言"删干净了"，
+    而删掉的是不是别人的头部就无法区分。
+    """
     plain = _render_plain_block(5, is_plain_doc=True)
-    assert _has_tooltip(plain, "折叠") is False
+    for tooltip in ("选择代码语言", "复制代码", "折叠"):
+        assert _has_tooltip(plain, tooltip) is False, tooltip
+    assert not any(isinstance(n, ft.PopupMenuButton) for n in walk(plain))
+    values = {getattr(n, "value", None) for n in walk(plain)}
+    assert "5 行" not in values  # 行数标签随头部一起消失
+    assert "Python" not in values  # 语言标签同理
+
     md = _render_plain_block(5, is_plain_doc=False)
-    assert _has_tooltip(md, "折叠") is True
+    assert _has_tooltip(md, "选择代码语言") is True
+    assert _has_tooltip(md, "复制代码") is True
+    assert "5 行" in {getattr(n, "value", None) for n in walk(md)}
 
 
-def test_plain_doc_renders_read_layer():
-    """浏览态仍走完整代码块（有复制入口 + 行数标签），不是退化成一个 TextField。"""
+def test_plain_doc_block_is_flush_with_viewport():
+    """源码视图的代码区铺满编辑区：无圆角 / 无边框 / 无阴影 / 无块级上下留白。
+
+    VSCode 打开 .py 时那一整片区域就是编辑器本身；只要留下任一条边或一层留白，
+    它就会退化回"嵌在文档里的卡片"，与桌面端直觉冲突。
+    """
+    root, block = _block_container(_render_plain_block(5, is_plain_doc=True))
+    assert block.border is None
+    assert block.border_radius is None
+    assert block.shadow is None
+    assert block.padding is None or (
+        block.padding.top == 0
+        and block.padding.bottom == 0
+        and block.padding.left == 0
+        and block.padding.right == 0
+    )
+    # 块与视口之间那层上下留白（Markdown 里是段落呼吸位）也归零
+    assert root.padding.top == 0
+    assert root.padding.bottom == 0
+    # 头部与正文之间的分隔线也随头部一起去掉（否则代码上方悬着一条横线）
+    assert block.content is not None and block.content.border is None
+
+    md_root, md_block = _block_container(_render_plain_block(5, is_plain_doc=False))
+    assert md_block.border is not None
+    assert md_block.border_radius is not None
+    assert md_block.shadow is not None
+    assert md_root.padding.top > 0
+    # Markdown 保留分隔线（头部与正文是两段）
+    column = md_block.content
+    assert column is not None and len(column.controls) == 2
+    assert column.controls[1].border is not None
+
+
+def test_plain_doc_keeps_body_and_line_numbers():
+    """去掉头部不等于退化成纯 TextField：行号 + 高亮层仍在（浏览态可选中复制）。"""
     tree = _render_plain_block(5, is_plain_doc=True)
-    assert _has_tooltip(tree, "复制代码") is True
-    assert "5 行" in [
-        getattr(node, "value", None) for node in walk(tree)
+    values = [getattr(n, "value", None) for n in walk(tree)]
+    assert [str(i) for i in range(1, 6)] == [v for v in values if v in {"1", "2", "3", "4", "5"}]
+    # 代码正文以高亮 span 形式存在（每个 token 一片），不是单块纯文本
+    spans = [
+        s for n in walk(tree) for s in (getattr(n, "spans", None) or [])
     ]
+    assert len(spans) > 0
+
+
+def test_plain_doc_suppresses_whole_block_current_highlight():
+    """源码视图整篇是同一个逻辑行：光标在里面走动时不做"当前行"整块染色。
+
+    Markdown 围栏代码块里这层高亮是对的（当前行是一行代码）；照搬到源码视图，
+    `is_current_line` 恒为真，整片代码会被罩上一层选中底色 —— 语义与视觉都错。
+    """
+    _root, plain_block = _block_container(
+        _render_plain_block(5, is_plain_doc=True, active=True)
+    )
+    # 行容器直接挂块容器：没有 active 底色包裹层，块本身仍是无边框无圆角的
+    assert plain_block.border is None
+    assert plain_block.border_radius is None
+    assert plain_block.bgcolor is not None
+
+    _md_root, md_wrap = _block_container(
+        _render_plain_block(5, is_plain_doc=False, active=True)
+    )
+    # Markdown 有 current-line 包裹层（圆角底色），卡片是它的 content
+    assert md_wrap.border_radius is not None
+    inner = md_wrap.content
+    assert inner is not None and getattr(inner, "bgcolor", None) is not None
+
+
+def test_page_padding_zero_for_source_view():
+    """页面级留白策略：源码视图归零，Markdown 照旧随 zoom 缩放。"""
+    from views.editor import page_padding
+
+    sets = {"content_padding": 36, "content_padding_top": 24}
+    assert page_padding(sets, 1.0, is_plain=True) == (0, 0)
+    assert page_padding(sets, 1.5, is_plain=True) == (0, 0)  # 归零与 zoom 无关
+    assert page_padding(sets, 1.0, is_plain=False) == (36, 24)
+    assert page_padding(sets, 1.5, is_plain=False) == (54, 36)
+    assert page_padding({}, 1.0, is_plain=False) == (36, 24)  # 缺省值
+
+
+def test_status_bar_counts_logical_lines_for_source_view():
+    """源码视图的状态栏第三段按非空逻辑行数计（不是恒为 0 的"段"）。"""
+    from views.status_bar import _compute_counts
+
+    body = "import os\n\nprint(1)\n"
+    doc = parser.parse_plain_text(body, "python")
+    _words, chars, count, _mins = _compute_counts(doc)
+    assert count == 2  # 两条非空行（空行不算）
+    assert chars == len(body)  # 序列化不带围栏，字符数就是正文长度
+
+    md = parser.parse_markdown("a\n\nb\n")
+    assert _compute_counts(md)[2] == 2  # Markdown 不变：仍是段落数
 
 
 @pytest.mark.parametrize(

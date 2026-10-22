@@ -541,147 +541,151 @@ def render_code_block(
         else float("inf")
     )
 
-    # ---- 头部交互元素 ----
-    # 两者都必须显式压到 _HEADER_H，否则头部会被它们的固有尺寸顶高：
-    # - 不用 `ft.Dropdown`：它即使 `dense=True` / `text_size=12` / 内边距归零，
-    #   高度仍恒为 48px（内部 InputDecorator 的固有高度），是头部行高的**唯一**
-    #   决定项。用 `height=` 强行压缩会裁切其文字（真机探针实测：文字下坠错位，
-    #   压到 24px 时直接溢出到下一行标签上），故此路不通。
-    #   改用 `PopupMenuButton` + 自绘紧凑触发器，并顺手拿到菜单定位与选中态。
-    # - 不用 `ft.IconButton`：Material 的最小点击区把它撑到 40px
-    #   （`visual_density=COMPACT` 也只降到 32）。改用固定尺寸的
-    #   `Container(ink=True)` —— 与 `views/status_bar.py` 的紧凑按钮同一套做法，
-    #   点击有水波反馈、悬停有 tooltip，全局观感一致。
-    def _header_icon(
-        icon: str, tooltip: str, color: str, on_click, bgcolor: str | None = None
-    ) -> ft.Control:
-        """固定 _HEADER_H 见方的头部图标按钮。
+    # 纯文本文档 = 源码视图：没有头部的容身之处（见本函数 Args 的说明）
+    if is_plain_doc:
+        header = None
+    else:
+        # ---- 头部交互元素 ----
+        # 两者都必须显式压到 _HEADER_H，否则头部会被它们的固有尺寸顶高：
+        # - 不用 `ft.Dropdown`：它即使 `dense=True` / `text_size=12` / 内边距归零，
+        #   高度仍恒为 48px（内部 InputDecorator 的固有高度），是头部行高的**唯一**
+        #   决定项。用 `height=` 强行压缩会裁切其文字（真机探针实测：文字下坠错位，
+        #   压到 24px 时直接溢出到下一行标签上），故此路不通。
+        #   改用 `PopupMenuButton` + 自绘紧凑触发器，并顺手拿到菜单定位与选中态。
+        # - 不用 `ft.IconButton`：Material 的最小点击区把它撑到 40px
+        #   （`visual_density=COMPACT` 也只降到 32）。改用固定尺寸的
+        #   `Container(ink=True)` —— 与 `views/status_bar.py` 的紧凑按钮同一套做法，
+        #   点击有水波反馈、悬停有 tooltip，全局观感一致。
+        def _header_icon(
+            icon: str, tooltip: str, color: str, on_click, bgcolor: str | None = None
+        ) -> ft.Control:
+            """固定 _HEADER_H 见方的头部图标按钮。
 
-        bgcolor 用于"已复制"这类一次性的状态反馈：静态赋值，不引入 on_hover
-        ——悬停反馈如果走 on_hover 就必须 set_state，而一次 set_state 会把整块
-        代码（含每一行高亮 span）重建一遍，几十行以上的代码块在快速划过时会明显
-        掉帧。头部按钮自带水波（ink=True），已经够表达"可按"。
-        """
-        return ft.Container(
-            width=_HEADER_H,
+            bgcolor 用于"已复制"这类一次性的状态反馈：静态赋值，不引入 on_hover
+            ——悬停反馈如果走 on_hover 就必须 set_state，而一次 set_state 会把整块
+            代码（含每一行高亮 span）重建一遍，几十行以上的代码块在快速划过时会明显
+            掉帧。头部按钮自带水波（ink=True），已经够表达"可按"。
+            """
+            return ft.Container(
+                width=_HEADER_H,
+                height=_HEADER_H,
+                border_radius=Radius.SM,
+                bgcolor=bgcolor,
+                alignment=ft.Alignment.CENTER,
+                ink=True,
+                tooltip=tooltip,
+                on_click=lambda e: on_click(),
+                content=ft.Icon(icon, size=14, color=color),
+            )
+
+        # 语言选择器：当前语言是可点的紧凑标签（Typora 同款位置与交互直觉）。
+        # 菜单项用 `on_click` 而非 `on_select`：后者只给被选项的控件 ID 字符串，
+        # 还得反查映射；前者可闭包捕获标识，是项目既有写法（tool_area / tab_bar）。
+        lang_button = ft.PopupMenuButton(
             height=_HEADER_H,
-            border_radius=Radius.SM,
-            bgcolor=bgcolor,
-            alignment=ft.Alignment.CENTER,
-            ink=True,
-            tooltip=tooltip,
-            on_click=lambda e: on_click(),
-            content=ft.Icon(icon, size=14, color=color),
+            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
+            tooltip="选择代码语言",
+            # UNDER：菜单向下展开，不遮住代码本身（默认 OVER 会盖住正文前几行）
+            menu_position=ft.PopupMenuPosition.UNDER,
+            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+                padding=ft.Padding.all(0),
+                # 淡底 pill：让"当前语言"在紧凑头部里成为一个可点的实体，而不是一段
+                # 悬空的文字（VSCode 的 language mode 指示器同理）；hover 叠一层更亮的
+                # overlay，按钮的悬停反馈由客户端完成，不产生任何服务端往返。
+                bgcolor=ft.Colors.with_opacity(0.05, c.text),
+                overlay_color=ft.Colors.with_opacity(0.10, c.text),
+            ),
+            content=ft.Row(
+                controls=[
+                    ft.Text(
+                        value=_lang_display(lang),
+                        size=12,
+                        color=c.text,
+                        font_family=FONT_MONO,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=c.muted),
+                ],
+                spacing=1,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            items=[
+                ft.PopupMenuItem(
+                    # 压缩项高（默认 48）：26 个语言的菜单因此不必滚动太多
+                    height=28,
+                    content=ft.Text(value=text, size=12, font_family=FONT_MONO),
+                    # 勾选当前语言：菜单一打开就能确认当前状态，无需记忆
+                    checked=key == lang,
+                    on_click=(
+                        (lambda e, k=key: on_change_lang(line_idx, k))
+                        if on_change_lang is not None
+                        else None
+                    ),
+                )
+                for key, text in _lang_entries(lang)
+            ],
         )
 
-    # 语言选择器：当前语言是可点的紧凑标签（Typora 同款位置与交互直觉）。
-    # 菜单项用 `on_click` 而非 `on_select`：后者只给被选项的控件 ID 字符串，
-    # 还得反查映射；前者可闭包捕获标识，是项目既有写法（tool_area / tab_bar）。
-    lang_button = ft.PopupMenuButton(
-        height=_HEADER_H,
-        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
-        tooltip="选择代码语言",
-        # UNDER：菜单向下展开，不遮住代码本身（默认 OVER 会盖住正文前几行）
-        menu_position=ft.PopupMenuPosition.UNDER,
-        shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
-            padding=ft.Padding.all(0),
-            # 淡底 pill：让"当前语言"在紧凑头部里成为一个可点的实体，而不是一段
-            # 悬空的文字（VSCode 的 language mode 指示器同理）；hover 叠一层更亮的
-            # overlay，按钮的悬停反馈由客户端完成，不产生任何服务端往返。
-            bgcolor=ft.Colors.with_opacity(0.05, c.text),
-            overlay_color=ft.Colors.with_opacity(0.10, c.text),
-        ),
-        content=ft.Row(
-            controls=[
-                ft.Text(
-                    value=_lang_display(lang),
-                    size=12,
-                    color=c.text,
-                    font_family=FONT_MONO,
-                    max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                ),
-                ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=c.muted),
-            ],
-            spacing=1,
-            tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        items=[
-            ft.PopupMenuItem(
-                # 压缩项高（默认 48）：26 个语言的菜单因此不必滚动太多
-                height=28,
-                content=ft.Text(value=text, size=12, font_family=FONT_MONO),
-                # 勾选当前语言：菜单一打开就能确认当前状态，无需记忆
-                checked=key == lang,
-                on_click=(
-                    (lambda e, k=key: on_change_lang(line_idx, k))
-                    if on_change_lang is not None
-                    else None
-                ),
-            )
-            for key, text in _lang_entries(lang)
-        ],
-    )
+        # ---- 复制按钮 ----
+        copy_btn = _header_icon(
+            ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+            "已复制" if copied else "复制代码",
+            ft.Colors.GREEN if copied else c.muted,
+            lambda: (
+                page.run_task(copy_code_to_clipboard, clipboard_ref, code, set_copied)
+                if page is not None and not copied
+                else None
+            ),
+            # "已复制"给一个静态底色，比只换图标颜色更容易被余光捕捉到
+            bgcolor=(
+                ft.Colors.with_opacity(0.14, ft.Colors.GREEN) if copied else None
+            ),
+        )
 
-    # ---- 复制按钮 ----
-    copy_btn = _header_icon(
-        ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
-        "已复制" if copied else "复制代码",
-        ft.Colors.GREEN if copied else c.muted,
-        lambda: (
-            page.run_task(copy_code_to_clipboard, clipboard_ref, code, set_copied)
-            if page is not None and not copied
-            else None
-        ),
-        # "已复制"给一个静态底色，比只换图标颜色更容易被余光捕捉到
-        bgcolor=(
-            ft.Colors.with_opacity(0.14, ft.Colors.GREEN) if copied else None
-        ),
-    )
+        # ---- 折叠按钮 ----
+        # `_toggle_collapse` 定义于下方"交互"分节，这里只能延迟绑定（lambda 内解析名字），
+        # 与本文件 `_build_edit_body` 引用 `_exit_edit` 的方式一致。
+        # 纯文本文档不提供折叠：整篇就是这个块，折叠后既没有"别的行"可落光标，
+        # 也没有任何信息可读（只剩一行摘要），是一个纯粹的死路。
+        collapse_btn = _header_icon(
+            ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
+            "展开" if is_collapsed else "折叠",
+            c.muted,
+            lambda: _toggle_collapse(),
+        )
 
-    # ---- 折叠按钮 ----
-    # `_toggle_collapse` 定义于下方"交互"分节，这里只能延迟绑定（lambda 内解析名字），
-    # 与本文件 `_build_edit_body` 引用 `_exit_edit` 的方式一致。
-    # 纯文本文档不提供折叠：整篇就是这个块，折叠后既没有"别的行"可落光标，
-    # 也没有任何信息可读（只剩一行摘要），是一个纯粹的死路。
-    collapse_btn = _header_icon(
-        ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
-        "展开" if is_collapsed else "折叠",
-        c.muted,
-        lambda: _toggle_collapse(),
-    )
-
-    # ---- 头部工具栏 ----
-    # 显式定高：把所有子项锁在 _HEADER_H 内，后续若有人往头部塞 Material 控件，
-    # 行高不会悄悄膨胀（tests/test_code_block_native.py 有用例守住每个子项的高度）。
-    # 左侧刻意不放装饰性图标（原 DATA_OBJECT）：语言标签紧邻其右，语义重复，
-    # 紧凑头部里多一个字形只会让起点更乱。
-    header = ft.Container(
-        content=ft.Row(
-            controls=[
-                *([] if is_plain_doc else [collapse_btn]),
-                lang_button,
-                ft.Container(expand=True),
-                ft.Text(
-                    value=f"{line_count} 行",
-                    size=11,
-                    color=c.muted,
-                    font_family=FONT_MONO,
-                ),
-                copy_btn,
-            ],
-            spacing=Spacing.SM,
-            height=_HEADER_H,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        # 工具栏的左右缩进由本层承担：块容器不再留水平内边距（见下方组装的说明），
-        # 否则图标会贴到块边框上。行号色带与细分隔线要贴边，工具栏不需要——
-        # 这正是"内边距按内容分工"的落点。
-        padding=ft.Padding.only(left=Spacing.MD, right=Spacing.MD),
-    )
+        # ---- 头部工具栏 ----
+        # 显式定高：把所有子项锁在 _HEADER_H 内，后续若有人往头部塞 Material 控件，
+        # 行高不会悄悄膨胀（tests/test_code_block_native.py 有用例守住每个子项的高度）。
+        # 左侧刻意不放装饰性图标（原 DATA_OBJECT）：语言标签紧邻其右，语义重复，
+        # 紧凑头部里多一个字形只会让起点更乱。
+        header = ft.Container(
+            content=ft.Row(
+                controls=[
+                    *([] if is_plain_doc else [collapse_btn]),
+                    lang_button,
+                    ft.Container(expand=True),
+                    ft.Text(
+                        value=f"{line_count} 行",
+                        size=11,
+                        color=c.muted,
+                        font_family=FONT_MONO,
+                    ),
+                    copy_btn,
+                ],
+                spacing=Spacing.SM,
+                height=_HEADER_H,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            # 工具栏的左右缩进由本层承担：块容器不再留水平内边距（见下方组装的说明），
+            # 否则图标会贴到块边框上。行号色带与细分隔线要贴边，工具栏不需要——
+            # 这正是"内边距按内容分工"的落点。
+            padding=ft.Padding.only(left=Spacing.MD, right=Spacing.MD),
+        )
 
     # ============================ 浏览态 ============================
 
@@ -1337,31 +1341,44 @@ def render_code_block(
             # 它同时是**代码窗格的上界**：本层的内边距上边已归零，行号色带从这里
             # 起铺。合起来即那条规则：**代码窗格贴边（上贴分隔线、左右贴边框、
             # 下贴下边框），工具栏与文本各自内缩**。
-            border=only_border(top=ft.BorderSide(1, border_color)),
+            # 源码视图没有头部，也就没有"要分开的两段"：这条线跟着头部一起去掉，
+            # 否则代码区上方会凭空多出一条悬空的横线。
+            border=(
+                None if is_plain_doc else only_border(top=ft.BorderSide(1, border_color))
+            ),
         )
 
-    content = ft.Container(
-        content=ft.Column(controls=[header, body], spacing=Spacing.XS),
-        bgcolor=c.code_block_bg,
-        border_radius=Radius.MD,
-        # **左右不留内边距**：行号色带与头部细分隔线因此直接贴到块的左右边框，
-        # 框架与行号列之间不再有一条背景色空隙。左右缩进改由各自的内容承担——
-        # 工具栏在 header 上、代码列右缘在行容器（浏览态）与编辑框的 content_padding
-        # （编辑态）上。原先左侧那段 Spacing.MD 不再被浪费：代码列整体左移一个
-        # Spacing.MD、可用宽度也随之多出一个 Spacing.MD（两层依旧严格同 x 同宽）。
-        # 上下方向同族处理：**上留一个 Spacing.XS 给工具栏**（头部图标是 22px 定高，
-        # 顶到上边框会显得局促；它与 Column 的 spacing 一起构成工具栏上下各 2px 的
-        # 呼吸位），**下不留** —— 代码窗格的下界就是块的下边框，行号色带要通到那条
-        # 线上（见 body 的说明）。
-        padding=ft.Padding.only(top=Spacing.XS),
-        shadow=card_shadow(Elevation.LOW, is_dark),
-        border=only_border(
-            top=ft.BorderSide(1, border_color),
-            bottom=ft.BorderSide(1, border_color),
-            left=ft.BorderSide(1, border_color),
-            right=ft.BorderSide(1, border_color),
-        ),
-    )
+    if is_plain_doc:
+        # 源码视图：这就是编辑区本身，不是"嵌在文档里的一个卡片"。
+        # 因此圆角 / 边框 / 阴影 / 内边距全部去掉，底色直接铺到编辑区的四条边上
+        # —— VSCode 打开 .py 时那一整片区域的样子。留任何一条边框，都会在
+        # "编辑器视口"里画出一个"卡片"，与桌面端编辑器直觉冲突。
+        # 上下内边距一并归零：外层 wrap_block 已传 pad_v=0，若这里再留
+        # Spacing.XS，代码首行就会离工具栏空出 4px（顶部留白 = 两个来源相加）。
+        content = ft.Container(content=body, bgcolor=c.code_block_bg)
+    else:
+        content = ft.Container(
+            content=ft.Column(controls=[header, body], spacing=Spacing.XS),
+            bgcolor=c.code_block_bg,
+            border_radius=Radius.MD,
+            # **左右不留内边距**：行号色带与头部细分隔线因此直接贴到块的左右边框，
+            # 框架与行号列之间不再有一条背景色空隙。左右缩进改由各自的内容承担——
+            # 工具栏在 header 上、代码列右缘在行容器（浏览态）与编辑框的 content_padding
+            # （编辑态）上。原先左侧那段 Spacing.MD 不再被浪费：代码列整体左移一个
+            # Spacing.MD、可用宽度也随之多出一个 Spacing.MD（两层依旧严格同 x 同宽）。
+            # 上下方向同族处理：**上留一个 Spacing.XS 给工具栏**（头部图标是 22px 定高，
+            # 顶到上边框会显得局促；它与 Column 的 spacing 一起构成工具栏上下各 2px 的
+            # 呼吸位），**下不留** —— 代码窗格的下界就是块的下边框，行号色带要通到那条
+            # 线上（见 body 的说明）。
+            padding=ft.Padding.only(top=Spacing.XS),
+            shadow=card_shadow(Elevation.LOW, is_dark),
+            border=only_border(
+                top=ft.BorderSide(1, border_color),
+                bottom=ft.BorderSide(1, border_color),
+                left=ft.BorderSide(1, border_color),
+                right=ft.BorderSide(1, border_color),
+            ),
+        )
 
     return _block_frame.wrap_block(
         content,
@@ -1373,4 +1390,8 @@ def render_code_block(
         is_flash=is_flash,
         on_size_change=on_line_size_change,
         diff_mark=diff_mark,
+        # 源码视图：块与视口之间不留任何缝隙（见 _block_frame.wrap_block 的 pad_v）
+        pad_v=0 if is_plain_doc else None,
+        # 源码视图整篇就是同一个逻辑行，current_line 高亮会把整块染色 —— 关掉。
+        highlight_current=not is_plain_doc,
     )

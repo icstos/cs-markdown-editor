@@ -559,6 +559,42 @@ def test_page_padding_zero_for_source_view():
     assert page_padding({}, 1.0, is_plain=False) == (36, 24)  # 缺省值
 
 
+def test_root_spacing_follows_toolbar():
+    """工具栏隐藏时根 Column 的 spacing 必须为 0。
+
+    零高度子项照样占一个间距槽：ToolArea 在 show_toolbar=False 时只返回一个
+    `Container(height=0)`，若根 Column 保留 spacing，编辑区顶部就会凭空多出
+    一条 10px 的页面底色横带——源码视图里正是"代码块与框架之间的那道缝"
+    （真机实测 17 物理 px @DPR1.75）。
+    """
+    from views.editor import _TOOLBAR_GAP, root_spacing
+
+    assert root_spacing(False) == 0
+    assert root_spacing(True) == _TOOLBAR_GAP > 0
+
+
+def test_editor_tree_has_no_gap_above_first_block():
+    """真实渲染：工具栏隐藏时，ToolArea 之后直接就是正文（间距 0）。"""
+    from tests.harness import RenderHarness
+    from views.editor import MarkdownEditor
+
+    doc = parser.parse_plain_text("import os\nprint(1)\n", "python")
+    for show, want in ((False, 0), (True, 10)):
+        harness = RenderHarness()
+        try:
+            harness.render(
+                MarkdownEditor,
+                document=doc,
+                settings={"word_wrap": True},
+                show_toolbar=show,
+            )
+            root = harness.tree.content  # KeyboardListener → Column
+            assert isinstance(root, ft.Column)
+            assert root.spacing == want
+        finally:
+            harness.dispose()
+
+
 def test_status_bar_counts_logical_lines_for_source_view():
     """源码视图的状态栏第三段按非空逻辑行数计（不是恒为 0 的"段"）。"""
     from views.status_bar import _compute_counts

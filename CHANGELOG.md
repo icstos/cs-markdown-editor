@@ -4,6 +4,41 @@
 
 ## [未发布]
 
+### 2026-10-22 修复：源码视图顶部仍有一条缝（第五层留白 = 根 Column 的 spacing）
+
+诉求原文：「非Markdown文档时，代码块顶部与整体框架间无边距（当前仍有边距）」。
+
+上一轮把四层留白都归零了，代码区左右与下方确实贴边，**但顶部还剩 17 物理 px**（真机
+2240×1260、DPR 1.75，即约 10 逻辑 px）。量出来的颜色是页面底色 `#FAFBFC`，说明它不是
+代码块的内边距，而是代码块**上方**的某层留白 —— 与"四层归零"无关的第五个来源。
+
+#### 真凶：零高度子项照样占一个间距槽
+
+编辑区根 `ft.Column` 是 `[ToolArea, SelectionArea]`，而 flet 的 `Column` 默认
+`spacing=10`，用于隔开工具栏与正文。工具栏隐藏时 `ToolArea` 只返回
+`ft.Container(height=0)` —— 高度为 0，**但作为子项仍然占一个间距槽**，于是正文之上
+照样画出 10px 的页面底色。单元测试里控件树"看起来"是对的（零高度容器确实在），
+只有量像素才能看见这条缝。
+
+#### 改了什么
+
+| 位置 | 改动 |
+|---|---|
+| `views/editor/__init__.py` | 新增纯函数 `root_spacing(show_toolbar)`：工具栏可见 → 10（那档呼吸位是给工具栏与正文两个不同层分段的），隐藏 → **0**；根 Column 的 `spacing` 改为读它，不再依赖 flet 的默认值 |
+
+Markdown 侧同样受益：`content_padding_top`（默认 24）此前实际渲染成 34，因为那 10px
+默认间距一直叠加在上面；现在设置值就是所见值。
+
+#### 验收
+
+- `tests/test_plain_text_docs.py`（70 条）：新增 `test_root_spacing_follows_toolbar`
+  与 `test_editor_tree_has_no_gap_above_first_block`（真实渲染断言根 Column 的 spacing）。
+- 变异 n=97/98 **两条 KILLED**（无条件保留 spacing / 渲染树写死 spacing=10）。
+- 真机探针新增**像素级**断言 `top_gap_px`：从代码区底色第一行往上数"连续多少行还是
+  页面底色"，容差 1px。同一张旧图测得 17px、新图 0px —— 这条断言能真的把回归杀红
+  （先用旧图校准过，不是"恰好通过"）。`verify` 全流程 rc=0：`gap=0px`、
+  `colors py=37 / txt=2`。
+
 ### 2026-10-22 调整：源码视图去掉代码块头部行，改为铺满编辑区
 
 诉求原文：「非Markdown文档时，代码块区域不显示头部行，参考VSCode的紧凑、周边与整体框架间无边距，遵循桌面端软件交互直觉，符合用户体验，界面美观、科学、清晰，操作自然」。
@@ -21,9 +56,10 @@
 | `views/_block_frame.py` | 新增 `pad_v`（块级上下留白可显式归零）与 `highlight_current`（可关闭"当前行"整块染色） |
 | `views/editor/__init__.py` | 新增纯函数 `page_padding()`：源码视图返回 `(0, 0)`，Markdown 仍按设置随 zoom 缩放；编辑区底色改为代码块底色 |
 
-#### 四个留白来源必须同时归零
+#### 四处 `padding` 必须同时归零
 
-"无边距"不是一处 `padding=0` 的事，代码区与视口之间一共压着四层留白，漏一层都会剩下一条缝：
+"无边距"不是一处 `padding=0` 的事，代码区与视口之间压着四层**内边距**，漏一层都会剩下一条缝
+（此外还有一层不是 padding 的来源：根 `Column` 的 `spacing`，见上方那条修复）：
 
 1. `wrap_block` 的块级 `padding`（Markdown 里是段落呼吸位）→ `pad_v=0`；
 2. 代码块容器自身的 `padding`（原先顶部 4px 是给 22px 工具栏留的呼吸位）；

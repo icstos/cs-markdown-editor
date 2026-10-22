@@ -103,6 +103,24 @@ _WINDOW_ACTIVATE = 200   # 行数超过此值才启用窗口化（小文档全�
 _WINDOW_INITIAL = 160    # 首屏构造行数（约 4~6 屏，够填满任意常见视口高度）
 _WINDOW_MARGIN = 40      # 视口外上下各预留的行数（滚动时提前物化）
 _WINDOW_CHUNK = 120      # 每次外扩的最少行数（迟滞：避免逐行跨越边界时频繁重渲染）
+# 工具栏与正文之间的呼吸位（flet Column 的默认 spacing 就是 10，此处显式化：
+# 它必须是**可关闭**的，见 root_spacing 的说明）
+_TOOLBAR_GAP = 10
+
+
+def root_spacing(show_toolbar: bool) -> int:
+    """编辑区根 Column 的 spacing：工具栏可见时留一档呼吸位，隐藏时必须为 0。
+
+    这一档间距是给"工具栏 → 正文"两个**不同层**的控件分段的（工具栏自己有底边框
+    与内边距，再加 10px 才不会让正文顶在分割线上）。
+
+    工具栏隐藏时 ToolArea 只返回一个零高度容器，但**零高度子项照样占一个间距槽**：
+    Column 会在"空子项"与正文之间照样画那段 spacing，于是编辑区顶部凭空多出 10px。
+    实测（真机 2240×1260，DPR 1.75）那条缝正好 17 物理 px ≈ 10 逻辑 px，颜色是
+    页面底色 #FAFBFC —— 源码视图里就成了"代码块与框架之间的一条缝"，与"代码区
+    就是视口"直接冲突。所以间距必须跟着工具栏一起开关，不能无条件保留。
+    """
+    return _TOOLBAR_GAP if show_toolbar else 0
 
 
 def page_padding(settings: dict, zoom: float, *, is_plain: bool) -> tuple[int, int]:
@@ -946,6 +964,8 @@ def MarkdownEditor(
                     ),
                 ),
             ],
+            # 工具栏与正文之间的间距：**只在工具栏真的存在时**才给（见 root_spacing）
+            spacing=root_spacing(show_toolbar),
             expand=True,
         ),
     )

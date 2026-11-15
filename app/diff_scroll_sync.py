@@ -25,7 +25,7 @@
 
 import asyncio
 
-import flet as ft
+import ui
 
 
 class DiffScrollSync:
@@ -54,19 +54,19 @@ class DiffScrollSync:
 
     def __init__(
         self,
-        page_ref: ft.Ref,
-        diff_nav_left: ft.Ref,
-        diff_nav_right: ft.Ref,
+        page_ref: ui.Ref,
+        diff_nav_left: ui.Ref,
+        diff_nav_right: ui.Ref,
     ) -> None:
         self._page_ref = page_ref
         self._nav_left = diff_nav_left
         self._nav_right = diff_nav_right
         self._syncing: bool = False
         self._direction: str | None = None
-        self._pending_target: ft.Ref | None = None
+        self._pending_target: ui.Ref | None = None
         self._pending_offset: float = 0.0
 
-    def sync_to(self, target_nav: ft.Ref, offset: float, direction: str) -> None:
+    def sync_to(self, target_nav: ui.Ref, offset: float, direction: str) -> None:
         """将 target_nav 侧滚动到 offset（像素同步）。
 
         direction: "lr"=左主动同步右 / "rl"=右主动同步左。标记主动侧，使 syncing

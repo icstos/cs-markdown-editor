@@ -13,16 +13,16 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import FONT_MONO, Spacing, get_colors
 
 
-@ft.memo
-@ft.component
+@ui.memo
+@ui.component
 def RawEditor(
     *,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     raw_draft: str,
     on_change: Callable[[str], None],
     content_padding: int,
@@ -35,22 +35,22 @@ def RawEditor(
     """
     c = get_colors(theme_mode)
 
-    return ft.Container(
+    return ui.Container(
         expand=True,
-        alignment=ft.Alignment.TOP_LEFT,
+        alignment=ui.Alignment.TOP_LEFT,
         bgcolor=c.bg,
         # 垂直留白固定不随内容滚动；水平内边距移入 TextField（content_padding），
         # 使滚动条贴紧列最右缘，与所见即所得模式一致
-        padding=ft.Padding.symmetric(vertical=content_padding_top),
-        content=ft.TextField(
+        padding=ui.Padding.symmetric(vertical=content_padding_top),
+        content=ui.TextField(
             value=raw_draft,
             multiline=True,
             min_lines=20,
-            border=ft.NoInputBorder(),
+            border=ui.NoInputBorder(),
             text_size=body_font_size,
-            text_style=ft.TextStyle(font_family=FONT_MONO, color=c.text),
+            text_style=ui.TextStyle(font_family=FONT_MONO, color=c.text),
             on_change=lambda e: on_change(e.control.value),
-            content_padding=ft.Padding.symmetric(
+            content_padding=ui.Padding.symmetric(
                 horizontal=content_padding, vertical=Spacing.SM
             ),
             expand=True,

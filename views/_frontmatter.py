@@ -12,7 +12,7 @@
 import re
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from models.document import Line
 from services.clipboard import (
@@ -32,16 +32,16 @@ def render_frontmatter(
     line_idx: int,
     base: int,
     content_width: float | None,
-    clipboard_ref: ft.Ref | None,
+    clipboard_ref: ui.Ref | None,
     on_change_code: Callable[[int, str], None] | None,
     on_code_focus: Callable[[int], None] | None,
     on_code_blur: Callable[[int], None] | None,
-    code_field_ref: ft.Ref | None,
+    code_field_ref: ui.Ref | None,
     is_current_line: bool,
     is_flash: bool = False,
     on_line_size_change: Callable[[int, float], None] | None = None,
     diff_mark: str | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """YAML 前置元数据渲染（Obsidian 风格可编辑属性表格）。
 
     渲染态：键值对表格化展示，键/值均为 TextField 可直接编辑。
@@ -57,8 +57,8 @@ def render_frontmatter(
     """
     c = _current_colors()
     content = line.segments[0].text if line.segments else ""
-    page = ft.context.page
-    is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
+    page = ui.context.page
+    is_dark = page is not None and page.theme_mode == ui.ThemeMode.DARK
 
     # 语义化数据类型颜色（科学区分 YAML 值类型，亮/暗主题各自适配）
     # 取色原则：每种类型一个固定色相，亮暗模式仅调整明度/饱和度
@@ -84,25 +84,25 @@ def render_frontmatter(
         _key_color = "#1A4480"  # 深海军蓝（键名 + 标题，权威标识）
 
     # ---- 状态 ----
-    copied, set_copied = ft.use_state(False)
-    is_collapsed, set_collapsed = ft.use_state(False)
+    copied, set_copied = ui.use_state(False)
+    is_collapsed, set_collapsed = ui.use_state(False)
     # 复制/剪切的行缓冲（内部粘贴源，跨渲染保留）
-    copied_row, set_copied_row = ft.use_state(None)
+    copied_row, set_copied_row = ui.use_state(None)
     # 拖拽悬停目标行索引（-1=无），用于合法目标高亮
-    drop_hover, set_drop_hover = ft.use_state(-1)
+    drop_hover, set_drop_hover = ui.use_state(-1)
 
     # ---- 解析键值对 ----
     pairs = parse_yaml_pairs(content) if content else []
 
     # ---- 复制按钮 ----
-    copy_btn = ft.IconButton(
-        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+    copy_btn = ui.IconButton(
+        icon=ui.Icons.CHECK if copied else ui.Icons.CONTENT_COPY,
         icon_size=13,
         tooltip="已复制" if copied else "复制 YAML",
-        padding=ft.Padding.all(Spacing.SM),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
-            color=ft.Colors.GREEN if copied else c.muted,
+        padding=ui.Padding.all(Spacing.SM),
+        style=ui.ButtonStyle(
+            shape=ui.RoundedRectangleBorder(radius=Radius.SM),
+            color=ui.Colors.GREEN if copied else c.muted,
         ),
         on_click=lambda e, txt=content: (
             page.run_task(copy_code_to_clipboard, clipboard_ref, txt, set_copied)
@@ -112,46 +112,46 @@ def render_frontmatter(
     )
 
     # ---- 折叠按钮 ----
-    collapse_btn = ft.IconButton(
-        icon=ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
+    collapse_btn = ui.IconButton(
+        icon=ui.Icons.EXPAND_MORE if is_collapsed else ui.Icons.EXPAND_LESS,
         icon_size=13,
         tooltip="展开" if is_collapsed else "折叠",
-        padding=ft.Padding.all(Spacing.SM),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+        padding=ui.Padding.all(Spacing.SM),
+        style=ui.ButtonStyle(
+            shape=ui.RoundedRectangleBorder(radius=Radius.SM),
             color=c.muted,
         ),
         on_click=lambda e: set_collapsed(not is_collapsed),
     )
 
     # ---- 头部工具栏 ----
-    header = ft.Row(
+    header = ui.Row(
         controls=[
-            ft.Icon(ft.Icons.DATA_OBJECT, size=14, color=_key_color),
-            ft.Text(
+            ui.Icon(ui.Icons.DATA_OBJECT, size=14, color=_key_color),
+            ui.Text(
                 value="YAML 前置元数据",
                 size=11,
                 color=_key_color,
                 font_family=FONT_MAIN,
-                weight=ft.FontWeight.W_600,
+                weight=ui.FontWeight.W_600,
             ),
-            ft.Container(expand=True),
-            ft.Container(
-                content=ft.Text(
+            ui.Container(expand=True),
+            ui.Container(
+                content=ui.Text(
                     value=f"{len(pairs)} 项" if pairs else "空",
                     size=10,
                     color=c.muted,
                     font_family=FONT_MONO,
                 ),
-                bgcolor=ft.Colors.with_opacity(0.06, c.text),
-                padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                bgcolor=ui.Colors.with_opacity(0.06, c.text),
+                padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
                 border_radius=Radius.SM,
             ),
             copy_btn,
             collapse_btn,
         ],
         spacing=Spacing.SM,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
     # ---- 可编辑属性表格 ----
@@ -161,7 +161,7 @@ def render_frontmatter(
     _DEL_BTN_WIDTH = 32  # 删除按钮列宽度
 
     # 编辑态键值对列表：本地 state 管理实时编辑，变化时序列化写回文档
-    editing_pairs, set_editing_pairs = ft.use_state(
+    editing_pairs, set_editing_pairs = ui.use_state(
         [list(p) for p in pairs] if pairs else []
     )
 
@@ -174,7 +174,7 @@ def render_frontmatter(
             return
         set_editing_pairs([list(p) for p in pairs] if pairs else [])
 
-    ft.use_effect(_sync_editing_pairs, [content])
+    ui.use_effect(_sync_editing_pairs, [content])
 
     def _value_style(val: str) -> tuple[str, str]:
         """根据值内容推断 (color, font_family)。
@@ -280,28 +280,28 @@ def render_frontmatter(
         if page is not None:
             page.run_task(paste_row_from_clipboard, clipboard_ref, _insert)
 
-    def _row_menu_items(idx: int) -> list[ft.PopupMenuItem]:
+    def _row_menu_items(idx: int) -> list[ui.PopupMenuItem]:
         """行操作菜单项：剪切 / 复制 / 粘贴 / 删除（桌面端交互直觉）。"""
         return [
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content="剪切",
-                icon=ft.Icons.CONTENT_CUT,
+                icon=ui.Icons.CONTENT_CUT,
                 on_click=lambda e, i=idx: _cut_row(i),
             ),
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content="复制",
-                icon=ft.Icons.CONTENT_COPY,
+                icon=ui.Icons.CONTENT_COPY,
                 on_click=lambda e, i=idx: _copy_row(i),
             ),
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content="粘贴",
-                icon=ft.Icons.CONTENT_PASTE,
+                icon=ui.Icons.CONTENT_PASTE,
                 on_click=lambda e, i=idx: _paste_row(i),
             ),
-            ft.PopupMenuItem(),  # 分隔
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(),  # 分隔
+            ui.PopupMenuItem(
                 content="删除",
-                icon=ft.Icons.DELETE_OUTLINE,
+                icon=ui.Icons.DELETE_OUTLINE,
                 on_click=lambda e, i=idx: _delete_row(i),
             ),
         ]
@@ -334,32 +334,32 @@ def render_frontmatter(
         set_editing_pairs(new_pairs)
         _commit_pairs(new_pairs)
 
-    def _row_preview(idx: int) -> ft.Control:
+    def _row_preview(idx: int) -> ui.Control:
         """拖拽时跟随指针的紧凑预览（key: value pill）。"""
         p = editing_pairs[idx] if 0 <= idx < len(editing_pairs) else ["", ""]
-        return ft.Container(
-            bgcolor=ft.Colors.with_opacity(0.96, c.surface),
-            border=ft.Border.all(1, c.border),
+        return ui.Container(
+            bgcolor=ui.Colors.with_opacity(0.96, c.surface),
+            border=ui.Border.all(1, c.border),
             border_radius=Radius.SM,
-            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-            content=ft.Row(
+            padding=ui.Padding.symmetric(horizontal=8, vertical=4),
+            content=ui.Row(
                 controls=[
-                    ft.Icon(ft.Icons.DRAG_INDICATOR, size=12, color=c.muted),
-                    ft.Text(
+                    ui.Icon(ui.Icons.DRAG_INDICATOR, size=12, color=c.muted),
+                    ui.Text(
                         p[0] or "新属性",
                         size=base - 6,
                         color=_key_color,
                         font_family=FONT_MONO,
-                        weight=ft.FontWeight.W_500,
+                        weight=ui.FontWeight.W_500,
                     ),
-                    ft.Text(": ", size=base - 6, color=c.muted),
-                    ft.Text(
+                    ui.Text(": ", size=base - 6, color=c.muted),
+                    ui.Text(
                         p[1],
                         size=base - 6,
                         color=c.text,
                         font_family=FONT_MAIN,
                         max_lines=1,
-                        overflow=ft.TextOverflow.ELLIPSIS,
+                        overflow=ui.TextOverflow.ELLIPSIS,
                     ),
                 ],
                 spacing=Spacing.XS,
@@ -367,50 +367,50 @@ def render_frontmatter(
             ),
         )
 
-    def _build_property_table() -> ft.Control:
+    def _build_property_table() -> ui.Control:
         """构造 Obsidian 风格的可编辑属性表格。
 
         表头行（属性 | 值 | 操作）+ 数据行（TextField 键/值 + 删除按钮），
         底部新增行按钮。键列固定宽度，值列自适应。整体圆角裁剪。
         """
         # ---- 表头行：略深背景，与数据行明显分层（紧凑高度）----
-        header_bg = ft.Colors.with_opacity(0.09 if is_dark else 0.06, c.text)
-        header_row = ft.Container(
-            content=ft.Row(
+        header_bg = ui.Colors.with_opacity(0.09 if is_dark else 0.06, c.text)
+        header_row = ui.Container(
+            content=ui.Row(
                 controls=[
-                    ft.Container(width=_HANDLE_WIDTH),  # 拖拽把手列占位
-                    ft.Container(
-                        content=ft.Text(
+                    ui.Container(width=_HANDLE_WIDTH),  # 拖拽把手列占位
+                    ui.Container(
+                        content=ui.Text(
                             value="属性",
                             size=base - 7,
                             color=c.muted,
                             font_family=FONT_MAIN,
-                            weight=ft.FontWeight.W_600,
+                            weight=ui.FontWeight.W_600,
                         ),
                         width=_KEY_COL_WIDTH,
-                        padding=ft.Padding.only(left=Spacing.SM, right=Spacing.SM),
+                        padding=ui.Padding.only(left=Spacing.SM, right=Spacing.SM),
                     ),
-                    ft.Text(
+                    ui.Text(
                         value="值",
                         size=base - 7,
                         color=c.muted,
                         font_family=FONT_MAIN,
-                        weight=ft.FontWeight.W_600,
+                        weight=ui.FontWeight.W_600,
                         expand=True,
                     ),
-                    ft.Container(width=_MORE_BTN_WIDTH + _DEL_BTN_WIDTH),  # 操作列占位
+                    ui.Container(width=_MORE_BTN_WIDTH + _DEL_BTN_WIDTH),  # 操作列占位
                 ],
                 spacing=0,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
             bgcolor=header_bg,
-            padding=ft.Padding.symmetric(vertical=3),
+            padding=ui.Padding.symmetric(vertical=3),
         )
 
         # ---- 数据行：斑马纹增强可读性，拖拽悬停高亮合法目标 ----
-        zebra_bg = ft.Colors.with_opacity(0.045 if is_dark else 0.03, c.text)
-        hover_bg = ft.Colors.with_opacity(0.10 if is_dark else 0.08, c.link)
-        data_rows: list[ft.Control] = [header_row]
+        zebra_bg = ui.Colors.with_opacity(0.045 if is_dark else 0.03, c.text)
+        hover_bg = ui.Colors.with_opacity(0.10 if is_dark else 0.08, c.link)
+        data_rows: list[ui.Control] = [header_row]
 
         rows_data = editing_pairs if editing_pairs else []
         for idx, pair in enumerate(rows_data):
@@ -420,21 +420,21 @@ def render_frontmatter(
             row_bg = zebra_bg if idx % 2 == 1 else None
 
             # 键 TextField：品牌蓝色突出属性标识，等宽字体（紧凑高度）
-            key_field = ft.TextField(
+            key_field = ui.TextField(
                 value=key_val,
                 text_size=base - 6,
                 color=_key_color,
-                text_style=ft.TextStyle(
-                    font_family=FONT_MONO, weight=ft.FontWeight.W_500
+                text_style=ui.TextStyle(
+                    font_family=FONT_MONO, weight=ui.FontWeight.W_500
                 ),
-                border=ft.NoInputBorder(),
-                fill_color=ft.Colors.TRANSPARENT,
+                border=ui.NoInputBorder(),
+                fill_color=ui.Colors.TRANSPARENT,
                 dense=True,
-                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
+                content_padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
                 hint_text="键名",
-                hint_style=ft.TextStyle(
+                hint_style=ui.TextStyle(
                     size=base - 6,
-                    color=ft.Colors.with_opacity(0.35, c.muted),
+                    color=ui.Colors.with_opacity(0.35, c.muted),
                     font_family=FONT_MONO,
                 ),
                 on_change=lambda e, i=idx: _on_key_change(i, e.control.value or ""),
@@ -446,19 +446,19 @@ def render_frontmatter(
                 ),
             )
             # 值 TextField：按数据类型着色，无边框透明底（紧凑高度）
-            val_field = ft.TextField(
+            val_field = ui.TextField(
                 value=val_val,
                 text_size=base - 5,
                 color=val_color,
-                text_style=ft.TextStyle(font_family=val_font),
-                border=ft.NoInputBorder(),
-                fill_color=ft.Colors.TRANSPARENT,
+                text_style=ui.TextStyle(font_family=val_font),
+                border=ui.NoInputBorder(),
+                fill_color=ui.Colors.TRANSPARENT,
                 dense=True,
-                content_padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
+                content_padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=1),
                 hint_text="值",
-                hint_style=ft.TextStyle(
+                hint_style=ui.TextStyle(
                     size=base - 5,
-                    color=ft.Colors.with_opacity(0.35, c.muted),
+                    color=ui.Colors.with_opacity(0.35, c.muted),
                 ),
                 on_change=lambda e, i=idx: _on_value_change(i, e.control.value or ""),
                 on_focus=lambda e: (
@@ -469,84 +469,84 @@ def render_frontmatter(
                 ),
             )
             # 删除按钮：悬停时显红色警示
-            del_btn = ft.IconButton(
-                icon=ft.Icons.CLOSE,
+            del_btn = ui.IconButton(
+                icon=ui.Icons.CLOSE,
                 icon_size=13,
                 tooltip="删除此行",
-                padding=ft.Padding.all(2),
-                style=ft.ButtonStyle(
-                    shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+                padding=ui.Padding.all(2),
+                style=ui.ButtonStyle(
+                    shape=ui.RoundedRectangleBorder(radius=Radius.SM),
                     color={
-                        ft.ControlState.HOVERED: "#E5484D",
-                        ft.ControlState.DEFAULT: ft.Colors.with_opacity(0.4, c.muted),
+                        ui.ControlState.HOVERED: "#E5484D",
+                        ui.ControlState.DEFAULT: ui.Colors.with_opacity(0.4, c.muted),
                     },
                     bgcolor={
-                        ft.ControlState.HOVERED: ft.Colors.with_opacity(
+                        ui.ControlState.HOVERED: ui.Colors.with_opacity(
                             0.08, "#E5484D"
                         ),
-                        ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT,
+                        ui.ControlState.DEFAULT: ui.Colors.TRANSPARENT,
                     },
                 ),
                 on_click=lambda e, i=idx: _delete_row(i),
             )
             # 行操作菜单按钮（⋮）：剪切/复制/粘贴/删除（始终可用，不受字段原生菜单影响）
-            more_btn = ft.PopupMenuButton(
-                icon=ft.Icons.MORE_VERT,
+            more_btn = ui.PopupMenuButton(
+                icon=ui.Icons.MORE_VERT,
                 icon_size=13,
-                icon_color=ft.Colors.with_opacity(0.4, c.muted),
+                icon_color=ui.Colors.with_opacity(0.4, c.muted),
                 items=_row_menu_items(idx),
-                padding=ft.Padding.all(2),
+                padding=ui.Padding.all(2),
             )
             # 拖拽把手：仅把手可拖起（避免与键/值字段内的文本选择拖拽冲突）
-            handle = ft.Draggable(
+            handle = ui.Draggable(
                 group=_FM_DRAG_GROUP,
-                content=ft.Icon(
-                    ft.Icons.DRAG_INDICATOR,
+                content=ui.Icon(
+                    ui.Icons.DRAG_INDICATOR,
                     size=14,
-                    color=ft.Colors.with_opacity(0.35, c.muted),
+                    color=ui.Colors.with_opacity(0.35, c.muted),
                 ),
-                content_when_dragging=ft.Icon(
-                    ft.Icons.DRAG_INDICATOR,
+                content_when_dragging=ui.Icon(
+                    ui.Icons.DRAG_INDICATOR,
                     size=14,
-                    color=ft.Colors.with_opacity(0.15, c.muted),
+                    color=ui.Colors.with_opacity(0.15, c.muted),
                 ),
                 content_feedback=_row_preview(idx),
                 data=idx,
             )
 
             # 行内容：把手 | 键 | 值 | ⋮ | ×（紧凑高度）
-            row_inner = ft.Container(
-                content=ft.Row(
+            row_inner = ui.Container(
+                content=ui.Row(
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             content=handle,
                             width=_HANDLE_WIDTH,
-                            alignment=ft.Alignment.CENTER,
+                            alignment=ui.Alignment.CENTER,
                         ),
-                        ft.Container(
+                        ui.Container(
                             content=key_field,
                             width=_KEY_COL_WIDTH,
                         ),
                         val_field,
-                        ft.Container(
+                        ui.Container(
                             content=more_btn,
                             width=_MORE_BTN_WIDTH,
-                            alignment=ft.Alignment.CENTER,
+                            alignment=ui.Alignment.CENTER,
                         ),
-                        ft.Container(
+                        ui.Container(
                             content=del_btn,
                             width=_DEL_BTN_WIDTH,
-                            alignment=ft.Alignment.CENTER,
+                            alignment=ui.Alignment.CENTER,
                         ),
                     ],
                     spacing=0,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
                 ),
                 bgcolor=hover_bg if drop_hover == idx else row_bg,
-                padding=ft.Padding.symmetric(vertical=0),
+                padding=ui.Padding.symmetric(vertical=0),
             )
             # 放置目标：整行可接收拖放（拖起只能从把手开始）
-            row = ft.DragTarget(
+            row = ui.DragTarget(
                 group=_FM_DRAG_GROUP,
                 content=row_inner,
                 on_will_accept=lambda e, i=idx: _on_will_accept(e, i),
@@ -554,26 +554,26 @@ def render_frontmatter(
                 on_leave=lambda e, i=idx: _on_drag_leave(e, i),
             )
             # 右键菜单：剪切 / 复制 / 粘贴 / 删除
-            row = ft.ContextMenu(content=row, secondary_items=_row_menu_items(idx))
+            row = ui.ContextMenu(content=row, secondary_items=_row_menu_items(idx))
             data_rows.append(row)
 
         # ---- 新增行按钮：悬停高亮 ----
-        add_row_btn = ft.Container(
-            content=ft.Row(
+        add_row_btn = ui.Container(
+            content=ui.Row(
                 controls=[
-                    ft.Icon(ft.Icons.ADD, size=14, color=_key_color),
-                    ft.Text(
+                    ui.Icon(ui.Icons.ADD, size=14, color=_key_color),
+                    ui.Text(
                         value="添加属性",
                         size=base - 6,
                         color=_key_color,
                         font_family=FONT_MAIN,
-                        weight=ft.FontWeight.W_500,
+                        weight=ui.FontWeight.W_500,
                     ),
                 ],
                 spacing=Spacing.XS,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+            padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
             ink=True,
             border_radius=Radius.SM,
             on_click=lambda e: _add_row(),
@@ -581,36 +581,36 @@ def render_frontmatter(
         data_rows.append(add_row_btn)
 
         # ---- 表格容器：圆角裁剪 + 清晰边框 ----
-        table_border = ft.Colors.with_opacity(0.14 if is_dark else 0.10, c.text)
-        return ft.Container(
-            content=ft.Column(
+        table_border = ui.Colors.with_opacity(0.14 if is_dark else 0.10, c.text)
+        return ui.Container(
+            content=ui.Column(
                 controls=data_rows,
                 spacing=0,
             ),
             border_radius=Radius.SM,
             border=only_border(
-                top=ft.BorderSide(1, table_border),
-                bottom=ft.BorderSide(1, table_border),
-                left=ft.BorderSide(1, table_border),
-                right=ft.BorderSide(1, table_border),
+                top=ui.BorderSide(1, table_border),
+                bottom=ui.BorderSide(1, table_border),
+                left=ui.BorderSide(1, table_border),
+                right=ui.BorderSide(1, table_border),
             ),
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            clip_behavior=ui.ClipBehavior.HARD_EDGE,
         )
 
     # ---- 折叠态摘要 ----
-    collapsed_preview = ft.Container(
-        content=ft.Row(
+    collapsed_preview = ui.Container(
+        content=ui.Row(
             controls=[
-                ft.Text(
+                ui.Text(
                     value=(pairs[0][0] + ": " + pairs[0][1]) if pairs else "(空)",
                     size=base - 6,
                     color=c.muted,
                     font_family=FONT_MONO,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                     expand=True,
                 ),
-                ft.Text(
+                ui.Text(
                     value=f"{len(pairs)} 项",
                     size=10,
                     color=c.muted,
@@ -618,35 +618,35 @@ def render_frontmatter(
                 ),
             ],
             spacing=Spacing.MD,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.XS),
+        padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.XS),
     )
 
     # ---- 主内容：折叠时显示摘要，否则显示可编辑表格 ----
     body = collapsed_preview if is_collapsed else _build_property_table()
 
-    main_content = ft.Column(
+    main_content = ui.Column(
         controls=[header, body],
         spacing=Spacing.XS,
     )
 
     # ---- 卡片容器（Obsidian 风格：左侧彩色边框 + 浅色背景）----
-    border_color = ft.Colors.with_opacity(0.12 if is_dark else 0.08, c.text)
+    border_color = ui.Colors.with_opacity(0.12 if is_dark else 0.08, c.text)
     # 左侧强调色：与键名/标题色一致（_key_color），整体配色统一
     accent = _key_color
-    content_ctrl = ft.Container(
+    content_ctrl = ui.Container(
         content=main_content,
-        bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
+        bgcolor=ui.Colors.with_opacity(0.5, c.code_block_bg),
         border_radius=Radius.MD,
-        padding=ft.Padding.only(
+        padding=ui.Padding.only(
             left=Spacing.MD, right=Spacing.MD, top=Spacing.XS, bottom=Spacing.SM
         ),
         border=only_border(
-            top=ft.BorderSide(1, border_color),
-            bottom=ft.BorderSide(1, border_color),
-            left=ft.BorderSide(3, accent),
-            right=ft.BorderSide(1, border_color),
+            top=ui.BorderSide(1, border_color),
+            bottom=ui.BorderSide(1, border_color),
+            left=ui.BorderSide(3, accent),
+            right=ui.BorderSide(1, border_color),
         ),
     )
 

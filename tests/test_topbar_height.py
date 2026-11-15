@@ -26,7 +26,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-import flet as ft
+from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

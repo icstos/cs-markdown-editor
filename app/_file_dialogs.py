@@ -30,7 +30,7 @@ open_delete_dialog / on_tab_context_action / on_sidebar_context_action
 
 import os
 
-import flet as ft
+import ui
 
 from app._contracts import FileDialogsEnv
 from app._tab_helpers import tab_group, tab_paths
@@ -276,7 +276,7 @@ def build_file_dialogs(ctx: FileDialogsEnv):
             "mode": "confirm",
             "instance": _next_dialog_seq(),
             "title": title,
-            "icon": ft.Icons.DELETE_OUTLINE,
+            "icon": ui.Icons.DELETE_OUTLINE,
             "message": msg,
             "confirm_label": "删除",
             "danger": True,
@@ -349,7 +349,7 @@ def build_file_dialogs(ctx: FileDialogsEnv):
             if path:
                 dir_path = os.path.dirname(path)
                 open_input_dialog(
-                    "new_file", "新建文件", ft.Icons.NOTE_ADD,
+                    "new_file", "新建文件", ui.Icons.NOTE_ADD,
                     "文件名", "输入文件名（自动添加 .md）", "",
                     f"在 {dir_path} 创建", "创建", dir_path,
                 )
@@ -357,7 +357,7 @@ def build_file_dialogs(ctx: FileDialogsEnv):
             if path:
                 dir_path = os.path.dirname(path)
                 open_input_dialog(
-                    "new_folder", "新建文件夹", ft.Icons.CREATE_NEW_FOLDER,
+                    "new_folder", "新建文件夹", ui.Icons.CREATE_NEW_FOLDER,
                     "文件夹名", "输入文件夹名", "",
                     f"在 {dir_path} 创建", "创建", dir_path,
                 )
@@ -371,7 +371,7 @@ def build_file_dialogs(ctx: FileDialogsEnv):
             if path:
                 dir_path = os.path.dirname(path)
                 open_input_dialog(
-                    "rename", "重命名", ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                    "rename", "重命名", ui.Icons.DRIVE_FILE_RENAME_OUTLINE,
                     "新名称", "输入新文件名", os.path.basename(path),
                     f"位置：{dir_path}", "重命名", path,
                 )
@@ -507,14 +507,14 @@ def build_file_dialogs(ctx: FileDialogsEnv):
         elif action == "new_file":
             dir_path = path if is_dir else os.path.dirname(path)
             open_input_dialog(
-                "new_file", "新建文件", ft.Icons.NOTE_ADD,
+                "new_file", "新建文件", ui.Icons.NOTE_ADD,
                 "文件名", "输入文件名（自动添加 .md）", "",
                 f"在 {dir_path} 创建", "创建", dir_path,
             )
         elif action == "new_folder":
             dir_path = path if is_dir else os.path.dirname(path)
             open_input_dialog(
-                "new_folder", "新建文件夹", ft.Icons.CREATE_NEW_FOLDER,
+                "new_folder", "新建文件夹", ui.Icons.CREATE_NEW_FOLDER,
                 "文件夹名", "输入文件夹名", "",
                 f"在 {dir_path} 创建", "创建", dir_path,
             )
@@ -534,7 +534,7 @@ def build_file_dialogs(ctx: FileDialogsEnv):
         elif action == "rename":
             dir_path = os.path.dirname(path)
             open_input_dialog(
-                "rename", "重命名", ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                "rename", "重命名", ui.Icons.DRIVE_FILE_RENAME_OUTLINE,
                 "新名称", "输入新名称", os.path.basename(path),
                 f"位置：{dir_path}", "重命名", path,
             )

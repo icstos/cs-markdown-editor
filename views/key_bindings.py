@@ -20,17 +20,16 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime
 
-import flet as ft
+import ui
 
 from core.actions import EditorActions
 from models.document import BlockType
 from services.clipboard_html import get_clipboard_html_async
 from services.html_to_markdown import html_to_markdown
 from services.shortcuts import ShortcutManager, matches
-from views._combo import extract_printable_char
 from views._combo import combo as key_combo
+from views._combo import extract_printable_char
 from views.native_scope import DOMAIN_GIT_COMMIT
-
 
 # 不应触发"打字替换 outward 选区"的按键（修饰/导航/功能键等）
 
@@ -96,23 +95,23 @@ class KeyDispatcher:
     def __init__(
         self,
         shortcut_mgr: ShortcutManager,
-        actions_ref: ft.Ref,  # ft.Ref[EditorActions | None]
-        clipboard_ref: ft.Ref,
-        page_ref: ft.Ref,
-        paste_old_draft: ft.Ref,
+        actions_ref: ui.Ref,  # ft.Ref[EditorActions | None]
+        clipboard_ref: ui.Ref,
+        page_ref: ui.Ref,
+        paste_old_draft: ui.Ref,
         app_callbacks: dict[str, Callable[[], None]],
         # 期望键：save / new / open / toggle_sidebar / toggle_theme / open_settings
         capturing: tuple[str | None, str | None] = (None, None),
         on_capture: Callable[[str, str, str], None] | None = None,
         on_cancel_capture: Callable[[], None] | None = None,
-        arrow_repeat_ref: ft.Ref | None = None,
+        arrow_repeat_ref: ui.Ref | None = None,
         # 非编辑器原生输入框（侧边栏搜索/替换/过滤、文件对话框输入等）焦点域 ref。
         # current 非 None（token）表示键盘焦点在外部输入框：文档编辑/选区/导航/
         # 剪贴板快捷键一律不消费（交原生输入框），仅放行全局窗口级快捷键。
-        native_input_ref: ft.Ref | None = None,
+        native_input_ref: ui.Ref | None = None,
         # 文档内搜索浮层打开标志 ref（current=True 时由浮层输入框消费 Enter /
         # Shift+Enter / Esc，见 handle() 顶部浮层分支）
-        doc_search_open_ref: ft.Ref | None = None,
+        doc_search_open_ref: ui.Ref | None = None,
     ):
         self._shortcut_mgr = shortcut_mgr
         self._actions_ref = actions_ref
@@ -888,7 +887,7 @@ class KeyDispatcher:
     # ---- 快捷键分发（浏览态 / 编辑态各自匹配）----
     def _handle_shortcuts(
         self,
-        page: ft.Page,
+        page: ui.Page,
         actions: EditorActions | None,
         combo: str,
         shortcuts: dict[str, str],

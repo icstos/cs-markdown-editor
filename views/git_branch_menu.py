@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from services.git.models import BranchInfo
 from styles import (
@@ -47,12 +47,12 @@ from views.git_widgets import filter_box, git_icon_button, git_text_button
 __all__ = ["GitBranchMenu"]
 
 
-@ft.component
+@ui.component
 def GitBranchMenu(
     open_state: bool,
     branches: list[BranchInfo],
     current: str | None,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     *,
     busy: bool = False,
     loading: bool = False,
@@ -63,17 +63,17 @@ def GitBranchMenu(
     on_merge: Callable[[str], None] | None = None,
     on_refresh: Callable[[], None] | None = None,
     on_close: Callable[[], None] | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """分支管理面板（居中卡片弹层）。"""
     c = get_colors(theme_mode)
-    is_dark = theme_mode == ft.ThemeMode.DARK
+    is_dark = theme_mode == ui.ThemeMode.DARK
 
-    filter_text, set_filter_text = ft.use_state("")
-    new_name, set_new_name = ft.use_state("")
+    filter_text, set_filter_text = ui.use_state("")
+    new_name, set_new_name = ui.use_state("")
 
     if not open_state:
         # 关闭时零尺寸：不拦截点击，也不参与布局
-        return ft.Container(width=0, height=0, visible=False)
+        return ui.Container(width=0, height=0, visible=False)
 
     text = filter_text.strip().lower()
     remote = [b for b in branches if b.is_remote]
@@ -96,44 +96,44 @@ def GitBranchMenu(
         set_new_name("")
 
     # ---- 头部：标题 + 刷新 + 关闭 ----
-    header = ft.Row(
+    header = ui.Row(
         controls=[
-            ft.Icon(ft.Icons.ACCOUNT_TREE, color=c.link, size=20),
-            ft.Text("切换分支", size=15, weight=ft.FontWeight.W_600,
+            ui.Icon(ui.Icons.ACCOUNT_TREE, color=c.link, size=20),
+            ui.Text("切换分支", size=15, weight=ui.FontWeight.W_600,
                     color=c.text, font_family=FONT_MAIN),
-            ft.Container(expand=True),
+            ui.Container(expand=True),
             git_icon_button(
-                ft.Icons.REFRESH, "重新读取分支列表",
+                ui.Icons.REFRESH, "重新读取分支列表",
                 None if busy or on_refresh is None else on_refresh, c.muted, size=16, box=26,
             ),
             git_icon_button(
-                ft.Icons.CLOSE, "关闭 (Esc)",
+                ui.Icons.CLOSE, "关闭 (Esc)",
                 on_close, c.muted, size=16, box=26,
             ),
         ],
         spacing=Spacing.MD,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
     # ---- 过滤 + 新建 ----
-    tools = ft.Column(
+    tools = ui.Column(
         controls=[
             filter_box(
                 filter_text, set_filter_text, "按分支名过滤…", c,
                 native_ref=native_input_ref,
             ),
-            ft.Row(
+            ui.Row(
                 controls=[
-                    ft.Container(
+                    ui.Container(
                         expand=True,
-                        content=ft.TextField(
+                        content=ui.TextField(
                             value=new_name,
                             hint_text="新分支名称，如 feature/git-panel",
                             dense=True,
-                            border=ft.InputBorder.OUTLINE,
+                            border=ui.InputBorder.OUTLINE,
                             border_radius=Radius.MD,
                             text_size=12,
-                            content_padding=ft.Padding.symmetric(
+                            content_padding=ui.Padding.symmetric(
                                 horizontal=Spacing.MD, vertical=Spacing.MD
                             ),
                             on_change=lambda e: set_new_name(e.control.value or ""),
@@ -146,18 +146,18 @@ def GitBranchMenu(
                         "基于当前 HEAD 创建新分支并切换过去",
                         _create if (new_name.strip() and not busy) else None,
                         c,
-                        icon=ft.Icons.ADD,
+                        icon=ui.Icons.ADD,
                     ),
                 ],
                 spacing=Spacing.SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
         ],
         spacing=Spacing.SM,
     )
 
     # ---- 列表 ----
-    rows: list[ft.Control] = []
+    rows: list[ui.Control] = []
     rows.append(_section_label(f"本地分支（{len(local)}）", c))
     if not local:
         rows.append(_hint("没有匹配的本地分支", c))
@@ -175,34 +175,34 @@ def GitBranchMenu(
     if loading and not branches:
         rows = [_hint("正在读取分支列表…", c)]
 
-    return ft.Container(
+    return ui.Container(
         visible=True,
         expand=True,
-        bgcolor=ft.Colors.with_opacity(0.28, ft.Colors.BLACK),
-        alignment=ft.Alignment.CENTER,
-        content=ft.Container(
+        bgcolor=ui.Colors.with_opacity(0.28, ui.Colors.BLACK),
+        alignment=ui.Alignment.CENTER,
+        content=ui.Container(
             width=520,
             height=520,
             bgcolor=c.toolbar_bg,
             border_radius=Radius.XXXL,
             shadow=card_shadow(Elevation.DIALOG, is_dark),
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            clip_behavior=ui.ClipBehavior.ANTI_ALIAS,
             padding=Spacing.XXL,
-            content=ft.Column(
+            content=ui.Column(
                 controls=[
                     header,
-                    ft.Container(height=Spacing.SM),
+                    ui.Container(height=Spacing.SM),
                     tools,
-                    ft.Container(height=Spacing.MD),
-                    ft.Container(height=1, bgcolor=c.border),
-                    ft.Container(
+                    ui.Container(height=Spacing.MD),
+                    ui.Container(height=1, bgcolor=c.border),
+                    ui.Container(
                         expand=True,
-                        padding=ft.Padding.only(top=Spacing.SM),
-                        content=ft.ListView(
+                        padding=ui.Padding.only(top=Spacing.SM),
+                        content=ui.ListView(
                             controls=rows,
                             spacing=0,
                             expand=True,
-                            build_controls_on_demand=True,
+                            build_controls_on_demand=True, clip_behavior=ui.ClipBehavior.HARD_EDGE,
                         ),
                     ),
                 ],
@@ -222,22 +222,22 @@ def _focus_kwargs(native_input_ref) -> dict:
     return {"on_focus": focus_h, "on_blur": blur_h}
 
 
-def _section_label(text: str, c) -> ft.Control:
+def _section_label(text: str, c) -> ui.Control:
     """小节标题（本地分支 / 远端分支）。"""
-    return ft.Container(
-        padding=ft.Padding.only(left=Spacing.SM, top=Spacing.MD, bottom=2),
-        content=ft.Text(
+    return ui.Container(
+        padding=ui.Padding.only(left=Spacing.SM, top=Spacing.MD, bottom=2),
+        content=ui.Text(
             text, size=10, color=c.muted, font_family=FONT_MAIN,
-            weight=ft.FontWeight.W_700,
+            weight=ui.FontWeight.W_700,
         ),
     )
 
 
-def _hint(text: str, c) -> ft.Control:
+def _hint(text: str, c) -> ui.Control:
     """列表内空态提示。"""
-    return ft.Container(
-        padding=ft.Padding.only(left=Spacing.SM, top=Spacing.MD, bottom=Spacing.MD),
-        content=ft.Text(text, size=11, color=c.muted, font_family=FONT_MAIN),
+    return ui.Container(
+        padding=ui.Padding.only(left=Spacing.SM, top=Spacing.MD, bottom=Spacing.MD),
+        content=ui.Text(text, size=11, color=c.muted, font_family=FONT_MAIN),
     )
 
 
@@ -250,35 +250,35 @@ def _branch_row(
     on_switch,
     on_delete,
     on_merge,
-) -> ft.Control:
+) -> ui.Control:
     """单条分支行：``● 名称 ↑2 ↓1 [合并] [删除]``。"""
     name_color = c.link if is_current else c.text
 
-    badges: list[ft.Control] = []
+    badges: list[ui.Control] = []
     if b.ahead:
         badges.append(
-            ft.Text(f"↑{b.ahead}", size=10, color=git_status_color("added", c),
+            ui.Text(f"↑{b.ahead}", size=10, color=git_status_color("added", c),
                     font_family=FONT_MONO, tooltip=f"领先上游 {b.ahead} 个提交")
         )
     if b.behind:
         badges.append(
-            ft.Text(f"↓{b.behind}", size=10, color=git_status_color("deleted", c),
+            ui.Text(f"↓{b.behind}", size=10, color=git_status_color("deleted", c),
                     font_family=FONT_MONO, tooltip=f"落后上游 {b.behind} 个提交")
         )
 
-    actions: list[ft.Control] = []
+    actions: list[ui.Control] = []
     if not is_current and not busy:
         if on_merge is not None:
             actions.append(
                 git_icon_button(
-                    ft.Icons.MERGE, f"把 {b.name} 合并到当前分支",
+                    ui.Icons.MERGE, f"把 {b.name} 合并到当前分支",
                     (lambda n=b.name: on_merge(n)), c.muted, size=13,
                 )
             )
         if on_delete is not None:
             actions.append(
                 git_icon_button(
-                    ft.Icons.DELETE_OUTLINE, f"删除分支 {b.name}",
+                    ui.Icons.DELETE_OUTLINE, f"删除分支 {b.name}",
                     (lambda n=b.name: on_delete(n)), c.muted, size=13,
                 )
             )
@@ -287,8 +287,8 @@ def _branch_row(
         if on_switch is not None and not is_current and not busy:
             on_switch(b.name)
 
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.SM),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.SM),
         border_radius=Radius.MD,
         ink=not is_current and not busy and on_switch is not None,
         on_click=_click,
@@ -297,30 +297,30 @@ def _branch_row(
             else f"{b.subject}\n{b.time_text}" if b.subject
             else f"切换到 {b.name}"
         ),
-        content=ft.Row(
+        content=ui.Row(
             controls=[
-                ft.Container(
+                ui.Container(
                     width=14,
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Icon(
-                        ft.Icons.CIRCLE, size=8,
+                    alignment=ui.Alignment.CENTER,
+                    content=ui.Icon(
+                        ui.Icons.CIRCLE, size=8,
                         color=c.link if is_current else c.border,
                     ),
                 ),
-                ft.Text(
+                ui.Text(
                     b.name, size=12, color=name_color, font_family=FONT_MAIN,
-                    weight=ft.FontWeight.W_600 if is_current else None,
-                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                    weight=ui.FontWeight.W_600 if is_current else None,
+                    max_lines=1, overflow=ui.TextOverflow.ELLIPSIS,
                 ),
                 *badges,
-                ft.Container(expand=True),
+                ui.Container(expand=True),
                 *(
                     [
-                        ft.Container(
-                            bgcolor=ft.Colors.with_opacity(0.12, c.link),
+                        ui.Container(
+                            bgcolor=ui.Colors.with_opacity(0.12, c.link),
                             border_radius=Radius.SM,
-                            padding=ft.Padding.symmetric(horizontal=4, vertical=0),
-                            content=ft.Text("当前", size=9, color=c.link,
+                            padding=ui.Padding.symmetric(horizontal=4, vertical=0),
+                            content=ui.Text("当前", size=9, color=c.link,
                                             font_family=FONT_MAIN),
                         )
                     ]
@@ -330,6 +330,6 @@ def _branch_row(
                 *actions,
             ],
             spacing=Spacing.SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )

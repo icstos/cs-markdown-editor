@@ -36,7 +36,7 @@ import asyncio
 import bisect
 import contextlib
 
-import flet as ft
+import ui
 
 from models.document import BlockType
 from styles import FONT_MAIN, block_text_size
@@ -136,7 +136,7 @@ def build_scroll(ctx: ScrollEnv):
         duration=0 即时跳转，跟随滚轮无动画延迟（diff 同步滚动专用）。
         对外非阻塞：内部用 _run_task_safe 调度协程（session 销毁时静默跳过）。
         """
-        page = ft.context.page
+        page = ui.context.page
 
         async def _do():
             if ctx.list_view_ref.current is None:
@@ -164,7 +164,7 @@ def build_scroll(ctx: ScrollEnv):
             if new_w > 0 and abs(new_w - ctx.viewport_w_ref.current) > 1:
                 ctx.viewport_w_ref.current = new_w
                 # 侧边栏拖拽中：只更新 ref，跳过 set_viewport_w 避免换行重算卡顿
-                page = ft.context.page
+                page = ui.context.page
                 if getattr(page, "sidebar_dragging", False):
                     return
                 ctx.set_viewport_w(new_w)
@@ -365,7 +365,7 @@ def build_scroll(ctx: ScrollEnv):
         估算值，累加产生累积误差，滚动条滚动后会误判已可见行为视口外触发滚动。
         键盘导航场景仍用默认 False，保留 40px 安全边距以保证光标有可视空间。
         """
-        page = ft.context.page
+        page = ui.context.page
         if page is None:
             return
         # 点击场景：用户点击的行必然已构建（可见才能点击），line_heights 缓存
@@ -451,13 +451,13 @@ def build_scroll(ctx: ScrollEnv):
         if ctx.cursor_li is not None:
             ctx.move_vline(-1, _page_vlines())
         else:
-            _run_task_safe(ft.context.page, _scroll_by_page, -1)
+            _run_task_safe(ui.context.page, _scroll_by_page, -1)
 
     def page_down():
         if ctx.cursor_li is not None:
             ctx.move_vline(1, _page_vlines())
         else:
-            _run_task_safe(ft.context.page, _scroll_by_page, 1)
+            _run_task_safe(ui.context.page, _scroll_by_page, 1)
 
     async def _scroll_by_page(direction: int):
         if ctx.list_view_ref.current is None:
@@ -488,7 +488,7 @@ def build_scroll(ctx: ScrollEnv):
             ctx.set_cursor(li, off if off is not None else 0)
         # 跳转目标行脉冲高亮：置 flash_li 触发重渲染，1.2s 后异步清回 -1 淡出
         ctx.set_flash_li(li)
-        page = ft.context.page
+        page = ui.context.page
         _run_task_safe(page, _safe_scroll_to, li, to_top=True)
 
         async def _clear_flash():
@@ -542,7 +542,7 @@ def build_scroll(ctx: ScrollEnv):
             ctx.set_cursor_li(None)
         else:
             ctx.set_cursor(li, off if off is not None else 0)
-        page = ft.context.page
+        page = ui.context.page
         _run_task_safe(page, _scroll_line_centered, li)
 
     def _get_cursor_row_col() -> tuple[int, int]:

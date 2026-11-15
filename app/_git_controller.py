@@ -30,7 +30,7 @@ import contextlib
 import os
 from collections.abc import Awaitable, Callable
 
-import flet as ft
+import ui
 
 from app._contracts import GitEnv
 from services.git.errors import GitError, friendly_hint, friendly_message
@@ -426,7 +426,7 @@ def build_git_controller(ctx: GitEnv) -> dict:
             "mode": "confirm",
             "instance": _dialog_seq(),
             "title": "丢弃更改",
-            "icon": ft.Icons.UNDO,
+            "icon": ui.Icons.UNDO,
             "message": f"确定丢弃「{os.path.basename(path)}」的全部未暂存更改？\n"
                        "此操作不可撤销，文件将恢复为暂存区中的内容。",
             "confirm_label": "丢弃更改",
@@ -443,7 +443,7 @@ def build_git_controller(ctx: GitEnv) -> dict:
             "mode": "confirm",
             "instance": _dialog_seq(),
             "title": "丢弃所有更改",
-            "icon": ft.Icons.UNDO,
+            "icon": ui.Icons.UNDO,
             "message": "确定丢弃工作区中的全部未暂存更改？\n"
                        "已跟踪文件将恢复为暂存区内容，未跟踪的新文件将被删除。\n"
                        "此操作不可撤销。",
@@ -766,7 +766,7 @@ def build_git_controller(ctx: GitEnv) -> dict:
             "mode": "confirm",
             "instance": _dialog_seq(),
             "title": "删除分支",
-            "icon": ft.Icons.DELETE_OUTLINE,
+            "icon": ui.Icons.DELETE_OUTLINE,
             "message": f"确定删除分支「{name}」？\n"
                        "仅当该分支的提交已被其他分支包含时才能删除。",
             "confirm_label": "删除分支",

@@ -12,7 +12,7 @@ import asyncio
 import os
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from services import shortcut
 from utils import text_formats
@@ -24,50 +24,50 @@ WATCH_INTERVAL = 2.0  # 外部文件系统变化轮询间隔（秒）
 
 FILE_ICON_MAP: dict[str, str] = {
     # Markdown 文档
-    ".md": ft.Icons.DESCRIPTION,
-    ".markdown": ft.Icons.DESCRIPTION,
+    ".md": ui.Icons.DESCRIPTION,
+    ".markdown": ui.Icons.DESCRIPTION,
     # 图片
-    ".png": ft.Icons.IMAGE,
-    ".jpg": ft.Icons.IMAGE,
-    ".jpeg": ft.Icons.IMAGE,
-    ".gif": ft.Icons.IMAGE,
-    ".svg": ft.Icons.IMAGE,
-    ".webp": ft.Icons.IMAGE,
-    ".bmp": ft.Icons.IMAGE,
-    ".ico": ft.Icons.IMAGE,
+    ".png": ui.Icons.IMAGE,
+    ".jpg": ui.Icons.IMAGE,
+    ".jpeg": ui.Icons.IMAGE,
+    ".gif": ui.Icons.IMAGE,
+    ".svg": ui.Icons.IMAGE,
+    ".webp": ui.Icons.IMAGE,
+    ".bmp": ui.Icons.IMAGE,
+    ".ico": ui.Icons.IMAGE,
     # 代码 / 配置
-    ".py": ft.Icons.CODE,
-    ".json": ft.Icons.CODE,
-    ".yaml": ft.Icons.CODE,
-    ".yml": ft.Icons.CODE,
-    ".toml": ft.Icons.CODE,
-    ".ini": ft.Icons.CODE,
-    ".cfg": ft.Icons.CODE,
-    ".js": ft.Icons.JAVASCRIPT,
-    ".ts": ft.Icons.JAVASCRIPT,
-    ".html": ft.Icons.HTML,
-    ".css": ft.Icons.CSS,
-    ".txt": ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+    ".py": ui.Icons.CODE,
+    ".json": ui.Icons.CODE,
+    ".yaml": ui.Icons.CODE,
+    ".yml": ui.Icons.CODE,
+    ".toml": ui.Icons.CODE,
+    ".ini": ui.Icons.CODE,
+    ".cfg": ui.Icons.CODE,
+    ".js": ui.Icons.JAVASCRIPT,
+    ".ts": ui.Icons.JAVASCRIPT,
+    ".html": ui.Icons.HTML,
+    ".css": ui.Icons.CSS,
+    ".txt": ui.Icons.INSERT_DRIVE_FILE_OUTLINED,
     # 文档
-    ".pdf": ft.Icons.PICTURE_AS_PDF,
-    ".doc": ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
-    ".docx": ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
+    ".pdf": ui.Icons.PICTURE_AS_PDF,
+    ".doc": ui.Icons.INSERT_DRIVE_FILE_OUTLINED,
+    ".docx": ui.Icons.INSERT_DRIVE_FILE_OUTLINED,
     # 压缩包
-    ".zip": ft.Icons.FOLDER_ZIP,
-    ".tar": ft.Icons.FOLDER_ZIP,
-    ".gz": ft.Icons.FOLDER_ZIP,
-    ".7z": ft.Icons.FOLDER_ZIP,
-    ".rar": ft.Icons.FOLDER_ZIP,
+    ".zip": ui.Icons.FOLDER_ZIP,
+    ".tar": ui.Icons.FOLDER_ZIP,
+    ".gz": ui.Icons.FOLDER_ZIP,
+    ".7z": ui.Icons.FOLDER_ZIP,
+    ".rar": ui.Icons.FOLDER_ZIP,
     # 音视频
-    ".mp3": ft.Icons.MUSIC_NOTE,
-    ".wav": ft.Icons.MUSIC_NOTE,
-    ".flac": ft.Icons.MUSIC_NOTE,
-    ".mp4": ft.Icons.MOVIE,
-    ".mov": ft.Icons.MOVIE,
-    ".avi": ft.Icons.MOVIE,
+    ".mp3": ui.Icons.MUSIC_NOTE,
+    ".wav": ui.Icons.MUSIC_NOTE,
+    ".flac": ui.Icons.MUSIC_NOTE,
+    ".mp4": ui.Icons.MOVIE,
+    ".mov": ui.Icons.MOVIE,
+    ".avi": ui.Icons.MOVIE,
     # Windows 快捷方式：一律 SHORTCUT 主图标（与 .md 的 DESCRIPTION 在形状上区分），
     # 指向 .md 的快捷方式在行渲染处改用 link 主题色（见 file_row_icon_data）
-    ".lnk": ft.Icons.SHORTCUT,
+    ".lnk": ui.Icons.SHORTCUT,
 }
 
 
@@ -82,7 +82,7 @@ def file_icon(name: str, c) -> tuple[str, str]:
     """
     lower = name.lower()
     _, ext = os.path.splitext(lower)
-    icon = FILE_ICON_MAP.get(ext, ft.Icons.INSERT_DRIVE_FILE_OUTLINED)
+    icon = FILE_ICON_MAP.get(ext, ui.Icons.INSERT_DRIVE_FILE_OUTLINED)
     color = c.link if text_formats.is_markdown_path(lower) else c.muted
     return icon, color
 
@@ -99,7 +99,7 @@ def file_row_icon_data(
     """
     if abspath and shortcut.is_shortcut(name):
         lnk_target = shortcut.resolve_text_target(abspath)
-        icon = ft.Icons.SHORTCUT
+        icon = ui.Icons.SHORTCUT
         color = c.link if lnk_target is not None else c.muted
         tooltip = f"→ {lnk_target}" if lnk_target is not None else None
         return icon, color, tooltip

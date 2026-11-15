@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-import flet as ft
+import ui
 
 from cmsite import _content as K
 from cmsite._theme import FONT_MONO, Layout, Radius, Type, current_colors, is_dark, tint
@@ -28,10 +28,10 @@ _SRC_SCROLL_H = 342
 _RENDER_SCROLL_H = 382
 
 
-@ft.component
-def DemoSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
+@ui.component
+def DemoSection(width: int, clipboard_ref: ui.Ref | None = None) -> ui.Control:
     """实时预览区块。"""
-    active, set_active = ft.use_state(0)
+    active, set_active = ui.use_state(0)
     sample = K.DEMO_SAMPLES[active]
     c = current_colors()
     narrow = width < 820
@@ -42,7 +42,7 @@ def DemoSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
         lambda key: set_active(int(key)),
     )
 
-    source_pane = ft.Container(
+    source_pane = ui.Container(
         height=_CARD_H,
         content=card(
             CodePanel(
@@ -56,28 +56,28 @@ def DemoSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
             spacing=0,
         ),
     )
-    render_pane = ft.Container(
+    render_pane = ui.Container(
         height=_CARD_H,
         content=card(
-            ft.Container(
+            ui.Container(
                 height=_RENDER_SCROLL_H,
-                padding=ft.Padding.only(right=4),
-                content=ft.ListView(
+                padding=ui.Padding.only(right=4),
+                content=ui.ListView(
                     spacing=0,
                     controls=[
-                        ft.Markdown(
+                        ui.ft.Markdown(
                             value=sample.source,
-                            extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                            extension_set=ui.MarkdownExtensionSet.GITHUB_FLAVORED,
                             code_theme=(
-                                ft.MarkdownCodeTheme.ATOM_ONE_DARK
+                                ui.MarkdownCodeTheme.ATOM_ONE_DARK
                                 if is_dark(c)
-                                else ft.MarkdownCodeTheme.GITHUB
+                                else ui.MarkdownCodeTheme.GITHUB
                             ),
                             md_style_sheet=_md_style(c),
                             selectable=True,
                             shrink_wrap=True,
                         )
-                    ],
+                    ], clip_behavior=ui.ClipBehavior.HARD_EDGE,
                 ),
             ),
             pad=14,
@@ -85,16 +85,16 @@ def DemoSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
         ),
     )
 
-    panes: list[ft.Control] = (
+    panes: list[ui.Control] = (
         [source_pane, render_pane]
         if narrow
         else [
-            ft.Row(
+            ui.Row(
                 spacing=Layout.GRID,
-                vertical_alignment=ft.CrossAxisAlignment.START,
+                vertical_alignment=ui.CrossAxisAlignment.START,
                 controls=[
-                    ft.Container(expand=True, content=source_pane),
-                    ft.Container(expand=True, content=render_pane),
+                    ui.Container(expand=True, content=source_pane),
+                    ui.Container(expand=True, content=render_pane),
                 ],
             )
         ]
@@ -115,7 +115,7 @@ def DemoSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
     )
 
 
-def _tabs_row(tabs: ft.Control, desc: str, c, narrow: bool) -> ft.Control:
+def _tabs_row(tabs: ui.Control, desc: str, c, narrow: bool) -> ui.Control:
     """页签 + 右侧说明。
 
     宽屏用 `SPACE_BETWEEN` 两端对齐，窄屏上下堆叠。
@@ -123,16 +123,16 @@ def _tabs_row(tabs: ft.Control, desc: str, c, narrow: bool) -> ft.Control:
     `Wrap` 不接受 flex 子项，会直接抛错（整块变灰）。
     """
     if narrow:
-        return ft.Column(spacing=8, tight=True, controls=[tabs, _hint(desc, c)])
-    return ft.Row(
+        return ui.Column(spacing=8, tight=True, controls=[tabs, _hint(desc, c)])
+    return ui.Row(
         spacing=12,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
+        alignment=ui.MainAxisAlignment.SPACE_BETWEEN,
         controls=[tabs, _hint(desc, c)],
     )
 
 
-def _md_style(c) -> ft.MarkdownStyleSheet:
+def _md_style(c) -> ui.MarkdownStyleSheet:
     """把演示用的 Markdown 套上站点自己的排版与标题色阶。
 
     默认样式是 flutter_markdown 的一刀切黑色，与编辑器里的彩色标题、
@@ -140,56 +140,56 @@ def _md_style(c) -> ft.MarkdownStyleSheet:
     """
     head = c.heading_colors
 
-    def h(level: int, size: float) -> ft.TextStyle:
-        return ft.TextStyle(
+    def h(level: int, size: float) -> ui.TextStyle:
+        return ui.TextStyle(
             size=size,
-            weight=ft.FontWeight.W_700 if level <= 2 else ft.FontWeight.W_600,
+            weight=ui.FontWeight.W_700 if level <= 2 else ui.FontWeight.W_600,
             color=head.get(level, c.text),
             height=1.35,
         )
 
-    return ft.MarkdownStyleSheet(
-        p_text_style=ft.TextStyle(size=13.5, color=c.text, height=1.7),
+    return ui.MarkdownStyleSheet(
+        p_text_style=ui.TextStyle(size=13.5, color=c.text, height=1.7),
         h1_text_style=h(1, 20),
         h2_text_style=h(2, 17),
         h3_text_style=h(3, 15),
         h4_text_style=h(4, 14),
         h5_text_style=h(5, 13.5),
         h6_text_style=h(6, 13),
-        code_text_style=ft.TextStyle(
+        code_text_style=ui.TextStyle(
             size=12, color=c.code_fg, bgcolor=c.code_bg, font_family=FONT_MONO
         ),
-        blockquote_text_style=ft.TextStyle(size=13.5, color=c.quote_fg),
-        list_bullet_text_style=ft.TextStyle(size=13.5, color=c.muted),
-        a_text_style=ft.TextStyle(size=13.5, color=c.link),
-        strong_text_style=ft.TextStyle(weight=ft.FontWeight.W_700, color=c.text),
-        em_text_style=ft.TextStyle(italic=True, color=c.text),
-        table_body_text_style=ft.TextStyle(size=12.5, color=c.text),
-        table_head_text_style=ft.TextStyle(size=12.5, color=c.text, weight=ft.FontWeight.W_600),
+        blockquote_text_style=ui.TextStyle(size=13.5, color=c.quote_fg),
+        list_bullet_text_style=ui.TextStyle(size=13.5, color=c.muted),
+        a_text_style=ui.TextStyle(size=13.5, color=c.link),
+        strong_text_style=ui.TextStyle(weight=ui.FontWeight.W_700, color=c.text),
+        em_text_style=ui.TextStyle(italic=True, color=c.text),
+        table_body_text_style=ui.TextStyle(size=12.5, color=c.text),
+        table_head_text_style=ui.TextStyle(size=12.5, color=c.text, weight=ui.FontWeight.W_600),
         block_spacing=10,
         list_indent=18,
     )
 
 
-def _hint(desc: str, c) -> ft.Control:
-    return ft.Container(
+def _hint(desc: str, c) -> ui.Control:
+    return ui.Container(
         width=360,
         content=text(desc, size=Type.TINY, color=c.muted),
     )
 
 
-def _caption(c) -> ft.Control:
+def _caption(c) -> ui.Control:
     """底部说明条：把「为什么这样做」讲清楚，避免演示沦为装饰。"""
-    return ft.Container(
-        padding=ft.Padding.all(12),
+    return ui.Container(
+        padding=ui.Padding.all(12),
         bgcolor=tint(c.link, 0.04),
         border_radius=Radius.MD,
-        content=ft.Row(
+        content=ui.Row(
             spacing=8,
-            vertical_alignment=ft.CrossAxisAlignment.START,
+            vertical_alignment=ui.CrossAxisAlignment.START,
             controls=[
                 icon("LIGHTBULB_OUTLINE", size=15, color=c.link),
-                ft.Container(
+                ui.Container(
                     expand=True,
                     content=text(
                         "右侧由 Flutter 渲染，语法规则与编辑器同源。"

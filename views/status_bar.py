@@ -23,7 +23,7 @@ import os
 import re
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 import parser
 from models.document import BlockType, Document
@@ -76,13 +76,13 @@ def _compute_counts(document: Document) -> tuple[int, int, int, int]:
 log = logging.getLogger(__name__)
 
 
-@ft.component
+@ui.component
 def StatusBar(
     document: Document,
     file_path: str | None,
     dirty: bool,
     sidebar_open: bool,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     on_toggle_sidebar: Callable[[], None],
     display_name: str | None = None,
     word_wrap: bool = True,
@@ -91,7 +91,7 @@ def StatusBar(
     on_toggle_split_editor: Callable[[], None] | None = None,
     outline_open: bool = True,
     on_toggle_outline: Callable[[], None] | None = None,
-    status_ref: ft.Ref | None = None,
+    status_ref: ui.Ref | None = None,
     status_message: tuple[str, str] | None = None,
     on_status_clear: Callable[[], None] | None = None,
     # ---- Git 段（分支名 / 领先落后 / 待提交计数，对标 VSCode 状态栏）----
@@ -122,8 +122,8 @@ def StatusBar(
 
     # 高频更新状态（仅本组件重渲染）：cursor_pos=(row,col)；counts=None 时从
     # document 派生初值，tuple 时用命令式更新值。
-    cursor_pos, set_cursor_pos = ft.use_state((1, 1))
-    counts, set_counts = ft.use_state(None)
+    cursor_pos, set_cursor_pos = ui.use_state((1, 1))
+    counts, set_counts = ui.use_state(None)
 
     # document 变化（切标签 / 打开文件）时重置高频状态，从新文档重算初值。
     # 用 id(document) 作依赖：document 引用变即触发。
@@ -131,14 +131,14 @@ def StatusBar(
         set_cursor_pos((1, 1))
         set_counts(None)
 
-    ft.use_effect(_reset_on_doc_change, [id(document)])
+    ui.use_effect(_reset_on_doc_change, [id(document)])
 
     # 状态消息自动清空计时器：status_message 变化时启动 _STATUS_TTL_SEC 秒倒计时，
     # 超时后调 on_status_clear 让 App 清空 state。无消息或无回调时不启动。
     def _auto_clear_status():
         if status_message is None or on_status_clear is None:
             return
-        page = ft.context.page
+        page = ui.context.page
         if page is None:
             return
 
@@ -156,7 +156,7 @@ def StatusBar(
             log.debug("状态自动清理任务未能提交", exc_info=True)
 
     # 依赖 status_message 元组身份（App 每次推送新元组），消息不变时不重启计时器
-    ft.use_effect(_auto_clear_status, [status_message])
+    ui.use_effect(_auto_clear_status, [status_message])
 
     # 字数统计初值：counts=None 从 document 算；否则用命令式更新值
     if counts is None:
@@ -204,79 +204,79 @@ def StatusBar(
         status_msg_color = _STATUS_COLOR.get(kind) or c.muted
 
     status_widget = (
-        ft.Container(
-            content=ft.Text(
+        ui.Container(
+            content=ui.Text(
                 value=status_msg_text,
                 size=11,
                 color=status_msg_color,
                 font_family=FONT_MAIN,
                 max_lines=1,
-                overflow=ft.TextOverflow.ELLIPSIS,
+                overflow=ui.TextOverflow.ELLIPSIS,
             ),
-            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
-            border_radius=ft.BorderRadius.all(4),
-            bgcolor=ft.Colors.with_opacity(0.06, status_msg_color),
+            padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+            border_radius=ui.BorderRadius.all(4),
+            bgcolor=ui.Colors.with_opacity(0.06, status_msg_color),
             visible=bool(status_msg_text),
         )
         if status_msg_text
-        else ft.Container(width=0, height=0)
+        else ui.Container(width=0, height=0)
     )
 
-    def _compact_icon_btn(icon: str, tooltip: str, on_click, color: str) -> ft.Control:
+    def _compact_icon_btn(icon: str, tooltip: str, on_click, color: str) -> ui.Control:
         """紧凑图标按钮：固定 22px 触控区，替代 IconButton（默认 48px 最小尺寸
         会把状态栏撑高到 ~46px）。ink 水波反馈 + tooltip，桌面状态栏直觉。"""
-        return ft.Container(
+        return ui.Container(
             width=22,
             height=22,
             border_radius=Radius.SM,
-            alignment=ft.Alignment.CENTER,
+            alignment=ui.Alignment.CENTER,
             ink=True,
             tooltip=tooltip,
             on_click=lambda e: on_click() if on_click else None,
-            content=ft.Icon(icon, size=14, color=color),
+            content=ui.Icon(icon, size=14, color=color),
         )
 
     def _chip(
-        content: ft.Control,
+        content: ui.Control,
         tooltip: str,
         on_click: Callable[[], None] | None = None,
-    ) -> ft.Control:
+    ) -> ui.Control:
         """状态栏可点击小片（分支名 / 计数）：统一样式，避免各段各写一遍内边距。"""
-        return ft.Container(
+        return ui.Container(
             content=content,
             tooltip=tooltip,
             ink=on_click is not None,
             on_click=(lambda e: on_click()) if on_click else None,
-            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
-            border_radius=ft.BorderRadius.all(4),
+            padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+            border_radius=ui.BorderRadius.all(4),
         )
 
     # ============ Git 段 ============
     # 分支名（分离 HEAD 时提示）+ 领先/落后 + 待提交计数 + 进行中操作警示
-    git_controls: list[ft.Control] = []
+    git_controls: list[ui.Control] = []
     if git_branch is not None or git_detached:
         branch_label = git_branch or "分离 HEAD"
-        badge_children: list[ft.Control] = [
-            ft.Icon(ft.Icons.ACCOUNT_TREE, size=12, color=c.muted),
-            ft.Text(
+        badge_children: list[ui.Control] = [
+            ui.Icon(ui.Icons.ACCOUNT_TREE, size=12, color=c.muted),
+            ui.Text(
                 branch_label,
                 size=11,
                 color=c.muted,
                 font_family=FONT_MAIN,
                 max_lines=1,
-                overflow=ft.TextOverflow.ELLIPSIS,
+                overflow=ui.TextOverflow.ELLIPSIS,
             ),
         ]
         counts_hint: list[str] = []
         if git_ahead:
             counts_hint.append(f"待推送 {git_ahead}")
             badge_children.append(
-                ft.Text(f"↑{git_ahead}", size=11, color="#1A7F37", font_family=FONT_MONO)
+                ui.Text(f"↑{git_ahead}", size=11, color="#1A7F37", font_family=FONT_MONO)
             )
         if git_behind:
             counts_hint.append(f"待拉取 {git_behind}")
             badge_children.append(
-                ft.Text(f"↓{git_behind}", size=11, color="#CF222E", font_family=FONT_MONO)
+                ui.Text(f"↓{git_behind}", size=11, color="#CF222E", font_family=FONT_MONO)
             )
         if git_pending:
             counts_hint.append(f"待提交 {git_pending}")
@@ -285,8 +285,8 @@ def StatusBar(
             tip = f"{tip}\n" + " · ".join(counts_hint)
         git_controls.append(
             _chip(
-                ft.Row(controls=badge_children, spacing=Spacing.XS, tight=True,
-                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ui.Row(controls=badge_children, spacing=Spacing.XS, tight=True,
+                       vertical_alignment=ui.CrossAxisAlignment.CENTER),
                 tip,
                 on_click_branch,
             )
@@ -294,10 +294,10 @@ def StatusBar(
     if git_pending:
         git_controls.append(
             _chip(
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.Icon(ft.Icons.EDIT_NOTE, size=12, color="#B54708"),
-                        ft.Text(str(git_pending), size=11, color="#B54708",
+                        ui.Icon(ui.Icons.EDIT_NOTE, size=12, color="#B54708"),
+                        ui.Text(str(git_pending), size=11, color="#B54708",
                                 font_family=FONT_MONO),
                     ],
                     spacing=Spacing.XS,
@@ -310,10 +310,10 @@ def StatusBar(
     if git_op:
         git_controls.append(
             _chip(
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=12, color="#FF9F0A"),
-                        ft.Text(f"{git_op}中", size=11, color="#FF9F0A",
+                        ui.Icon(ui.Icons.WARNING_AMBER_ROUNDED, size=12, color="#FF9F0A"),
+                        ui.Text(f"{git_op}中", size=11, color="#FF9F0A",
                                 font_family=FONT_MAIN),
                     ],
                     spacing=Spacing.XS,
@@ -323,56 +323,56 @@ def StatusBar(
                 on_click_git,
             )
         )
-    git_widget: ft.Control = (
-        ft.Row(
-            controls=[ft.Container(width=Spacing.LG), *git_controls],
+    git_widget: ui.Control = (
+        ui.Row(
+            controls=[ui.Container(width=Spacing.LG), *git_controls],
             spacing=0,
             tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         )
         if git_controls
-        else ft.Container(width=0, height=0)
+        else ui.Container(width=0, height=0)
     )
 
-    return ft.Container(
-        bgcolor=ft.Colors.with_opacity(0.03, c.text),
-        border=only_border(top=ft.BorderSide(1, c.border)),
+    return ui.Container(
+        bgcolor=ui.Colors.with_opacity(0.03, c.text),
+        border=only_border(top=ui.BorderSide(1, c.border)),
         # 紧凑高度：垂直内边距压到最小，文字/图标缩小，保持界面紧凑
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.XS),
-        content=ft.Row(
+        padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.XS),
+        content=ui.Row(
             controls=[
                 _compact_icon_btn(
-                    ft.Icons.VIEW_SIDEBAR if not sidebar_open else ft.Icons.MENU_OPEN,
+                    ui.Icons.VIEW_SIDEBAR if not sidebar_open else ui.Icons.MENU_OPEN,
                     "切换侧边栏",
                     on_toggle_sidebar,
                     c.link if sidebar_open else c.muted,
                 ),
-                ft.Icon(
-                    icon=ft.Icons.CIRCLE,
+                ui.Icon(
+                    icon=ui.Icons.CIRCLE,
                     size=8,
                     color="#FF9F0A" if document.dirty else "#35C759",
                 ),
-                ft.Text(
+                ui.Text(
                     value=fname,
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                 ),
-                ft.Container(width=Spacing.LG),
+                ui.Container(width=Spacing.LG),
                 status_widget,
                 git_widget,
-                ft.Container(expand=True),
-                ft.Text(
+                ui.Container(expand=True),
+                ui.Text(
                     value=f"行 {row}  列 {col}",
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.LG),
-                ft.Container(
-                    content=ft.Text(
+                ui.Container(width=Spacing.LG),
+                ui.Container(
+                    content=ui.Text(
                         value="换行: 开" if word_wrap else "换行: 关",
                         size=11,
                         color=c.link if word_wrap else c.muted,
@@ -381,12 +381,12 @@ def StatusBar(
                     on_click=lambda e: on_toggle_word_wrap() if on_toggle_word_wrap else None,
                     ink=True,
                     tooltip="自动换行 (Alt+Z)",
-                    padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
-                    border_radius=ft.BorderRadius.all(4),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+                    border_radius=ui.BorderRadius.all(4),
                 ),
-                ft.Container(width=Spacing.LG),
-                ft.Container(
-                    content=ft.Text(
+                ui.Container(width=Spacing.LG),
+                ui.Container(
+                    content=ui.Text(
                         value="拆分: 开" if split_editor else "拆分: 关",
                         size=11,
                         color=c.link if split_editor else c.muted,
@@ -395,48 +395,48 @@ def StatusBar(
                     on_click=lambda e: on_toggle_split_editor() if on_toggle_split_editor else None,
                     ink=True,
                     tooltip="向右拆分编辑器 (Ctrl+\\)",
-                    padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
-                    border_radius=ft.BorderRadius.all(4),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+                    border_radius=ui.BorderRadius.all(4),
                 ),
-                ft.Container(width=Spacing.LG),
-                ft.Text(
+                ui.Container(width=Spacing.LG),
+                ui.Text(
                     value=f"{para_count} {count_unit}",
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.LG),
-                ft.Text(
+                ui.Container(width=Spacing.LG),
+                ui.Text(
                     value=f"{word_count} 词",
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.MD),
-                ft.Text(
+                ui.Container(width=Spacing.MD),
+                ui.Text(
                     value=f"{char_count} 字符",
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.MD),
-                ft.Text(
+                ui.Container(width=Spacing.MD),
+                ui.Text(
                     value=f"阅读 {reading_min} min" if reading_min > 0 else "阅读 0 min",
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                ft.Container(width=Spacing.LG),
+                ui.Container(width=Spacing.LG),
                 # 大纲开合入口（最右侧，与左侧「切换侧边栏」对称）：
                 # 参考侧边栏切换的交互直觉，收起/展开第四列大纲
                 _compact_icon_btn(
-                    ft.Icons.FORMAT_LIST_BULLETED,
+                    ui.Icons.FORMAT_LIST_BULLETED,
                     "切换大纲",
                     on_toggle_outline,
                     c.link if outline_open else c.muted,
                 ),
             ],
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER, spacing=10,
         ),
     )
 

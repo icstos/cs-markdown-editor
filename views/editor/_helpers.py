@@ -17,13 +17,13 @@
 
 import re
 
-import flet as ft
+import ui
 
 import parser
 from models.document import BlockType, Line, SegType
 
 
-def _make_stable_cb(ref: ft.Ref, key: str):
+def _make_stable_cb(ref: ui.Ref, key: str):
     """创建稳定回调包装器：从 ref.current[key] 读取最新闭包并调用。
 
     配合 ft.use_callback([], []) 使用：首次渲染产出包装器，后续渲染返回缓存引用。
@@ -43,18 +43,18 @@ def _noop() -> None:
     pass
 
 
-def _build_diff_gap(height: float, c) -> ft.Control:
+def _build_diff_gap(height: float, c) -> ui.Control:
     """构建 diff 对齐间隙容器：空行占位，背景色标识对侧增删。
 
     用于 diff 对比模式中，当一侧有行而另一侧没有时，在缺失侧插入等高间隙，
     保持左右视觉行对齐（VSCode diff editor 风格）。
     """
-    return ft.Container(
+    return ui.Container(
         height=height,
         width=float("inf"),
         bgcolor=c.diff_gap_del_bg,
-        margin=ft.Margin.all(0),
-        padding=ft.Padding.all(0),
+        margin=ui.Margin.all(0),
+        padding=ui.Padding.all(0),
     )
 
 

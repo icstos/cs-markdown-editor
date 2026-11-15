@@ -40,7 +40,7 @@ body 根据 is_diff_tab / split_editor 分三种模式：
 import logging
 import os
 
-import flet as ft
+import ui
 
 import parser
 from app._tab_helpers import tab_display_name, tab_group
@@ -99,7 +99,7 @@ def _anchor_line(anchor, session: int) -> int | None:
     return None
 
 
-def _attach_doc_search_overlay(content: ft.Control, ctx) -> ft.Control:
+def _attach_doc_search_overlay(content: ui.Control, ctx) -> ui.Control:
     """把文档内搜索浮层叠到 editor_body 上：Stack 顶层右上角，不随内容滚动。
 
     浮层只在自身矩形内可命中（visible=False 时零尺寸），其余区域点击/滚动
@@ -128,10 +128,10 @@ def _attach_doc_search_overlay(content: ft.Control, ctx) -> ft.Control:
         native_input_ref=ctx.native_input_ref,
         theme_mode=ctx.theme_mode,
     )
-    return ft.Stack(
+    return ui.Stack(
         controls=[
             content,
-            ft.Container(
+            ui.Container(
                 content=overlay,
                 # 浮层与编辑区右上角留出一档呼吸间距（14/8 → 18/12）：太贴边会
                 # 像"贴在标签栏下的一条工具带"，而不是浮在画布上的搜索框。
@@ -143,7 +143,7 @@ def _attach_doc_search_overlay(content: ft.Control, ctx) -> ft.Control:
     )
 
 
-def build_render(ctx) -> ft.Control:
+def build_render(ctx) -> ui.Control:
     """构造应用根渲染树。
 
     返回 ft.Stack，包含 main_col / settings_view / confirm_dialog / file_dialog_view。
@@ -173,7 +173,7 @@ def build_render(ctx) -> ft.Control:
         if page is None or not url:
             return
         try:
-            page.launch_url(url, web_popup_window_name=ft.UrlTarget.BLANK)
+            page.launch_url(url, web_popup_window_name=ui.UrlTarget.BLANK)
         except Exception:
             log.debug("打开外链失败 url=%s", url, exc_info=True)
 
@@ -320,7 +320,7 @@ def build_render(ctx) -> ft.Control:
         )
     else:
         _ed_sp, _ed_ver = _editor_search_props(ctx, ctx.document)
-        editor_body = ft.Container(
+        editor_body = ui.Container(
             content=MarkdownEditor(
                 # key 用左组会话：与拆分时左视口同 key，切换拆分不重置左视口光标；
                 # 非拆分态激活标签=左组激活（不变式），session_left 随激活变化递增
@@ -351,7 +351,7 @@ def build_render(ctx) -> ft.Control:
     # 标签（VSCode「向右拆分」直觉：标签行与编辑区同步分栏）。
     global_menu = build_global_menu(ctx, ctx.theme_mode)
 
-    def _group_tab_bar(g: int, leading) -> ft.Control:
+    def _group_tab_bar(g: int, leading) -> ui.Control:
         """构造 g 组（0=左 / 1=右）的 TabBar：过滤该组标签，索引映射回全局。
 
         TabBar 回调的索引相对于过滤后的组内列表，这里统一映射为全局索引后
@@ -402,11 +402,11 @@ def build_render(ctx) -> ft.Control:
     if ctx.split_editor and not ctx.is_diff_tab:
         # 拆分：双 TabBar 并排（中缝分隔线与编辑区对齐），宽度跟随编辑区
         _c_tb = get_colors(ctx.theme_mode)
-        tab_bar = ft.Row(
+        tab_bar = ui.Row(
             controls=[
-                ft.Container(content=_group_tab_bar(0, None), expand=True),
-                ft.VerticalDivider(width=1, color=_c_tb.border),
-                ft.Container(content=_group_tab_bar(1, None), expand=True),
+                ui.Container(content=_group_tab_bar(0, None), expand=True),
+                ui.VerticalDivider(width=1, color=_c_tb.border),
+                ui.Container(content=_group_tab_bar(1, None), expand=True),
             ],
             spacing=0,
         )
@@ -457,14 +457,14 @@ def build_render(ctx) -> ft.Control:
 
     # 第三列：标签行 + 编辑区（标签行宽度与编辑区一致）；
     # 编辑区顶部叠文档内搜索浮层（右上角悬浮，仅自身矩形可命中）
-    editor_area = ft.Column(
+    editor_area = ui.Column(
         controls=[tab_bar, _attach_doc_search_overlay(editor_body, ctx)],
         spacing=0,
         expand=True,
     )
 
     # 第二~四列：管理面板 + 编辑区 + 大纲（状态栏仅存在于这三列下方）
-    body = ft.Row(
+    body = ui.Row(
         controls=[
             sidebar,
             editor_area,
@@ -472,7 +472,7 @@ def build_render(ctx) -> ft.Control:
         ],
         spacing=0,
         expand=True,
-        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+        vertical_alignment=ui.CrossAxisAlignment.STRETCH,
     )
 
     # ============ 底部状态栏 ============
@@ -519,17 +519,17 @@ def build_render(ctx) -> ft.Control:
             on_click_git=ctx.git_open_panel,
         )
         if ctx.settings.get("show_footer", True)
-        else ft.Container(height=0)
+        else ui.Container(height=0)
     )
 
     # 第一列功能栏独占整列高度（STRETCH 撑满到窗口底），状态栏只存在于
     # 第二~四列（管理面板 + 编辑区 + 大纲）下方：VSCode 式整高活动栏。
-    main_col = ft.Column(
+    main_col = ui.Column(
         controls=[
-            ft.Row(
+            ui.Row(
                 controls=[
                     activity_bar,
-                    ft.Column(
+                    ui.Column(
                         controls=[body, footer],
                         spacing=0,
                         expand=True,
@@ -537,7 +537,7 @@ def build_render(ctx) -> ft.Control:
                 ],
                 spacing=0,
                 expand=True,
-                vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                vertical_alignment=ui.CrossAxisAlignment.STRETCH,
             ),
         ],
         spacing=0,
@@ -586,7 +586,7 @@ def build_render(ctx) -> ft.Control:
             location_hint=_fd.get("location_hint"),
             message=_fd.get("message", ""),
             danger=_fd.get("danger", False),
-            icon=_fd.get("icon", ft.Icons.HELP_OUTLINE),
+            icon=_fd.get("icon", ui.Icons.HELP_OUTLINE),
             native_input_ref=ctx.native_input_ref,
         )
     else:
@@ -655,7 +655,7 @@ def build_render(ctx) -> ft.Control:
         on_close=lambda: ctx.set_recovery_open(False),
     )
 
-    return ft.Stack(
+    return ui.Stack(
         controls=[
             main_col,
             git_diff_view,
@@ -669,7 +669,7 @@ def build_render(ctx) -> ft.Control:
     )
 
 
-def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -> ft.Control:
+def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -> ui.Control:
     """构造对比标签编辑区：双 MarkdownEditor 并排 + 行级 diff 背景着色 + 差异统计头部。
 
     左右各一个原生可编辑 MarkdownEditor，共享 diff_marks/diff_gaps 实现差异可视化。
@@ -743,12 +743,12 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
         on_close=ctx.close_current_tab,
     )
 
-    return ft.Column(
+    return ui.Column(
         controls=[
             _diff_header,
-            ft.Row(
+            ui.Row(
                 controls=[
-                    ft.Container(
+                    ui.Container(
                         content=MarkdownEditor(
                             key=f"diff-left-{ctx.active_index}",
                             document=_ldoc,
@@ -777,8 +777,8 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
                         expand=True,
                         on_click=lambda e: ctx.set_diff_active_pane(0),
                     ),
-                    ft.VerticalDivider(width=1, color=_c.border),
-                    ft.Container(
+                    ui.VerticalDivider(width=1, color=_c.border),
+                    ui.Container(
                         content=MarkdownEditor(
                             key=f"diff-right-{ctx.active_index}",
                             document=_rdoc,
@@ -813,7 +813,7 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
     )
 
 
-def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pane_content_cb) -> ft.Control:
+def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pane_content_cb) -> ui.Control:
     """构造拆分编辑区：左 + 分隔线 + 右，各组绑定本组激活标签的文档。
 
     左右两组独立标签列表（tab.group 0/1），各自激活标签的 document/file_path
@@ -829,9 +829,9 @@ def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pa
     right_tab = group_tab_fn(1)
     _lsp2, _lver2 = _editor_search_props(ctx, left_tab.get("document"))
     _rsp2, _rver2 = _editor_search_props(ctx, right_tab.get("document"))
-    return ft.Row(
+    return ui.Row(
         controls=[
-            ft.Container(
+            ui.Container(
                 content=MarkdownEditor(
                     key=f"{ctx.session_left}-0",
                     nav_ref=ctx.nav_ref,
@@ -853,8 +853,8 @@ def _build_split_area(ctx, editor_common: dict, group_tab_fn, pane_cursor_cb, pa
                 expand=True,
                 on_click=lambda e: ctx.set_active_pane(0),
             ),
-            ft.VerticalDivider(width=1, color=get_colors(ctx.theme_mode).border),
-            ft.Container(
+            ui.VerticalDivider(width=1, color=get_colors(ctx.theme_mode).border),
+            ui.Container(
                 content=MarkdownEditor(
                     key=f"{ctx.session_right}-1",
                     nav_ref=ctx.nav_ref_split,

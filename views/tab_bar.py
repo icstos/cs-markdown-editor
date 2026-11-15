@@ -17,7 +17,7 @@ Material 的最小点击区会给它 40px 固有高，行高由最高子项决�
 import os
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import (
     FONT_MAIN,
@@ -43,17 +43,17 @@ def _file_name(path: str | None) -> str:
     return os.path.basename(path) if path else "未命名.md"
 
 
-@ft.component
+@ui.component
 def TabBar(
     tabs: list[dict],
     active_index: int,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     on_select: Callable[[int], None],
     on_close: Callable[[int], None],
     on_new: Callable[[], None],
     on_context_action: Callable[[str, int], None],
     compare_source: str | None = None,
-    leading: ft.Control | None = None,
+    leading: ui.Control | None = None,
 ):
     """顶部标签栏。
 
@@ -67,9 +67,9 @@ def TabBar(
     compare_source 非空时，所有有 file_path 的标签均显示「与已选项目进行比较」项。
     """
     c = get_colors(theme_mode)
-    hover_index, set_hover_index = ft.use_state(-1)
+    hover_index, set_hover_index = ui.use_state(-1)
 
-    def _btn_icon(icon: str, tooltip: str, on_click: Callable, color: str) -> ft.Control:
+    def _btn_icon(icon: str, tooltip: str, on_click: Callable, color: str) -> ui.Control:
         """固定 _ICON_BTN 见方的紧凑图标按钮（不用 ft.IconButton）。
 
         真机实测：`ft.IconButton` 无论如何压内边距/传 icon_size，Material 的最小点击区
@@ -77,18 +77,18 @@ def TabBar(
         40+2×2=44，比大纲头部高 12px。改用 `Container(ink=True)` 后行高由 TOPBAR_H
         决定（见 styles.TOPBAR_H），点击仍有水波反馈、悬停有 tooltip。
         """
-        return ft.Container(
+        return ui.Container(
             width=_ICON_BTN,
             height=_ICON_BTN,
             border_radius=Radius.MD,
-            alignment=ft.Alignment.CENTER,
+            alignment=ui.Alignment.CENTER,
             ink=True,
             tooltip=tooltip,
             on_click=on_click,
-            content=ft.Icon(icon, size=_TAB_ICON, color=color),
+            content=ui.Icon(icon, size=_TAB_ICON, color=color),
         )
 
-    tab_controls: list[ft.Control] = []
+    tab_controls: list[ui.Control] = []
     for i, t in enumerate(tabs):
         is_diff = t.get("type") == "diff"
         path = t.get("file_path")
@@ -98,7 +98,7 @@ def TabBar(
             right_name = os.path.basename(t.get("right_path")) if t.get("right_path") else "未命名"
             fname = f"{left_name} ⟷ {right_name}"
             dirty = bool(t.get("left_dirty")) or bool(t.get("right_dirty"))
-            leading_icon = ft.Icons.COMPARE_ARROWS
+            leading_icon = ui.Icons.COMPARE_ARROWS
             leading_color = c.link
         else:
             # .lnk 快捷方式打开时 display_name 记录链接文件名（file_path 为目标路径）
@@ -116,7 +116,7 @@ def TabBar(
         elif is_hover:
             bgcolor = c.hover
         else:
-            bgcolor = ft.Colors.with_opacity(0.0, c.text)
+            bgcolor = ui.Colors.with_opacity(0.0, c.text)
 
         # 关闭按钮颜色：激活或悬停时提亮
         close_color = c.text if (is_active or is_hover) else c.muted
@@ -137,185 +137,185 @@ def TabBar(
             on_close(idx)
 
         # 右键菜单项：有 file_path 才显示文件操作（打开/比较/复制路径/打开位置/重命名/副本/删除）
-        context_items: list[ft.PopupMenuItem] = []
+        context_items: list[ui.PopupMenuItem] = []
         if path:
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="打开",
-                    icon=ft.Icons.OPEN_IN_NEW,
+                    icon=ui.Icons.OPEN_IN_NEW,
                     on_click=lambda e, idx=i: on_context_action("open", idx),
                 )
             )
             # 文件比较：选择以进行比较 / 与已选项目进行比较（VSCode 风格）
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="选择以进行比较",
-                    icon=ft.Icons.DIFFERENCE,
+                    icon=ui.Icons.DIFFERENCE,
                     on_click=lambda e, idx=i: on_context_action("select_for_compare", idx),
                 )
             )
             if compare_source and os.path.abspath(compare_source) != os.path.abspath(path):
                 context_items.append(
-                    ft.PopupMenuItem(
+                    ui.PopupMenuItem(
                         content="与已选项目进行比较",
-                        icon=ft.Icons.COMPARE_ARROWS,
+                        icon=ui.Icons.COMPARE_ARROWS,
                         on_click=lambda e, idx=i: on_context_action("compare_with_selected", idx),
                     )
                 )
-            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(ui.PopupMenuItem())  # 分隔
             # Git：单文件专属修改历史（VS Code「Open Timeline / File History」等价入口）
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="查看文件历史",
-                    icon=ft.Icons.HISTORY,
+                    icon=ui.Icons.HISTORY,
                     on_click=lambda e, idx=i: on_context_action("git_history", idx),
                 )
             )
-            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(ui.PopupMenuItem())  # 分隔
         # 新建文件/文件夹（有 file_path 时提供目录上下文）
         if path:
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="新建文件",
-                    icon=ft.Icons.NOTE_ADD,
+                    icon=ui.Icons.NOTE_ADD,
                     on_click=lambda e, idx=i: on_context_action("new_file", idx),
                 )
             )
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="新建文件夹",
-                    icon=ft.Icons.CREATE_NEW_FOLDER,
+                    icon=ui.Icons.CREATE_NEW_FOLDER,
                     on_click=lambda e, idx=i: on_context_action("new_folder", idx),
                 )
             )
-            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(ui.PopupMenuItem())  # 分隔
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="复制路径",
-                    icon=ft.Icons.CONTENT_COPY,
+                    icon=ui.Icons.CONTENT_COPY,
                     on_click=lambda e, idx=i: on_context_action("copy_path", idx),
                 )
             )
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="打开文件位置",
-                    icon=ft.Icons.FOLDER_OPEN,
+                    icon=ui.Icons.FOLDER_OPEN,
                     on_click=lambda e, idx=i: on_context_action("reveal", idx),
                 )
             )
-            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(ui.PopupMenuItem())  # 分隔
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="重命名",
-                    icon=ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                    icon=ui.Icons.DRIVE_FILE_RENAME_OUTLINE,
                     on_click=lambda e, idx=i: on_context_action("rename", idx),
                 )
             )
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="创建副本",
-                    icon=ft.Icons.FILE_COPY_OUTLINED,
+                    icon=ui.Icons.FILE_COPY_OUTLINED,
                     on_click=lambda e, idx=i: on_context_action("duplicate", idx),
                 )
             )
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="删除",
-                    icon=ft.Icons.DELETE_OUTLINE,
+                    icon=ui.Icons.DELETE_OUTLINE,
                     on_click=lambda e, idx=i: on_context_action("delete", idx),
                 )
             )
-            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(ui.PopupMenuItem())  # 分隔
         # 对比标签专属：交换左右侧（便于从不同视角审阅差异）
         if is_diff:
             context_items.append(
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="交换左右侧",
-                    icon=ft.Icons.SWAP_HORIZ,
+                    icon=ui.Icons.SWAP_HORIZ,
                     on_click=lambda e, idx=i: on_context_action("swap_diff", idx),
                 )
             )
-            context_items.append(ft.PopupMenuItem())  # 分隔
+            context_items.append(ui.PopupMenuItem())  # 分隔
         # 关闭操作（始终可用）
         context_items.append(
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content="关闭",
-                icon=ft.Icons.CLOSE,
+                icon=ui.Icons.CLOSE,
                 on_click=lambda e, idx=i: on_context_action("close", idx),
             )
         )
         context_items.append(
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content="关闭其他",
-                icon=ft.Icons.CANCEL,
+                icon=ui.Icons.CANCEL,
                 on_click=lambda e, idx=i: on_context_action("close_others", idx),
             )
         )
         context_items.append(
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content="关闭全部",
-                icon=ft.Icons.TAB,
+                icon=ui.Icons.TAB,
                 on_click=lambda e: on_context_action("close_all", 0),
             )
         )
 
         name_color = c.text if is_active else c.muted
-        name_weight = ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL
+        name_weight = ui.FontWeight.W_600 if is_active else ui.FontWeight.NORMAL
 
         # 对比标签显示双文件名，加宽以减少截断；普通标签保持固定宽度
         tab_width = _TAB_WIDTH_DIFF if is_diff else _TAB_WIDTH
 
-        row_controls: list[ft.Control] = []
+        row_controls: list[ui.Control] = []
         if leading_icon is not None:
             row_controls.append(
-                ft.Icon(
+                ui.Icon(
                     leading_icon,
                     size=_TAB_ICON,
                     color=leading_color if is_active else c.muted,
                 )
             )
         row_controls.append(
-            ft.Text(
+            ui.Text(
                 value="*" if dirty else "",
                 size=_TAB_ICON,
                 color=_DIRTY_COLOR,
                 font_family=FONT_MAIN,
-                weight=ft.FontWeight.BOLD,
+                weight=ui.FontWeight.BOLD,
                 visible=dirty,
             )
         )
         row_controls.append(
-            ft.Text(
+            ui.Text(
                 value=fname,
                 size=_TAB_ICON,
                 color=name_color,
                 font_family=FONT_MAIN,
                 weight=name_weight,
                 max_lines=1,
-                overflow=ft.TextOverflow.ELLIPSIS,
+                overflow=ui.TextOverflow.ELLIPSIS,
                 tooltip=fname,
                 expand=True,
             )
         )
         row_controls.append(
-            ft.Container(
+            ui.Container(
                 content=_btn_icon(
-                    ft.Icons.CLOSE,
+                    ui.Icons.CLOSE,
                     "关闭",
                     _on_close_click,
                     close_color,
                 ),
                 opacity=close_opacity,
-                animate_opacity=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+                animate_opacity=ui.Animation(150, ui.AnimationCurve.EASE_OUT),
             )
         )
 
         # 浏览器式标签：顶部圆角，无底部强调条（用背景色「连接」到编辑区）
         # height=TOPBAR_H：标签铺满整条顶栏，激活态背景因此**直达底边线**——与下方
         # 编辑区无缝合，同时把标签行整体高度锁在 TOPBAR_H（行高由最高子项决定）。
-        tab_content = ft.Container(
+        tab_content = ui.Container(
             bgcolor=bgcolor,
-            border_radius=ft.BorderRadius(
+            border_radius=ui.BorderRadius(
                 top_left=_TAB_RADIUS, top_right=_TAB_RADIUS,
                 bottom_left=0, bottom_right=0,
             ),
@@ -323,20 +323,20 @@ def TabBar(
             on_hover=_on_tab_hover,
             width=tab_width,
             height=TOPBAR_H,
-            padding=ft.Padding.only(
+            padding=ui.Padding.only(
                 left=Spacing.MD, right=Spacing.SM,
                 top=Spacing.XS, bottom=Spacing.XS,
             ),
-            content=ft.Row(
+            content=ui.Row(
                 controls=row_controls,
                 spacing=Spacing.XS,
                 tight=True,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
         )
 
         tab_controls.append(
-            ft.ContextMenu(
+            ui.ContextMenu(
                 content=tab_content,
                 secondary_items=context_items,
             )
@@ -344,13 +344,13 @@ def TabBar(
 
     # 尾部「+」新建按钮：固定在滚动区外，与标签栏底色一致。
     # 与标签容器同样锁定 TOPBAR_H，使整条顶栏高度只由这一个常量决定。
-    new_btn = ft.Container(
+    new_btn = ui.Container(
         bgcolor=c.toolbar_bg,
         height=TOPBAR_H,
-        alignment=ft.Alignment.CENTER,
-        padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
+        alignment=ui.Alignment.CENTER,
+        padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
         content=_btn_icon(
-            ft.Icons.ADD,
+            ui.Icons.ADD,
             "新建标签  Ctrl+N",
             lambda e: on_new(),
             c.muted,
@@ -362,33 +362,33 @@ def TabBar(
     if leading is not None:
         row_controls.append(leading)
     row_controls.append(
-        ft.Row(
+        ui.Row(
             controls=tab_controls,
             spacing=0,
-            scroll=ft.ScrollMode.AUTO,
+            scroll=ui.ScrollMode.AUTO,
             expand=True,
-            vertical_alignment=ft.CrossAxisAlignment.END,
+            vertical_alignment=ui.CrossAxisAlignment.END,
         )
     )
     row_controls.append(new_btn)
 
-    return ft.Container(
+    return ui.Container(
         bgcolor=c.toolbar_bg,
-        border=only_border(bottom=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.only(left=Spacing.SM, right=Spacing.SM, top=0, bottom=0),
-        content=ft.Row(
+        border=only_border(bottom=ui.BorderSide(1, c.border)),
+        padding=ui.Padding.only(left=Spacing.SM, right=Spacing.SM, top=0, bottom=0),
+        content=ui.Row(
             controls=row_controls,
             spacing=0,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )
 
 
-@ft.component
+@ui.component
 def ConfirmCloseDialog(
     visible: bool,
     file_name: str,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     on_save_and_close: Callable[[], None],
     on_close_without_save: Callable[[], None],
     on_cancel: Callable[[], None],
@@ -396,68 +396,68 @@ def ConfirmCloseDialog(
 ):
     """关闭脏标签确认弹层（Stack overlay 模式）。"""
     c = get_colors(theme_mode)
-    is_dark = theme_mode == ft.ThemeMode.DARK
+    is_dark = theme_mode == ui.ThemeMode.DARK
 
-    def _text_btn(label: str, on_click: Callable, color: str) -> ft.Control:
-        return ft.TextButton(
+    def _text_btn(label: str, on_click: Callable, color: str) -> ui.Control:
+        return ui.TextButton(
             label,
             on_click=lambda e: on_click(),
-            style=ft.ButtonStyle(color=color),
+            style=ui.ButtonStyle(color=color),
         )
 
-    return ft.Container(
+    return ui.Container(
         visible=visible,
         expand=True,
-        bgcolor=ft.Colors.with_opacity(0.28, ft.Colors.BLACK),
-        alignment=ft.Alignment.CENTER,
-        content=ft.Container(
+        bgcolor=ui.Colors.with_opacity(0.28, ui.Colors.BLACK),
+        alignment=ui.Alignment.CENTER,
+        content=ui.Container(
             width=440,
             bgcolor=c.toolbar_bg,
             border_radius=Radius.XL,
             padding=Spacing.XXXL,
             shadow=card_shadow(Elevation.DIALOG, is_dark),
-            content=ft.Column(
+            content=ui.Column(
                 controls=[
-                    ft.Row(
+                    ui.Row(
                         controls=[
-                            ft.Icon(
-                                ft.Icons.WARNING_AMBER_ROUNDED,
+                            ui.Icon(
+                                ui.Icons.WARNING_AMBER_ROUNDED,
                                 color=_DIRTY_COLOR,
                                 size=24,
                             ),
-                            ft.Text(
+                            ui.Text(
                                 value="未保存的修改",
                                 size=16,
-                                weight=ft.FontWeight.W_600,
+                                weight=ui.FontWeight.W_600,
                                 color=c.text,
                                 font_family=FONT_MAIN,
                             ),
                         ],
                         spacing=Spacing.XL,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Container(height=Spacing.SM),
-                    ft.Text(
+                    ui.Container(height=Spacing.SM),
+                    ui.Text(
                         value=f"「{file_name}」包含未保存的修改，关闭前是否保存？",
                         size=13,
                         color=c.muted,
                         font_family=FONT_MAIN,
                     ),
-                    ft.Container(height=Spacing.XXL),
-                    ft.Row(
+                    ui.Container(height=Spacing.XXL),
+                    ui.Row(
                         controls=[
-                            ft.Container(expand=True),
+                            ui.Container(expand=True),
                             _text_btn("取消", on_cancel, c.muted),
                             _text_btn("不保存", on_close_without_save, c.muted),
-                            ft.Button(
+                            ui.ft.Button(
                                 save_label,
                                 on_click=lambda e: on_save_and_close(),
-                                color=ft.Colors.WHITE,
+                                color=ui.Colors.WHITE,
                                 bgcolor=c.link,
                             ),
                         ],
                         spacing=Spacing.LG,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=0,

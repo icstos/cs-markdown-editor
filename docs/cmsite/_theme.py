@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-import flet as ft
+import ui
 
 from styles import FONT_MAIN, FONT_MONO, Colors, Radius, Spacing, get_colors
 
@@ -38,10 +38,10 @@ def current_colors() -> Colors:
     必须在组件体内调用（与主程序 `styles._current_colors()` 同语义），
     这样切主题的那一帧就已经是新颜色。
     """
-    page = ft.context.page
+    page = ui.context.page
     if page is not None:
         return get_colors(page.theme_mode)
-    return get_colors(ft.ThemeMode.LIGHT)
+    return get_colors(ui.ThemeMode.LIGHT)
 
 
 def is_dark(c: Colors | None = None) -> bool:
@@ -67,14 +67,14 @@ def tint(color: str, opacity: float) -> str:
 
 def only_border(
     *,
-    top: ft.BorderSide | None = None,
-    bottom: ft.BorderSide | None = None,
-    left: ft.BorderSide | None = None,
-    right: ft.BorderSide | None = None,
-) -> ft.Border:
+    top: ui.BorderSide | None = None,
+    bottom: ui.BorderSide | None = None,
+    left: ui.BorderSide | None = None,
+    right: ui.BorderSide | None = None,
+) -> ui.Border:
     """单边边框（`ft.border.all` 之外只想要一条线时用）。"""
-    none = ft.BorderSide.none()
-    return ft.Border(
+    none = ui.BorderSide.none()
+    return ui.Border(
         top=top or none, right=right or none, bottom=bottom or none, left=left or none
     )
 
@@ -133,7 +133,7 @@ class Type:
     CODE = 12.5
 
 
-def hero_gradient(c: Colors) -> ft.LinearGradient:
+def hero_gradient(c: Colors) -> ui.LinearGradient:
     """首屏背景渐变：在页面底色附近取蓝色 / 紫色两端的极淡着色。
 
     注意别用 `heading_colors[5]`（亮色主题下是暖棕 #B54708）——它会让首屏
@@ -141,9 +141,9 @@ def hero_gradient(c: Colors) -> ft.LinearGradient:
     """
     strength = 0.10 if is_dark(c) else 0.05
     violet = c.heading_colors.get(4, c.link)
-    return ft.LinearGradient(
-        begin=ft.Alignment.TOP_LEFT,
-        end=ft.Alignment.BOTTOM_RIGHT,
+    return ui.LinearGradient(
+        begin=ui.Alignment.TOP_LEFT,
+        end=ui.Alignment.BOTTOM_RIGHT,
         colors=[tint(c.link, strength), c.bg, tint(violet, strength * 0.8)],
     )
 

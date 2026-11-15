@@ -5,13 +5,18 @@
 - **定位**：对标 Typora 的光标级所见即所得（WYSIWYG）Markdown 桌面编辑器。核心能力：Stack 双层架构（底层渲染层 + 顶层透明 TextField 光标层）、像素级光标对齐（HarfBuzz）、IME 友好输入、软换行 2D 视觉行布局、多文档标签、文件对比 diff、拆分编辑器（左右独立标签组，同文件副本共享 document 实时同步）、侧边栏文件树（.lnk 快捷方式支持 + 外部变化实时监测）/大纲/搜索、快捷键自定义、自动保存与崩溃恢复。
 - **技术栈与版本**：
   - Python ≥ 3.12（`requires-python`，模型层用 `StrEnum`）
-  - Flet ≥ 1.0.4（声明式组件：`@ft.component` + `use_state`/`use_effect` + `@ft.observable`/`@ft.memo`，启动 `ft.run(main)` + `page.render(App)`）
+  - **cs-ui ≥ 0.2.0，< 0.3**（唯一 UI 依赖；它自带受版本约束的 flet 1.1.x。声明式原语 `@ui.component` + `use_state`/`use_effect` + `@ui.observable`/`@ui.memo`，启动 `ui.run(main)` + `page.render(App)`）
   - mistune ≥ 3.3.4（行内 AST 解析 + HTML 导出）
   - uharfbuzz ≥ 0.40.0（文本整形测量，与 Skia/Flutter 同引擎）
   - Pillow ≥ 12.3.0（图片尺寸读取）
   - Pygments ≥ 2.19.0（代码块语法分词，`services/code_highlight.py`；惰性导入）
-  - flet-datatable2 ≥ 1.0.4（表格编辑岛屿）
+  - flet-datatable2 == 1.1.2（表格编辑岛屿；与 cs-ui 的 flet 版本成对 pin）
   - watchdog ≥ 4.0.0（外部修改检测，原生文件通知）
+- **UI 门面约定（改 UI 前必读，事实源 `.workbuddy/probe/ui_semantics_audit.py`）**：
+  - 产品代码**只 `import ui`**，不直接 import flet。`ui.ft.X` 是 cs-ui 官方暴露的 flet 原生门面，仅在 cs-ui 同名组件语义不同时使用（Switch / Checkbox / Slider / Image / Markdown / Button / MenuBar / FilePicker）；迁移映射与冲突表见 `.workbuddy/probe/migrate_to_ui.py`。
+  - `ui.Row` / `ui.Column` 默认 spacing 是 8（flet 原生 10），`ui.ListView` 默认 clip_behavior 是 ANTI_ALIAS。项目里依赖原生默认值的地方都**显式传参锁住几何**（`spacing=10` / `clip_behavior=ui.ClipBehavior.HARD_EDGE`），删掉就会静默改掉全站像素。
+  - 测试与探针统一 `from ui import ft`（`ui.ft` 就是 flet 模块，isinstance / 常量断言基准不变）；flet 私有 API 只在 `tests/_flet_internals.py` 一处导入。
+  - 已反哺到 cs-ui 的公共能力：`ui.SearchField` / `ui.SearchFieldPalette`（行内搜索框，`views/_widgets._search_box` 消费它）、`ui.focus_ring`（实心外扩聚焦环，`styles.focus_ring` 委托它）、`ui.ObservableList`（声明式可观察列表）。改这些要同步跑 cs-ui 的 `gen_ui_registry.py`、`ui-mcp build`、`check_all.py`。
 - **运行环境与前提**：Windows 优先的桌面应用；字体 `assets/fonts/AlibabaPuHuiTi-3-55-Regular.otf`（注册名 "Alibaba"）；用户设置持久化于项目根 `settings.json`（由 `config/settings.py` 深合并管理，非源码，禁止提交改动假设）；备份目录由 `services/backup.py` 管理。
 
 ## 2. 任务-目录-文档映射表
@@ -48,7 +53,7 @@
 | 图片交互（粘贴/右键菜单/另存为） | `views/editor/_image.py`、`views/rendered_line.py`、`utils/text_layout.py`（image_fit_size） | `README.md`「关键设计决策」 |
 | 测试编写 | `tests/`（按 `test_<模块>.py` 命名） | 同目录下同类测试文件、`pyproject.toml` `[tool.pytest.ini_options]` |
 | 依赖更新 | `pyproject.toml` | `README.md`「技术栈」 |
-| 打包发布 | `pyproject.toml` `[tool.flet.*]` | — |
+| 打包发布 | `pyproject.toml` `[tool.flet.*]`
 | 日志/异常排查/崩溃现场/性能卡顿定位 | `utils/log.py`、`utils/diagnostics.py`、运行时 `logs/` | 本文件「6. 异常排查」、`tests/test_logging.py` |
 
 ## 3. 全局架构与调用边界
@@ -71,7 +76,7 @@
 - 禁止 `utils/` 内出现任何 `import models/parser/services/views/app`；后果：破坏叶子层纯函数定位，工具函数被状态耦合污染。
 - 禁止绕过 `parser/__init__.py` 直接 `from parser.block import ...`（包外部调用方）；后果：绕过唯一聚合入口产生循环依赖风险。包内部子模块按 DAG 方向单向依赖。
 - 禁止视图层（`views/`）内实现 Markdown 解析/序列化逻辑；解析一律走 `parser`。后果：解析口径分裂，roundtrip 测试失效。
-- 禁止 UI 更新走命令式路径：不得手动增删控件、不得在组件渲染后手动 `control.update()`/`page.update()` 改 UI；一切界面变化由 `@ft.observable` 字段变更或 `use_state` 触发。后果：Flet 1.0 组件在 render 中构建后被**冻结**，命令式 `row.update()` / `field.value = ...` / `field.selection = ...` 直接抛 `RuntimeError: Frozen controls cannot be updated.`；控件状态只能从渲染流入（写成渲染参数）。唯一例外是**方法调用**（如 `await field.focus()`）。
+- 禁止 UI 更新走命令式路径：不得手动增删控件、不得在组件渲染后手动 `control.update()`/`page.update()` 改 UI；一切界面变化由 `@ui.observable` 字段变更或 `use_state` 触发。后果：flet 1.1 组件在 render 中构建后被**冻结**，命令式 `row.update()` / `field.value = ...` / `field.selection = ...` 直接抛 `RuntimeError: Frozen controls cannot be updated.`；控件状态只能从渲染流入（写成渲染参数）。唯一例外是**方法调用**（如 `await field.focus()`）。
 - 禁止用 `control.ref = my_ref` 事后绑定 `ref`：`ref` 是 `InitVar`，只在 `__init__` 里由 `BaseControl.__post_init__` 绑定，事后赋值永不生效（`my_ref.current` 恒为 `None`，聚焦/读值静默失效）。必须在构造函数里传 `ref=`。
 - 禁止在事件回调里用 `e.control.value` 当"当前文本"：它是**渲染时**的取值，flet 不会把客户端输入回写到控件属性。拿它配 `e.selection` 的新偏移量做文本变换会用"旧文本 + 新偏移"越界裁剪，实测会吃掉用户刚输入的字符。文本一律以文档模型为唯一真相，回调里只记偏移量。
 - 禁止把 `KeyboardListener` 当作"需要撑满可用宽度的子项的父级"：它只把自己撑开，**不向 `content` 传递紧宽度**（内容拿到松约束）。后果：多行 `TextField` 缩到内在宽度（实测 728px 可用宽度下只有 300px），折行提前、块高变化。需要紧宽度时用 `Row([Container(expand=True, content=X)])`，监听器放最外层。
@@ -156,7 +161,7 @@
   `config/app_meta.py`（唯一来源）。后果：外链或版本改了但某个入口忘了改，两处静默漂移，
   没有任何测试能发现不一致。
 
-- 禁止延迟 `utils.log.setup()` 的安装位置：必须在 `main.py` 顶部、**早于 `import flet` / `import app`** 执行（`LOG = setup()`）。这是「最早安装」原则——项目自己的模块在导入期就可能抛异常，日志装晚了这些异常就没有任何痕迹。后果：启动即崩时零现场，只能靠逐段注释代码二分。
+- 禁止延迟 `utils.log.setup()` 的安装位置：必须在 `main.py` 顶部、**早于 `import ui` / `import app`** 执行（`LOG = setup()`）。这是「最早安装」原则——项目自己的模块在导入期就可能抛异常，日志装晚了这些异常就没有任何痕迹。后果：启动即崩时零现场，只能靠逐段注释代码二分。
 - 禁止移除 `utils/log.py::attach_flet` 对 `page.run_task` 的异常现场包装（`_instrument_run_task` / `_report_task_failure`）：flet 的 `page.run_task` 把协程异常 **re-raise 在 `concurrent.futures` 的完成回调里**（该模块只打一行 ERROR，既不写现场文件、logger 名字也不含 crash），而这是本项目最常用的异步入口（打开/保存/导出/自动保存全走它）。后果：所有 `page.run_task` 内的异常重新退化成「只有一行日志、无线索」。
 - 禁止在热路径（逐字符输入 / 每行渲染 / 滚动回调 / 光标移动）打重活日志：日志虽走 `QueueHandler` 入队（写盘在后台线程、调用方 O(1)），但**入队之前的参数求值在调用方线程执行**。因此热路径禁止 `log.debug(f"...")` 形式的 f-string（**无条件先求值**，即使级别过滤掉了也白算）、禁止 `repr(document)` / `json.dumps(...)` 这类为了打日志而遍历大对象、禁止逐行/逐段打日志。需要时用惰性参数形式 `log.debug("x=%s", x)`，并只在排查期临时调 `DEBUG`。
 
@@ -567,5 +572,5 @@ pid / cwd / 实际日志路径 / 级别），任何一条日志都能据此回�
 **重构硬约束（不可回退项）**：`transparent cursor TextField 不设 value`、
 `nav_seq` 仅撤销/重做递增（保 IME 组合态）、`reparse_line_atomic` 热路径、
 `ft.memo` 行级缓存 prop 稳定性、`active_index == 焦点侧组激活索引` 不变式、
-同文件多副本共享 `document` 身份、`utils.log.setup()` 早于 `import flet`/`import app`、
+同文件多副本共享 `document` 身份、`utils.log.setup()` 早于 `import ui`/`import app`、
 `page.run_task` 的异常现场包装不得移除。详见第 4 节红线规则。

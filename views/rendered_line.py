@@ -36,7 +36,7 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from models.document import BlockType, Line, SegType
 from styles import (
@@ -53,6 +53,7 @@ from styles import (
 )
 from utils.segment_helpers import PREFIX_SEGTYPES, display_text
 from utils.text_layout import image_fit_size, measure_text_width, resolve_image_src
+from views import _line_helpers, _spans
 from views.pixel_layout import (
     VisualLine,
     _block_padding,
@@ -61,7 +62,6 @@ from views.pixel_layout import (
     _line_visual_layout,
     hit_test_line_x_raw,
 )
-from views import _line_helpers, _spans
 
 
 def RenderedLine(
@@ -72,7 +72,7 @@ def RenderedLine(
     line_height: float = 1.6,
     body_font_size: int = 16,
     content_width: float | None = None,
-    cursor_overlay: ft.Control | None = None,
+    cursor_overlay: ui.Control | None = None,
     # 预计算视觉行布局：(wrap_width, visual_lines)，由 LineView 共享传入避免重复计算
     precomputed_vlayout: tuple[float, list[VisualLine]] | None = None,
     # 点击 / 拖拽
@@ -84,9 +84,9 @@ def RenderedLine(
     outward_range: tuple[int, int] | None = None,
     on_extend_outward: Callable[[int, int], None] | None = None,
     on_clear_outward: Callable[[], None] | None = None,
-    shift_pressed_ref: ft.Ref | None = None,
-    ctrl_pressed_ref: ft.Ref | None = None,
-    alt_pressed_ref: ft.Ref | None = None,
+    shift_pressed_ref: ui.Ref | None = None,
+    ctrl_pressed_ref: ui.Ref | None = None,
+    alt_pressed_ref: ui.Ref | None = None,
     on_hit_test_x: Callable[[int, float], int] | None = None,
     on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
     on_double_tap: Callable[[int, int], None] | None = None,
@@ -99,7 +99,7 @@ def RenderedLine(
     # 文档内搜索（浮层）：本行命中 [(s, e, is_current)]（raw 偏移）。仅做装饰
     # bgcolor（不改变文字/宽度/测量）；outward_range 有值时跳过避免覆盖选区高亮。
     search_hits: list[tuple[int, int, bool]] | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """渲染层行组件（Stack 底层）。
 
     参数：
@@ -280,7 +280,7 @@ def RenderedLine(
         # 单视觉行或未换行：整行 offsets_x 单调，二分查找正确
         return _hit_raw_off(pos.x)
 
-    def _on_double_tap_down(e: ft.TapEvent):
+    def _on_double_tap_down(e: ui.TapEvent):
         """双击选词：命中 raw_off 后回调 on_double_tap(li, raw_off)。
 
         用 on_double_tap_down 而非 on_double_tap：后者用 ControlEventHandler
@@ -295,7 +295,7 @@ def RenderedLine(
         raw_off = _tap_raw_off(pos) if pos is not None else 0
         on_double_tap(line_idx, raw_off)
 
-    def _on_tap(e: ft.TapEvent):
+    def _on_tap(e: ui.TapEvent):
         pos = e.local_position
         if pos is None:
             if on_clear_outward is not None and outward_range is not None:
@@ -327,7 +327,7 @@ def RenderedLine(
         if on_tap is not None:
             on_tap(line_idx, raw_off)
 
-    def _on_pan_start(e: ft.DragStartEvent):
+    def _on_pan_start(e: ui.DragStartEvent):
         # pan_start 用专用 on_pan_start 回调：以命中点为 anchor（不沿用光标位置）。
         # 回退兼容：未提供 on_pan_start 时退用 on_extend_outward（保留旧行为）。
         cb = on_pan_start if on_pan_start is not None else on_extend_outward
@@ -339,7 +339,7 @@ def RenderedLine(
         t_li, t_off = _pan_target_off(e.local_position)
         cb(t_li, t_off)
 
-    def _on_pan_update(e: ft.DragUpdateEvent):
+    def _on_pan_update(e: ui.DragUpdateEvent):
         if on_extend_outward is None:
             return
         t_li, t_off = _pan_target_off(e.local_position)
@@ -347,12 +347,12 @@ def RenderedLine(
 
     # ============ 空行 ============
     if line.block_type == BlockType.BLANK or not _line_helpers._has_visible_text(line):
-        spans = [ft.TextSpan(" ", style=style)]
+        spans = [ui.TextSpan(" ", style=style)]
         ww, vlines = _get_vlayout()
         r2f = _spans.build_raw_to_flat_map(line, cursor_off, outward_range)
         content = _spans.maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
                                      base, line_height, ww, style)
-        return ft.GestureDetector(
+        return ui.GestureDetector(
             content=content, on_tap=_on_tap,
             on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
             on_double_tap_down=_on_double_tap_down,
@@ -373,12 +373,12 @@ def RenderedLine(
         else:
             # 空任务：浏览态显示淡灰占位符（编辑态仍可输入，保留单空格 span）
             if cursor_off is None:
-                spans = [ft.TextSpan(
+                spans = [ui.TextSpan(
                     "待办事项...",
-                    style=ft.TextStyle(color=c.muted, italic=True, size=base),
+                    style=ui.TextStyle(color=c.muted, italic=True, size=base),
                 )]
             else:
-                spans = [ft.TextSpan(" ", style=style)]
+                spans = [ui.TextSpan(" ", style=style)]
         ww, vlines = _get_vlayout()
         r2f = _spans.build_raw_to_flat_map(line, cursor_off, outward_range, skip_prefix=True)
         if search_hits and outward_range is None:
@@ -396,26 +396,26 @@ def RenderedLine(
         # 视觉尺寸（清晰可点，与 Typora 16-18px 视觉等效），由 Container 锁定高度
         # 占满行高实现垂直居中对齐。
         text_h = base * line_height
-        checkbox = ft.Checkbox(
+        checkbox = ui.ft.Checkbox(
             value=line.checked,
             on_change=lambda e: on_toggle_task(line_idx) if on_toggle_task else None,
             active_color=c.link,
-            check_color=ft.Colors.WHITE,
+            check_color=ui.Colors.WHITE,
             fill_color={
-                ft.ControlState.SELECTED: c.link,
-                ft.ControlState.DEFAULT: c.surface,
+                ui.ControlState.SELECTED: c.link,
+                ui.ControlState.DEFAULT: c.surface,
             },
             overlay_color={
-                ft.ControlState.HOVERED: ft.Colors.with_opacity(0.06, c.text),
-                ft.ControlState.FOCUSED: ft.Colors.TRANSPARENT,
+                ui.ControlState.HOVERED: ui.Colors.with_opacity(0.06, c.text),
+                ui.ControlState.FOCUSED: ui.Colors.TRANSPARENT,
             },
-            border_side=ft.BorderSide(1.5, c.muted if not line.checked else c.link),
-            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+            border_side=ui.BorderSide(1.5, c.muted if not line.checked else c.link),
+            shape=ui.RoundedRectangleBorder(radius=Radius.SM),
             tristate=False,
             splash_radius=0,
             # 紧凑布局：收紧 padding + 清零 margin，不缩放（保持 Material 基准视觉尺寸）
-            visual_density=ft.VisualDensity.COMPACT,  # 最小化 Material padding
-            margin=ft.Margin(0, 0, 0, 0),
+            visual_density=ui.VisualDensity.COMPACT,  # 最小化 Material padding
+            margin=ui.Margin(0, 0, 0, 0),
         )
         # 布局：Checkbox 容器 + GestureDetector(expand) 占据剩余空间。
         # 容器高度锁定到 text_h 占满单行高，Checkbox 在容器内居中对齐，避免行高跳变。
@@ -426,16 +426,16 @@ def RenderedLine(
         # wrap=False 强制同一行（text_area 的 width=inf 由 expand 约束，
         # 文本软换行由 _spans.maybe_stack_multi 内部多视觉行处理），
         # 避免 text_area 因 width=inf 被换到下一行导致框与文本分离。
-        return ft.Row(
+        return ui.Row(
             controls=[
-                ft.Container(
+                ui.Container(
                     content=checkbox,
                     height=text_h,  # 容器占满单行高，Checkbox 在首行内居中对齐
-                    alignment=ft.Alignment.CENTER,
-                    margin=ft.Margin(0, 0, 0, 0),
+                    alignment=ui.Alignment.CENTER,
+                    margin=ui.Margin(0, 0, 0, 0),
                     padding=0,
                 ),
-                ft.GestureDetector(
+                ui.GestureDetector(
                     content=text_area, on_tap=_on_tap,
                     on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
                     on_double_tap_down=_on_double_tap_down,
@@ -443,7 +443,7 @@ def RenderedLine(
                 ),
             ],
             wrap=False, spacing=Spacing.SM, run_spacing=0,
-            vertical_alignment=ft.CrossAxisAlignment.START,  # 复选框固定在第一行（Typora 式）
+            vertical_alignment=ui.CrossAxisAlignment.START,  # 复选框固定在第一行（Typora 式）
             width=float("inf"),  # 可滚动 Column 中占满全宽
         )
 
@@ -451,7 +451,7 @@ def RenderedLine(
     # 浏览态：ft.Image 列表；左键进入图片 Markdown 编辑，右键弹出上下文菜单。
     # 激活态（cursor_overlay 非 None）跳过此分支，走普通文本渲染显示 ![alt](url) 源码。
     if (img_idxs := _line_helpers._image_seg_indices(line)) and cursor_overlay is None:
-        img_controls: list[ft.Control] = []
+        img_controls: list[ui.Control] = []
         for seg_idx in img_idxs:
             seg = line.segments[seg_idx]
             # 相对路径基于文档目录解析为绝对路径（修复 ![](assets/xxx.png) 无法
@@ -460,32 +460,32 @@ def RenderedLine(
             w, h = image_fit_size(abs_src)
             kw: dict = {
                 "src": abs_src,
-                "fit": ft.BoxFit.CONTAIN,
+                "fit": ui.BoxFit.CONTAIN,
                 "tooltip": seg.text,
-                "error_content": ft.Container(
-                    content=ft.Row(
+                "error_content": ui.Container(
+                    content=ui.Row(
                         controls=[
-                            ft.Icon(ft.Icons.IMAGE_NOT_SUPPORTED_OUTLINED, color=c.muted, size=20),
-                            ft.Text(value=seg.text or seg.url or "图片", color=c.muted,
+                            ui.Icon(ui.Icons.IMAGE_NOT_SUPPORTED_OUTLINED, color=c.muted, size=20),
+                            ui.Text(value=seg.text or seg.url or "图片", color=c.muted,
                                     size=base - 1, font_family=FONT_MAIN),
                         ],
-                        spacing=Spacing.LG, alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=Spacing.LG, alignment=ui.MainAxisAlignment.CENTER,
                     ),
-                    padding=ft.Padding.symmetric(horizontal=Spacing.XXL, vertical=Spacing.XL),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.XXL, vertical=Spacing.XL),
                     bgcolor=c.code_block_bg, border_radius=Radius.MD,
-                    alignment=ft.Alignment.CENTER,
+                    alignment=ui.Alignment.CENTER,
                 ),
             }
             if w is not None:
                 kw["width"] = w
             if h is not None:
                 kw["height"] = h
-            img = ft.Image(**kw)
+            img = ui.ft.Image(**kw)
 
             # 图片段起始 raw 偏移：左键点击定位光标到此处，触发激活行渲染源码
             seg_raw_off = sum(len(s.raw) for s in line.segments[:seg_idx])
 
-            def _on_img_tap(e: ft.TapEvent, off=seg_raw_off):
+            def _on_img_tap(e: ui.TapEvent, off=seg_raw_off):
                 # 清除既有向外选区，再定位光标到图片段（与普通行点击一致）
                 if outward_range is not None and on_clear_outward is not None:
                     on_clear_outward()
@@ -499,35 +499,35 @@ def RenderedLine(
             url_text = seg.url or ""
             if on_image_action is not None:
                 def _mi(label, icon, action, si=seg_idx, u=url_text, al=alt_text):
-                    return ft.PopupMenuItem(
+                    return ui.PopupMenuItem(
                         content=label, icon=icon,
                         on_click=lambda e, act=action, idx=si, url=u, alt=al:
                             on_image_action(act, line_idx, idx, url, alt),
                     )
 
-                menu_items: list[ft.PopupMenuItem] = [
-                    _mi("拷贝图片 Markdown", ft.Icons.CONTENT_COPY, "copy_md"),
-                    _mi("拷贝图片", ft.Icons.IMAGE_OUTLINED, "copy_image"),
-                    _mi("将图像另存为", ft.Icons.SAVE_OUTLINED, "save_as"),
-                    ft.PopupMenuItem(),  # 分隔
-                    _mi("删除图片", ft.Icons.DELETE_OUTLINE, "delete"),
+                menu_items: list[ui.PopupMenuItem] = [
+                    _mi("拷贝图片 Markdown", ui.Icons.CONTENT_COPY, "copy_md"),
+                    _mi("拷贝图片", ui.Icons.IMAGE_OUTLINED, "copy_image"),
+                    _mi("将图像另存为", ui.Icons.SAVE_OUTLINED, "save_as"),
+                    ui.PopupMenuItem(),  # 分隔
+                    _mi("删除图片", ui.Icons.DELETE_OUTLINE, "delete"),
                 ]
-                wrapped = ft.ContextMenu(
-                    content=ft.GestureDetector(
-                        content=ft.Container(content=img, ink=True),
+                wrapped = ui.ContextMenu(
+                    content=ui.GestureDetector(
+                        content=ui.Container(content=img, ink=True),
                         on_tap=_on_img_tap,
                     ),
                     secondary_items=menu_items,
                 )
             else:
-                wrapped = ft.GestureDetector(
-                    content=ft.Container(content=img, ink=True),
+                wrapped = ui.GestureDetector(
+                    content=ui.Container(content=img, ink=True),
                     on_tap=_on_img_tap,
                 )
             img_controls.append(wrapped)
-        return ft.Column(
+        return ui.Column(
             controls=img_controls, spacing=Spacing.SM,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            horizontal_alignment=ui.CrossAxisAlignment.CENTER,
             width=float("inf"),  # 可滚动 Column 中占满全宽
         )
 
@@ -552,17 +552,17 @@ def RenderedLine(
             p_size = block_text_size(BlockType.HEADING, heading_level, body_font_size)
         else:
             p_color = c.text
-            p_weight = ft.FontWeight.NORMAL
+            p_weight = ui.FontWeight.NORMAL
             p_size = base
 
-        md = ft.Markdown(
+        md = ui.ft.Markdown(
             value=content_raw,
             selectable=False,
-            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+            extension_set=ui.MarkdownExtensionSet.GITHUB_WEB,
             soft_line_break=True,
-            latex_style=ft.TextStyle(size=p_size, color=c.math_fg),
-            md_style_sheet=ft.MarkdownStyleSheet(
-                p_text_style=ft.TextStyle(
+            latex_style=ui.TextStyle(size=p_size, color=c.math_fg),
+            md_style_sheet=ui.MarkdownStyleSheet(
+                p_text_style=ui.TextStyle(
                     size=p_size, color=p_color, weight=p_weight,
                     font_family=FONT_MAIN, height=line_height,
                 ),
@@ -571,25 +571,25 @@ def RenderedLine(
                 # 特别是 code_text_style：flet 在其为 None 时会把 code 重置为
                 # bodyMedium+monospace（丢失 bgcolor/code_fg），导致行内代码
                 # 在含公式行中显示异常（无背景、配色错乱）。
-                code_text_style=ft.TextStyle(
+                code_text_style=ui.TextStyle(
                     size=p_size - 1,
                     color=c.code_fg,
                     bgcolor=c.code_bg,
                     font_family=FONT_MONO,
                 ),
-                strong_text_style=ft.TextStyle(
-                    size=p_size, weight=ft.FontWeight.BOLD, color=p_color,
+                strong_text_style=ui.TextStyle(
+                    size=p_size, weight=ui.FontWeight.BOLD, color=p_color,
                 ),
-                em_text_style=ft.TextStyle(
+                em_text_style=ui.TextStyle(
                     size=p_size, italic=True, color=p_color,
                 ),
-                del_text_style=ft.TextStyle(
+                del_text_style=ui.TextStyle(
                     size=p_size, color=c.strike,
-                    decoration=ft.TextDecoration.LINE_THROUGH,
+                    decoration=ui.TextDecoration.LINE_THROUGH,
                 ),
-                a_text_style=ft.TextStyle(
+                a_text_style=ui.TextStyle(
                     size=p_size, color=c.link,
-                    decoration=ft.TextDecoration.UNDERLINE,
+                    decoration=ui.TextDecoration.UNDERLINE,
                 ),
             ),
         )
@@ -601,9 +601,9 @@ def RenderedLine(
                 raw_ls = prefix_seg.raw.lstrip()
                 if raw_ls and raw_ls[0] in "-*+":
                     lvl = list_color_level(prefix_seg.level)
-                    prefix_st = ft.TextStyle(
+                    prefix_st = ui.TextStyle(
                         size=base, color=c.heading_colors.get(lvl, c.muted),
-                        weight=ft.FontWeight.BOLD,
+                        weight=ui.FontWeight.BOLD,
                     )
             # 约束 Markdown 宽度到 wrap_width（减去前缀宽度），让长公式行原生换行
             _, _, left_pad = _block_padding(line)
@@ -611,17 +611,17 @@ def RenderedLine(
             full_ww = _compute_wrap_width(cw, left_pad)
             prefix_w = measure_text_width(prefix_display, FONT_MAIN, base) if prefix_display else 0.0
             md_w = full_ww - prefix_w if full_ww != float("inf") else float("inf")
-            content = ft.Row(
+            content = ui.Row(
                 controls=[
-                    ft.Text(
-                        spans=[ft.TextSpan(text=prefix_display, style=prefix_st)],
-                        style=ft.TextStyle(size=base, height=line_height),
+                    ui.Text(
+                        spans=[ui.TextSpan(text=prefix_display, style=prefix_st)],
+                        style=ui.TextStyle(size=base, height=line_height),
                     ),
-                    ft.Container(content=md, expand=True, width=md_w if md_w != float("inf") else None),
+                    ui.Container(content=md, expand=True, width=md_w if md_w != float("inf") else None),
                 ],
                 spacing=0,
                 wrap=False,
-                vertical_alignment=ft.CrossAxisAlignment.START,
+                vertical_alignment=ui.CrossAxisAlignment.START,
                 width=float("inf"),  # 占满父容器全宽（与代码块/公式块一致）
             )
         else:
@@ -631,14 +631,14 @@ def RenderedLine(
             full_ww = _compute_wrap_width(cw, left_pad)
             if full_ww != float("inf"):
                 # 外层 Container 占满全宽（高亮背景铺满整行），内层约束 Markdown 到 wrap_width 换行
-                content = ft.Container(
-                    content=ft.Container(content=md, width=full_ww),
+                content = ui.Container(
+                    content=ui.Container(content=md, width=full_ww),
                     width=float("inf"),
                 )
             else:
                 content = md
 
-        return ft.GestureDetector(
+        return ui.GestureDetector(
             content=content, on_tap=_on_tap,
             on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
             on_double_tap_down=_on_double_tap_down,
@@ -655,7 +655,7 @@ def RenderedLine(
         )
     content = _spans.maybe_stack_multi(spans, r2f, vlines, cursor_overlay,
                                  base, line_height, ww, style)
-    return ft.GestureDetector(
+    return ui.GestureDetector(
         content=content, on_tap=_on_tap,
         on_pan_start=_on_pan_start, on_pan_update=_on_pan_update,
         on_double_tap_down=_on_double_tap_down,

@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-import flet as ft
+import ui
 
 from models.document import Document
 
@@ -49,10 +49,10 @@ class EditorContext:
     on_save: Callable[[], None] | None
     on_export: Callable[[], None] | None
     on_dirty_change: Callable[[bool], None] | None
-    nav_ref: ft.Ref | None
-    clipboard_ref: ft.Ref | None
-    picker_ref: ft.Ref | None
-    theme_mode: ft.ThemeMode
+    nav_ref: ui.Ref | None
+    clipboard_ref: ui.Ref | None
+    picker_ref: ui.Ref | None
+    theme_mode: ui.ThemeMode
     on_toggle_theme: Callable[[], None] | None
     settings: dict[str, Any]
     on_open_settings: Callable[[], None] | None
@@ -133,51 +133,51 @@ class EditorContext:
     set_code_enter: Callable[[int, int], None]
 
     # ============ Refs（稳定区，跨渲染身份不变）============
-    cursor_field_ref: ft.Ref
-    input_session_ref: ft.Ref
-    cursor_ref: ft.Ref  # CursorState
-    suppress_blur: ft.Ref  # bool
-    list_view_ref: ft.Ref
-    scroll_offset_ref: ft.Ref  # float
-    viewport_h_ref: ft.Ref  # float
-    max_scroll_ref: ft.Ref  # float
-    viewport_w_ref: ft.Ref  # float
-    line_heights_ref: ft.Ref  # dict[int, float]
-    layout_cache_ref: ft.Ref  # LineLayoutCache | None
-    offset_prefix_ref: ft.Ref  # list[float] | None
-    preferred_col_ref: ft.Ref  # float | None
-    selection_text_ref: ft.Ref  # str
-    history_ref: ft.Ref  # EditHistory
-    restoring: ft.Ref  # bool
-    undo_push_pending: ft.Ref  # bool
-    outward_sel_ref: ft.Ref  # outward_sel 镜像
-    shift_pressed_ref: ft.Ref  # bool
-    ctrl_pressed_ref: ft.Ref  # bool
-    code_focus_ref: ft.Ref  # int | None
-    code_edit_snapshot: ft.Ref  # EditorSnapshot | None
-    code_edit_changed: ft.Ref  # bool
-    table_focus_ref: ft.Ref  # int | None（镜像 table_focus_li）
-    table_nav_ref: ft.Ref  # Callable | None
-    math_focus_ref: ft.Ref  # int | None（镜像 math_focus_li）
-    math_field_ref: ft.Ref  # ft.Control | None
-    math_edit_snapshot: ft.Ref  # EditorSnapshot | None
-    math_edit_changed: ft.Ref  # bool
+    cursor_field_ref: ui.Ref
+    input_session_ref: ui.Ref
+    cursor_ref: ui.Ref  # CursorState
+    suppress_blur: ui.Ref  # bool
+    list_view_ref: ui.Ref
+    scroll_offset_ref: ui.Ref  # float
+    viewport_h_ref: ui.Ref  # float
+    max_scroll_ref: ui.Ref  # float
+    viewport_w_ref: ui.Ref  # float
+    line_heights_ref: ui.Ref  # dict[int, float]
+    layout_cache_ref: ui.Ref  # LineLayoutCache | None
+    offset_prefix_ref: ui.Ref  # list[float] | None
+    preferred_col_ref: ui.Ref  # float | None
+    selection_text_ref: ui.Ref  # str
+    history_ref: ui.Ref  # EditHistory
+    restoring: ui.Ref  # bool
+    undo_push_pending: ui.Ref  # bool
+    outward_sel_ref: ui.Ref  # outward_sel 镜像
+    shift_pressed_ref: ui.Ref  # bool
+    ctrl_pressed_ref: ui.Ref  # bool
+    code_focus_ref: ui.Ref  # int | None
+    code_edit_snapshot: ui.Ref  # EditorSnapshot | None
+    code_edit_changed: ui.Ref  # bool
+    table_focus_ref: ui.Ref  # int | None（镜像 table_focus_li）
+    table_nav_ref: ui.Ref  # Callable | None
+    math_focus_ref: ui.Ref  # int | None（镜像 math_focus_li）
+    math_field_ref: ui.Ref  # ft.Control | None
+    math_edit_snapshot: ui.Ref  # EditorSnapshot | None
+    math_edit_changed: ui.Ref  # bool
     # 光标离开编辑器（cursor TextField 真实失焦）回调：触发即时自动保存等
     on_editor_blur: Callable[[], None] | None = None
     # 多光标：ref 镜像（IME 期间同步读取），alt 键状态 ref
-    secondary_cursors_ref: ft.Ref = field(default=None)
-    alt_pressed_ref: ft.Ref = field(default=None)
+    secondary_cursors_ref: ui.Ref = field(default=None)
+    alt_pressed_ref: ui.Ref = field(default=None)
     # 粘贴进行中标志（拦截原生 TextField 单行粘贴的 on_change 干扰）
     # KeyDispatcher Ctrl+V 时置 True；_do_paste_check 完成后置 False。
     # handle_char_input 入口检测：True 时跳过（由 handle_paste 统一处理）。
-    paste_in_progress_ref: ft.Ref = field(default=None)
+    paste_in_progress_ref: ui.Ref = field(default=None)
     # float：上次同行移动脉冲时间戳（monotonic），_set_cursor 节流重建用
-    cursor_pulse_ref: ft.Ref = field(default=None)
+    cursor_pulse_ref: ui.Ref = field(default=None)
     # 上/下键自驱动重复任务标志（asyncio.Task | None），_key.py 长按导航用
-    arrow_repeat_ref: ft.Ref = field(default=None)
+    arrow_repeat_ref: ui.Ref = field(default=None)
     # 代码块编辑框光标/选区跟踪：(value, base_offset, extent_offset) | None，
     # on_code_selection 写入，供 KeyDispatcher 代码块边界方向键跳出判定
-    code_caret_ref: ft.Ref = field(default=None)
+    code_caret_ref: ui.Ref = field(default=None)
 
     # ============ 装配槽（跨工厂调用，工厂装配后写入）============
     # 以下字段全部由 build_xxx 工厂返回的 {槽位名: 回调} 自动装配（见 __init__.py

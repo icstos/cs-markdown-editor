@@ -24,7 +24,7 @@ Ctrl+F 唤起的「当前文档搜索」UI：固定悬浮、不遮挡编辑主�
 import contextlib
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import (
     FONT_MAIN,
@@ -49,7 +49,7 @@ _COUNT_W = 58
 _PANEL_H = 40
 
 
-@ft.component
+@ui.component
 def FloatingSearch(
     open: bool,
     query: str,
@@ -66,13 +66,13 @@ def FloatingSearch(
     # Ctrl+F 每次唤起都会递增 focus_seq，驱动本组件聚焦输入框
     focus_seq: int = 0,
     native_input_ref=None,  # 外部输入焦点域 ref（可空）
-    theme_mode: ft.ThemeMode | None = None,
+    theme_mode: ui.ThemeMode | None = None,
 ):
     """搜索浮层面板。所有状态由父级（App）持有，本组件只做展示与转发。"""
     c = _current_colors()
-    is_dark = theme_mode == ft.ThemeMode.DARK
-    field_ref = ft.use_ref(None)
-    focused, set_focused = ft.use_state(False)
+    is_dark = theme_mode == ui.ThemeMode.DARK
+    field_ref = ui.use_ref(None)
+    focused, set_focused = ui.use_state(False)
 
     # 唤起后自动聚焦搜索输入框（open 变化或 focus_seq 递增时触发）
     async def _focus_field():
@@ -83,7 +83,7 @@ def FloatingSearch(
             with contextlib.suppress(Exception):
                 await f.focus()
 
-    ft.use_effect(_focus_field, [open, focus_seq])
+    ui.use_effect(_focus_field, [open, focus_seq])
 
     focus_h, blur_h = native_focus_hooks(native_input_ref)
 
@@ -97,30 +97,30 @@ def FloatingSearch(
         if blur_h is not None:
             blur_h(e)
 
-    def _divider() -> ft.Control:
+    def _divider() -> ui.Control:
         """组间分隔：1px 细线，比边框更弱，只切断节奏不制造格子。"""
-        return ft.Container(
+        return ui.Container(
             width=1,
             height=18,
-            bgcolor=ft.Colors.with_opacity(0.8, c.border),
+            bgcolor=ui.Colors.with_opacity(0.8, c.border),
         )
 
-    def _count() -> ft.Control:
+    def _count() -> ui.Control:
         """计数区：数字用等宽体（跳动不抖），无匹配时才出现中文提示。"""
         if not query.strip():
-            body: ft.Control = ft.Container()
+            body: ui.Control = ui.Container()
         elif total > 0:
-            body = ft.Row(
+            body = ui.Row(
                 controls=[
-                    ft.Text(
+                    ui.Text(
                         str(current_idx + 1),
                         size=12,
-                        weight=ft.FontWeight.W_600,
+                        weight=ui.FontWeight.W_600,
                         color=c.text,
                         font_family=FONT_MONO,
                         max_lines=1,
                     ),
-                    ft.Text(
+                    ui.Text(
                         f"/ {total}",
                         size=11,
                         color=c.muted,
@@ -130,61 +130,61 @@ def FloatingSearch(
                 ],
                 spacing=Spacing.SM,
                 tight=True,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             )
         else:
-            body = ft.Text(
+            body = ui.Text(
                 "无匹配",
                 size=11,
                 color=c.muted,
                 font_family=FONT_MAIN,
                 max_lines=1,
             )
-        return ft.Container(
+        return ui.Container(
             width=_COUNT_W,
-            alignment=ft.Alignment.CENTER_RIGHT,
+            alignment=ui.Alignment.CENTER_RIGHT,
             content=body,
         )
 
     has_nav = total > 0
 
-    return ft.Container(
+    return ui.Container(
         visible=open,
         height=_PANEL_H,
         bgcolor=c.surface,
-        border=ft.Border.all(1, c.link if focused else c.border),
+        border=ui.Border.all(1, c.link if focused else c.border),
         border_radius=Radius.XL,
-        padding=ft.Padding.symmetric(horizontal=14, vertical=0),
+        padding=ui.Padding.symmetric(horizontal=14, vertical=0),
         shadow=card_shadow(Elevation.MEDIUM, is_dark=is_dark)
         + (focus_ring(c.link, is_dark) if focused else []),
-        alignment=ft.Alignment.CENTER_LEFT,
-        content=ft.Row(
+        alignment=ui.Alignment.CENTER_LEFT,
+        content=ui.Row(
             controls=[
                 # 输入区：放大镜 + 无边框输入框（底色/描边一律由外壳给）
-                ft.Container(
+                ui.Container(
                     width=_FIELD_W,
-                    content=ft.Row(
+                    content=ui.Row(
                         controls=[
-                            ft.Icon(
-                                ft.Icons.SEARCH,
+                            ui.Icon(
+                                ui.Icons.SEARCH,
                                 size=15,
                                 color=c.link if focused else c.muted,
                             ),
-                            ft.TextField(
+                            ui.TextField(
                                 ref=field_ref,
                                 value=query,
                                 hint_text="搜索当前文档…",
-                                hint_style=ft.TextStyle(
+                                hint_style=ui.TextStyle(
                                     size=13, color=c.muted, font_family=FONT_MAIN
                                 ),
                                 dense=True,
-                                border=ft.NoInputBorder(),
+                                border=ui.NoInputBorder(),
                                 filled=False,
                                 text_size=13,
-                                text_style=ft.TextStyle(
+                                text_style=ui.TextStyle(
                                     size=13, color=c.text, font_family=FONT_MAIN
                                 ),
-                                content_padding=ft.Padding.symmetric(
+                                content_padding=ui.Padding.symmetric(
                                     horizontal=0, vertical=Spacing.LG
                                 ),
                                 cursor_color=c.link,
@@ -195,7 +195,7 @@ def FloatingSearch(
                             ),
                         ],
                         spacing=Spacing.MD,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                     ),
                 ),
                 _divider(),
@@ -204,7 +204,7 @@ def FloatingSearch(
                 _divider(),
                 _count(),
                 _compact_btn(
-                    ft.Icons.KEYBOARD_ARROW_UP,
+                    ui.Icons.KEYBOARD_ARROW_UP,
                     "上一个 (Shift+Enter)",
                     lambda e: on_prev(),
                     c,
@@ -212,7 +212,7 @@ def FloatingSearch(
                     disabled=not has_nav,
                 ),
                 _compact_btn(
-                    ft.Icons.KEYBOARD_ARROW_DOWN,
+                    ui.Icons.KEYBOARD_ARROW_DOWN,
                     "下一个 (Enter)",
                     lambda e: on_next(),
                     c,
@@ -221,11 +221,11 @@ def FloatingSearch(
                 ),
                 _divider(),
                 _compact_btn(
-                    ft.Icons.CLOSE, "关闭 (Esc)", lambda e: on_close(), c, box=24
+                    ui.Icons.CLOSE, "关闭 (Esc)", lambda e: on_close(), c, box=24
                 ),
             ],
             spacing=Spacing.SM,
             tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )

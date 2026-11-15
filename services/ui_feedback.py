@@ -11,17 +11,17 @@
   可复用、可独立测试的模块函数，供 main.py 及未来其他视图共享。
 """
 
-import flet as ft
+import ui
 
 
-def show_snack(page: ft.Page, msg: str) -> None:
+def show_snack(page: ui.Page, msg: str) -> None:
     """在页面底部弹出 SnackBar 提示。
 
     page 为 None 时静默跳过。
     """
     if page is None:
         return
-    snack = ft.SnackBar(content=ft.Text(msg))
+    snack = ui.SnackBar(content=ui.Text(msg))
 
     def _on_dismiss(e):
         try:

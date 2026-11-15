@@ -18,7 +18,7 @@
 
 import os
 
-import flet as ft
+import ui
 
 from config import app_meta
 from models.document import BlockType
@@ -43,10 +43,10 @@ def _menu_item(
     on_click=None,
     disabled: bool = False,
     c=None,
-) -> ft.MenuItemButton:
+) -> ui.MenuItemButton:
     """构造单个菜单项：左侧标签 + 右侧快捷键。"""
     controls = [
-        ft.Text(
+        ui.Text(
             value=label,
             size=_MENU_FONT,
             font_family=FONT_MAIN,
@@ -55,22 +55,22 @@ def _menu_item(
     ]
     if shortcut:
         controls.append(
-            ft.Container(
-                content=ft.Text(
+            ui.Container(
+                content=ui.Text(
                     value=shortcut,
                     size=_MENU_SHORTCUT_FONT,
                     font_family=FONT_MAIN,
                     color=c.muted,
                 ),
-                margin=ft.Margin.only(left=24),
+                margin=ui.Margin.only(left=24),
             )
         )
-    return ft.MenuItemButton(
-        content=ft.Row(
+    return ui.MenuItemButton(
+        content=ui.Row(
             controls=controls,
             spacing=0,
             tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
         on_click=on_click if not disabled else None,
         disabled=disabled,
@@ -79,20 +79,20 @@ def _menu_item(
     )
 
 
-def _separator(c) -> ft.MenuItemButton:
+def _separator(c) -> ui.MenuItemButton:
     """菜单分隔线。"""
-    return ft.MenuItemButton(
-        content=ft.Divider(height=1, thickness=1, color=c.border),
+    return ui.MenuItemButton(
+        content=ui.Divider(height=1, thickness=1, color=c.border),
         disabled=True,
         close_on_click=False,
         height=1,
     )
 
 
-def _submenu(label: str, controls: list, c) -> ft.SubmenuButton:
+def _submenu(label: str, controls: list, c) -> ui.SubmenuButton:
     """构造一级子菜单按钮。"""
-    return ft.SubmenuButton(
-        content=ft.Text(
+    return ui.SubmenuButton(
+        content=ui.Text(
             value=label,
             size=_MENU_FONT,
             font_family=FONT_MAIN,
@@ -102,7 +102,7 @@ def _submenu(label: str, controls: list, c) -> ft.SubmenuButton:
     )
 
 
-def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
+def build_global_menu(ctx, theme_mode: ui.ThemeMode) -> ui.ft.MenuBar:
     """构造 MarkText 风格全局菜单栏。
 
     从 ctx 装配槽读取所有业务回调，EditorActions 通过 ctx.get_active_nav() 路由
@@ -313,7 +313,7 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
     def _open_url(e, url: str):
         """调用系统默认浏览器打开 URL。"""
         if page_ref.current is not None:
-            page_ref.current.launch_url(url, web_popup_window_name=ft.UrlTarget.BLANK)
+            page_ref.current.launch_url(url, web_popup_window_name=ui.UrlTarget.BLANK)
 
     # TODO: 替换为实际网址
     # 外链统一来自 config/app_meta（设置「关于」页与这里共用同一来源，
@@ -338,12 +338,12 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
     # ============ 组装 MenuBar：单个菜单图标按钮收纳六组 ============
     # 标签栏最左侧仅显示一个 ≡ 菜单图标，点击弹出文件/编辑/段落/格式/视图/帮助
     # 六组分级菜单（悬停展开二级）。视觉等效 PopupMenuButton，且支持完整嵌套。
-    return ft.MenuBar(
+    return ui.ft.MenuBar(
         controls=[
-            ft.SubmenuButton(
+            ui.SubmenuButton(
                 width=_MENU_TRIGGER_W,
-                content=ft.Icon(
-                    ft.Icons.MENU,
+                content=ui.Icon(
+                    ui.Icons.MENU,
                     size=_MENU_ICON_SIZE,
                     color=c.text,
                 ),
@@ -358,23 +358,23 @@ def build_global_menu(ctx, theme_mode: ft.ThemeMode) -> ft.MenuBar:
                 ],
                 # 紧凑图标按钮：减小内边距，圆角与标签栏一致；内容 alignment 强制
                 # CENTER——即使客户端把按钮撑到整宽，≡ 图标也在按钮内严格居中
-                style=ft.ButtonStyle(
+                style=ui.ButtonStyle(
                     padding=Spacing.XS,
-                    alignment=ft.Alignment.CENTER,
-                    shape=ft.RoundedRectangleBorder(radius=Radius.SM),
+                    alignment=ui.Alignment.CENTER,
+                    shape=ui.RoundedRectangleBorder(radius=Radius.SM),
                     bgcolor={
-                        ft.ControlState.HOVERED: c.hover,
-                        ft.ControlState.DEFAULT: ft.Colors.TRANSPARENT,
+                        ui.ControlState.HOVERED: c.hover,
+                        ui.ControlState.DEFAULT: ui.Colors.TRANSPARENT,
                     },
                 ),
             ),
         ],
-        style=ft.MenuStyle(
+        style=ui.MenuStyle(
             bgcolor=c.toolbar_bg,
-            shadow_color=ft.Colors.TRANSPARENT,
+            shadow_color=ui.Colors.TRANSPARENT,
             elevation=0,
             # 紧凑：去掉菜单栏默认边距与最小尺寸，使按钮内容贴合图标居中
             padding=0,
-            visual_density=ft.VisualDensity.COMPACT,
+            visual_density=ui.VisualDensity.COMPACT,
         ),
     )

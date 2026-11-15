@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-import flet as ft
+import ui
 
 
 @dataclass(kw_only=True)
@@ -45,7 +45,7 @@ class AppContext:
     file_dialog: dict | None
     compare_source: str | None
     diff_active_pane: int
-    theme_mode: ft.ThemeMode
+    theme_mode: ui.ThemeMode
     settings: dict
     settings_open: bool
     settings_tab: str
@@ -101,37 +101,37 @@ class AppContext:
     set_session_right: Callable
 
     # ============ Refs（稳定区）============
-    is_diff_tab_ref: ft.Ref
-    diff_nav_left: ft.Ref
-    diff_nav_right: ft.Ref
-    diff_active_pane_ref: ft.Ref
-    nav_ref: ft.Ref
-    nav_ref_split: ft.Ref
-    active_pane_ref: ft.Ref
+    is_diff_tab_ref: ui.Ref
+    diff_nav_left: ui.Ref
+    diff_nav_right: ui.Ref
+    diff_active_pane_ref: ui.Ref
+    nav_ref: ui.Ref
+    nav_ref_split: ui.Ref
+    active_pane_ref: ui.Ref
     # 每侧组激活索引 ref 镜像（异步回调读取最新值，同 tabs_ref 模式）
-    active_index_left_ref: ft.Ref
-    active_index_right_ref: ft.Ref
+    active_index_left_ref: ui.Ref
+    active_index_right_ref: ui.Ref
     # 每侧会话计数 ref 镜像（同值自增模式，供单事件内多次 bump 不丢计数）
-    session_left_ref: ft.Ref
-    session_right_ref: ft.Ref
-    picker_holder: ft.Ref
-    clipboard_holder: ft.Ref
-    page_ref: ft.Ref
-    tabs_ref: ft.Ref
-    active_index_ref: ft.Ref
+    session_left_ref: ui.Ref
+    session_right_ref: ui.Ref
+    picker_holder: ui.Ref
+    clipboard_holder: ui.Ref
+    page_ref: ui.Ref
+    tabs_ref: ui.Ref
+    active_index_ref: ui.Ref
     # 「重新打开已关闭标签」栈（Ctrl+Shift+T）：do_close_many 入栈、reopen_closed_tab
     # 出栈。只读 ref 不入 state——栈变化不驱动 UI，只影响下一次按键的恢复结果。
-    closed_tabs_ref: ft.Ref
-    settings_ref: ft.Ref  # 最新 settings 快照（供异步任务读取，避免闭包捕获过期快照）
-    dispatcher_ref: ft.Ref  # KeyDispatcher 实例
-    paste_old_draft: ft.Ref  # 粘贴前 draft 快照（供 handle_paste 做 diff 定位）
-    arrow_repeat_ref: ft.Ref  # 上/下键自驱动重复标志（KeyDispatcher 与 editor _on_key_up 共享）
+    closed_tabs_ref: ui.Ref
+    settings_ref: ui.Ref  # 最新 settings 快照（供异步任务读取，避免闭包捕获过期快照）
+    dispatcher_ref: ui.Ref  # KeyDispatcher 实例
+    paste_old_draft: ui.Ref  # 粘贴前 draft 快照（供 handle_paste 做 diff 定位）
+    arrow_repeat_ref: ui.Ref  # 上/下键自驱动重复标志（KeyDispatcher 与 editor _on_key_up 共享）
     # 非编辑器原生输入框（侧边栏搜索/替换/过滤、文件对话框输入等）焦点域 ref。
     # current 非 None（token）＝键盘焦点在外部输入框 → KeyDispatcher 只放行
     # 全局窗口级快捷键，文档编辑/选区/导航/剪贴板键交原生输入框处理。
     # 由各输入框 on_focus/on_blur 经 views.native_scope.native_focus_hooks 写入。
-    native_input_ref: ft.Ref = field(default=None)
-    status_ref: ft.Ref  # 状态栏命令式更新器（update_cursor / update_counts）
+    native_input_ref: ui.Ref = field(default=None)
+    status_ref: ui.Ref  # 状态栏命令式更新器（update_cursor / update_counts）
 
     # ============ 装配槽（跨控制器调用，控制器装配后写入）============
     # tab_management 组

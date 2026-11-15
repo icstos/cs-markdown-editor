@@ -1,6 +1,6 @@
 # Markdown 编辑器
 
-基于 [Flet](https://flet.dev) 0.86.2 声明式组件与 [mistune](https://mistune.lepture.com/) 实时解析，对标 [Typora](https://typora.io/) 的**光标级所见即所得（WYSIWYG）**编辑体验。
+基于 [cs-ui](https://github.com/icstos/cs-ui)（Flet 1.1 声明式组件库）与 [mistune](https://mistune.lepture.com/) 实时解析，对标 [Typora](https://typora.io/) 的**光标级所见即所得（WYSIWYG）**编辑体验。
 
 采用 **Stack 双层架构**：底层渲染层始终以渲染样式呈现 Markdown，顶层透明 TextField 承载光标与输入。每个字符输入即时渲染到文档，光标与渲染层文字像素级对齐——彻底消除传统「源码 / 预览」双栏割裂与「段级编辑」的语法噪声跳变。
 
@@ -91,12 +91,13 @@
 
 | 依赖 | 用途 |
 |------|------|
-| [Flet](https://flet.dev) ≥ 0.86.2 | 声明式 GUI（`@ft.component` + `use_state` / `use_effect` + `@ft.observable` / `@ft.memo`） |
+| [cs-ui](https://github.com/icstos/cs-ui) ≥ 0.2.0，< 0.3 | **唯一 UI 依赖**，基于受版本约束的 flet 1.1.x：`@ui.component` + `use_state` / `use_effect` + `@ui.observable` / `@ui.memo`，启动 `ui.run(main)` + `page.render(App)`。未覆写的 flet 名字由 `ui` 透传；同名但语义不同的控件走 `ui.ft.X` 兼容门面 |
 | [mistune](https://mistune.lepture.com/) ≥ 3.3.4 | 行内 AST 解析；HTML 导出（含 strikethrough / mark / 上下标 / 表格等插件） |
 | [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) ≥ 0.40.0 | 文本整形测量（与 Skia/Flutter 同引擎，光标像素级对齐渲染层文字） |
 | [Pillow](https://pillow.readthedocs.io/) ≥ 12.3.0 | 图片尺寸读取与缩放 |
 | [Pygments](https://pygments.org/) ≥ 2.19.0 | 代码块语法分词（`services/code_highlight.py`，惰性导入；未知语言 / 超长代码回退纯文本，仅失去上色） |
-| [flet-datatable2](https://pub.dev/packages/flet_datatable2) ≥ 0.86.2 | 表格渲染与编辑（DataTable 扩展，固定表头 / 单元格编辑） |
+| [flet-datatable2](https://pub.dev/packages/flet_datatable2) == 1.1.2 | 表格渲染与编辑（DataTable 扩展，固定表头 / 单元格编辑）；与 cs-ui 的 flet 版本成对 pin |
+| watchdog ≥ 4.0.0 | 文件树外部修改检测 |
 
 > **Python** ≥ 3.12（`pyproject.toml`）；模型层使用 `StrEnum`（3.11+ 特性）
 
@@ -112,7 +113,7 @@ python main.py
 或安装依赖后运行：
 
 ```bash
-pip install flet mistune pillow uharfbuzz pygments flet-datatable2
+pip install "cs-ui>=0.2.0,<0.3" "flet-datatable2==1.1.2" mistune pillow uharfbuzz pygments watchdog
 python main.py
 ```
 
@@ -287,7 +288,7 @@ cs-markdown-editor
 │    autosave.py      自动保存（间隔触发+共享doc去重）          │
 │    diff_scroll_sync DiffScrollSync（对比双视口同步滚动）      │
 ├──────────────────────────────────────────────────────────────┤
-│  views/             声明式 Flet 视图组件                      │
+│  views/             声明式 cs-ui 视图组件                    │
 │    editor/          编辑器根组件包（EditorContext + 工厂模式） │
 │      __init__.py    MarkdownEditor：hooks → ctx → 工厂 → 渲染 │
 │      _context.py    EditorContext：状态容器（双区 + 装配槽）  │

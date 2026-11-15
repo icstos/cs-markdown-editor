@@ -10,7 +10,7 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import FONT_MAIN, Spacing, _current_colors, only_border
 
@@ -19,15 +19,15 @@ _BAR_W = 44  # 活动栏固定宽度：VSCode / Obsidian 风格紧凑带宽（20
 # 44px 较原 60px 更贴近列内容，消除大面积留白，把横向空间让给编辑区（紧凑、专业）。
 
 
-@ft.component
+@ui.component
 def ActivityBar(
     active_panel: str,
     sidebar_open: bool,
     on_click_panel: Callable[[str], None],
-    menu: ft.Control,
-    theme_mode: ft.ThemeMode,
+    menu: ui.Control,
+    theme_mode: ui.ThemeMode,
     git_count: int = 0,
-) -> ft.Control:
+) -> ui.Control:
     """活动栏：文件 / 搜索 / 源代码管理（顶部）+ 全局菜单按钮（底部）。
 
     on_click_panel(key)：点击面板图标，App 侧根据当前选中状态决定
@@ -44,90 +44,90 @@ def ActivityBar(
         active: bool,
         on_click,
         badge: int = 0,
-    ) -> ft.Control:
+    ) -> ui.Control:
         # VSCode 风格：激活项仅左侧 3px 主题色强调条 + 主题色图标，
         # 不再用整块半透明圆角底色（观感更清爽、与冷灰底色更协调）
-        icon_control: ft.Control = ft.Icon(
+        icon_control: ui.Control = ui.Icon(
             icon, size=20, color=c.link if active else c.muted
         )
         if badge > 0:
             # Stack：图标保持居中，角标绝对定位到右上角（不挤压图标行宽）。
             # 超过 99 显示 99+（VSCode 同款截断），避免角标被撑宽后出框。
-            icon_control = ft.Stack(
+            icon_control = ui.Stack(
                 controls=[
-                    ft.Container(content=icon_control, alignment=ft.Alignment.CENTER),
-                    ft.Container(
+                    ui.Container(content=icon_control, alignment=ui.Alignment.CENTER),
+                    ui.Container(
                         right=-8,
                         top=-5,
                         bgcolor=c.link,
-                        border_radius=ft.BorderRadius.all(7),
-                        padding=ft.Padding.symmetric(horizontal=3, vertical=0),
-                        content=ft.Text(
+                        border_radius=ui.BorderRadius.all(7),
+                        padding=ui.Padding.symmetric(horizontal=3, vertical=0),
+                        content=ui.Text(
                             "99+" if badge > 99 else str(badge),
                             size=8,
                             color="#FFFFFF",
                             font_family=FONT_MAIN,
-                            weight=ft.FontWeight.W_700,
+                            weight=ui.FontWeight.W_700,
                         ),
                     ),
                 ],
                 width=26,
                 height=26,
-                alignment=ft.Alignment.CENTER,
+                alignment=ui.Alignment.CENTER,
             )
-        return ft.Container(
+        return ui.Container(
             height=44,
             on_click=on_click,
             tooltip=tooltip,
             ink=True,
-            content=ft.Row(
+            content=ui.Row(
                 controls=[
-                    ft.Container(
+                    ui.Container(
                         width=3,
                         height=24,
-                        border_radius=ft.BorderRadius.all(2),
+                        border_radius=ui.BorderRadius.all(2),
                         bgcolor=c.link,
                         visible=active,
                     ),
-                    ft.Container(
+                    ui.Container(
                         expand=True,
-                        alignment=ft.Alignment.CENTER,
+                        alignment=ui.Alignment.CENTER,
                         content=icon_control,
                     ),
                     # 右侧对称占位：图标在剩余空间内严格居中
-                    ft.Container(width=3),
+                    ui.Container(width=3),
                 ],
                 spacing=0,
             ),
         )
 
-    return ft.Container(
+    return ui.Container(
         width=_BAR_W,
         bgcolor=c.toolbar_bg,
-        border=only_border(right=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.symmetric(vertical=Spacing.LG),
-        content=ft.Column(
+        border=only_border(right=ui.BorderSide(1, c.border)),
+        padding=ui.Padding.symmetric(vertical=Spacing.LG),
+        content=ui.Column(
             controls=[
                 # 顶部按钮组（文件 / 搜索 / 源代码管理）：独立子列保持 SM 间距，整体置顶
-                ft.Column(
+                ui.Column(
                     controls=[
                         _btn(
                             "files",
-                            ft.Icons.FOLDER_OUTLINED,
+                            ui.Icons.FOLDER_OUTLINED,
                             "文件",
                             active_panel == "files" and sidebar_open,
                             lambda e: on_click_panel("files"),
                         ),
                         _btn(
                             "search",
-                            ft.Icons.SEARCH,
+                            ui.Icons.SEARCH,
                             "搜索",
                             active_panel == "search" and sidebar_open,
                             lambda e: on_click_panel("search"),
                         ),
                         _btn(
                             "git",
-                            ft.Icons.ACCOUNT_TREE,
+                            ui.Icons.ACCOUNT_TREE,
                             f"源代码管理（{git_count} 项更改）" if git_count
                             else "源代码管理",
                             active_panel == "git" and sidebar_open,
@@ -136,23 +136,23 @@ def ActivityBar(
                         ),
                     ],
                     spacing=Spacing.SM,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    horizontal_alignment=ui.CrossAxisAlignment.CENTER,
                 ),
                 # 底部 ≡ 菜单按钮：整列不出现任何 expand/flex 子控件（沉底交给
                 # SPACE_BETWEEN），规避桌面客户端「expand 之后的兄弟控件」布局
                 # 异常（不居中 / 出现多余滚动条）。按钮行固定整宽整高
                 # （_BAR_W × 44），由 Row 自身把 MenuBar 在列内严格居中（横竖
                 # 双向 CENTER），不依赖外层任何对齐。
-                ft.Row(
+                ui.Row(
                     controls=[menu],
                     width=_BAR_W,
                     height=44,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    tooltip="菜单",
+                    alignment=ui.MainAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
+                    tooltip="菜单", spacing=10,
                 ),
             ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ui.MainAxisAlignment.SPACE_BETWEEN,
+            horizontal_alignment=ui.CrossAxisAlignment.CENTER, spacing=10,
         ),
     )

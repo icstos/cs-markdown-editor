@@ -62,7 +62,7 @@ Python 侧 `controls` 列表里的控件对象仍是全量构造的——实测 
 from collections.abc import Callable
 from typing import Any
 
-import flet as ft
+import ui
 
 from models.document import BlockType
 from views.editor._helpers import _build_diff_gap

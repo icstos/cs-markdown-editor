@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
-import flet as ft
+import ui
 
 from cmsite import _content as K
 from cmsite._demo import DemoSection
@@ -38,18 +38,18 @@ from cmsite._ui import icon, on_event, text
 _FALLBACK_W = 1280
 
 
-@ft.component
-def SiteShell() -> ft.Control:
+@ui.component
+def SiteShell() -> ui.Control:
     """站点根组件。"""
-    active_anchor, set_active_anchor = ft.use_state(K.START_ANCHOR or K.NAV_ITEMS[0].anchor)
-    theme_mode, set_theme_mode = ft.use_state(
-        ft.ThemeMode.DARK if K.START_THEME == "dark" else ft.ThemeMode.LIGHT
+    active_anchor, set_active_anchor = ui.use_state(K.START_ANCHOR or K.NAV_ITEMS[0].anchor)
+    theme_mode, set_theme_mode = ui.use_state(
+        ui.ThemeMode.DARK if K.START_THEME == "dark" else ui.ThemeMode.LIGHT
     )
-    viewport, set_viewport = ft.use_state(_FALLBACK_W)
-    scroll_ref = ft.use_ref(None)
-    clipboard_ref = ft.use_ref(None)
+    viewport, set_viewport = ui.use_state(_FALLBACK_W)
+    scroll_ref = ui.use_ref(None)
+    clipboard_ref = ui.use_ref(None)
 
-    page = ft.context.page
+    page = ui.context.page
     # 渲染期同步主题：`use_effect` 在渲染之后才跑，若只靠它，切主题那一帧
     # `current_colors()` 读到的还是旧值，界面会有一帧旧配色。
     if page is not None:
@@ -78,7 +78,7 @@ def SiteShell() -> ft.Control:
             await col.scroll_to(
                 scroll_key=anchor,
                 duration=duration,
-                curve=ft.AnimationCurve.EASE_OUT,
+                curve=ui.AnimationCurve.EASE_OUT,
             )
 
     async def _jump_task(anchor: str) -> None:
@@ -97,11 +97,11 @@ def SiteShell() -> ft.Control:
         page.on_resize = lambda _e: _sync_viewport()
         _sync_viewport()
         if clipboard_ref.current is None:
-            clipboard_ref.current = ft.Clipboard()
+            clipboard_ref.current = ui.Clipboard()
         if K.START_ANCHOR:
             page.run_task(_jump_task, K.START_ANCHOR)
 
-    ft.use_effect(_bind, [])
+    ui.use_effect(_bind, [])
 
     def jump(anchor: str):
         """生成导航回调：先高亮，再滚动（顺序反了会像"点了没反应"）。"""
@@ -115,12 +115,12 @@ def SiteShell() -> ft.Control:
 
     def toggle_theme() -> None:
         set_theme_mode(
-            ft.ThemeMode.DARK if theme_mode == ft.ThemeMode.LIGHT else ft.ThemeMode.LIGHT
+            ui.ThemeMode.DARK if theme_mode == ui.ThemeMode.LIGHT else ui.ThemeMode.LIGHT
         )
 
     go_home = jump("hero")
 
-    return ft.Column(
+    return ui.Column(
         spacing=0,
         tight=True,
         expand=True,
@@ -144,20 +144,20 @@ def SiteShell() -> ft.Control:
             # 交叉轴依旧是松的，Column 仍然会缩到最宽子项的宽度（试过，整页左对齐）。
             # 真正能给满宽紧约束的是 Row + STRETCH + 一个 Expanded 子项——
             # 高度由 STRETCH 顶紧，宽度由 Expanded 顶紧，Column 才真的铺满。
-            ft.Container(
+            ui.Container(
                 expand=True,
-                content=ft.Row(
+                content=ui.Row(
                     spacing=0,
-                    vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                    vertical_alignment=ui.CrossAxisAlignment.STRETCH,
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             expand=True,
-                            content=ft.Column(
+                            content=ui.Column(
                                 ref=scroll_ref,
                                 spacing=0,
                                 tight=True,
-                                scroll=ft.ScrollMode.AUTO,
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                scroll=ui.ScrollMode.AUTO,
+                                horizontal_alignment=ui.CrossAxisAlignment.CENTER,
                                 controls=[
                                     hero_section(width, jump, clipboard_ref),
                                     features_section(width),
@@ -179,19 +179,19 @@ def SiteShell() -> ft.Control:
 def _top_bar(
     active: str,
     on_jump,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     on_toggle_theme,
     compact: bool,
     gutter: int,
     on_home,
     c,
-) -> ft.Control:
+) -> ui.Control:
     """顶栏：品牌（点击回顶）+ 导航 + 主题开关。
 
     显式定高 60；内部不使用 `ft.IconButton`（Material 固有高 40 会把行高顶开），
     图标按钮一律是定尺寸 `Container(ink=True)`。
     """
-    nav = ft.Row(
+    nav = ui.Row(
         spacing=2,
         wrap=True,
         run_spacing=2,
@@ -201,27 +201,27 @@ def _top_bar(
         ],
     )
 
-    brand = ft.Container(
+    brand = ui.Container(
         ink=True,
         on_click=on_event(on_home),
         tooltip="回到顶部",
-        padding=ft.Padding.symmetric(horizontal=4, vertical=4),
+        padding=ui.Padding.symmetric(horizontal=4, vertical=4),
         border_radius=Radius.SM,
-        content=ft.Row(
+        content=ui.Row(
             spacing=8,
             tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Container(
+                ui.Container(
                     width=26,
                     height=26,
                     border_radius=Radius.MD,
                     bgcolor=c.link,
-                    alignment=ft.Alignment.CENTER,
+                    alignment=ui.Alignment.CENTER,
                     content=icon("EDIT_NOTE", size=16, color=c.bg),
                 ),
                 *(
-                    [text(K.APP_NAME, size=Type.SMALL, weight=ft.FontWeight.W_600)]
+                    [text(K.APP_NAME, size=Type.SMALL, weight=ui.FontWeight.W_600)]
                     if not compact
                     else []
                 ),
@@ -229,46 +229,46 @@ def _top_bar(
         ),
     )
 
-    return ft.Container(
+    return ui.Container(
         height=Layout.NAV_H,
-        padding=ft.Padding.symmetric(horizontal=gutter),
+        padding=ui.Padding.symmetric(horizontal=gutter),
         bgcolor=tint(c.bg, 0.96),
-        border=only_border(bottom=ft.BorderSide(1, c.border)),
-        content=ft.Row(
+        border=only_border(bottom=ui.BorderSide(1, c.border)),
+        content=ui.Row(
             spacing=Spacing.XL,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
                 brand,
-                ft.Container(expand=True, alignment=ft.Alignment.CENTER_RIGHT, content=nav),
+                ui.Container(expand=True, alignment=ui.Alignment.CENTER_RIGHT, content=nav),
                 _theme_switch(theme_mode, on_toggle_theme, c),
             ],
         ),
     )
 
 
-def _nav_item(label: str, active: bool, on_click, c) -> ft.Control:
+def _nav_item(label: str, active: bool, on_click, c) -> ui.Control:
     """导航项：选中态用强调色文字 + 2px 下划条。
 
     用下划条而不是整块底色——长页面上底色块会抢走内容的注意力。
     """
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=10, vertical=6),
         border_radius=Radius.SM,
         ink=True,
         on_click=on_event(on_click),
         tooltip=label,
-        content=ft.Column(
+        content=ui.Column(
             spacing=3,
             tight=True,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            horizontal_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
                 text(
                     label,
                     size=Type.SMALL,
                     color=c.link if active else c.muted,
-                    weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400,
+                    weight=ui.FontWeight.W_600 if active else ui.FontWeight.W_400,
                 ),
-                ft.Container(
+                ui.Container(
                     height=2,
                     width=16,
                     border_radius=1,
@@ -279,41 +279,41 @@ def _nav_item(label: str, active: bool, on_click, c) -> ft.Control:
     )
 
 
-def _theme_switch(theme_mode: ft.ThemeMode, on_click, c) -> ft.Control:
+def _theme_switch(theme_mode: ui.ThemeMode, on_click, c) -> ui.Control:
     """亮 / 暗主题开关（定尺寸 30，与顶栏 60 的行高协调）。"""
-    dark = theme_mode == ft.ThemeMode.DARK
-    return ft.Container(
+    dark = theme_mode == ui.ThemeMode.DARK
+    return ui.Container(
         width=30,
         height=30,
         border_radius=Radius.MD,
         bgcolor=tint(c.text, 0.05),
-        border=ft.Border.all(1, c.border),
+        border=ui.Border.all(1, c.border),
         ink=True,
         on_click=on_event(on_click),
         tooltip="切换到亮色主题" if dark else "切换到暗色主题",
-        alignment=ft.Alignment.CENTER,
+        alignment=ui.Alignment.CENTER,
         content=icon("LIGHT_MODE" if dark else "DARK_MODE", size=15, color=c.text),
     )
 
 
-def _footer(width: int, c) -> ft.Control:
+def _footer(width: int, c) -> ui.Control:
     """页脚：身份信息 + 一句技术说明。"""
-    return ft.Container(
+    return ui.Container(
         width=width,
-        padding=ft.Padding.only(top=Spacing.XXXL, bottom=40),
-        border=only_border(top=ft.BorderSide(1, c.border)),
-        content=ft.Row(
+        padding=ui.Padding.only(top=Spacing.XXXL, bottom=40),
+        border=only_border(top=ui.BorderSide(1, c.border)),
+        content=ui.Row(
             spacing=Spacing.XL,
             run_spacing=12,
             wrap=True,
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ui.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Column(
+                ui.Column(
                     spacing=3,
                     tight=True,
                     controls=[
-                        text(K.APP_NAME, size=Type.SMALL, weight=ft.FontWeight.W_600),
+                        text(K.APP_NAME, size=Type.SMALL, weight=ui.FontWeight.W_600),
                         text(
                             f"v{K.RUNTIME['version']} · {K.APP_LICENSE} · {K.APP_AUTHOR} / "
                             f"{K.APP_COMPANY}",

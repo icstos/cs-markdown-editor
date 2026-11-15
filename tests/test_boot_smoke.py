@@ -14,8 +14,8 @@ import sys
 import types
 from pathlib import Path
 
-import flet as ft
 import pytest
+from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

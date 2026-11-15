@@ -9,14 +9,14 @@ YAML 前置元数据）都要包同一层块级容器，而前置元数据已拆
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from models.document import BlockType, Line
 from styles import Radius, Spacing, _current_colors, only_border
 
 
 def wrap_block(
-    content: ft.Control, line: Line, base: int, line_idx: int | None = None,
+    content: ui.Control, line: Line, base: int, line_idx: int | None = None,
     on_click: Callable | None = None,
     is_current_line: bool = False,
     is_flash: bool = False,
@@ -24,7 +24,7 @@ def wrap_block(
     diff_mark: str | None = None,
     pad_v: int | None = None,
     highlight_current: bool = True,
-) -> ft.Control:
+) -> ui.Control:
     """包一层块级容器：缩进、引用边框、当前行高亮、跳转脉冲高亮、diff 背景着色。
 
     on_click：挂到最外层 Container 的点击回调（padding 死区兜底）。
@@ -56,7 +56,7 @@ def wrap_block(
             "modified": c.diff_add_bg,
         }.get(diff_mark)
         if diff_bg:
-            content = ft.Container(
+            content = ui.Container(
                 content=content,
                 bgcolor=diff_bg,
                 border_radius=Radius.LG,
@@ -64,19 +64,19 @@ def wrap_block(
 
     if is_flash:
         # 跳转脉冲高亮：淡蓝底，animate 使 flash_li 清回 -1 时 bgcolor 平滑淡出
-        content = ft.Container(
+        content = ui.Container(
             content=content,
-            bgcolor=ft.Colors.with_opacity(0.18, c.link),
+            bgcolor=ui.Colors.with_opacity(0.18, c.link),
             border_radius=Radius.LG,
-            animate=ft.Animation(300, ft.AnimationCurve.EASE_OUT),
+            animate=ui.Animation(300, ui.AnimationCurve.EASE_OUT),
         )
 
     if is_current_line and highlight_current:
         # 当前行高亮：仅淡色背景，无蓝色竖条（保持界面简洁专业）
         # 左侧不再加 border 竖条，避免视觉噪声；与跳转脉冲高亮风格统一
-        content = ft.Container(
+        content = ui.Container(
             content=content,
-            bgcolor=ft.Colors.with_opacity(0.22, c.active_bg),
+            bgcolor=ui.Colors.with_opacity(0.22, c.active_bg),
             border_radius=Radius.LG,
         )
 
@@ -93,26 +93,26 @@ def wrap_block(
             # i=0 → 最内层（最深 lvl），i=lvl-1 → 最外层（level 1）
             level = lvl - i
             base_color = c.heading_colors.get(min(level, 6), c.quote_bar)
-            color = ft.Colors.with_opacity(0.5, base_color)
+            color = ui.Colors.with_opacity(0.5, base_color)
             kwargs_bg = {
-                "bgcolor": ft.Colors.with_opacity(0.55, c.quote_bg),
+                "bgcolor": ui.Colors.with_opacity(0.55, c.quote_bg),
             } if i == lvl - 1 else {}  # 整块浅蓝底只挂最外层，避免多层叠色变深
-            content = ft.Container(
+            content = ui.Container(
                 content=content,
-                padding=ft.Padding.only(left=Spacing.XL),
-                border=only_border(left=ft.BorderSide(3, color)),
+                padding=ui.Padding.only(left=Spacing.XL),
+                border=only_border(left=ui.BorderSide(3, color)),
                 **kwargs_bg,
             )
 
     kwargs: dict = {
         "key": f"line-{line_idx}" if line_idx is not None else None,
         "content": content,
-        "padding": ft.Padding.only(left=pad_left, top=pad_v, bottom=pad_v),
-        "margin": ft.Margin.all(0),
+        "padding": ui.Padding.only(left=pad_left, top=pad_v, bottom=pad_v),
+        "margin": ui.Margin.all(0),
         "ink": False,
     }
     if on_click is not None:
         kwargs["on_click"] = on_click
     if on_size_change is not None and line_idx is not None:
         kwargs["on_size_change"] = lambda e, li=line_idx: on_size_change(li, e.height)
-    return ft.Container(**kwargs)
+    return ui.Container(**kwargs)

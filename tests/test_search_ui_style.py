@@ -15,9 +15,10 @@ import json
 import sys
 from pathlib import Path
 
-import flet as ft
 import pytest
-from flet.components.component import Component
+from ui import ft
+
+from tests._flet_internals import Component
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

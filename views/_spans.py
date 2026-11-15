@@ -9,7 +9,7 @@
 
 from dataclasses import replace
 
-import flet as ft
+import ui
 
 from models.document import BlockType, Line, SegType
 from styles import _current_colors
@@ -30,7 +30,7 @@ def spans_with_highlight(
     outward_range: tuple[int, int] | None,
     skip_prefix: bool = False,
     checked: bool = False,
-) -> list[ft.TextSpan]:
+) -> list[ui.TextSpan]:
     """构造渲染 spans：raw_to_visible_spans 基础上注入向外选区高亮。
 
     skip_prefix=True 时跳过前缀段（任务列表用 Checkbox 替代前缀）。
@@ -49,7 +49,7 @@ def spans_with_highlight(
     return spans
 
 
-def apply_checked_style(spans: list[ft.TextSpan]) -> list[ft.TextSpan]:
+def apply_checked_style(spans: list[ui.TextSpan]) -> list[ui.TextSpan]:
     """已勾选任务文字样式：追加删除线 + 半透明文字色，保留 bgcolor。
 
     Typora 风格：已勾选文字不直接覆盖为 muted，而是用半透明（0.55）保留原色，
@@ -57,17 +57,17 @@ def apply_checked_style(spans: list[ft.TextSpan]) -> list[ft.TextSpan]:
     删除线颜色也用半透明 muted，比文字本身更淡，符合"已完成"的退后语义。
     """
     c = _current_colors()
-    strike_color = ft.Colors.with_opacity(0.5, c.muted)
-    result: list[ft.TextSpan] = []
+    strike_color = ui.Colors.with_opacity(0.5, c.muted)
+    result: list[ui.TextSpan] = []
     for sp in spans:
         s = sp.style
         # decoration 并集：原值 | LINE_THROUGH
-        orig_decoration = s.decoration if s is not None and s.decoration else ft.TextDecoration.NONE
-        new_decoration = orig_decoration | ft.TextDecoration.LINE_THROUGH
+        orig_decoration = s.decoration if s is not None and s.decoration else ui.TextDecoration.NONE
+        new_decoration = orig_decoration | ui.TextDecoration.LINE_THROUGH
         # 半透明文字色：保留原色但降低饱和度（Typora 风格）
         orig_color = s.color if s is not None else None
-        new_color = ft.Colors.with_opacity(0.55, orig_color) if orig_color else c.muted
-        new_style = ft.TextStyle(
+        new_color = ui.Colors.with_opacity(0.55, orig_color) if orig_color else c.muted
+        new_style = ui.TextStyle(
             size=s.size if s is not None else None,
             weight=s.weight if s is not None else None,
             color=new_color,
@@ -77,15 +77,15 @@ def apply_checked_style(spans: list[ft.TextSpan]) -> list[ft.TextSpan]:
             decoration_color=strike_color,
             bgcolor=s.bgcolor if s is not None else None,  # 保留选区高亮底色
         )
-        result.append(ft.TextSpan(text=sp.text, style=new_style))
+        result.append(ui.TextSpan(text=sp.text, style=new_style))
     return result
 
 
-def strip_prefix_spans(spans: list[ft.TextSpan], prefix_len: int) -> list[ft.TextSpan]:
+def strip_prefix_spans(spans: list[ui.TextSpan], prefix_len: int) -> list[ui.TextSpan]:
     """从前缀 spans 中移除前缀长度的字符（任务列表用）。"""
     if prefix_len <= 0:
         return spans
-    result: list[ft.TextSpan] = []
+    result: list[ui.TextSpan] = []
     remaining = prefix_len
     for sp in spans:
         if remaining <= 0:
@@ -96,7 +96,7 @@ def strip_prefix_spans(spans: list[ft.TextSpan], prefix_len: int) -> list[ft.Tex
             # 跳过该 span
             continue
         # 部分截断
-        new_sp = ft.TextSpan(text=sp.text[remaining:], style=sp.style)
+        new_sp = ui.TextSpan(text=sp.text[remaining:], style=sp.style)
         result.append(new_sp)
         remaining = 0
     return result
@@ -109,7 +109,7 @@ def spans_with_selection(
     heading_level: int,
     outward_range: tuple[int, int],
     skip_prefix: bool = False,
-) -> list[ft.TextSpan]:
+) -> list[ui.TextSpan]:
     """带向外选区高亮的 spans 构造（字符级拆分）。
 
     复用 segment_view.segment_to_spans_partial 做字符级高亮拆分。
@@ -117,7 +117,7 @@ def spans_with_selection(
     from views.segment_view import segment_to_span, segment_to_spans_partial
 
     hl_s, hl_e = outward_range
-    spans: list[ft.TextSpan] = []
+    spans: list[ui.TextSpan] = []
     raw_offset = 0
     for seg_idx, seg in enumerate(line.segments):
         seg_start = raw_offset
@@ -155,7 +155,7 @@ def spans_with_selection(
     return spans
 
 
-def gray_marker_spans(seg, base: int, heading_level: int) -> list[ft.TextSpan]:
+def gray_marker_spans(seg, base: int, heading_level: int) -> list[ui.TextSpan]:
     """光标在段内时的渲染：标记灰色、内容正常（复用 raw_to_visible_spans 逻辑）。
 
     简化处理：构造一个单段行调用 raw_to_visible_spans。
@@ -275,12 +275,12 @@ def build_raw_to_flat_map(
 
 
 def decorate_search_hits(
-    flat_spans: list[ft.TextSpan],
+    flat_spans: list[ui.TextSpan],
     raw_to_flat: list[int],
     hits: list[tuple[int, int, bool]],
     bg_normal: str,
     bg_active: str,
-) -> list[ft.TextSpan]:
+) -> list[ui.TextSpan]:
     """把文档内搜索命中的 raw 区间转成 flat 区间，逐 span 切分并注入 bgcolor。
 
     纯装饰层：只改写 TextSpan.style.bgcolor，不改文字内容与排版宽度，因此
@@ -300,7 +300,7 @@ def decorate_search_hits(
         return list(flat_spans)
     intervals.sort(key=lambda t: t[0])
 
-    def _copy_span(span: ft.TextSpan, text: str, bgcolor: str | None) -> ft.TextSpan:
+    def _copy_span(span: ui.TextSpan, text: str, bgcolor: str | None) -> ui.TextSpan:
         style = span.style
         if bgcolor is not None:
             style = replace(style, bgcolor=bgcolor)
@@ -311,9 +311,9 @@ def decorate_search_hits(
         tooltip = getattr(span, "tooltip", None)
         if tooltip is not None:
             kwargs["tooltip"] = tooltip
-        return ft.TextSpan(**kwargs)
+        return ui.TextSpan(**kwargs)
 
-    result: list[ft.TextSpan] = []
+    result: list[ui.TextSpan] = []
     pos = 0
     for span in flat_spans:
         text = span.text or ""
@@ -343,11 +343,11 @@ def decorate_search_hits(
 
 
 def slice_spans_for_visual_line(
-    flat_spans: list[ft.TextSpan],
+    flat_spans: list[ui.TextSpan],
     raw_to_flat: list[int],
     vline: VisualLine,
-    fallback_style: ft.TextStyle,
-) -> list[ft.TextSpan]:
+    fallback_style: ui.TextStyle,
+) -> list[ui.TextSpan]:
     """按视觉行 raw 范围切 flat spans（跨边界 span 拆分，保留 style/on_click/tooltip）。
 
     flat_spans 的文本拼接 = flat text；raw_to_flat[vline.start_raw/end_raw] 给出
@@ -358,9 +358,9 @@ def slice_spans_for_visual_line(
 
     if flat_start >= flat_end:
         # 空范围（如纯标记行）：返回单个空格 span 保持行高
-        return [ft.TextSpan(" ", style=fallback_style)]
+        return [ui.TextSpan(" ", style=fallback_style)]
 
-    result: list[ft.TextSpan] = []
+    result: list[ui.TextSpan] = []
     current_pos = 0
     for span in flat_spans:
         span_text = span.text or ""
@@ -386,25 +386,25 @@ def slice_spans_for_visual_line(
             tooltip = getattr(span, "tooltip", None)
             if tooltip is not None:
                 kwargs["tooltip"] = tooltip
-            result.append(ft.TextSpan(**kwargs))
+            result.append(ui.TextSpan(**kwargs))
 
         current_pos = span_end
 
     if not result:
-        return [ft.TextSpan(" ", style=fallback_style)]
+        return [ui.TextSpan(" ", style=fallback_style)]
     return result
 
 
 def maybe_stack_multi(
-    flat_spans: list[ft.TextSpan],
+    flat_spans: list[ui.TextSpan],
     raw_to_flat: list[int],
     visual_lines: list[VisualLine],
-    cursor_overlay: ft.Control | None,
+    cursor_overlay: ui.Control | None,
     base: int,
     line_height: float,
     wrap_width: float,
-    style: ft.TextStyle,
-) -> ft.Control:
+    style: ui.TextStyle,
+) -> ui.Control:
     """渲染 N 个视觉行（Stack 内逐行 Text）+ 可选光标 overlay。
 
     每个视觉行渲染为单独的 ft.Text（no_wrap=True, top=i*text_h），保证换行点
@@ -430,13 +430,13 @@ def maybe_stack_multi(
         text = flat_spans[0] if len(flat_spans) == 1 else None
         if text is not None and text.text == " ":
             # 空行快捷路径
-            return ft.Container(
-                content=ft.Text(spans=flat_spans, style=style, height=text_h),
+            return ui.Container(
+                content=ui.Text(spans=flat_spans, style=style, height=text_h),
                 width=float("inf"),
                 height=text_h,
             )
-        return ft.Container(
-            content=ft.Text(spans=flat_spans, style=style, height=text_h),
+        return ui.Container(
+            content=ui.Text(spans=flat_spans, style=style, height=text_h),
             width=float("inf"),
             height=text_h,
         )
@@ -447,12 +447,12 @@ def maybe_stack_multi(
     # Stack 的 index —— diff 不产生 move 操作，overlay 元素不移动/不重挂载，焦点
     # 与 IME 组合态不受干扰（否则元素移动触发 Flutter 重挂载，Windows IME 会提交
     # 并选中正在拼写的文本，继续输入会覆盖选区）。
-    text_controls: list[ft.Control] = []
+    text_controls: list[ui.Control] = []
     for vline in visual_lines:
         vline_spans = slice_spans_for_visual_line(flat_spans, raw_to_flat, vline, style)
         # 每个视觉行 Text 宽度 = wrap_width：文本在此宽度内换行
         text_w = wrap_width if not is_inf else float("inf")
-        text_controls.append(ft.Text(
+        text_controls.append(ui.Text(
             spans=vline_spans,
             style=style,
             width=text_w,
@@ -462,21 +462,21 @@ def maybe_stack_multi(
             left=0,
         ))
 
-    inner = ft.Stack(
+    inner = ui.Stack(
         controls=text_controls,
         width=float("inf"),  # 撑满外层（外层 Stack 尺寸由本子项决定，与旧版一致）
         height=stack_h,
-        clip_behavior=ft.ClipBehavior.NONE,
+        clip_behavior=ui.ClipBehavior.NONE,
     )
-    outer_controls: list[ft.Control] = [inner]
+    outer_controls: list[ui.Control] = [inner]
     if cursor_overlay is not None:
         outer_controls.append(cursor_overlay)
 
-    return ft.Container(
-        content=ft.Stack(
+    return ui.Container(
+        content=ui.Stack(
             controls=outer_controls,
             height=stack_h,
-            clip_behavior=ft.ClipBehavior.NONE,  # 不裁切光标层（IME 候选框）
+            clip_behavior=ui.ClipBehavior.NONE,  # 不裁切光标层（IME 候选框）
         ),
         width=float("inf"),  # 可滚动 Column 中只有 Container width=inf 撑满全宽
         height=stack_h,

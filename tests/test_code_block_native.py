@@ -41,10 +41,10 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-import flet as ft
+from ui import ft
 
 # flet 自己就是用它把 Dart 侧上报的属性写回服务端控件的（见 `Session.apply_patch`）。
-from flet.utils.object_model import patch_dataclass
+from tests._flet_internals import patch_dataclass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

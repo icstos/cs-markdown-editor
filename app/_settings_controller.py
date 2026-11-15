@@ -36,7 +36,7 @@ pick_backup_dir
 
 import json
 
-import flet as ft
+import ui
 
 from app._contracts import SettingsEnv
 from app.autosave import AutosaveContext, schedule_autosave
@@ -62,7 +62,7 @@ def build_settings_controller(ctx: SettingsEnv):
         use_effect 回调：渲染期已同步写入 page.theme_mode/bgcolor（保证子组件
         取色正确），此处 use_effect 再次推送确保原生 chrome 同步。
         """
-        page = ft.context.page
+        page = ui.context.page
         page.theme_mode = ctx.theme_mode
         page.bgcolor = get_colors(ctx.theme_mode).bg
         page.update()
@@ -72,16 +72,16 @@ def build_settings_controller(ctx: SettingsEnv):
 
         FilePicker / Clipboard 是 service，不需要添加到 page.overlay。
         """
-        page = ft.context.page
+        page = ui.context.page
         ctx.page_ref.current = page
-        ctx.picker_holder.current = ft.FilePicker()
-        ctx.clipboard_holder.current = ft.Clipboard()
+        ctx.picker_holder.current = ui.ft.FilePicker()
+        ctx.clipboard_holder.current = ui.Clipboard()
 
     def toggle_theme():
         ctx.set_theme_mode(
-            ft.ThemeMode.DARK
-            if ctx.theme_mode == ft.ThemeMode.LIGHT
-            else ft.ThemeMode.LIGHT
+            ui.ThemeMode.DARK
+            if ctx.theme_mode == ui.ThemeMode.LIGHT
+            else ui.ThemeMode.LIGHT
         )
 
     def open_settings():
@@ -196,7 +196,7 @@ def build_settings_controller(ctx: SettingsEnv):
             dialog_title="导出快捷键方案",
             file_name="shortcuts.json",
             allowed_extensions=["json"],
-            file_type=ft.FilePickerFileType.CUSTOM,
+            file_type=ui.FilePickerFileType.CUSTOM,
         )
         if not path:
             return
@@ -221,7 +221,7 @@ def build_settings_controller(ctx: SettingsEnv):
         files = await picker.pick_files(
             dialog_title="导入快捷键方案",
             allowed_extensions=["json"],
-            file_type=ft.FilePickerFileType.CUSTOM,
+            file_type=ui.FilePickerFileType.CUSTOM,
         )
         if not files:
             return

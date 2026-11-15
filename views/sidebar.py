@@ -21,7 +21,7 @@ import contextlib
 import os
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from models.document import Document
 from services import shortcut
@@ -79,18 +79,18 @@ def _build_preview_spans(
     matches: list[tuple[int, int]],
     c,
     radius: int = PREVIEW_RADIUS,
-) -> ft.Text:
+) -> ui.Text:
     """构造带高亮的预览文本：匹配段 bgcolor=search_match_bg。
 
     窗口以首个匹配为中心，前后各 radius 字符；截断处加 …。
     用 ft.Text(spans=...) 单控件支持行内自动换行与 max_lines 截断。
     """
     if not raw:
-        return ft.Text("", size=11, font_family=FONT_MONO)
+        return ui.Text("", size=11, font_family=FONT_MONO)
     if not matches:
-        return ft.Text(
+        return ui.Text(
             raw[:radius * 2], size=11, color=c.text, font_family=FONT_MONO,
-            max_lines=2, overflow=ft.TextOverflow.ELLIPSIS,
+            max_lines=2, overflow=ui.TextOverflow.ELLIPSIS,
         )
 
     first_start = matches[0][0]
@@ -100,13 +100,13 @@ def _build_preview_spans(
     prefix = "…" if win_start > 0 else ""
     suffix = "…" if win_end < len(raw) else ""
 
-    spans: list[ft.TextSpan] = []
+    spans: list[ui.TextSpan] = []
     if prefix:
-        spans.append(ft.TextSpan(prefix, ft.TextStyle(size=11, color=c.muted, font_family=FONT_MONO)))
+        spans.append(ui.TextSpan(prefix, ui.TextStyle(size=11, color=c.muted, font_family=FONT_MONO)))
 
     pos = win_start
-    base_style = ft.TextStyle(size=11, color=c.text, font_family=FONT_MONO)
-    match_style = ft.TextStyle(
+    base_style = ui.TextStyle(size=11, color=c.text, font_family=FONT_MONO)
+    match_style = ui.TextStyle(
         size=11, color=c.search_match_fg, bgcolor=c.search_match_bg, font_family=FONT_MONO,
     )
     for s, e in matches:
@@ -114,15 +114,15 @@ def _build_preview_spans(
             continue
         ms, me = max(s, win_start), min(e, win_end)
         if ms > pos:
-            spans.append(ft.TextSpan(raw[pos:ms], base_style))
-        spans.append(ft.TextSpan(raw[ms:me], match_style))
+            spans.append(ui.TextSpan(raw[pos:ms], base_style))
+        spans.append(ui.TextSpan(raw[ms:me], match_style))
         pos = me
     if pos < win_end:
-        spans.append(ft.TextSpan(raw[pos:win_end], base_style))
+        spans.append(ui.TextSpan(raw[pos:win_end], base_style))
     if suffix:
-        spans.append(ft.TextSpan(suffix, ft.TextStyle(size=11, color=c.muted, font_family=FONT_MONO)))
+        spans.append(ui.TextSpan(suffix, ui.TextStyle(size=11, color=c.muted, font_family=FONT_MONO)))
 
-    return ft.Text(spans=spans, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS)
+    return ui.Text(spans=spans, max_lines=2, overflow=ui.TextOverflow.ELLIPSIS)
 
 
 def _resolve_files_root(
@@ -167,8 +167,8 @@ def _render_files_panel(
     highlight_dir: str | None = None,
     set_highlight_dir: Callable[[str | None], None] | None = None,
     # 外部输入焦点域 ref：文件过滤输入框挂 on_focus/on_blur 跟踪
-    native_ref: ft.Ref | None = None,
-) -> ft.Control:
+    native_ref: ui.Ref | None = None,
+) -> ui.Control:
     """文件面板：有根目录显示文件树+过滤；否则显示最近文件列表。
 
     文件树扫描与扁平化由 Sidebar 异步预计算后传入（flat），本函数仅负责
@@ -203,16 +203,16 @@ def _render_files_panel(
             items.append(
                 _wrap_context_menu(
                     _list_item(
-                        ft.Row(
+                        ui.Row(
                             controls=[
-                                ft.Icon(icon_name, size=14, color=icon_color),
-                                ft.Text(
+                                ui.Icon(icon_name, size=14, color=icon_color),
+                                ui.Text(
                                     os.path.basename(p),
                                     size=12,
                                     color=c.text,
                                     font_family=FONT_MAIN,
                                     max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    overflow=ui.TextOverflow.ELLIPSIS,
                                     expand=True,
                                     tooltip=tooltip,
                                 ),
@@ -229,23 +229,23 @@ def _render_files_panel(
                     key=f"recent-{p}",
                 )
             )
-        return ft.Column(
+        return ui.Column(
             controls=[
-                ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-                    content=ft.Text(
+                ui.Container(
+                    padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+                    content=ui.Text(
                         "最近文件",
                         size=11,
                         color=c.muted,
                         font_family=FONT_MAIN,
                     ),
                 ),
-                ft.ListView(
+                ui.ListView(
                     controls=items,
                     spacing=0,
                     expand=True,
                     first_item_prototype=True,
-                    padding=ft.Padding.symmetric(vertical=Spacing.XS),
+                    padding=ui.Padding.symmetric(vertical=Spacing.XS), clip_behavior=ui.ClipBehavior.HARD_EDGE,
                 ),
             ],
             spacing=0,
@@ -269,7 +269,7 @@ def _render_files_panel(
     if not flat:
         # flat 为空可能是真无文件，也可能是异步扫描进行中（首帧）。
         # 有过滤词时提示无匹配，否则提示无文件（异步加载完成后 fs_version 变化会刷新）。
-        body: ft.Control = _empty_hint(
+        body: ui.Control = _empty_hint(
             "无匹配文件" if file_filter.strip() else "该目录下无文件",
             c,
         )
@@ -308,7 +308,7 @@ def _render_files_panel(
                 # .lnk 一律 SHORTCUT 主图标（与 .md 的 DESCRIPTION 在形状上区分）；
                 # 指向可编辑文本的快捷方式用 link 主题色提示「可在编辑器中打开」
                 if shortcut.is_shortcut(name):
-                    icon_name, icon_color = ft.Icons.SHORTCUT, (
+                    icon_name, icon_color = ui.Icons.SHORTCUT, (
                         c.link if lnk_target is not None else c.muted
                     )
                 else:
@@ -326,28 +326,28 @@ def _render_files_panel(
                 else:
                     _file_click = None
 
-                def _file_row_icon() -> ft.Control:
+                def _file_row_icon() -> ui.Control:
                     """文件图标：.lnk 用 SHORTCUT，与 .md 文档图标一眼可分。"""
-                    return ft.Icon(
+                    return ui.Icon(
                         icon_name,
                         size=13,
                         color=c.link if is_active else icon_color,
                     )
 
-                def _build_file_row() -> ft.Container:
+                def _build_file_row() -> ui.Container:
                     return _list_item(
-                        ft.Row(
+                        ui.Row(
                             controls=[
-                                ft.Container(width=14),  # chevron 占位，与文件夹行对齐
+                                ui.Container(width=14),  # chevron 占位，与文件夹行对齐
                                 _file_row_icon(),
-                                ft.Text(
+                                ui.Text(
                                     name,
                                     size=12,
                                     color=c.text,
                                     font_family=FONT_MAIN,
-                                    weight=ft.FontWeight.W_600 if is_active else ft.FontWeight.NORMAL,
+                                    weight=ui.FontWeight.W_600 if is_active else ui.FontWeight.NORMAL,
                                     max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    overflow=ui.TextOverflow.ELLIPSIS,
                                     expand=True,
                                     tooltip=name_tooltip,
                                 ),
@@ -381,7 +381,7 @@ def _render_files_panel(
                             _wrap_drop_target(
                                 _wrap_draggable(
                                     inner,
-                                    ft.Container(opacity=0.35, content=_build_file_row()),
+                                    ui.Container(opacity=0.35, content=_build_file_row()),
                                     _drag_feedback(name, icon_name, icon_color, c),
                                     drag_registry,
                                     abspath,
@@ -399,27 +399,27 @@ def _render_files_panel(
             else:
                 # 文件夹行：chevron（▸折叠/▾展开）+ 动态 folder icon + 整行点击 toggle
                 is_expanded = bool(abspath and abspath in expanded_dirs)
-                chevron_icon = ft.Icons.EXPAND_MORE if is_expanded else ft.Icons.CHEVRON_RIGHT
-                folder_icon = ft.Icons.FOLDER_OPEN_OUTLINED if is_expanded else ft.Icons.FOLDER_OUTLINED
+                chevron_icon = ui.Icons.EXPAND_MORE if is_expanded else ui.Icons.CHEVRON_RIGHT
+                folder_icon = ui.Icons.FOLDER_OPEN_OUTLINED if is_expanded else ui.Icons.FOLDER_OUTLINED
                 if on_toggle_dir is not None:
                     _dir_click: Callable | None = lambda e, p=abspath: on_toggle_dir(p)
                 else:
                     _dir_click = None
 
-                def _build_dir_row() -> ft.Container:
+                def _build_dir_row() -> ui.Container:
                     return _list_item(
-                        ft.Row(
+                        ui.Row(
                             controls=[
-                                ft.Icon(chevron_icon, size=14, color=c.muted),
-                                ft.Icon(folder_icon, size=13, color=c.muted),
-                                ft.Text(
+                                ui.Icon(chevron_icon, size=14, color=c.muted),
+                                ui.Icon(folder_icon, size=13, color=c.muted),
+                                ui.Text(
                                     name,
                                     size=12,
                                     color=c.text,
                                     font_family=FONT_MAIN,
-                                    weight=ft.FontWeight.W_600,
+                                    weight=ui.FontWeight.W_600,
                                     max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    overflow=ui.TextOverflow.ELLIPSIS,
                                     expand=True,
                                 ),
                             ],
@@ -434,7 +434,7 @@ def _render_files_panel(
                 # 拖拽悬停高亮（状态驱动）：构建期按 highlight_dir 计算背景，
                 # 事件回调经 set_highlight_dir 触发重渲染刷新（控件冻结禁 update）
                 if can_drag and abspath == highlight_dir:
-                    dir_row.bgcolor = ft.Colors.with_opacity(0.18, c.link)
+                    dir_row.bgcolor = ui.Colors.with_opacity(0.18, c.link)
                 inner = _wrap_context_menu(
                     dir_row,
                     abspath or "",
@@ -448,7 +448,7 @@ def _render_files_panel(
                     # 最外层「竞技场占位 GD」同文件行（见 _wrap_row_gesture）
                     draggable = _wrap_draggable(
                         inner,
-                        ft.Container(opacity=0.35, content=_build_dir_row()),
+                        ui.Container(opacity=0.35, content=_build_dir_row()),
                         _drag_feedback(name, folder_icon, c.muted, c),
                         drag_registry,
                         abspath,
@@ -467,12 +467,12 @@ def _render_files_panel(
                     )
                 else:
                     rows.append(inner)
-        body = ft.ListView(
+        body = ui.ListView(
             controls=rows,
             spacing=0,
             expand=True,
             first_item_prototype=True,
-            padding=ft.Padding.symmetric(vertical=Spacing.XS),
+            padding=ui.Padding.symmetric(vertical=Spacing.XS), clip_behavior=ui.ClipBehavior.HARD_EDGE,
         )
 
     # 工作区模式：空白区域右键菜单（新建文件/文件夹、复制路径、打开文件位置）
@@ -480,7 +480,7 @@ def _render_files_panel(
     # GestureDetector 的右键 tap 识别器，故空白菜单 GD 必须在根 DragTarget
     # 外层（GD > DT > ListView）；行/空白分流靠手势竞技场（行占位 GD 更深
     # 先赢，见 _wrap_row_gesture），右键行弹行级菜单、右键空白弹空白菜单
-    blank_holder: ft.Control | None = None
+    blank_holder: ui.Control | None = None
     if root_dir:
         # 根区域拖放目标在内层：拖到列表空白区（行间/底部）= 移动到工作区根目录
         if can_drag:
@@ -497,43 +497,43 @@ def _render_files_panel(
     header_controls: list = []
     if is_workspace:
         header_controls.append(
-            ft.Container(
-                padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-                content=ft.Row(
+            ui.Container(
+                padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+                content=ui.Row(
                     controls=[
-                        ft.Icon(ft.Icons.FOLDER_OPEN, size=14, color=c.muted),
-                        ft.Text(
+                        ui.Icon(ui.Icons.FOLDER_OPEN, size=14, color=c.muted),
+                        ui.Text(
                             root_label,
                             size=11,
                             color=c.muted,
                             font_family=FONT_MAIN,
-                            weight=ft.FontWeight.W_600,
+                            weight=ui.FontWeight.W_600,
                             max_lines=1,
-                            overflow=ft.TextOverflow.ELLIPSIS,
+                            overflow=ui.TextOverflow.ELLIPSIS,
                             expand=True,
                         ),
-                        ft.IconButton(
-                            icon=ft.Icons.CLOSE,
+                        ui.IconButton(
+                            icon=ui.Icons.CLOSE,
                             tooltip="关闭文件夹",
                             on_click=lambda e: on_close_folder() if on_close_folder else None,
                             icon_size=14,
-                            style=ft.ButtonStyle(
+                            style=ui.ButtonStyle(
                                 color=c.muted,
                                 padding=Spacing.XS,
                             ),
                         ),
                     ],
                     spacing=Spacing.SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
                 ),
             )
         )
 
-    return ft.Column(
+    return ui.Column(
         controls=[
             *header_controls,
-            ft.Container(
-                padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+            ui.Container(
+                padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
                 content=_search_box(
                     file_filter, set_file_filter, "过滤文件…", c, native_ref=native_ref
                 ),
@@ -549,14 +549,14 @@ def _render_files_panel(
 
 def _option_toggle_text(
     label: str, tooltip: str, active: bool, on_toggle: Callable[[bool], None], c,
-) -> ft.Control:
+) -> ui.Control:
     """文本切换按钮（Aa / ab / .*）：与浮动搜索条共用同一款 pill。"""
     return _option_pill(label, tooltip, active, on_toggle, c)
 
 
 def _option_toggle_icon(
     icon: str, tooltip: str, active: bool, on_toggle: Callable[[bool], None], c,
-) -> ft.Control:
+) -> ui.Control:
     """图标切换按钮（文件夹范围），与文本 pill 同高同圆角。"""
     return _option_pill(
         "", tooltip, active, on_toggle, c, icon=icon,
@@ -570,19 +570,19 @@ def _render_search_toolbar(
     c,
     on_prev: Callable[[], None] | None = None,
     on_next: Callable[[], None] | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """搜索选项工具栏：4 个切换按钮 + 右侧结果计数 + 上下翻导航。
 
     布局：[📁文件夹] [Aa大小写] [ab整词] [.*正则]  ----  [N 个结果] [↑] [↓]
     on_prev/on_next 非 None 时显示导航按钮（当前文档模式有匹配时）。
     """
     right_controls: list = [
-        ft.Text(count_text, size=11, color=c.muted, font_family=FONT_MAIN),
+        ui.Text(count_text, size=11, color=c.muted, font_family=FONT_MAIN),
     ]
     if on_prev is not None:
         right_controls.append(
             _compact_btn(
-                ft.Icons.KEYBOARD_ARROW_UP,
+                ui.Icons.KEYBOARD_ARROW_UP,
                 "上一个匹配 (Shift+Enter)",
                 lambda e: on_prev(),
                 c,
@@ -594,7 +594,7 @@ def _render_search_toolbar(
     if on_next is not None:
         right_controls.append(
             _compact_btn(
-                ft.Icons.KEYBOARD_ARROW_DOWN,
+                ui.Icons.KEYBOARD_ARROW_DOWN,
                 "下一个匹配 (Enter)",
                 lambda e: on_next(),
                 c,
@@ -603,12 +603,12 @@ def _render_search_toolbar(
                 radius=Radius.SM,
             )
         )
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-        content=ft.Row(
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+        content=ui.Row(
             controls=[
                 _option_toggle_icon(
-                    ft.Icons.FOLDER_OPEN, "搜索整个文件夹",
+                    ui.Icons.FOLDER_OPEN, "搜索整个文件夹",
                     opts["folder"], lambda v: on_toggle("folder", v), c,
                 ),
                 _option_toggle_text(
@@ -623,11 +623,11 @@ def _render_search_toolbar(
                     ".*", "正则表达式",
                     opts["regex"], lambda v: on_toggle("regex", v), c,
                 ),
-                ft.Container(expand=True),
+                ui.Container(expand=True),
                 *right_controls,
             ],
             spacing=Spacing.XS,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )
 
@@ -640,8 +640,8 @@ def _render_replace_bar(
     on_replace_all: Callable[[], None],
     has_query: bool,
     c,
-    native_ref: ft.Ref | None = None,
-) -> ft.Control:
+    native_ref: ui.Ref | None = None,
+) -> ui.Control:
     """替换栏：折叠时 height=0；展开时替换输入 + 替换/全部替换按钮。
 
     VSCode 风格：替换栏在搜索框下方、选项工具栏上方，折叠时完全隐藏。
@@ -649,18 +649,18 @@ def _render_replace_bar(
     native_ref：外部输入焦点域 ref（非 None 时挂 on_focus/on_blur 跟踪）。
     """
     if not replace_expanded:
-        return ft.Container(height=0)
-    return ft.Container(
-        padding=ft.Padding.only(
+        return ui.Container(height=0)
+    return ui.Container(
+        padding=ui.Padding.only(
             # 与搜索框左缘对齐：外壳左内边距 8 + chevron 20 + 行间距 4
             left=Spacing.LG + 20 + Spacing.SM,
             right=Spacing.LG,
             top=Spacing.SM,
             bottom=0,
         ),
-        content=ft.Row(
+        content=ui.Row(
             controls=[
-                ft.Container(
+                ui.Container(
                     expand=True,
                     content=_search_box(
                         replace_text,
@@ -672,14 +672,14 @@ def _render_replace_bar(
                     ),
                 ),
                 _compact_btn(
-                    ft.Icons.FIND_REPLACE,
+                    ui.Icons.FIND_REPLACE,
                     "替换当前 (Alt+Enter)",
                     lambda e: on_replace_current(),
                     c,
                     disabled=not has_query,
                 ),
                 _compact_btn(
-                    ft.Icons.AUTORENEW_OUTLINED,
+                    ui.Icons.AUTORENEW_OUTLINED,
                     "全部替换 (Ctrl+Alt+Enter)",
                     lambda e: on_replace_all(),
                     c,
@@ -687,7 +687,7 @@ def _render_replace_bar(
                 ),
             ],
             spacing=Spacing.SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )
 
@@ -717,9 +717,9 @@ def _render_search_panel(
     total_matches: int = 0,
     on_prev_match: Callable[[], None] | None = None,
     on_next_match: Callable[[], None] | None = None,
-    search_field_ref: ft.Ref | None = None,
-    native_ref: ft.Ref | None = None,
-) -> ft.Control:
+    search_field_ref: ui.Ref | None = None,
+    native_ref: ui.Ref | None = None,
+) -> ui.Control:
     """搜索面板：搜索框（+折叠按钮）+ 替换栏 + 选项工具栏 + 结果列表。
 
     - search_opts：4 选项当前值（folder/case/word/regex）
@@ -734,9 +734,9 @@ def _render_search_panel(
     has_query = bool(search_query.strip())
 
     # 搜索框 + 左侧折叠 chevron（VSCode 风格）
-    _chevron = ft.Icons.ARROW_DROP_DOWN if replace_expanded else ft.Icons.ARROW_RIGHT
+    _chevron = ui.Icons.ARROW_DROP_DOWN if replace_expanded else ui.Icons.ARROW_RIGHT
     _on_toggle_replace = on_set_replace_expanded or (lambda v: None)
-    search_row = ft.Row(
+    search_row = ui.Row(
         controls=[
             _compact_btn(
                 _chevron,
@@ -747,7 +747,7 @@ def _render_search_panel(
                 box=20,
                 radius=Radius.SM,
             ),
-            ft.Container(
+            ui.Container(
                 expand=True,
                 content=_search_box(
                     search_query, set_search_query, placeholder, c,
@@ -756,15 +756,15 @@ def _render_search_panel(
             ),
         ],
         spacing=Spacing.SM,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
     # 头部：搜索框 + 替换栏 + 选项工具栏
     header = [
-        ft.Container(
+        ui.Container(
             # 搜索框与下方的选项行属于同一组：贴紧一点（bottom=0），
             # 与结果列表之间靠选项行自己的 padding 拉开留白。
-            padding=ft.Padding.only(
+            padding=ui.Padding.only(
                 left=Spacing.LG, right=Spacing.LG, top=Spacing.SM, bottom=0
             ),
             content=search_row,
@@ -784,13 +784,13 @@ def _render_search_panel(
 
     # 空查询
     if not search_query.strip():
-        body: ft.Control = _empty_hint("输入关键词以搜索文档", c)
-        return ft.Column(controls=[*header, body], spacing=0, expand=True)
+        body: ui.Control = _empty_hint("输入关键词以搜索文档", c)
+        return ui.Column(controls=[*header, body], spacing=0, expand=True)
 
     # 正则错误
     if regex_invalid:
         body = _empty_hint("正则表达式无效", c)
-        return ft.Column(controls=[*header, body], spacing=0, expand=True)
+        return ui.Column(controls=[*header, body], spacing=0, expand=True)
 
     # 跨文件模式
     if search_opts["folder"]:
@@ -802,7 +802,7 @@ def _render_search_panel(
             body = _empty_hint("无匹配结果", c)
         else:
             total = sum(len(hits) for _, _, hits in cross_results)
-            items: list[ft.Control] = []
+            items: list[ui.Control] = []
             for path, name, hits in cross_results:
                 # 文件分组标题：文件名 + 匹配数
                 items.append(_render_file_group_header(name, len(hits), c))
@@ -812,23 +812,23 @@ def _render_search_panel(
                         li, raw, matches, document, path,
                         on_jump_to_line, on_open_file_and_jump, c,
                     ))
-            body = ft.ListView(
+            body = ui.ListView(
                 controls=items,
                 spacing=0,
                 expand=True,
-                padding=ft.Padding.symmetric(vertical=Spacing.XS),
+                padding=ui.Padding.symmetric(vertical=Spacing.XS), clip_behavior=ui.ClipBehavior.HARD_EDGE,
             )
             header[-1] = _render_search_toolbar(
                 search_opts, on_toggle_opt,
                 f"{total} 个结果 / {len(cross_results)} 文件", c,
             )
-        return ft.Column(controls=[*header, body], spacing=0, expand=True)
+        return ui.Column(controls=[*header, body], spacing=0, expand=True)
 
     # 当前文档模式
     if not search_results:
         header[-1] = _render_search_toolbar(search_opts, on_toggle_opt, "无匹配结果", c)
         body = _empty_hint("无匹配结果", c)
-        return ft.Column(controls=[*header, body], spacing=0, expand=True)
+        return ui.Column(controls=[*header, body], spacing=0, expand=True)
 
     # 计数 + 导航：有匹配时显示 "X / Y" 和上下翻按钮
     _count_text = f"{current_match_idx + 1} / {total_matches}" if total_matches > 0 else ""
@@ -844,13 +844,13 @@ def _render_search_panel(
         )
         for li, matches in search_results
     ]
-    body = ft.ListView(
+    body = ui.ListView(
         controls=items,
         spacing=0,
         expand=True,
-        padding=ft.Padding.symmetric(vertical=Spacing.XS),
+        padding=ui.Padding.symmetric(vertical=Spacing.XS), clip_behavior=ui.ClipBehavior.HARD_EDGE,
     )
-    return ft.Column(controls=[*header, body], spacing=0, expand=True)
+    return ui.Column(controls=[*header, body], spacing=0, expand=True)
 
 
 def _file_lines(path: str) -> list[str]:
@@ -917,21 +917,21 @@ def _write_edit_text(path: str, text: str, eol: str, encoding: str) -> bool:
     return True
 
 
-def _render_file_group_header(name: str, hit_count: int, c) -> ft.Control:
+def _render_file_group_header(name: str, hit_count: int, c) -> ui.Control:
     """跨文件分组标题：文件图标 + 文件名 + 匹配数。"""
-    return ft.Container(
-        padding=ft.Padding.only(
+    return ui.Container(
+        padding=ui.Padding.only(
             left=Spacing.LG, top=Spacing.SM, bottom=Spacing.XS, right=Spacing.LG,
         ),
-        content=ft.Row(
+        content=ui.Row(
             controls=[
-                ft.Icon(ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=12, color=c.muted),
-                ft.Text(
-                    name, size=11, color=c.text, weight=ft.FontWeight.W_600,
+                ui.Icon(ui.Icons.INSERT_DRIVE_FILE_OUTLINED, size=12, color=c.muted),
+                ui.Text(
+                    name, size=11, color=c.text, weight=ui.FontWeight.W_600,
                     font_family=FONT_MAIN, max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                    overflow=ui.TextOverflow.ELLIPSIS, expand=True,
                 ),
-                ft.Text(f"{hit_count}", size=10, color=c.muted, font_family=FONT_MONO),
+                ui.Text(f"{hit_count}", size=10, color=c.muted, font_family=FONT_MONO),
             ],
             spacing=Spacing.SM,
         ),
@@ -947,7 +947,7 @@ def _render_search_result_item(
     on_jump_to_line: Callable[[int, int | None], None],
     on_open_file_and_jump: Callable[[str, int, int | None], None],
     c,
-) -> ft.Control:
+) -> ui.Control:
     """单个搜索结果项：行号 + 高亮预览，点击跳转到首匹配 offset。
 
     raw=None 时从 document.lines[li].raw 读取（当前文档模式）；
@@ -965,9 +965,9 @@ def _render_search_result_item(
         on_click = lambda e, p=path, l=li, off=first_off: on_open_file_and_jump(p, l, off)
         key = f"cross-{path}-{li}"
     return _list_item(
-        ft.Column(
+        ui.Column(
             controls=[
-                ft.Text(
+                ui.Text(
                     value=f"行 {li + 1}",
                     size=10,
                     color=c.muted,
@@ -984,11 +984,11 @@ def _render_search_result_item(
     )
 
 
-@ft.component
+@ui.component
 def Sidebar(
     document: Document,
     file_path: str | None,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     settings: dict,
     active_panel: str,
     on_open_file: Callable[[str], None],
@@ -1006,7 +1006,7 @@ def Sidebar(
     on_replace_match_in_doc: Callable[[int, int, int, str], None] | None = None,
     on_replace_all_in_doc: Callable[[list], int] | None = None,
     on_bump_fs_version: Callable[[], None] | None = None,
-    replace_actions_ref: ft.Ref | None = None,
+    replace_actions_ref: ui.Ref | None = None,
     # VSCode 风格文件树：非 md 文件用系统默认程序打开（资源管理器双击直觉）
     on_open_external: Callable[[str], None] | None = None,
     # VSCode 风格文件树拖拽：文件/文件夹移动到目标文件夹 (src, dst_dir)
@@ -1015,11 +1015,11 @@ def Sidebar(
     search_focus_seq: int = 0,
     # 外部输入焦点域 ref：搜索/替换/过滤输入框聚焦时置 token，KeyDispatcher
     # 据此不再把文档编辑快捷键（Ctrl+A 等）误作用到编辑器
-    native_input_ref: ft.Ref | None = None,
+    native_input_ref: ui.Ref | None = None,
     # 源代码管理面板：由 App 用 views/git_panel.GitPanel 构造后传入
     # （面板需要 App 持有的仓库状态，且与差异视图 / 状态栏共享同一份数据，
     # 故不在 Sidebar 内部构造）。None 时该面板不可用。
-    git_panel: ft.Control | None = None,
+    git_panel: ui.Control | None = None,
 ):
     """左侧管理面板（横向四列布局第二列）：文件 / 搜索面板由功能栏（第一列）切换，右侧可拖拽调宽。
 
@@ -1044,16 +1044,16 @@ def Sidebar(
 
     # 宽度：内部 state（拖拽时实时更新），ref 同步避免 stale 闭包
     _INIT_W = settings.get("sidebar_width", 256)
-    width, set_width = ft.use_state(_INIT_W)
-    width_ref = ft.use_ref(_INIT_W)
+    width, set_width = ui.use_state(_INIT_W)
+    width_ref = ui.use_ref(_INIT_W)
     width_ref.current = width
 
     # 拖拽中标志：控制外层 Container animate（拖拽时 None 即时跟随，否则 200ms 动画）
-    dragging, set_dragging = ft.use_state(False)
+    dragging, set_dragging = ui.use_state(False)
 
     # 搜索输入框引用（Ctrl+F 聚焦）：App 的 focus_search 递增 search_focus_seq，
     # 本组件渲染后 effect 检测到序号变化且搜索面板可见时聚焦输入框。
-    search_field_ref = ft.use_ref(None)
+    search_field_ref = ui.use_ref(None)
 
     async def _focus_search_field():
         if active_panel != "search":
@@ -1063,7 +1063,7 @@ def Sidebar(
             with contextlib.suppress(Exception):
                 await field.focus()
 
-    ft.use_effect(_focus_search_field, [search_focus_seq, active_panel])
+    ui.use_effect(_focus_search_field, [search_focus_seq, active_panel])
 
     # 外部 settings → 内部 width state 同步：
     # use_state 初始值仅首次挂载生效，reset_settings / 外部改 settings 后需 effect
@@ -1076,20 +1076,20 @@ def Sidebar(
             width_ref.current = _ext_w
             set_width(_ext_w)
 
-    ft.use_effect(_sync_from_settings, [_ext_w])
+    ui.use_effect(_sync_from_settings, [_ext_w])
 
     _MIN_W, _MAX_W = 180, 600
 
     # 内部状态：文件过滤与文档搜索词
-    file_filter, set_file_filter = ft.use_state("")
-    search_query, set_search_query = ft.use_state("")
+    file_filter, set_file_filter = ui.use_state("")
+    search_query, set_search_query = ui.use_state("")
     # 拖拽悬停高亮：当前悬停的放置目标文件夹路径（None = 无高亮）。
     # Flet 0.86 冻结控件禁止命令式 update，高亮必须走 set_state 重渲染
-    drop_hover_dir, set_drop_hover_dir = ft.use_state(None)
+    drop_hover_dir, set_drop_hover_dir = ui.use_state(None)
     # 替换状态：替换文本、当前匹配索引、替换后跳转索引
-    replace_text, set_replace_text = ft.use_state("")
-    current_match_idx, set_current_match_idx = ft.use_state(0)
-    pending_jump_idx, set_pending_jump_idx = ft.use_state(-1)  # -1 = 无待跳转
+    replace_text, set_replace_text = ui.use_state("")
+    current_match_idx, set_current_match_idx = ui.use_state(0)
+    pending_jump_idx, set_pending_jump_idx = ui.use_state(-1)  # -1 = 无待跳转
 
     # 派生数据
     recent_files = settings.get("recent_files", [])
@@ -1097,7 +1097,7 @@ def Sidebar(
     root_dir, root_label, is_workspace = _resolve_files_root(workspace_folder, file_path)
 
     # ---- 回调稳定化：供 use_memo 提取的静态控件读取最新回调（避免闭包过期）----
-    _cb_ref = ft.use_ref({})
+    _cb_ref = ui.use_ref({})
     _cb_ref.current = {
         "on_width_change": on_width_change,
     }
@@ -1127,7 +1127,7 @@ def Sidebar(
 
     # ---- 搜索 pattern：use_memo 缓存（4 选项 + 查询词变化才重编译）----
     # pattern 为 None 可能是空查询（正常）或无效正则（regex_invalid 提示）。
-    pattern = ft.use_memo(
+    pattern = ui.use_memo(
         lambda: build_query_regex(search_query, _case_sensitive, _whole_word, _regex),
         [search_query, _case_sensitive, _whole_word, _regex],
     )
@@ -1136,7 +1136,7 @@ def Sidebar(
     # ---- 当前文档搜索：use_memo 按 pattern + 行内容签名缓存 ----
     # 行签名 tuple of raw（指针复制 O(n)，远轻于每次重跑匹配）；pattern 已聚合 4 选项+查询词。
     _lines_sig = tuple(ln.raw for ln in document.lines) if document is not None else ()
-    search_results = ft.use_memo(
+    search_results = ui.use_memo(
         lambda: match_lines(document, pattern),
         [pattern, _lines_sig],
     )
@@ -1145,12 +1145,12 @@ def Sidebar(
     # 异步 IO 不能用 use_memo（纯函数约束），用 use_state + use_effect。
     # effect 依赖 [pattern, _search_folder, root_dir, fs_version]：选项/查询词变 → pattern
     # 变 → 重扫；文件夹范围切换 / 文件增删改 → 重扫。
-    cross_results, set_cross_results = ft.use_state(())
-    cross_loading, set_cross_loading = ft.use_state(False)
-    cross_token_ref = ft.use_ref(0)
+    cross_results, set_cross_results = ui.use_state(())
+    cross_loading, set_cross_loading = ui.use_state(False)
+    cross_token_ref = ui.use_ref(0)
     # page_ref 与文件树扫描共用（跨文件搜索在前声明，文件树复用）
-    page_ref = ft.use_ref(None)
-    page_ref.current = ft.context.page
+    page_ref = ui.use_ref(None)
+    page_ref.current = ui.context.page
 
     def _search_cross_files():
         if not _search_folder or pattern is None or not root_dir:
@@ -1192,12 +1192,12 @@ def Sidebar(
 
         page.run_task(_do)
 
-    ft.use_effect(_search_cross_files, [pattern, _search_folder, root_dir, fs_version])
+    ui.use_effect(_search_cross_files, [pattern, _search_folder, root_dir, fs_version])
 
     # ---- 替换栏展开状态（从 settings 读取，持久化）----
     _replace_expanded = settings.get("search_replace_expanded", False)
     # 跨文件替换防竞态 token
-    replace_token_ref = ft.use_ref(0)
+    replace_token_ref = ui.use_ref(0)
 
     def _on_set_replace_expanded(v: bool):
         if on_update_setting is not None:
@@ -1215,7 +1215,7 @@ def Sidebar(
         elif current_match_idx >= total_matches:
             set_current_match_idx(total_matches - 1)
 
-    ft.use_effect(_clamp_match_idx, [total_matches])
+    ui.use_effect(_clamp_match_idx, [total_matches])
 
     # ---- 替换后跳转：search_results 变化 + pending_jump_idx >= 0 时跳到下一个匹配 ----
     # 替换使 line.raw 变 → _lines_sig 变 → search_results use_memo 重算（少一条匹配）
@@ -1234,7 +1234,7 @@ def Sidebar(
         li, s, _e = flat_matches[idx]
         on_jump_to_line(li, s)
 
-    ft.use_effect(_do_jump_after_replace, [search_results, pending_jump_idx])
+    ui.use_effect(_do_jump_after_replace, [search_results, pending_jump_idx])
 
     # ---- 替换回调 ----
     def _expand_for_match(li: int, s: int, e: int) -> str:
@@ -1445,12 +1445,12 @@ def Sidebar(
     # use_effect 依赖 [root_dir, fs_version]：根目录切换 / 文件增删改后重扫 /
     # 外部变化轮询上报后重扫。asyncio.to_thread 把同步磁盘扫描移出 UI 线程；
     # scan_token 丢弃过期结果。
-    file_tree, set_file_tree = ft.use_state(())
-    scan_token_ref = ft.use_ref(0)
+    file_tree, set_file_tree = ui.use_state(())
+    scan_token_ref = ui.use_ref(0)
     # 外部变化轮询 watcher 状态：基准签名（str 可弱引用，list/tuple 不行）+ 任务句柄。
     # 声明在 _scan_fs 前：重扫成功后同步基准，应用内变更不会被轮询重复上报。
-    watch_base = ft.use_ref(None)
-    watch_task_ref = ft.use_ref(None)
+    watch_base = ui.use_ref(None)
+    watch_task_ref = ui.use_ref(None)
 
     def _scan_fs():
         if not root_dir or not os.path.isdir(root_dir):
@@ -1480,7 +1480,7 @@ def Sidebar(
 
         page.run_task(_do_scan)
 
-    ft.use_effect(_scan_fs, [root_dir, fs_version])
+    ui.use_effect(_scan_fs, [root_dir, fs_version])
 
     # ---- 外部文件系统变化监测（轮询 watcher，零依赖）----
     # 后台每 WATCH_INTERVAL 秒重扫 root_dir，外部程序创建/删除/重命名文件 →
@@ -1510,14 +1510,14 @@ def Sidebar(
             watch_task_ref.current = None
         watch_base.current = None  # 目录切换/卸载：基准失效，重启时重新初始化
 
-    ft.use_effect(_watch_fs, [root_dir], cleanup=_stop_watch_fs)
+    ui.use_effect(_watch_fs, [root_dir], cleanup=_stop_watch_fs)
 
     # ---- 文件夹展开/折叠状态（VSCode 风格动态扁平化）----
     # frozenset 不可变，== 比较内容触发更新；存目录绝对路径（与 flatten_tree 的
     # dir_path 拼接方式一致）。默认空集合 = 根级直接子项可见、子目录折叠。
-    expanded_dirs, set_expanded_dirs = ft.use_state(frozenset())
+    expanded_dirs, set_expanded_dirs = ui.use_state(frozenset())
     # ref 持最新值供 toggle / reveal 闭包读取（避免 stale 闭包丢失用户已展开的目录）
-    expanded_dirs_ref = ft.use_ref(frozenset())
+    expanded_dirs_ref = ui.use_ref(frozenset())
     expanded_dirs_ref.current = expanded_dirs
 
     def _toggle_dir(dir_path: str):
@@ -1530,7 +1530,7 @@ def Sidebar(
         set_expanded_dirs(frozenset(current))
 
     # root_dir 切换时重置展开状态（切换工作区/文件夹后旧的展开路径无意义）
-    ft.use_effect(lambda: set_expanded_dirs(frozenset()), [root_dir])
+    ui.use_effect(lambda: set_expanded_dirs(frozenset()), [root_dir])
 
     # reveal：当前文件变化时自动展开其祖先目录链（VSCode "Reveal in Explorer" 行为）
     # 让用户切标签打开深层文件时文件树自动定位到该文件所在目录。
@@ -1559,15 +1559,15 @@ def Sidebar(
             return  # 祖先已全部展开，无需更新
         set_expanded_dirs(frozenset(current | ancestors))
 
-    ft.use_effect(_reveal_current_file, [file_path, root_dir])
+    ui.use_effect(_reveal_current_file, [file_path, root_dir])
 
     # ---- 文件树过滤 + 扁平化：use_memo 缓存（仅文件树 / 过滤词 / 展开状态变化才重算）----
-    filtered = ft.use_memo(
+    filtered = ui.use_memo(
         lambda: filter_tree(list(file_tree), file_filter),
         [file_tree, file_filter],
     )
     _has_filter = bool(file_filter.strip())
-    flat = ft.use_memo(
+    flat = ui.use_memo(
         lambda: (
             flatten_tree(
                 filtered, root_dir=root_dir,
@@ -1578,16 +1578,16 @@ def Sidebar(
     )
 
     # ---- 拖拽调宽手柄：use_memo 提取（仅主题变化重建）----
-    def _on_pan_start(e: ft.DragStartEvent):
+    def _on_pan_start(e: ui.DragStartEvent):
         set_dragging(True)
         # 标记侧边栏拖拽中：编辑器 _on_content_resize 据此跳过 set_viewport_w，
         # 避免开启换行时拖拽过程每帧触发全量软换行重算（HarfBuzz 测量）导致卡顿。
         # 用 page 属性传递标志，免去跨组件 props 链路改动。
-        page = ft.context.page
+        page = ui.context.page
         if page is not None:
             page.sidebar_dragging = True
 
-    def _on_pan_update(e: ft.DragUpdateEvent):
+    def _on_pan_update(e: ui.DragUpdateEvent):
         new_w = int(max(_MIN_W, min(_MAX_W, width_ref.current + e.local_delta.x)))
         if new_w != width_ref.current:
             width_ref.current = new_w
@@ -1595,22 +1595,22 @@ def Sidebar(
 
     def _on_pan_end(e):
         set_dragging(False)
-        page = ft.context.page
+        page = ui.context.page
         if page is not None:
             page.sidebar_dragging = False
         cb = _cb_ref.current.get("on_width_change")
         if cb is not None:
             cb(width_ref.current)
 
-    drag_handle = ft.use_memo(
-        lambda: ft.GestureDetector(
-            mouse_cursor=ft.MouseCursor.RESIZE_COLUMN,
+    drag_handle = ui.use_memo(
+        lambda: ui.GestureDetector(
+            mouse_cursor=ui.MouseCursor.RESIZE_COLUMN,
             on_pan_start=_on_pan_start,
             on_pan_update=_on_pan_update,
             on_pan_end=_on_pan_end,
-            content=ft.Container(
+            content=ui.Container(
                 width=3,
-                bgcolor=ft.Colors.with_opacity(0.15, c.text),
+                bgcolor=ui.Colors.with_opacity(0.15, c.text),
                 expand=True,
             ),
         ),
@@ -1621,7 +1621,7 @@ def Sidebar(
     # 文件面板右键回调：未提供时用 no-op 避免崩溃
     _file_ctx = on_file_context_action if on_file_context_action is not None else (lambda action, path: None)
     if active_panel == "files":
-        panel: ft.Control = _render_files_panel(
+        panel: ui.Control = _render_files_panel(
             file_path,
             recent_files,
             root_dir,
@@ -1686,16 +1686,16 @@ def Sidebar(
     # - dragging 时 animate=None 即时跟随，否则 200ms 动画（展开/折叠平滑过渡）
     # - 内容 Container 用 expand=True 撑满减去 drag_handle(6px) 的空间，零溢出
     # - STRETCH 让 drag_handle 竖向填满，全高可抓
-    return ft.Container(
+    return ui.Container(
         width=width if sidebar_open else 0,
-        animate=None if dragging else ft.Animation(200, ft.AnimationCurve.EASE_OUT),
-        clip_behavior=ft.ClipBehavior.HARD_EDGE,
-        content=ft.Row(
+        animate=None if dragging else ui.Animation(200, ui.AnimationCurve.EASE_OUT),
+        clip_behavior=ui.ClipBehavior.HARD_EDGE,
+        content=ui.Row(
             controls=[
-                ft.Container(
+                ui.Container(
                     expand=True,
                     bgcolor=c.surface,
-                    content=ft.Column(
+                    content=ui.Column(
                         controls=[panel],
                         spacing=0,
                         expand=True,
@@ -1704,6 +1704,6 @@ def Sidebar(
                 drag_handle,
             ],
             spacing=0,
-            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+            vertical_alignment=ui.CrossAxisAlignment.STRETCH,
         ),
     )

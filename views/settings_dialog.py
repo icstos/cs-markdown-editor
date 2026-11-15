@@ -24,7 +24,7 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from config import app_meta
 from services.shortcuts import ShortcutManager, normalize
@@ -48,35 +48,35 @@ _SECTIONS = {
 }
 
 _TAB_ICONS = [
-    ("edit", "编辑", ft.Icons.EDIT_OUTLINED),
-    ("appearance", "外观", ft.Icons.PALETTE_OUTLINED),
-    ("behavior", "行为", ft.Icons.TUNE),
-    ("shortcuts", "快捷键", ft.Icons.KEYBOARD_OUTLINED),
-    ("about", "关于", ft.Icons.INFO_OUTLINE),
+    ("edit", "编辑", ui.Icons.EDIT_OUTLINED),
+    ("appearance", "外观", ui.Icons.PALETTE_OUTLINED),
+    ("behavior", "行为", ui.Icons.TUNE),
+    ("shortcuts", "快捷键", ui.Icons.KEYBOARD_OUTLINED),
+    ("about", "关于", ui.Icons.INFO_OUTLINE),
 ]
 
 
-def _all_border(width: float, color: str) -> ft.Border:
+def _all_border(width: float, color: str) -> ui.Border:
     """便捷构造四边相同 Border（项目 styles.only_border 仅支持单边）。"""
-    side = ft.BorderSide(width, color)
-    return ft.Border(top=side, right=side, bottom=side, left=side)
+    side = ui.BorderSide(width, color)
+    return ui.Border(top=side, right=side, bottom=side, left=side)
 
 
-def _hairline(c, opacity: float = 1.0) -> ft.Container:
+def _hairline(c, opacity: float = 1.0) -> ui.Container:
     """1px 分隔线（用 Container 而非 ft.Divider：Divider 自带高度与外边距，
     在紧凑布局里会多出几像素的不可控留白）。"""
-    return ft.Container(
+    return ui.Container(
         height=1,
-        bgcolor=ft.Colors.with_opacity(opacity, c.border),
+        bgcolor=ui.Colors.with_opacity(opacity, c.border),
     )
 
 
-@ft.component
+@ui.component
 def SettingsDialog(
     open_state: bool,
     tab: str,
     settings: dict,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     shortcut_focus: tuple,
     shortcut_mgr: ShortcutManager,
     on_close: Callable[[], None],
@@ -106,31 +106,31 @@ def SettingsDialog(
     on_open_url / on_copy: 「关于」页的外链打开与复制（系统浏览器 / 剪贴板）。
     """
     c = get_colors(theme_mode)
-    is_dark = theme_mode == ft.ThemeMode.DARK
+    is_dark = theme_mode == ui.ThemeMode.DARK
     current_title, current_desc = _SECTIONS.get(tab, _SECTIONS["edit"])
     # 「只看已修改」为面板内部状态：不引入 App 级 state，切窗时随组件销毁复位
-    only_modified, set_only_modified = ft.use_state(False)
+    only_modified, set_only_modified = ui.use_state(False)
 
-    return ft.Container(
+    return ui.Container(
         visible=open_state,
         expand=True,
-        bgcolor=ft.Colors.with_opacity(0.32, ft.Colors.BLACK),
-        alignment=ft.Alignment.CENTER,
-        content=ft.Container(
+        bgcolor=ui.Colors.with_opacity(0.32, ui.Colors.BLACK),
+        alignment=ui.Alignment.CENTER,
+        content=ui.Container(
             width=1040,
             height=740,
             bgcolor=c.surface,
             border_radius=Radius.XXXL,
             shadow=card_shadow(Elevation.DIALOG, is_dark),
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            content=ft.Row(
+            clip_behavior=ui.ClipBehavior.ANTI_ALIAS,
+            content=ui.Row(
                 spacing=0,
                 controls=[
                     _sidebar(c, tab, on_select_tab, on_reset_all),
                     _hairline(c),
-                    ft.Container(
+                    ui.Container(
                         expand=True,
-                        content=ft.Column(
+                        content=ui.Column(
                             # expand 必须写：否则该 Column 按内容取高，
                             # 下面的滚动列拿不到有界高度 → 内容被卡片裁掉且**滚不动**
                             # （真机实测：滚轮打了 6 次内容区零位移）。父级 Row 的
@@ -142,18 +142,18 @@ def SettingsDialog(
                                 _header(current_title, current_desc, c, on_close),
                                 _hairline(c),
                                 # 唯一滚动区
-                                ft.Container(
+                                ui.Container(
                                     expand=True,
-                                    padding=ft.Padding.only(
+                                    padding=ui.Padding.only(
                                         left=Spacing.XXXL,
                                         right=Spacing.XXXL,
                                         top=Spacing.XXL,
                                         bottom=Spacing.XXXL,
                                     ),
-                                    content=ft.Column(
+                                    content=ui.Column(
                                         expand=True,
                                         spacing=0,
-                                        scroll=ft.ScrollMode.AUTO,
+                                        scroll=ui.ScrollMode.AUTO,
                                         controls=[
                                             _panel(
                                                 tab, settings, theme_mode, shortcut_focus,
@@ -184,128 +184,128 @@ def SettingsDialog(
 def _icon_button(
     c, icon, on_click, *, tooltip: str = "", color: str | None = None,
     box: int = 28, icon_size: int = 16,
-) -> ft.Control:
+) -> ui.Control:
     """定尺寸图标按钮（不用 ft.IconButton：Material 固有高 40 不可压缩）。"""
-    return ft.Container(
+    return ui.Container(
         width=box,
         height=box,
         border_radius=Radius.MD,
-        alignment=ft.Alignment.CENTER,
+        alignment=ui.Alignment.CENTER,
         ink=True,
         tooltip=tooltip or None,
         on_click=lambda e: on_click() if on_click else None,
-        content=ft.Icon(icon, size=icon_size, color=color or c.muted),
+        content=ui.Icon(icon, size=icon_size, color=color or c.muted),
     )
 
 
-def _card(c, *, title: str = "", desc: str = "", controls: list) -> ft.Control:
+def _card(c, *, title: str = "", desc: str = "", controls: list) -> ui.Control:
     """统一的分组卡片：细边框 + 圆角 + 可选标题。
 
     设置项按语义分组进卡片（而不是裸 Text + Divider 平铺），是「更精致」的主要
     来源——分组边界清晰、卡片间留白一致，扫读时能按块定位。
     """
-    body: list[ft.Control] = []
+    body: list[ui.Control] = []
     if title:
-        head: list[ft.Control] = [
-            ft.Text(title, size=13, weight=ft.FontWeight.W_600, color=c.text)
+        head: list[ui.Control] = [
+            ui.Text(title, size=13, weight=ui.FontWeight.W_600, color=c.text)
         ]
         if desc:
-            head.append(ft.Text(desc, size=11, color=c.muted))
-        body.append(ft.Column(controls=head, spacing=Spacing.XS))
-        body.append(ft.Container(height=Spacing.MD))
+            head.append(ui.Text(desc, size=11, color=c.muted))
+        body.append(ui.Column(controls=head, spacing=Spacing.XS))
+        body.append(ui.Container(height=Spacing.MD))
     body.extend(controls)
-    return ft.Container(
-        padding=ft.Padding.all(Spacing.XXL),
+    return ui.Container(
+        padding=ui.Padding.all(Spacing.XXL),
         border_radius=Radius.XL,
         border=_all_border(1, c.border),
-        content=ft.Column(controls=body, spacing=Spacing.XL),
+        content=ui.Column(controls=body, spacing=Spacing.XL),
     )
 
 
-def _badge(c, text: str, color: str) -> ft.Control:
+def _badge(c, text: str, color: str) -> ui.Control:
     """小圆角角标（「已修改」/「已清空」）。"""
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=1),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=1),
         border_radius=Radius.SM,
-        bgcolor=ft.Colors.with_opacity(0.14, color),
-        content=ft.Text(text, size=10, color=color, weight=ft.FontWeight.W_600),
+        bgcolor=ui.Colors.with_opacity(0.14, color),
+        content=ui.Text(text, size=10, color=color, weight=ui.FontWeight.W_600),
     )
 
 
-def _switch_row(c, label: str, value: bool, on_change, *, desc: str = "") -> ft.Control:
+def _switch_row(c, label: str, value: bool, on_change, *, desc: str = "") -> ui.Control:
     """开关行：左侧标签（+ 说明），右侧开关。"""
-    left: list[ft.Control] = [ft.Text(label, size=13, color=c.text)]
+    left: list[ui.Control] = [ui.Text(label, size=13, color=c.text)]
     if desc:
-        left.append(ft.Text(desc, size=11, color=c.muted))
-    return ft.Row(
+        left.append(ui.Text(desc, size=11, color=c.muted))
+    return ui.Row(
         controls=[
-            ft.Column(controls=left, spacing=Spacing.XS, expand=True),
-            ft.Switch(value=value, on_change=on_change),
+            ui.Column(controls=left, spacing=Spacing.XS, expand=True),
+            ui.ft.Switch(value=value, on_change=on_change),
         ],
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER, spacing=10,
     )
 
 
 def _slider_row(
     c, label: str, value, on_change, *,
     minv: float, maxv: float, divisions: int, suffix: str = "",
-) -> ft.Control:
+) -> ui.Control:
     """滑杆行：标签 / 滑杆 / 右对齐数值（数值列定宽，各行右边缘对齐）。"""
-    return ft.Row(
+    return ui.Row(
         controls=[
-            ft.Text(label, width=_LABEL_W, size=13, color=c.text),
-            ft.Slider(
+            ui.Text(label, width=_LABEL_W, size=13, color=c.text),
+            ui.ft.Slider(
                 min=minv, max=maxv, divisions=divisions,
                 value=value, expand=True,
                 on_change=lambda e: on_change(e.control.value),
             ),
-            ft.Text(
+            ui.Text(
                 f"{value}{suffix}",
                 width=_VALUE_W,
                 size=12,
                 color=c.muted,
-                text_align=ft.TextAlign.RIGHT,
+                text_align=ui.TextAlign.RIGHT,
             ),
         ],
         spacing=Spacing.LG,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
 
 def _dropdown_row(
     c, label: str, value, options: list[str], on_select,
-) -> ft.Control:
+) -> ui.Control:
     """下拉行。
 
     注意：**不给 ft.Dropdown 设 height** —— 内部 InputDecorator 的高度是固定的，
     设 height 只会改外框而裁切内部文字（项目红线，见 AGENT.md 第 4 节）。
     """
-    return ft.Row(
+    return ui.Row(
         controls=[
-            ft.Text(label, width=_LABEL_W, size=13, color=c.text),
-            ft.Dropdown(
-                options=[ft.dropdown.Option(o) for o in options],
+            ui.Text(label, width=_LABEL_W, size=13, color=c.text),
+            ui.Dropdown(
+                options=[ui.dropdown.Option(o) for o in options],
                 value=value, expand=True,
                 on_select=lambda e: on_select(e.control.value),
             ),
         ],
         spacing=Spacing.LG,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
 
-def _value_row(c, label: str, control: ft.Control, *, desc: str = "") -> ft.Control:
+def _value_row(c, label: str, control: ui.Control, *, desc: str = "") -> ui.Control:
     """只读/自定义控件行：定宽标签 + 右侧内容。"""
-    left: list[ft.Control] = [ft.Text(label, size=13, color=c.text)]
+    left: list[ui.Control] = [ui.Text(label, size=13, color=c.text)]
     if desc:
-        left.append(ft.Text(desc, size=11, color=c.muted))
-    return ft.Row(
+        left.append(ui.Text(desc, size=11, color=c.muted))
+    return ui.Row(
         controls=[
-            ft.Column(controls=left, spacing=Spacing.XS, width=_LABEL_W),
-            ft.Container(expand=True, content=control),
+            ui.Column(controls=left, spacing=Spacing.XS, width=_LABEL_W),
+            ui.Container(expand=True, content=control),
         ],
         spacing=Spacing.LG,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
 
@@ -313,44 +313,44 @@ def _value_row(c, label: str, control: ft.Control, *, desc: str = "") -> ft.Cont
 # 侧栏 / 头部
 # ---------------------------------------------------------------------------
 
-def _sidebar(c, tab: str, on_select_tab, on_reset_all) -> ft.Control:
-    return ft.Container(
+def _sidebar(c, tab: str, on_select_tab, on_reset_all) -> ui.Control:
+    return ui.Container(
         width=232,
-        bgcolor=ft.Colors.with_opacity(0.30, c.border),
-        padding=ft.Padding.only(
+        bgcolor=ui.Colors.with_opacity(0.30, c.border),
+        padding=ui.Padding.only(
             left=Spacing.XXL, right=Spacing.XXL,
             top=Spacing.XXL, bottom=Spacing.XL,
         ),
-        content=ft.Column(
+        content=ui.Column(
             expand=True,
             spacing=0,
             controls=[
-                ft.Text(app_meta.APP_NAME, size=15, weight=ft.FontWeight.W_700,
-                        color=c.text, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                ft.Text("设置中心", size=11, color=c.muted),
-                ft.Container(height=Spacing.XXL),
-                ft.Column(
+                ui.Text(app_meta.APP_NAME, size=15, weight=ui.FontWeight.W_700,
+                        color=c.text, max_lines=1, overflow=ui.TextOverflow.ELLIPSIS),
+                ui.Text("设置中心", size=11, color=c.muted),
+                ui.Container(height=Spacing.XXL),
+                ui.Column(
                     spacing=Spacing.XS,
                     controls=[
                         _nav_item(t, label, icon, c, tab, on_select_tab)
                         for t, label, icon in _TAB_ICONS
                     ],
                 ),
-                ft.Container(expand=True),
+                ui.Container(expand=True),
                 _hairline(c),
-                ft.Container(height=Spacing.MD),
-                ft.Container(
+                ui.Container(height=Spacing.MD),
+                ui.Container(
                     height=34,
                     border_radius=Radius.LG,
                     ink=True,
-                    padding=ft.Padding.symmetric(horizontal=Spacing.XL),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.XL),
                     on_click=lambda e: on_reset_all(),
-                    content=ft.Row(
+                    content=ui.Row(
                         spacing=Spacing.XL,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                         controls=[
-                            ft.Icon(ft.Icons.RESTART_ALT, size=15, color=c.muted),
-                            ft.Text("恢复默认设置", size=12, color=c.muted),
+                            ui.Icon(ui.Icons.RESTART_ALT, size=15, color=c.muted),
+                            ui.Text("恢复默认设置", size=12, color=c.muted),
                         ],
                     ),
                 ),
@@ -359,54 +359,54 @@ def _sidebar(c, tab: str, on_select_tab, on_reset_all) -> ft.Control:
     )
 
 
-def _nav_item(t: str, label: str, icon: str, c, current_tab: str, on_select_tab) -> ft.Control:
+def _nav_item(t: str, label: str, icon: str, c, current_tab: str, on_select_tab) -> ui.Control:
     """侧栏导航项：整行可点（原实现把 TextButton 嵌在 Container 里，
     只有文字那一点可点，行内其余位置点不动）。"""
     active = current_tab == t
-    return ft.Container(
+    return ui.Container(
         height=38,
         border_radius=Radius.LG,
-        bgcolor=ft.Colors.with_opacity(0.14, c.link) if active else None,
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL),
+        bgcolor=ui.Colors.with_opacity(0.14, c.link) if active else None,
+        padding=ui.Padding.symmetric(horizontal=Spacing.XL),
         ink=True,
         on_click=lambda e: on_select_tab(t),
-        content=ft.Row(
+        content=ui.Row(
             spacing=Spacing.XL,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Icon(icon, size=17, color=c.link if active else c.muted),
-                ft.Text(
+                ui.Icon(icon, size=17, color=c.link if active else c.muted),
+                ui.Text(
                     label, size=13,
                     color=c.link if active else c.text,
-                    weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400,
+                    weight=ui.FontWeight.W_600 if active else ui.FontWeight.W_400,
                 ),
             ],
         ),
     )
 
 
-def _header(title: str, desc: str, c, on_close) -> ft.Control:
+def _header(title: str, desc: str, c, on_close) -> ui.Control:
     """固定头部：标题 / 说明在左，关闭按钮在右。位于滚动区之外。"""
-    return ft.Container(
-        padding=ft.Padding.only(
+    return ui.Container(
+        padding=ui.Padding.only(
             left=Spacing.XXXL, right=Spacing.XXL,
             top=Spacing.XXL, bottom=Spacing.XXL,
         ),
-        content=ft.Row(
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        content=ui.Row(
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Column(
+                ui.Column(
                     spacing=Spacing.XS,
                     expand=True,
                     controls=[
-                        ft.Text(title, size=19, weight=ft.FontWeight.W_700, color=c.text),
-                        ft.Text(desc, size=12, color=c.muted),
+                        ui.Text(title, size=19, weight=ui.FontWeight.W_700, color=c.text),
+                        ui.Text(desc, size=12, color=c.muted),
                     ],
                 ),
                 _icon_button(
-                    c, ft.Icons.CLOSE, on_close, tooltip="关闭", box=32, icon_size=18,
+                    c, ui.Icons.CLOSE, on_close, tooltip="关闭", box=32, icon_size=18,
                 ),
-            ],
+            ], spacing=10,
         ),
     )
 
@@ -416,13 +416,13 @@ def _header(title: str, desc: str, c, on_close) -> ft.Control:
 # ---------------------------------------------------------------------------
 
 def _panel(
-    tab: str, settings: dict, theme_mode: ft.ThemeMode, shortcut_focus: tuple,
+    tab: str, settings: dict, theme_mode: ui.ThemeMode, shortcut_focus: tuple,
     shortcut_mgr: ShortcutManager, on_update, on_reset_shortcuts, on_import, on_export,
     capturing: tuple, on_capture_click, on_cancel_capture_click,
     on_open_recovery=None, on_pick_backup_dir=None,
     only_modified: bool = False, set_only_modified=None,
     on_open_url=None, on_copy=None,
-) -> ft.Control:
+) -> ui.Control:
     if tab == "edit":
         return _edit_panel(settings, theme_mode, on_update)
     if tab == "appearance":
@@ -445,9 +445,9 @@ def _panel(
 # 编辑 tab
 # ---------------------------------------------------------------------------
 
-def _edit_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft.Control:
+def _edit_panel(settings: dict, theme_mode: ui.ThemeMode, on_update) -> ui.Control:
     c = get_colors(theme_mode)
-    return ft.Column(
+    return ui.Column(
         spacing=Spacing.XXL,
         controls=[
             _card(
@@ -485,9 +485,9 @@ def _edit_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft.Contr
 # 外观 tab
 # ---------------------------------------------------------------------------
 
-def _appearance_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft.Control:
+def _appearance_panel(settings: dict, theme_mode: ui.ThemeMode, on_update) -> ui.Control:
     c = get_colors(theme_mode)
-    return ft.Column(
+    return ui.Column(
         spacing=Spacing.XXL,
         controls=[
             _card(
@@ -528,13 +528,13 @@ def _appearance_panel(settings: dict, theme_mode: ft.ThemeMode, on_update) -> ft
 
 def _behavior_panel(
     settings: dict,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     on_update,
     on_open_recovery=None,
     on_pick_backup_dir=None,
-) -> ft.Control:
+) -> ui.Control:
     c = get_colors(theme_mode)
-    return ft.Column(
+    return ui.Column(
         spacing=Spacing.XXL,
         controls=[
             _card(
@@ -613,25 +613,25 @@ def _behavior_panel(
                     _value_row(
                         c,
                         "备份目录",
-                        ft.Row(
+                        ui.Row(
                             spacing=Spacing.SM,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            vertical_alignment=ui.CrossAxisAlignment.CENTER,
                             controls=[
-                                ft.Container(
+                                ui.Container(
                                     expand=True,
-                                    padding=ft.Padding.symmetric(
+                                    padding=ui.Padding.symmetric(
                                         horizontal=Spacing.MD, vertical=Spacing.SM,
                                     ),
                                     border_radius=Radius.MD,
-                                    bgcolor=ft.Colors.with_opacity(0.04, c.text),
+                                    bgcolor=ui.Colors.with_opacity(0.04, c.text),
                                     border=_all_border(1, c.border),
-                                    content=ft.Text(
+                                    content=ui.Text(
                                         value=settings.get("backup_dir") or "（平台默认路径）",
                                         size=12, color=c.muted, max_lines=1,
-                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                        overflow=ui.TextOverflow.ELLIPSIS,
                                     ),
                                 ),
-                                ft.TextButton(
+                                ui.TextButton(
                                     "选择目录",
                                     on_click=lambda e: (
                                         on_pick_backup_dir() if on_pick_backup_dir else None
@@ -643,12 +643,12 @@ def _behavior_panel(
                     _value_row(
                         c,
                         "历史备份",
-                        ft.Row(
+                        ui.Row(
                             spacing=Spacing.SM,
                             controls=[
-                                ft.TextButton(
+                                ui.TextButton(
                                     "恢复未保存的草稿",
-                                    icon=ft.Icons.RESTORE_PAGE,
+                                    icon=ui.Icons.RESTORE_PAGE,
                                     on_click=lambda e: (
                                         on_open_recovery() if on_open_recovery else None
                                     ),
@@ -684,11 +684,11 @@ def _shortcut_diff(current: str, default: str) -> str:
 
 
 def _shortcuts_panel(
-    theme_mode: ft.ThemeMode, shortcut_focus: tuple, shortcut_mgr: ShortcutManager,
+    theme_mode: ui.ThemeMode, shortcut_focus: tuple, shortcut_mgr: ShortcutManager,
     capturing: tuple, on_capture_click, on_cancel_capture_click,
     on_reset_shortcuts, on_import, on_export,
     only_modified: bool = False, set_only_modified=None,
-) -> ft.Control:
+) -> ui.Control:
     c = get_colors(theme_mode)
     rows, total, changed = _action_rows(
         shortcut_mgr, theme_mode, shortcut_focus, capturing,
@@ -696,17 +696,17 @@ def _shortcuts_panel(
     )
     # 过滤后可能一行不剩：区分「本来就是全默认」与「有改动但被筛掉」
     empty_msg = "所有快捷键均为默认设置。" if changed == 0 else "没有符合条件的快捷键。"
-    return ft.Column(
+    return ui.Column(
         spacing=Spacing.XXL,
         controls=[
             # 工具栏
-            ft.Row(
+            ui.Row(
                 controls=[
-                    ft.Column(
+                    ui.Column(
                         controls=[
-                            ft.Text("快捷键管理", size=14, weight=ft.FontWeight.W_600,
+                            ui.Text("快捷键管理", size=14, weight=ui.FontWeight.W_600,
                                     color=c.text),
-                            ft.Text(
+                            ui.Text(
                                 "点击「修改」后按下新组合键，立即生效。Esc 取消，Backspace 清空。",
                                 size=12, color=c.muted,
                             ),
@@ -714,16 +714,16 @@ def _shortcuts_panel(
                         spacing=Spacing.XS,
                         expand=True,
                     ),
-                    ft.TextButton("导入方案", on_click=lambda e: on_import()),
-                    ft.TextButton("导出方案", on_click=lambda e: on_export()),
-                    ft.TextButton("恢复全部默认", on_click=lambda e: on_reset_shortcuts()),
+                    ui.TextButton("导入方案", on_click=lambda e: on_import()),
+                    ui.TextButton("导出方案", on_click=lambda e: on_export()),
+                    ui.TextButton("恢复全部默认", on_click=lambda e: on_reset_shortcuts()),
                 ],
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER, spacing=10,
             ),
             # 改动概览 + 过滤开关
             _modified_summary(c, changed, total, only_modified, set_only_modified),
             # 冲突卡片
-            ft.Row(
+            ui.Row(
                 controls=[
                     _conflict_card("浏览态", shortcut_mgr.conflict_summary("browse"), c),
                     _conflict_card("编辑态", shortcut_mgr.conflict_summary("edit"), c),
@@ -732,16 +732,16 @@ def _shortcuts_panel(
             ),
             _fixed_keys_hint(c),
             # 动作列表（单层滚动：由外层内容区承载，此处不再自带滚动）
-            ft.Container(
+            ui.Container(
                 border_radius=Radius.XL,
                 border=_all_border(1, c.border),
-                padding=ft.Padding.all(Spacing.XL),
-                content=ft.Column(
+                padding=ui.Padding.all(Spacing.XL),
+                content=ui.Column(
                     controls=rows or [
-                        ft.Container(
-                            padding=ft.Padding.all(Spacing.XXL),
-                            alignment=ft.Alignment.CENTER,
-                            content=ft.Text(empty_msg, size=12, color=c.muted),
+                        ui.Container(
+                            padding=ui.Padding.all(Spacing.XXL),
+                            alignment=ui.Alignment.CENTER,
+                            content=ui.Text(empty_msg, size=12, color=c.muted),
                         )
                     ],
                     spacing=Spacing.SM,
@@ -751,7 +751,7 @@ def _shortcuts_panel(
     )
 
 
-def _modified_summary(c, changed: int, total: int, only_modified: bool, set_only_modified) -> ft.Control:
+def _modified_summary(c, changed: int, total: int, only_modified: bool, set_only_modified) -> ui.Control:
     """改动概览条：左为统计，右为「只看已修改」开关。"""
     if changed:
         tone = _AMBER
@@ -761,25 +761,25 @@ def _modified_summary(c, changed: int, total: int, only_modified: bool, set_only
         tone = _OK
         head = "全部为默认键位"
         tail = f"共 {total} 项，未做任何修改。"
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         border_radius=Radius.LG,
-        bgcolor=ft.Colors.with_opacity(0.08, tone),
-        content=ft.Row(
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        bgcolor=ui.Colors.with_opacity(0.08, tone),
+        content=ui.Row(
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Icon(
-                    ft.Icons.CHECK_CIRCLE_OUTLINE if not changed else ft.Icons.EDIT,
+                ui.Icon(
+                    ui.Icons.CHECK_CIRCLE_OUTLINE if not changed else ui.Icons.EDIT,
                     size=15, color=tone,
                 ),
-                ft.Container(width=Spacing.MD),
-                ft.Text(head, size=12, weight=ft.FontWeight.W_600, color=tone),
-                ft.Text(tail, size=11, color=c.muted),
-                ft.Container(expand=True),
-                ft.Switch(
+                ui.Container(width=Spacing.MD),
+                ui.Text(head, size=12, weight=ui.FontWeight.W_600, color=tone),
+                ui.Text(tail, size=11, color=c.muted),
+                ui.Container(expand=True),
+                ui.ft.Switch(
                     label="只看已修改",
-                    label_position=ft.LabelPosition.LEFT,
-                    label_text_style=ft.TextStyle(size=12, color=c.muted),
+                    label_position=ui.LabelPosition.LEFT,
+                    label_text_style=ui.TextStyle(size=12, color=c.muted),
                     value=bool(only_modified),
                     disabled=not total,
                     on_change=(
@@ -787,24 +787,24 @@ def _modified_summary(c, changed: int, total: int, only_modified: bool, set_only
                         if set_only_modified else None
                     ),
                 ),
-            ],
+            ], spacing=10,
         ),
     )
 
 
-def _fixed_keys_hint(c) -> ft.Control:
+def _fixed_keys_hint(c) -> ui.Control:
     """固定导航键说明（不可自定义）。"""
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         border_radius=Radius.LG,
-        bgcolor=ft.Colors.with_opacity(0.06, c.muted),
-        content=ft.Column(
+        bgcolor=ui.Colors.with_opacity(0.06, c.muted),
+        content=ui.Column(
             controls=[
-                ft.Text("固定导航键（不可自定义）", size=11,
-                        weight=ft.FontWeight.W_600, color=c.muted),
-                ft.Text("Ctrl+0~6 切换标题级别（0=正文，1~6=H1~H6）",
+                ui.Text("固定导航键（不可自定义）", size=11,
+                        weight=ui.FontWeight.W_600, color=c.muted),
+                ui.Text("Ctrl+0~6 切换标题级别（0=正文，1~6=H1~H6）",
                         size=11, color=c.muted),
-                ft.Text("方向键 / Home / End / PageUp / PageDown 光标导航",
+                ui.Text("方向键 / Home / End / PageUp / PageDown 光标导航",
                         size=11, color=c.muted),
             ],
             spacing=Spacing.XS,
@@ -812,27 +812,27 @@ def _fixed_keys_hint(c) -> ft.Control:
     )
 
 
-def _conflict_card(label: str, summary: str | None, c) -> ft.Control:
+def _conflict_card(label: str, summary: str | None, c) -> ui.Control:
     tone = _DANGER if summary else _OK
-    return ft.Container(
+    return ui.Container(
         expand=True,
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+        padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         border_radius=Radius.XL,
-        bgcolor=ft.Colors.with_opacity(0.08, tone),
-        content=ft.Column(
+        bgcolor=ui.Colors.with_opacity(0.08, tone),
+        content=ui.Column(
             controls=[
-                ft.Row(
+                ui.Row(
                     spacing=Spacing.MD,
                     controls=[
-                        ft.Icon(
-                            ft.Icons.ERROR_OUTLINE if summary else ft.Icons.CHECK_CIRCLE_OUTLINE,
+                        ui.Icon(
+                            ui.Icons.ERROR_OUTLINE if summary else ui.Icons.CHECK_CIRCLE_OUTLINE,
                             size=14, color=tone,
                         ),
-                        ft.Text(f"{label}快捷键", size=12,
-                                weight=ft.FontWeight.W_700, color=tone),
+                        ui.Text(f"{label}快捷键", size=12,
+                                weight=ui.FontWeight.W_700, color=tone),
                     ],
                 ),
-                ft.Text(summary or "无冲突", size=11, color=tone if summary else c.muted),
+                ui.Text(summary or "无冲突", size=11, color=tone if summary else c.muted),
             ],
             spacing=Spacing.XS,
         ),
@@ -840,11 +840,11 @@ def _conflict_card(label: str, summary: str | None, c) -> ft.Control:
 
 
 def _action_rows(
-    shortcut_mgr: ShortcutManager, theme_mode: ft.ThemeMode,
+    shortcut_mgr: ShortcutManager, theme_mode: ui.ThemeMode,
     shortcut_focus: tuple, capturing: tuple,
     on_capture_click, on_cancel_capture_click,
     only_modified: bool = False,
-) -> tuple[list[ft.Control], int, int]:
+) -> tuple[list[ui.Control], int, int]:
     """构造动作行，返回 (控件列表, 总项数, 已修改项数)。
 
     按「层 → 分类」两级分组：层用大标题，分类用小标题并汇总该分类下的改动条数。
@@ -852,7 +852,7 @@ def _action_rows(
     """
     c = get_colors(theme_mode)
     focus_key = tuple(shortcut_focus or (None, None))
-    rows: list[ft.Control] = []
+    rows: list[ui.Control] = []
     total = 0
     changed_total = 0
 
@@ -876,14 +876,14 @@ def _action_rows(
             continue
 
         rows.append(
-            ft.Container(
-                padding=ft.Padding.only(top=Spacing.SM, bottom=Spacing.XS),
-                content=ft.Row(
+            ui.Container(
+                padding=ui.Padding.only(top=Spacing.SM, bottom=Spacing.XS),
+                content=ui.Row(
                     spacing=Spacing.MD,
                     controls=[
-                        ft.Text("浏览态" if layer == "browse" else "编辑态",
-                                size=13, weight=ft.FontWeight.W_700, color=c.text),
-                        ft.Text(f"{len(visible)} 项", size=11, color=c.muted),
+                        ui.Text("浏览态" if layer == "browse" else "编辑态",
+                                size=13, weight=ui.FontWeight.W_700, color=c.text),
+                        ui.Text(f"{len(visible)} 项", size=11, color=c.muted),
                     ],
                 ),
             )
@@ -895,16 +895,16 @@ def _action_rows(
 
         for category, items in groups.items():
             cat_changed = sum(1 for e in items if e[3])
-            head: list[ft.Control] = [
-                ft.Text(category, size=11, weight=ft.FontWeight.W_600, color=c.muted),
-                ft.Text(f"{len(items)} 项", size=10, color=c.muted),
+            head: list[ui.Control] = [
+                ui.Text(category, size=11, weight=ui.FontWeight.W_600, color=c.muted),
+                ui.Text(f"{len(items)} 项", size=10, color=c.muted),
             ]
             if cat_changed:
                 head.append(_badge(c, f"{cat_changed} 项已调整", _AMBER))
             rows.append(
-                ft.Container(
-                    padding=ft.Padding.only(top=Spacing.XL, bottom=Spacing.XS),
-                    content=ft.Row(spacing=Spacing.MD, controls=head),
+                ui.Container(
+                    padding=ui.Padding.only(top=Spacing.XL, bottom=Spacing.XS),
+                    content=ui.Row(spacing=Spacing.MD, controls=head),
                 )
             )
             for action, current, default, badge in items:
@@ -938,20 +938,20 @@ def _action_row(
     action, layer: str, current: str, default: str, badge: str, is_conflict: bool,
     is_focused: bool, c, shortcut_mgr: ShortcutManager,
     capturing: tuple, on_capture_click, on_cancel_capture_click,
-) -> ft.Control:
+) -> ui.Control:
     is_capturing = capturing == (layer, action.id)
     row_key = f"{layer}:{action.id}"
 
     # 左侧：动作名（+ 已修改角标）+ 说明
-    name_row: list[ft.Control] = [
-        ft.Text(action.label, size=13, weight=ft.FontWeight.W_600, color=c.text),
+    name_row: list[ui.Control] = [
+        ui.Text(action.label, size=13, weight=ui.FontWeight.W_600, color=c.text),
     ]
     if badge:
         name_row.append(_badge(c, badge, _DANGER if badge == "已清空" else _AMBER))
-    left = ft.Column(
+    left = ui.Column(
         controls=[
-            ft.Row(spacing=Spacing.MD, controls=name_row),
-            ft.Text(
+            ui.Row(spacing=Spacing.MD, controls=name_row),
+            ui.Text(
                 f"{action.category} · {action.description}"
                 + (f" · 默认 {_format_combo_display(default)}" if badge and default else ""),
                 size=11, color=c.muted,
@@ -963,20 +963,20 @@ def _action_row(
 
     if is_capturing:
         # 捕获中：提示 + 取消按钮
-        right = ft.Row(
+        right = ui.Row(
             controls=[
-                ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.MD),
+                ui.Container(
+                    padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.MD),
                     border_radius=Radius.MD,
-                    bgcolor=ft.Colors.with_opacity(0.12, c.link),
-                    content=ft.Text("按下新组合键…（Esc 取消，Backspace 清空）",
-                                    size=11, color=c.link, weight=ft.FontWeight.W_600),
+                    bgcolor=ui.Colors.with_opacity(0.12, c.link),
+                    content=ui.Text("按下新组合键…（Esc 取消，Backspace 清空）",
+                                    size=11, color=c.link, weight=ui.FontWeight.W_600),
                 ),
-                ft.TextButton("取消", on_click=lambda e: on_cancel_capture_click()),
+                ui.TextButton("取消", on_click=lambda e: on_cancel_capture_click()),
             ],
             spacing=Spacing.SM,
         )
-        bgcolor = ft.Colors.with_opacity(0.08, c.link)
+        bgcolor = ui.Colors.with_opacity(0.08, c.link)
         border = _all_border(1, c.link)
     else:
         # 正常态：只读 kbd 标签 + 修改 + 恢复默认
@@ -986,26 +986,26 @@ def _action_row(
         kbd_color = _DANGER if is_conflict else c.text
         kbd_border = _DANGER if is_conflict else c.border
         kbd_bg = (
-            ft.Colors.with_opacity(0.10, _DANGER) if is_conflict
-            else ft.Colors.with_opacity(0.04, c.text)
+            ui.Colors.with_opacity(0.10, _DANGER) if is_conflict
+            else ui.Colors.with_opacity(0.04, c.text)
         )
-        right = ft.Row(
+        right = ui.Row(
             controls=[
-                ft.Container(
+                ui.Container(
                     width=160,
-                    padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
                     border_radius=Radius.MD,
                     bgcolor=kbd_bg,
                     border=_all_border(1, kbd_border),
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Text(_format_combo_display(kbd_display),
+                    alignment=ui.Alignment.CENTER,
+                    content=ui.Text(_format_combo_display(kbd_display),
                                     size=12, color=kbd_color),
                 ),
-                ft.TextButton(
+                ui.TextButton(
                     "修改",
                     on_click=lambda e, lyr=layer, a=action.id: on_capture_click(lyr, a),
                 ),
-                ft.TextButton(
+                ui.TextButton(
                     "恢复默认",
                     on_click=lambda e, lyr=layer, a=action.id: shortcut_mgr.reset(lyr, a),
                     disabled=(not default) or (not badge),
@@ -1014,19 +1014,19 @@ def _action_row(
             spacing=Spacing.SM,
         )
         # 冲突定位高亮（update_setting 写入 shortcuts 后指向首个冲突项）
-        bgcolor = ft.Colors.with_opacity(0.05, c.link) if is_focused else None
+        bgcolor = ui.Colors.with_opacity(0.05, c.link) if is_focused else None
         border = _all_border(1, c.link) if is_focused else None
 
-    return ft.Container(
+    return ui.Container(
         key=row_key,
         bgcolor=bgcolor,
         border=border,
         border_radius=Radius.XL,
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.MD),
-        content=ft.Row(
+        padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.MD),
+        content=ui.Row(
             controls=[left, right],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ui.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER, spacing=10,
         ),
     )
 
@@ -1038,7 +1038,7 @@ def _action_row(
 def _about_row(
     c, icon, label: str, value: str, *, on_open=None, on_copy_value=None,
     tooltip: str = "",
-) -> ft.Control:
+) -> ui.Control:
     """关于页的信息行：图标 + 标题 + 值 + 右侧操作按钮。
 
     回调契约（两者都接收**本行的值**，不是零参）：
@@ -1046,40 +1046,40 @@ def _about_row(
     - `on_copy_value(value)`：复制到剪贴板。
     两者都为 None 时该行不渲染对应按钮。
     """
-    actions: list[ft.Control] = []
+    actions: list[ui.Control] = []
     if on_copy_value:
         actions.append(_icon_button(
-            c, ft.Icons.CONTENT_COPY, lambda: on_copy_value(value),
+            c, ui.Icons.CONTENT_COPY, lambda: on_copy_value(value),
             tooltip="复制", box=26, icon_size=14,
         ))
     if on_open:
         actions.append(_icon_button(
-            c, ft.Icons.OPEN_IN_NEW, lambda: on_open(value),
+            c, ui.Icons.OPEN_IN_NEW, lambda: on_open(value),
             tooltip=tooltip or "在浏览器中打开", box=26, icon_size=15,
         ))
-    return ft.Row(
+    return ui.Row(
         spacing=Spacing.LG,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
         controls=[
-            ft.Container(
+            ui.Container(
                 width=28, height=28,
                 border_radius=Radius.MD,
-                alignment=ft.Alignment.CENTER,
-                bgcolor=ft.Colors.with_opacity(0.08, c.text),
-                content=ft.Icon(icon, size=15, color=c.muted),
+                alignment=ui.Alignment.CENTER,
+                bgcolor=ui.Colors.with_opacity(0.08, c.text),
+                content=ui.Icon(icon, size=15, color=c.muted),
             ),
-            ft.Text(label, width=76, size=12, color=c.text),
-            ft.Container(
+            ui.Text(label, width=76, size=12, color=c.text),
+            ui.Container(
                 expand=True,
-                content=ft.Text(value, size=12, color=c.muted, max_lines=1,
-                                overflow=ft.TextOverflow.ELLIPSIS),
+                content=ui.Text(value, size=12, color=c.muted, max_lines=1,
+                                overflow=ui.TextOverflow.ELLIPSIS),
             ),
             *actions,
         ],
     )
 
 
-def _about_panel(theme_mode: ft.ThemeMode, on_open_url=None, on_copy=None) -> ft.Control:
+def _about_panel(theme_mode: ui.ThemeMode, on_open_url=None, on_copy=None) -> ui.Control:
     """关于页：版本信息 + 联系邮箱 / 官方社群 / 用户手册 + 相关链接。
 
     外链与版本全部取自 `config/app_meta`（唯一来源），此处不写死任何 URL。
@@ -1090,32 +1090,32 @@ def _about_panel(theme_mode: ft.ThemeMode, on_open_url=None, on_copy=None) -> ft
     community = (app_meta.COMMUNITY_URL or "").strip()
     manual = (app_meta.USER_MANUAL_URL or "").strip()
 
-    hero = ft.Container(
-        padding=ft.Padding.all(Spacing.XXL),
+    hero = ui.Container(
+        padding=ui.Padding.all(Spacing.XXL),
         border_radius=Radius.XL,
-        bgcolor=ft.Colors.with_opacity(0.06, c.link),
-        content=ft.Row(
+        bgcolor=ui.Colors.with_opacity(0.06, c.link),
+        content=ui.Row(
             spacing=Spacing.XXL,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Container(
+                ui.Container(
                     width=56, height=56,
                     border_radius=Radius.XXL,
-                    alignment=ft.Alignment.CENTER,
-                    bgcolor=ft.Colors.with_opacity(0.16, c.link),
-                    content=ft.Icon(ft.Icons.ARTICLE_OUTLINED, size=28, color=c.link),
+                    alignment=ui.Alignment.CENTER,
+                    bgcolor=ui.Colors.with_opacity(0.16, c.link),
+                    content=ui.Icon(ui.Icons.ARTICLE_OUTLINED, size=28, color=c.link),
                 ),
-                ft.Column(
+                ui.Column(
                     spacing=Spacing.XS,
                     expand=True,
                     controls=[
-                        ft.Text(app_meta.APP_NAME, size=18,
-                                weight=ft.FontWeight.W_700, color=c.text),
-                        ft.Row(
+                        ui.Text(app_meta.APP_NAME, size=18,
+                                weight=ui.FontWeight.W_700, color=c.text),
+                        ui.Row(
                             spacing=Spacing.MD,
                             controls=[
                                 _badge(c, f"v{version}", c.link),
-                                ft.Text(app_meta.APP_TAGLINE, size=12, color=c.muted),
+                                ui.Text(app_meta.APP_TAGLINE, size=12, color=c.muted),
                             ],
                         ),
                     ],
@@ -1124,20 +1124,20 @@ def _about_panel(theme_mode: ft.ThemeMode, on_open_url=None, on_copy=None) -> ft
         ),
     )
 
-    version_rows: list[ft.Control] = [
-        _about_row(c, ft.Icons.TAG, "版本", version,
+    version_rows: list[ui.Control] = [
+        _about_row(c, ui.Icons.TAG, "版本", version,
                    on_copy_value=(lambda v: on_copy(v)) if on_copy else None,
                    tooltip="复制版本号"),
-        _about_row(c, ft.Icons.MEMORY, "运行环境", app_meta.runtime_summary(),
+        _about_row(c, ui.Icons.MEMORY, "运行环境", app_meta.runtime_summary(),
                    on_copy_value=(lambda v: on_copy(v)) if on_copy else None,
                    tooltip="复制运行环境"),
-        _about_row(c, ft.Icons.FINGERPRINT, "作者", app_meta.APP_AUTHOR),
-        _about_row(c, ft.Icons.BALANCE, "开源许可", app_meta.APP_LICENSE),
+        _about_row(c, ui.Icons.FINGERPRINT, "作者", app_meta.APP_AUTHOR),
+        _about_row(c, ui.Icons.BALANCE, "开源许可", app_meta.APP_LICENSE),
     ]
 
-    support_rows: list[ft.Control] = [
+    support_rows: list[ui.Control] = [
         _about_row(
-            c, ft.Icons.MAIL_OUTLINE, "联系邮箱",
+            c, ui.Icons.MAIL_OUTLINE, "联系邮箱",
             email or "未配置",
             on_open=(lambda v: on_open_url(app_meta.mailto(v)))
             if (on_open_url and email) else None,
@@ -1145,14 +1145,14 @@ def _about_panel(theme_mode: ft.ThemeMode, on_open_url=None, on_copy=None) -> ft
             tooltip="用邮件客户端写信",
         ),
         _about_row(
-            c, ft.Icons.GROUPS_OUTLINED, "官方社群",
+            c, ui.Icons.GROUPS_OUTLINED, "官方社群",
             community or "未配置",
             on_open=(lambda v: on_open_url(v))
             if (on_open_url and community) else None,
             on_copy_value=(lambda v: on_copy(v)) if (on_copy and community) else None,
         ),
         _about_row(
-            c, ft.Icons.MENU_BOOK_OUTLINED, "用户手册",
+            c, ui.Icons.MENU_BOOK_OUTLINED, "用户手册",
             manual or "未配置",
             on_open=(lambda v: on_open_url(v))
             if (on_open_url and manual) else None,
@@ -1160,16 +1160,16 @@ def _about_panel(theme_mode: ft.ThemeMode, on_open_url=None, on_copy=None) -> ft
         ),
     ]
 
-    link_rows: list[ft.Control] = [
+    link_rows: list[ui.Control] = [
         _about_row(
-            c, getattr(ft.Icons, icon_name), title, url,
+            c, getattr(ui.Icons, icon_name), title, url,
             on_open=(lambda v: on_open_url(v)) if on_open_url else None,
             on_copy_value=(lambda v: on_copy(v)) if on_copy else None,
         )
         for icon_name, title, url in app_meta.EXTRA_LINKS
     ]
 
-    return ft.Column(
+    return ui.Column(
         spacing=Spacing.XXL,
         controls=[
             hero,

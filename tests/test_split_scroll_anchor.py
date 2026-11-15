@@ -24,8 +24,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import flet as ft
 import pytest
+from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

@@ -9,13 +9,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flet as ft
 import pytest
+from ui import ft
 
 import parser
-from views.doc_search import compute_doc_matches
 from views._spans import decorate_search_hits
-
+from views.doc_search import compute_doc_matches
 
 
 def _span(text: str) -> ft.TextSpan:

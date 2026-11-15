@@ -40,7 +40,7 @@
 import asyncio
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 import parser
 from models.document import BlockType, Line
@@ -70,7 +70,7 @@ def _data_table2_cls():
         try:
             from flet_datatable2 import DataTable2
         except Exception:  # pragma: no cover
-            from flet import DataTable as DataTable2
+            from ui import DataTable as DataTable2
         _DataTable2 = DataTable2
     return _DataTable2
 
@@ -165,7 +165,7 @@ def _cell_text(cell: str) -> str:
     return cell.strip() or "\u00a0"  # 不换行空格：确保空单元格有可测量宽度
 
 
-def _render_cell_spans(cell_text: str, base_size: int = 14) -> list[ft.TextSpan]:
+def _render_cell_spans(cell_text: str, base_size: int = 14) -> list[ui.TextSpan]:
     """把单元格文本解析为行内 markdown 并渲染为 TextSpan 列表（Typora 式）。
 
     复用 parse_inline + segment_to_span：**bold** *italic* `code` ~~strike~~
@@ -176,15 +176,15 @@ def _render_cell_spans(cell_text: str, base_size: int = 14) -> list[ft.TextSpan]
     """
     text = cell_text.strip()
     if not text:
-        return [ft.TextSpan(text="\u00a0", style=ft.TextStyle(size=base_size))]
+        return [ui.TextSpan(text="\u00a0", style=ui.TextStyle(size=base_size))]
     segs = parser.parse_inline(text)
-    spans: list[ft.TextSpan] = []
+    spans: list[ui.TextSpan] = []
     for i, seg in enumerate(segs):
         spans.append(segment_to_span(seg, i, on_activate=None, base_size=base_size))
-    return spans or [ft.TextSpan(text=text, style=ft.TextStyle(size=base_size))]
+    return spans or [ui.TextSpan(text=text, style=ui.TextStyle(size=base_size))]
 
 
-def _cell_tooltip(spans: list[ft.TextSpan]) -> str | None:
+def _cell_tooltip(spans: list[ui.TextSpan]) -> str | None:
     """单元格被省略号裁切时的悬停提示文本；内容短到不会裁切时返回 None。
 
     取**渲染后**的可见文本（markdown 标记已折叠、链接显示 label），与用户看到的
@@ -199,7 +199,7 @@ def _cell_tooltip(spans: list[ft.TextSpan]) -> str | None:
 
 
 def _safe_color(color: str, opacity: float) -> str:
-    return ft.Colors.with_opacity(opacity, color)
+    return ui.Colors.with_opacity(opacity, color)
 
 
 def _align_of(sep_cell: str) -> str:
@@ -211,33 +211,33 @@ def _align_of(sep_cell: str) -> str:
     return "left"
 
 
-def _align_text_align(align: str) -> ft.TextAlign:
+def _align_text_align(align: str) -> ui.TextAlign:
     return {
-        "left": ft.TextAlign.LEFT,
-        "center": ft.TextAlign.CENTER,
-        "right": ft.TextAlign.RIGHT,
-    }.get(align, ft.TextAlign.LEFT)
+        "left": ui.TextAlign.LEFT,
+        "center": ui.TextAlign.CENTER,
+        "right": ui.TextAlign.RIGHT,
+    }.get(align, ui.TextAlign.LEFT)
 
 
-def _align_container(align: str) -> ft.Alignment:
+def _align_container(align: str) -> ui.Alignment:
     """Container 内容对齐：控制 Text 块在单元格内的水平位置。
 
     Text 无 expand=True 时只占内容宽度，text_align 无空间生效。
     通过 Container.alignment 把 Text 块整体左/中/右对齐。
     """
     return {
-        "left": ft.Alignment.CENTER_LEFT,
-        "center": ft.Alignment.CENTER,
-        "right": ft.Alignment.CENTER_RIGHT,
-    }.get(align, ft.Alignment.CENTER_LEFT)
+        "left": ui.Alignment.CENTER_LEFT,
+        "center": ui.Alignment.CENTER,
+        "right": ui.Alignment.CENTER_RIGHT,
+    }.get(align, ui.Alignment.CENTER_LEFT)
 
 
 def _align_icon(align: str) -> str:
     return {
-        "left": ft.Icons.FORMAT_ALIGN_LEFT,
-        "center": ft.Icons.FORMAT_ALIGN_CENTER,
-        "right": ft.Icons.FORMAT_ALIGN_RIGHT,
-    }.get(align, ft.Icons.FORMAT_ALIGN_LEFT)
+        "left": ui.Icons.FORMAT_ALIGN_LEFT,
+        "center": ui.Icons.FORMAT_ALIGN_CENTER,
+        "right": ui.Icons.FORMAT_ALIGN_RIGHT,
+    }.get(align, ui.Icons.FORMAT_ALIGN_LEFT)
 
 
 # ---------------------------------------------------------------------------
@@ -245,18 +245,18 @@ def _align_icon(align: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@ft.memo
-@ft.component
+@ui.memo
+@ui.component
 def TableView(
     lines: list[Line],
     line_idx: int,
     content_width: float | None = None,
-    clipboard_ref: ft.Ref | None = None,
+    clipboard_ref: ui.Ref | None = None,
     on_change_cell: Callable[[int, int, str], None] | None = None,
     on_table_op: Callable[[str, dict], None] | None = None,
     on_table_focus: Callable[[], None] | None = None,
     on_table_blur: Callable[[], None] | None = None,
-    table_nav_ref: ft.Ref | None = None,
+    table_nav_ref: ui.Ref | None = None,
     is_current_line: bool = False,
     # set_block(TABLE) 创建后传入 table_focus_li，触发 use_effect 自动聚焦表头首格
     auto_focus_li: int | None = None,
@@ -274,7 +274,7 @@ def TableView(
     # 单元格背景、表头色、边框色不刷新。通过 theme_mode 变化触发 memo 失效，
     # 重新执行函数体取色。TableView 内部不读取此值（直接读 page.theme_mode，
     # 已由 App 在渲染期同步写入），仅作 memo 触发用。
-    theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
+    theme_mode: ui.ThemeMode = ui.ThemeMode.LIGHT,
 ):
     """自管理的表格编辑组件（独立岛屿，不使用 active/draft 系统）。
 
@@ -286,16 +286,16 @@ def TableView(
     驱动显示，无需外部重渲染，memo 跳过以保 IME/编辑流畅。
     """
     c = _current_colors()
-    page = ft.context.page
-    is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
+    page = ui.context.page
+    is_dark = page is not None and page.theme_mode == ui.ThemeMode.DARK
     header_idx, sep_idx, row_indices, rows, aligns = _parse_table_lines(lines, line_idx)
     if not rows:
-        return ft.Container()
+        return ui.Container()
 
     normalized = _normalize_rows(rows)
     col_count = len(normalized[0]) if normalized else 0
     if col_count == 0:
-        return ft.Container()
+        return ui.Container()
 
     aligns = [
         _align_of(aligns[i]) if i < len(aligns) else "left" for i in range(col_count)
@@ -304,19 +304,19 @@ def TableView(
     body_rows = normalized[1:] if len(normalized) > 1 else []
 
     # ---- 内部状态 ----
-    edit_cell, set_edit_cell = ft.use_state(None)  # (line_idx, col_idx) | None
-    edit_draft, set_edit_draft = ft.use_state("")
-    edit_draft_ref = ft.use_ref("")
+    edit_cell, set_edit_cell = ui.use_state(None)  # (line_idx, col_idx) | None
+    edit_draft, set_edit_draft = ui.use_state("")
+    edit_draft_ref = ui.use_ref("")
     # 复制按钮反馈：复制成功后图标切换为 ✓ 1.2s 后复位（与代码块复制按钮一致）
-    copied, set_copied = ft.use_state(False)
+    copied, set_copied = ui.use_state(False)
     edit_draft_ref.current = edit_draft
-    pending_blur_ref = ft.use_ref(False)
-    nav_seq, set_nav_seq = ft.use_state(0)
-    pending_nav, set_pending_nav = ft.use_state(None)  # ("new_row", col_idx) | None
+    pending_blur_ref = ui.use_ref(False)
+    nav_seq, set_nav_seq = ui.use_state(0)
+    pending_nav, set_pending_nav = ui.use_state(None)  # ("new_row", col_idx) | None
     # 导航守卫：_start_edit 切换单元格时设为 True，阻止旧 TextField 卸载触发的
     # on_blur 退出编辑模式（Tab/Enter 导航、点击新单元格均会触发重渲染→旧 field 卸载）。
     # 0.1s 后自动复位，允许真正的失焦（点击表格外部）正常退出。
-    nav_guard_ref = ft.use_ref(False)
+    nav_guard_ref = ui.use_ref(False)
 
     # ---- 辅助方法 ----
     def _cell_value(li: int, ci: int) -> str:
@@ -341,7 +341,7 @@ def TableView(
         if on_table_focus is not None:
             on_table_focus()
         # 延迟复位守卫：等待 on_blur 触发窗口过去后恢复
-        page = ft.context.page
+        page = ui.context.page
         if page is not None:
 
             async def _reset_guard():
@@ -451,7 +451,7 @@ def TableView(
                 if on_table_blur is not None:
                     on_table_blur()
 
-        page = ft.context.page
+        page = ui.context.page
         if page is not None:
             page.run_task(_deferred)
 
@@ -460,7 +460,7 @@ def TableView(
         _move_down()
 
     # ---- 编辑态底面（表头与数据格共用一份实现）----
-    def _cell_edit_surface(ci: int, *, key: str, bold: bool = False) -> ft.Container:
+    def _cell_edit_surface(ci: int, *, key: str, bold: bool = False) -> ui.Container:
         """单元格编辑态：一张**铺满整格**的底面 + 一个透明输入框。
 
         表头与数据格只差字重与 key 前缀，故共用一份实现 —— 三态对齐/铺满这两条
@@ -480,28 +480,28 @@ def TableView(
         一旦 `filled=True`，它的 InputDecorator 会在行首**自己**多让出一段内缩
         （真机实测 4 逻辑 px），文字立刻右移，这里就得再补一条减法。
         """
-        return ft.Container(
-            content=ft.TextField(
+        return ui.Container(
+            content=ui.TextField(
                 key=key,
                 value=edit_draft,
                 autofocus=True,
-                border=ft.NoInputBorder(),
+                border=ui.NoInputBorder(),
                 # **输入框自身不上色**：底色只由外层底面一处提供。这里若再叠一层
                 # fill，两层叠加处会重新变成一个"格中格"的小方块（正是本轮的 bug）。
                 # 与 views/code_block.py 的编辑框同一做法（filled=False + 透明底）。
                 filled=False,
-                bgcolor=ft.Colors.TRANSPARENT,
+                bgcolor=ui.Colors.TRANSPARENT,
                 dense=True,
                 # 内边距与表头/数据格的浏览态**同值**（`_CELL_PAD_*`）：三态字形
                 # 左缘落在同一条竖线上，点进编辑不跳字。
-                content_padding=ft.Padding.symmetric(
+                content_padding=ui.Padding.symmetric(
                     horizontal=_CELL_PAD_H, vertical=_CELL_PAD_V
                 ),
-                text_style=ft.TextStyle(
+                text_style=ui.TextStyle(
                     font_family=FONT_MAIN,
                     color=c.text,
                     size=_CELL_FONT,
-                    weight=ft.FontWeight.W_600 if bold else ft.FontWeight.NORMAL,
+                    weight=ui.FontWeight.W_600 if bold else ui.FontWeight.NORMAL,
                 ),
                 text_align=_align_text_align(aligns[ci]),
                 cursor_color=c.link,
@@ -511,7 +511,7 @@ def TableView(
                 on_blur=lambda e: _on_blur(),
                 on_focus=lambda e: on_table_focus() if on_table_focus else None,
             ),
-            alignment=ft.Alignment.CENTER,
+            alignment=ui.Alignment.CENTER,
             bgcolor=_safe_color(c.link, _EDIT_CELL_TINT),
             # 不留圆角：单元格是网格里的一格，"铺满"才是这一格的语义；圆角会在四角
             # 露出底色，又变回"一格里的一个色块"。表格自身有 border_radius +
@@ -544,7 +544,7 @@ def TableView(
                 _start_edit(new_row_indices[-1], col_idx)
         set_pending_nav(None)
 
-    ft.use_effect(_resolve_pending_nav, [pending_nav])
+    ui.use_effect(_resolve_pending_nav, [pending_nav])
 
     # ---- 表格创建后自动聚焦表头首格（set_block(TABLE) 触发）----
     def _auto_focus_first_cell():
@@ -557,7 +557,7 @@ def TableView(
         ):
             _start_edit(header_idx, 0)
 
-    ft.use_effect(_auto_focus_first_cell, [auto_focus_li])
+    ui.use_effect(_auto_focus_first_cell, [auto_focus_li])
 
     # ---- 当前选中行/列（工具栏操作目标）----
     sel = edit_cell or ((row_indices[-1] if row_indices else header_idx, col_count - 1))
@@ -635,7 +635,7 @@ def TableView(
         if not is_header:
             items.extend(
                 [
-                    ft.PopupMenuItem(
+                    ui.PopupMenuItem(
                         content="上方插入行",
                         on_click=lambda e: (
                             on_table_op(
@@ -645,7 +645,7 @@ def TableView(
                             else None
                         ),
                     ),
-                    ft.PopupMenuItem(
+                    ui.PopupMenuItem(
                         content="下方插入行",
                         on_click=lambda e: (
                             on_table_op(
@@ -655,7 +655,7 @@ def TableView(
                             else None
                         ),
                     ),
-                    ft.PopupMenuItem(
+                    ui.PopupMenuItem(
                         content="删除行",
                         on_click=lambda e: (
                             on_table_op("delete_row", {"li": li})
@@ -663,12 +663,12 @@ def TableView(
                             else None
                         ),
                     ),
-                    ft.PopupMenuItem(),
+                    ui.PopupMenuItem(),
                 ]
             )
         items.extend(
             [
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="左侧插入列",
                     on_click=lambda e: (
                         on_table_op("add_col", {"table_start": line_idx, "col_idx": ci})
@@ -676,7 +676,7 @@ def TableView(
                         else None
                     ),
                 ),
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="右侧插入列",
                     on_click=lambda e: (
                         on_table_op(
@@ -686,7 +686,7 @@ def TableView(
                         else None
                     ),
                 ),
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="删除列",
                     on_click=lambda e: (
                         on_table_op(
@@ -696,8 +696,8 @@ def TableView(
                         else None
                     ),
                 ),
-                ft.PopupMenuItem(),
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(),
+                ui.PopupMenuItem(
                     content="左对齐",
                     on_click=lambda e: (
                         on_table_op(
@@ -712,7 +712,7 @@ def TableView(
                         else None
                     ),
                 ),
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="居中对齐",
                     on_click=lambda e: (
                         on_table_op(
@@ -727,7 +727,7 @@ def TableView(
                         else None
                     ),
                 ),
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="右对齐",
                     on_click=lambda e: (
                         on_table_op(
@@ -742,11 +742,11 @@ def TableView(
                         else None
                     ),
                 ),
-                ft.PopupMenuItem(),
+                ui.PopupMenuItem(),
                 # 删除整表：与工具栏的垃圾桶按钮同一入口。放在**最末**并用分隔线
                 # 隔开——它是唯一会一次删掉整块内容的菜单项，不能与"删一行/删一列"
                 # 混在相邻位置（误点代价最大）。
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     content="删除表格",
                     on_click=lambda e: (
                         on_table_op("delete_table", {"table_start": line_idx})
@@ -767,28 +767,28 @@ def TableView(
             # 不变量因此只有一处可改。
             label = _cell_edit_surface(ci, key=f"th-edit-{nav_seq}", bold=True)
         else:
-            inner = ft.Container(
+            inner = ui.Container(
                 # 表头**只有文字**：曾经此处前置了一个常驻对齐图标（12px + 4px 间距），
                 # 它把表头文字右推 16 逻辑 px，而数据格只缩进 `_CELL_PAD_H` —— 真机
                 # 实测表头"名称"的墨迹左缘比数据"Alpha"右移 21 物理 px（14 逻辑 px），
                 # 点击进编辑（编辑框按 `_CELL_PAD_H` 缩进）时又跳回来，三态两处错位。
                 # 列对齐状态改由工具栏承载：当前列的图标 + 下拉都在那条 22px 的行上。
-                content=ft.Text(
+                content=ui.Text(
                     value=_cell_text(header_row[ci]),
-                    style=ft.TextStyle(
+                    style=ui.TextStyle(
                         font_family=FONT_MAIN,
-                        weight=ft.FontWeight.W_600,
+                        weight=ui.FontWeight.W_600,
                         color=c.text,
                         size=_CELL_FONT,
                     ),
                     text_align=_align_text_align(aligns[ci]),
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                 ),
                 # 与数据格同一套对齐方式（Container.alignment）：Text 无 expand 时
                 # text_align 无空间生效，数据行靠这一层做左/中/右。
                 alignment=_align_container(aligns[ci]),
-                padding=ft.Padding.symmetric(
+                padding=ui.Padding.symmetric(
                     horizontal=_CELL_PAD_H, vertical=_CELL_PAD_V
                 ),
                 border_radius=Radius.MD,
@@ -797,35 +797,35 @@ def TableView(
                 # 之间有 column_spacing 的缝隙，逐格铺色会断成一串小方块，看不出是一列。
                 bgcolor=_safe_color(c.link, 0.10) if ci == active_ci else None,
             )
-            label = ft.ContextMenu(
-                content=ft.GestureDetector(
+            label = ui.ContextMenu(
+                content=ui.GestureDetector(
                     content=inner,
                     on_tap=lambda e, ci=ci: _start_edit(header_idx, ci),
-                    mouse_cursor=ft.MouseCursor.CLICK,
+                    mouse_cursor=ui.MouseCursor.CLICK,
                 ),
                 secondary_items=_cell_context_items(header_idx, ci, is_header=True),
             )
-        columns.append(ft.DataColumn(label=label))
+        columns.append(ui.DataColumn(label=label))
 
     # ---- 渲染：数据行 ----
-    data_rows: list[ft.DataRow] = []
+    data_rows: list[ui.DataRow] = []
     for ri, source_li in enumerate(row_indices):
         row = normalized[ri + 1] if ri + 1 < len(normalized) else [""] * col_count
-        cells: list[ft.DataCell] = []
+        cells: list[ui.DataCell] = []
         for ci in range(col_count):
             is_editing = edit_cell == (source_li, ci)
             if is_editing:
                 content = _cell_edit_surface(ci, key=f"td-edit-{nav_seq}")
             else:
                 spans = _render_cell_spans(row[ci], base_size=_CELL_FONT)
-                inner = ft.Container(
-                    content=ft.Text(
+                inner = ui.Container(
+                    content=ui.Text(
                         # 行内 markdown 渲染：**bold** *italic* `code` ~~strike~~
                         # ==hl== [link](url) 等语法渲染为带样式 TextSpan，标记折叠
                         # 仅显示内容（Typora 式）。外层 style 作为基础样式兜底，
                         # segment_style 对 TEXT 段仅设 size+color，font_family 由此继承。
                         spans=spans,
-                        style=ft.TextStyle(
+                        style=ui.TextStyle(
                             font_family=FONT_MAIN,
                             color=c.text,
                             size=_CELL_FONT,
@@ -836,14 +836,14 @@ def TableView(
                         # 被横向切半（真机截图里"请求分发"只剩上半个字），既不是完整内容
                         # 也没有省略号，比直接裁掉更难看。完整内容由 tooltip 承载。
                         max_lines=1,
-                        overflow=ft.TextOverflow.ELLIPSIS,
+                        overflow=ui.TextOverflow.ELLIPSIS,
                     ),
                     # Container.alignment：控制 Text 块在单元格内的水平位置。
                     # Text 无 expand=True 只占内容宽度，text_align 无空间生效，
                     # 仅靠 text_align 数据行永远左对齐。表头与数据格都走这一层，
                     # 两者的文字左缘才会在同一条竖线上。
                     alignment=_align_container(aligns[ci]),
-                    padding=ft.Padding.symmetric(
+                    padding=ui.Padding.symmetric(
                         horizontal=_CELL_PAD_H, vertical=_CELL_PAD_V
                     ),
                     border_radius=Radius.MD,
@@ -856,12 +856,12 @@ def TableView(
                 # 由 Flutter InkWell 拦截，命中区域覆盖整个单元格（不受 content
                 # 尺寸影响）；GestureDetector 只命中 inner Container（Text+padding），
                 # 空单元格 Text 为 " " 极窄，几乎无法点击进入编辑。
-                content = ft.ContextMenu(
+                content = ui.ContextMenu(
                     content=inner,
                     secondary_items=_cell_context_items(source_li, ci, is_header=False),
                 )
             cells.append(
-                ft.DataCell(
+                ui.DataCell(
                     content=content,
                     # 编辑态不绑 on_tap：避免点击当前编辑单元格时重复触发
                     # _start_edit 导致 TextField 重建（key 变化）、光标跳动。
@@ -871,7 +871,7 @@ def TableView(
                 )
             )
         data_rows.append(
-            ft.DataRow(
+            ui.DataRow(
                 cells=cells,
                 # **行底色用状态映射**，不是单一颜色：
                 # `ft.DataRow.color` 是 `ControlStateValue`，Flutter 侧按状态取值，
@@ -883,17 +883,17 @@ def TableView(
                 color={
                     # 当前行（光标所在行）：整条行带染淡蓝 —— 宽表里"我在哪一行"
                     # 由它回答，"在哪一列"由表头色片回答。
-                    ft.ControlState.DEFAULT: (
+                    ui.ControlState.DEFAULT: (
                         _safe_color(c.link, 0.07)
                         if source_li == active_li
                         else _safe_color(
                             c.text, 0.015 if ri % 2 == 0 else 0.0
                         )
                     ),
-                    ft.ControlState.HOVERED: _safe_color(
+                    ui.ControlState.HOVERED: _safe_color(
                         c.link, 0.11 if source_li == active_li else 0.05
                     ),
-                    ft.ControlState.PRESSED: _safe_color(
+                    ui.ControlState.PRESSED: _safe_color(
                         c.link, 0.14 if source_li == active_li else 0.08
                     ),
                 },
@@ -917,7 +917,7 @@ def TableView(
         tooltip: str = "",
         enabled: bool = True,
         color: str | None = None,
-    ) -> ft.Control:
+    ) -> ui.Control:
         """紧凑工具栏按钮（图标 / 文字 / 图标+文字 通用）。
 
         `enabled=False`：不挂 `on_click` 且 `ink=False`（Material 的"禁用"语义 =
@@ -927,30 +927,30 @@ def TableView(
         fg = color or c.text
         if not enabled:
             fg = _safe_color(c.muted, 0.55)
-        parts: list[ft.Control] = []
+        parts: list[ui.Control] = []
         if icon is not None:
-            parts.append(ft.Icon(icon, size=13, color=fg))
+            parts.append(ui.Icon(icon, size=13, color=fg))
         if label:
-            parts.append(ft.Text(label, size=12, color=fg))
-        return ft.Container(
+            parts.append(ui.Text(label, size=12, color=fg))
+        return ui.Container(
             height=_TB_H,
             border_radius=Radius.SM,
-            padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=0),
-            alignment=ft.Alignment.CENTER,
+            padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=0),
+            alignment=ui.Alignment.CENTER,
             ink=enabled,
             on_click=(lambda e: on_click()) if enabled else None,
             tooltip=tooltip or label,
-            content=ft.Row(
+            content=ui.Row(
                 controls=parts,
                 spacing=Spacing.XS,
                 tight=True,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
         )
 
-    def _tb_sep() -> ft.Control:
+    def _tb_sep() -> ui.Control:
         """组间细分隔条：把"加"与"减"两族分开，避免四个按钮连成一片。"""
-        return ft.Container(
+        return ui.Container(
             width=1, height=12, bgcolor=_safe_color(c.border, 0.9)
         )
 
@@ -958,9 +958,9 @@ def TableView(
     # `ft.Dropdown` —— 它恒为 48px，是工具栏行高的唯一决定项（见上方说明）。
     # 无活动单元格时置灰：对齐作用于"光标所在列"，没有当前列就不该能点。
     current_align = aligns[sel_ci] if sel_ci < len(aligns) else "left"
-    align_button = ft.PopupMenuButton(
+    align_button = ui.PopupMenuButton(
         height=_TB_H,
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=0),
+        padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=0),
         tooltip=(
             "设置当前列对齐"
             if has_active
@@ -968,34 +968,34 @@ def TableView(
         ),
         disabled=not has_active,
         # UNDER：菜单向下展开，不遮住表头本身（默认 OVER 会盖住正在看的那一行）
-        menu_position=ft.PopupMenuPosition.UNDER,
-        shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=Radius.SM),
-            padding=ft.Padding.all(0),
+        menu_position=ui.PopupMenuPosition.UNDER,
+        shape=ui.RoundedRectangleBorder(radius=Radius.MD),
+        style=ui.ButtonStyle(
+            shape=ui.RoundedRectangleBorder(radius=Radius.SM),
+            padding=ui.Padding.all(0),
             # 淡底 pill：让"当前列对齐"在紧凑工具栏里成为一个可点的实体
             # （VSCode 的 language mode 指示器同理），不是一段悬空的图标
-            bgcolor=ft.Colors.with_opacity(0.05, c.text),
-            overlay_color=ft.Colors.with_opacity(0.10, c.text),
+            bgcolor=ui.Colors.with_opacity(0.05, c.text),
+            overlay_color=ui.Colors.with_opacity(0.10, c.text),
         ),
-        content=ft.Row(
+        content=ui.Row(
             controls=[
-                ft.Icon(
+                ui.Icon(
                     _align_icon(current_align),
                     size=13,
                     color=c.text if has_active else _safe_color(c.muted, 0.55),
                 ),
-                ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=15, color=c.muted),
+                ui.Icon(ui.Icons.ARROW_DROP_DOWN, size=15, color=c.muted),
             ],
             spacing=0,
             tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
         items=[
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 # 压缩项高（默认 48）：三项的菜单不必铺满一屏
                 height=28,
-                content=ft.Text(value=text, size=12),
+                content=ui.Text(value=text, size=12),
                 # 勾选当前列的对齐：菜单一打开就能确认状态，无需记忆
                 checked=key == current_align,
                 on_click=lambda e, k=key: _do_set_align(k),
@@ -1019,24 +1019,24 @@ def TableView(
             if page is not None and not copied and clipboard_ref is not None
             else None
         ),
-        icon=ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+        icon=ui.Icons.CHECK if copied else ui.Icons.CONTENT_COPY,
         tooltip="已复制" if copied else "复制表格 Markdown（可直接粘到别处）",
-        color=ft.Colors.GREEN if copied else c.muted,
+        color=ui.Colors.GREEN if copied else c.muted,
     )
     # 删除整表：此前**完全没有入口** —— 只能切到原文模式手动删（工具栏只有删行/删列，
     # 右键菜单也没有）。删掉多行后光标无处可落，故 op 里用一行空段落替换整张表。
     delete_btn = _tb_btn(
         "",
         _do_delete_table,
-        icon=ft.Icons.DELETE_OUTLINE,
+        icon=ui.Icons.DELETE_OUTLINE,
         tooltip="删除整张表格（可 Ctrl+Z 撤销）",
         color=c.muted,
     )
 
-    toolbar = ft.Row(
+    toolbar = ui.Row(
         controls=[
-            ft.Icon(ft.Icons.TABLE_ROWS_ROUNDED, size=14, color=c.muted),
-            ft.Text(
+            ui.Icon(ui.Icons.TABLE_ROWS_ROUNDED, size=14, color=c.muted),
+            ui.Text(
                 # 显式标注"行/列"：原来的 `4 × 4` 两个数字同形，读者无法判断哪个是
                 # 行、哪个是列；行数**含表头行**（tooltip 里说明）。
                 f"{len(body_rows) + 1} 行 × {col_count} 列",
@@ -1045,21 +1045,21 @@ def TableView(
                 font_family=FONT_MONO,
                 tooltip="表格尺寸（行数含表头行）",
             ),
-            ft.Container(expand=True),
+            ui.Container(expand=True),
             _tb_btn(
-                "行", _do_add_row, icon=ft.Icons.ADD, tooltip="在表格末尾新增一行"
+                "行", _do_add_row, icon=ui.Icons.ADD, tooltip="在表格末尾新增一行"
             ),
             _tb_btn(
                 "列",
                 _do_add_col,
-                icon=ft.Icons.ADD,
+                icon=ui.Icons.ADD,
                 tooltip="在当前列右侧插入一列（未选中单元格时追加到末尾）",
             ),
             _tb_sep(),
             _tb_btn(
                 "行",
                 _do_delete_row,
-                icon=ft.Icons.REMOVE,
+                icon=ui.Icons.REMOVE,
                 tooltip="删除光标所在行（仅剩一行数据时清空其内容）"
                 if has_active
                 else "先点击一个单元格，再删除它所在的行",
@@ -1068,7 +1068,7 @@ def TableView(
             _tb_btn(
                 "列",
                 _do_delete_col,
-                icon=ft.Icons.REMOVE,
+                icon=ui.Icons.REMOVE,
                 tooltip="删除光标所在列"
                 if has_active and col_count > 1
                 else (
@@ -1080,13 +1080,13 @@ def TableView(
             ),
             _tb_sep(),
             align_button,
-            ft.Container(expand=True),
+            ui.Container(expand=True),
             copy_btn,
             delete_btn,
         ],
         spacing=Spacing.XS,
         height=_TB_H,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
     # ---- DataTable2 ----
@@ -1104,14 +1104,14 @@ def TableView(
         data_row_height=_DATA_ROW_H,
         heading_row_height=_HEAD_ROW_H,
         divider_thickness=1,
-        horizontal_lines=ft.BorderSide(1, _safe_color(c.border, 0.08)),
-        vertical_lines=ft.BorderSide(1, _safe_color(c.border, 0.06)),
-        border=ft.TableBorder.all(
+        horizontal_lines=ui.BorderSide(1, _safe_color(c.border, 0.08)),
+        vertical_lines=ui.BorderSide(1, _safe_color(c.border, 0.06)),
+        border=ui.TableBorder.all(
             1,
             _safe_color(c.border, 0.10),
         )
-        if hasattr(ft, "TableBorder")
-        else ft.Border.all(
+        if hasattr(ui, "TableBorder")
+        else ui.Border.all(
             1,
             _safe_color(c.border, 0.10),
         ),
@@ -1130,7 +1130,7 @@ def TableView(
             getattr(c, "surface", c.code_bg),
             0.96,
         ),
-        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+        clip_behavior=ui.ClipBehavior.ANTI_ALIAS,
         show_checkbox_column=False,
         fixed_top_rows=1,
         fixed_left_columns=0,
@@ -1143,28 +1143,28 @@ def TableView(
     # is_current_line 高亮
     # 顶部操作区紧凑：移除工具栏与表格间的固定间隔器（Column spacing=0 即贴合），
     # 外层垂直 padding 由 Spacing.LG(8) 收紧至 Spacing.SM(4)，整体顶部高度更紧凑。
-    content = ft.Container(
-        content=ft.Column(
+    content = ui.Container(
+        content=ui.Column(
             controls=[toolbar, table],
             spacing=0,
         ),
         width=float("inf"),
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.XS),
+        padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.XS),
         bgcolor=container_bg,
         border_radius=Radius.XXL,
-        border=ft.Border.all(1, container_border),
+        border=ui.Border.all(1, container_border),
         shadow=card_shadow(Elevation.LOW, is_dark),
     )
 
     if is_current_line:
-        content = ft.Container(
+        content = ui.Container(
             content=content,
-            border=ft.Border.all(
+            border=ui.Border.all(
                 2,
                 _safe_color(c.link, 0.20),
             ),
             border_radius=Radius.XXXL,
-            padding=ft.Padding.all(1),
+            padding=ui.Padding.all(1),
         )
 
     return content

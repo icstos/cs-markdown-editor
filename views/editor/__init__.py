@@ -29,7 +29,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-import flet as ft
+import ui
 
 import parser
 from core.cursor import CursorState
@@ -161,7 +161,7 @@ def _code_enter_after_consumed(
     return state
 
 
-@ft.component
+@ui.component
 def MarkdownEditor(
     document: Document,
     file_path: str | None = None,
@@ -174,11 +174,11 @@ def MarkdownEditor(
     on_export_docx: Callable[[], None] | None = None,
     on_export_pdf: Callable[[], None] | None = None,
     on_dirty_change: Callable[[bool], None] | None = None,
-    nav_ref: ft.Ref | None = None,
-    arrow_repeat_ref: ft.Ref | None = None,
-    clipboard_ref: ft.Ref | None = None,
-    picker_ref: ft.Ref | None = None,
-    theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
+    nav_ref: ui.Ref | None = None,
+    arrow_repeat_ref: ui.Ref | None = None,
+    clipboard_ref: ui.Ref | None = None,
+    picker_ref: ui.Ref | None = None,
+    theme_mode: ui.ThemeMode = ui.ThemeMode.LIGHT,
     on_toggle_theme: Callable[[], None] | None = None,
     settings: dict | None = None,
     on_open_settings: Callable[[], None] | None = None,
@@ -257,79 +257,79 @@ def MarkdownEditor(
     _block_diff_gaps = None if _plain_diff else diff_gaps
 
     # ============ 状态:光标级(替代 active/active_seg/draft)============
-    cursor_li, set_cursor_li = ft.use_state(None)  # 激活行号 | None(浏览态)
-    cursor_off, set_cursor_off = ft.use_state(0)  # 行级 raw 偏移 0..len(line.raw)
-    nav_seq, set_nav_seq = ft.use_state(0)  # 仅撤销/重做递增,强制 TextField 重建
+    cursor_li, set_cursor_li = ui.use_state(None)  # 激活行号 | None(浏览态)
+    cursor_off, set_cursor_off = ui.use_state(0)  # 行级 raw 偏移 0..len(line.raw)
+    nav_seq, set_nav_seq = ui.use_state(0)  # 仅撤销/重做递增,强制 TextField 重建
     # 光标重聚焦触发器:点击同一位置时 cursor_li/cursor_off 不变,use_effect 不触发,
     # 但点击已使 cursor TextField 失焦。递增此值强制 _focus_cursor_field 重新聚焦。
-    focus_seq, set_focus_seq = ft.use_state(0)
+    focus_seq, set_focus_seq = ui.use_state(0)
     # 软换行触发一次性选区折叠序号：_refocus_on_wrap_change 在换行边界变化时递增，
     # 渲染层据此给 cursor TextField 传 collapsed 选区（清掉 IME 因失焦/重挂载提交并
     # 选中的刚输入文本），use_effect 在下一次渲染前复位为 0（一次性）。
-    wrap_sel_seq, set_wrap_sel_seq = ft.use_state(0)
-    cursor_line, set_cursor_line = ft.use_state(0)  # 最近交互行(供工具栏块级操作)
-    cursor_field_ref = ft.use_ref(None)  # 透明 cursor TextField 引用
+    wrap_sel_seq, set_wrap_sel_seq = ui.use_state(0)
+    cursor_line, set_cursor_line = ui.use_state(0)  # 最近交互行(供工具栏块级操作)
+    cursor_field_ref = ui.use_ref(None)  # 透明 cursor TextField 引用
     # IME 输入会话:on_change 期间不清空 TextField value,用"增量式"编辑同步文档
-    input_session_ref = ft.use_ref({"li": -1, "start_off": -1, "last_value": ""})
+    input_session_ref = ui.use_ref({"li": -1, "start_off": -1, "last_value": ""})
     # value 清空序列号:_end_input_session 递增 → use_effect 触发清空 TextField value
-    clear_value_seq, set_clear_value_seq = ft.use_state(0)
+    clear_value_seq, set_clear_value_seq = ui.use_state(0)
     # cursor TextField value 镜像:重渲染时 Flet 同步 value 到 Flutter,避免
     # value 被重置为空导致 IME 重新触发 on_change(连续输入字符吞没根因)。
-    cursor_field_value, set_cursor_field_value = ft.use_state("")
+    cursor_field_value, set_cursor_field_value = ui.use_state("")
 
     # 光标跟踪(ref 而非 state):避免 on_selection_change 触发重渲染导致光标跳动
-    cursor_ref = ft.use_ref(CursorState())
+    cursor_ref = ui.use_ref(CursorState())
     # 粘贴时抑制 on_blur
-    suppress_blur = ft.use_ref(False)
+    suppress_blur = ui.use_ref(False)
     # 同行移动脉冲节流时间戳(monotonic):_set_cursor 窗口内只重建一次 TextField
-    cursor_pulse_ref = ft.use_ref(0.0)
+    cursor_pulse_ref = ui.use_ref(0.0)
     # 上/下键自驱动重复标志:由 App 传入(KeyDispatcher 与 editor _on_key_up 共享)
-    arrow_repeat_ref = arrow_repeat_ref if arrow_repeat_ref is not None else ft.use_ref(None)
+    arrow_repeat_ref = arrow_repeat_ref if arrow_repeat_ref is not None else ui.use_ref(None)
     # 原文模式
-    raw_mode, set_raw_mode = ft.use_state(False)
-    raw_draft, set_raw_draft = ft.use_state("")
+    raw_mode, set_raw_mode = ui.use_state(False)
+    raw_draft, set_raw_draft = ui.use_state("")
     # ListView ref + 滚动跟踪
-    list_view_ref = ft.use_ref(None)
-    scroll_offset_ref = ft.use_ref(0.0)
-    viewport_h_ref = ft.use_ref(0.0)
-    max_scroll_ref = ft.use_ref(0.0)
+    list_view_ref = ui.use_ref(None)
+    scroll_offset_ref = ui.use_ref(0.0)
+    viewport_h_ref = ui.use_ref(0.0)
+    max_scroll_ref = ui.use_ref(0.0)
     # 视口宽度跟踪:程序尺寸变化时段落自适应宽度
-    viewport_w, set_viewport_w = ft.use_state(0.0)
-    viewport_w_ref = ft.use_ref(0.0)
+    viewport_w, set_viewport_w = ui.use_state(0.0)
+    viewport_w_ref = ui.use_ref(0.0)
     # 行实际渲染高度缓存:{line_idx: height_px}
-    line_heights_ref = ft.use_ref({})
+    line_heights_ref = ui.use_ref({})
     # 行视图窗口上界（窗口化）：已构建的行区间恒为 [0, window_hi)。
     # 0 = 尚未外扩（首屏用 _WINDOW_INITIAL）；由 request_line_window 单调抬高。
-    window_hi, set_window_hi = ft.use_state(0)
+    window_hi, set_window_hi = ui.use_state(0)
     # window_hi 的即时镜像：同一帧内多次请求（连续滚动事件）时防止按陈旧值重复扩窗。
     # 0 表示「尚未外扩」，此时有效上界按 _WINDOW_INITIAL 计算。
-    window_hi_ref = ft.use_ref(0)
+    window_hi_ref = ui.use_ref(0)
     # LineLayoutCache 缓存:跨行拖拽选区精确命中
-    layout_cache_ref = ft.use_ref(None)
+    layout_cache_ref = ui.use_ref(None)
     # 行偏移前缀和缓存
-    _offset_prefix_ref = ft.use_ref(None)
+    _offset_prefix_ref = ui.use_ref(None)
     # 记忆列:垂直导航时记录的 X 像素
-    preferred_col_ref = ft.use_ref(None)
+    preferred_col_ref = ui.use_ref(None)
     # SelectionArea 当前选中的纯文本
-    selection_text_ref = ft.use_ref("")
+    selection_text_ref = ui.use_ref("")
     # 撤销 / 重做栈
-    history_ref = ft.use_ref(EditHistory(max_size=50))
-    restoring = ft.use_ref(False)
-    undo_push_pending = ft.use_ref(True)
+    history_ref = ui.use_ref(EditHistory(max_size=50))
+    restoring = ui.use_ref(False)
+    undo_push_pending = ui.use_ref(True)
     # 向外选区
-    outward_sel, set_outward_sel = ft.use_state(None)
-    outward_sel_ref = ft.use_ref(None)
-    shift_pressed_ref = ft.use_ref(False)
-    ctrl_pressed_ref = ft.use_ref(False)
+    outward_sel, set_outward_sel = ui.use_state(None)
+    outward_sel_ref = ui.use_ref(None)
+    shift_pressed_ref = ui.use_ref(False)
+    ctrl_pressed_ref = ui.use_ref(False)
     # 跳转目标行脉冲高亮
-    flash_li, set_flash_li = ft.use_state(-1)
+    flash_li, set_flash_li = ui.use_state(-1)
     # 代码块 / 表格聚焦
-    code_focus_ref = ft.use_ref(None)
-    code_edit_snapshot = ft.use_ref(None)
-    code_edit_changed = ft.use_ref(False)
+    code_focus_ref = ui.use_ref(None)
+    code_edit_snapshot = ui.use_ref(None)
+    code_edit_changed = ui.use_ref(False)
     # 代码块编辑框光标/选区跟踪：on_code_selection 写入 (value, base, extent)，
     # 供 KeyDispatcher 代码块边界方向键跳出（↑/←/↓/→）判定边界
-    code_caret_ref = ft.use_ref(None)
+    code_caret_ref = ui.use_ref(None)
     # 代码块"外部请求进入编辑态"：(目标行, 序号, 初始光标偏移) | None。
     # 方向键在代码块上/下一行按到边界时由 _navigation 写入，经 _render → LineView
     # 传给 code_block 组件消费一次。
@@ -337,8 +337,8 @@ def MarkdownEditor(
     # 否则组件根本读不到请求（ref 变化不产生渲染）。
     # **请求必须被兑现后立刻作废**（见 `_clear_code_enter`）——它是"一次性待办"，
     # 不是"当前状态"。
-    code_enter_state, set_code_enter_state = ft.use_state(None)
-    code_enter_seq_ref = ft.use_ref(0)
+    code_enter_state, set_code_enter_state = ui.use_state(None)
+    code_enter_seq_ref = ui.use_ref(0)
 
     def _request_code_enter(li: int, off: int) -> None:
         """请求让 li 行的代码块进入编辑态并把光标放在 off。"""
@@ -363,34 +363,34 @@ def MarkdownEditor(
         if new_state is not code_enter_state:
             set_code_enter_state(new_state)
 
-    table_focus_ref = ft.use_ref(None)
-    table_nav_ref = ft.use_ref(None)
+    table_focus_ref = ui.use_ref(None)
+    table_nav_ref = ui.use_ref(None)
     # 表格聚焦 state(修复 table_focus_ref 从未赋值 Bug)
-    table_focus_li, set_table_focus_li = ft.use_state(None)
+    table_focus_li, set_table_focus_li = ui.use_state(None)
     table_focus_ref.current = table_focus_li
     # 块级公式聚焦:浏览态 ft.Markdown 渲染 LaTeX,点击进入编辑态 TextField
-    math_focus_li, set_math_focus_li = ft.use_state(None)
-    math_focus_ref = ft.use_ref(None)
+    math_focus_li, set_math_focus_li = ui.use_state(None)
+    math_focus_ref = ui.use_ref(None)
     math_focus_ref.current = math_focus_li
-    math_field_ref = ft.use_ref(None)
-    math_edit_snapshot = ft.use_ref(None)
-    math_edit_changed = ft.use_ref(False)
+    math_field_ref = ui.use_ref(None)
+    math_edit_snapshot = ui.use_ref(None)
+    math_edit_changed = ui.use_ref(False)
 
     # ============ 多光标(VSCode 式 Alt+Click / Alt+Shift+Click)============
     # secondary_cursors:list[(li, base, extent)],base==extent 表示无选区
     # ref 镜像用于 IME 期间同步读取(避免 set_state 滞后)
-    secondary_cursors, set_secondary_cursors = ft.use_state([])
-    secondary_cursors_ref = ft.use_ref([])
+    secondary_cursors, set_secondary_cursors = ui.use_state([])
+    secondary_cursors_ref = ui.use_ref([])
     secondary_cursors_ref.current = secondary_cursors
     # 版本号:每次 _sync 递增,传给 LineView 强制 ft.memo 失效
     # (ft.memo 对 list 走身份比较,版本号 int 走 == 比较,确保选区变化时所有行刷新)
-    secondary_cursors_version, set_secondary_cursors_version = ft.use_state(0)
+    secondary_cursors_version, set_secondary_cursors_version = ui.use_state(0)
     # Alt 键状态(用于点击分发:Alt+Click 切换副光标)
-    alt_pressed_ref = ft.use_ref(False)
+    alt_pressed_ref = ui.use_ref(False)
     # 粘贴进行中标志:Ctrl+V 时 KeyDispatcher 置 True,handle_char_input 检测到
     # True 时跳过原生 TextField 单行粘贴的 on_change(由 _do_paste_check 走
     # handle_paste 统一处理多行/单行粘贴,避免拼接成一行 + 重复插入)。
-    paste_in_progress_ref = ft.use_ref(False)
+    paste_in_progress_ref = ui.use_ref(False)
 
     # ============ state → ref 镜像(单一编排点)============
     outward_sel_ref.current = outward_sel
@@ -658,7 +658,7 @@ def MarkdownEditor(
             return parser.serialize(document)
         return ""
 
-    _large_doc_draft = ft.use_memo(_build_large_doc_draft, [is_large_doc, _doc_line_count])
+    _large_doc_draft = ui.use_memo(_build_large_doc_draft, [is_large_doc, _doc_line_count])
 
     # 有效渲染模式:用户源码模式 或 大文件强制源码模式
     effective_raw_mode = raw_mode or is_large_doc
@@ -666,7 +666,7 @@ def MarkdownEditor(
     effective_raw_draft = raw_draft if raw_mode else (_large_doc_draft if is_large_doc else "")
 
     # ============ use_memo:向外选区高亮映射 ============
-    _highlight_map = ft.use_memo(
+    _highlight_map = ui.use_memo(
         scroll_cbs["build_highlight_map"], [outward_sel, len(document.lines)]
     )
 
@@ -679,7 +679,7 @@ def MarkdownEditor(
         if wrap_sel_seq > 0:
             set_wrap_sel_seq(0)
 
-    ft.use_effect(_reset_wrap_sel_seq, [wrap_sel_seq])
+    ui.use_effect(_reset_wrap_sel_seq, [wrap_sel_seq])
 
     # ============ use_effect:初始滚动锚点（拆分新视口继承浏览位置）============
     # 拆分开启时右侧是全新挂载的编辑器，其 ListView 默认停在文档首行；而用户
@@ -697,7 +697,7 @@ def MarkdownEditor(
         await asyncio.sleep(0.08)
         await scroll_cbs["safe_scroll_to"](initial_scroll_line, to_top=True)
 
-    ft.use_effect(_apply_initial_scroll, [initial_scroll_line])
+    ui.use_effect(_apply_initial_scroll, [initial_scroll_line])
 
     # ============ use_effect:聚焦 cursor TextField ============
     # 依赖 cursor_li + nav_seq + focus_seq + word_wrap + viewport_w:
@@ -713,10 +713,10 @@ def MarkdownEditor(
     #   所在行视觉行数变化,cursor_px_y 从 0 变 vline_idx*text_h 或反向,TextField
     #   属性大幅更新触发失焦)。此 effect 在 reset_line_heights(下方)之前执行,
     #   line_heights_ref 仍有旧实测高度,_line_built()=True 直接聚焦,无需延迟重试。
-    ft.use_effect(focus_cbs["focus_cursor_field"], [cursor_li, nav_seq, focus_seq, word_wrap, viewport_w])
+    ui.use_effect(focus_cbs["focus_cursor_field"], [cursor_li, nav_seq, focus_seq, word_wrap, viewport_w])
 
     # ============ use_effect:文档行数变化时清空行高缓存 ============
-    ft.use_effect(scroll_cbs["reset_line_heights"], [len(document.lines), word_wrap, viewport_w])
+    ui.use_effect(scroll_cbs["reset_line_heights"], [len(document.lines), word_wrap, viewport_w])
 
     # ============ use_effect:侧边栏拖拽结束后同步 viewport_w ============
     # 拖拽中 _on_content_resize 跳过了 set_viewport_w(page.sidebar_dragging=True,
@@ -725,13 +725,13 @@ def MarkdownEditor(
     # →此处 effect 触发,一次性 set_viewport_w 同步最终宽度。拖拽中即使 settings
     # 变化触发 effect,也因 sidebar_dragging=True 跳过,避免中途换行重算。
     def _sync_viewport_after_sidebar_drag():
-        page = ft.context.page
+        page = ui.context.page
         if getattr(page, "sidebar_dragging", False):
             return
         if viewport_w_ref.current != viewport_w and viewport_w_ref.current > 0:
             set_viewport_w(viewport_w_ref.current)
 
-    ft.use_effect(_sync_viewport_after_sidebar_drag, [settings])
+    ui.use_effect(_sync_viewport_after_sidebar_drag, [settings])
 
     # ============ use_effect:状态栏光标位置命令式上报 ============
     # 依赖 cursor_li/cursor_off/cursor_line/nav_seq:覆盖所有光标状态变化路径
@@ -750,7 +750,7 @@ def MarkdownEditor(
         if res is not None:
             await res
 
-    ft.use_effect(_report_cursor, [cursor_li, cursor_off, cursor_line, nav_seq])
+    ui.use_effect(_report_cursor, [cursor_li, cursor_off, cursor_line, nav_seq])
 
     # cursor TextField value 清空:已改由 _end_input_session 递增 nav_seq 重建控件
     # 实现(key 含 nav_seq → 新控件 value="")。原 use_effect([clear_value_seq])
@@ -758,7 +758,7 @@ def MarkdownEditor(
     # 声明式模型下控件冻结会抛异常(虽 suppress 不崩但清空失效),故移除。
 
     # ============ use_effect:聚焦公式 TextField ============
-    ft.use_effect(focus_cbs["focus_math_field"], [math_focus_li])
+    ui.use_effect(focus_cbs["focus_math_field"], [math_focus_li])
 
     # ============ EditorActions 上报 ============
     build_actions(ctx)
@@ -789,12 +789,12 @@ def MarkdownEditor(
             ).strip()
         ]
 
-    toc_entries = ft.use_memo(_build_toc, [_toc_sig])
+    toc_entries = ui.use_memo(_build_toc, [_toc_sig])
 
     # ============ 回调稳定化:LineView 共享回调 ============
     # editor 每次重渲染时闭包重建,若直接传给 LineView 会导致 ft.memo 浅比较
     # 误判所有行变化并重渲染。此处用 ref 持有最新闭包,use_memo([]) 产出稳定引用。
-    _cb_ref = ft.use_ref({})
+    _cb_ref = ui.use_ref({})
     _cb_ref.current = {
         "on_tap": cursor_cbs["on_tap_line"],
         # pan_start 用专用闭包:以命中点为 anchor(不沿用光标位置),
@@ -831,13 +831,13 @@ def MarkdownEditor(
         "on_line_size_change", "on_extend_outward", "on_clear_outward",
         "on_hit_test_x", "on_hit_test_xy", "on_double_tap", "on_image_action",
     )
-    _stable_cbs = ft.use_memo(
+    _stable_cbs = ui.use_memo(
         lambda: {k: _make_stable_cb(_cb_ref, k) for k in _STABLE_CB_KEYS},
         [],
     )
 
     # ============ 回调稳定化:TableView 回调 ============
-    _table_cb_ref = ft.use_ref({})
+    _table_cb_ref = ui.use_ref({})
     _table_cb_ref.current = {
         "on_change_cell": fence_cbs["on_change_cell"],
         "on_table_op": fence_cbs["on_table_op"],
@@ -845,13 +845,13 @@ def MarkdownEditor(
         "on_table_blur": fence_cbs["on_table_blur"],
     }
     _TABLE_CB_KEYS = ("on_change_cell", "on_table_op", "on_table_focus", "on_table_blur")
-    _table_stable = ft.use_memo(
+    _table_stable = ui.use_memo(
         lambda: {k: _make_stable_cb(_table_cb_ref, k) for k in _TABLE_CB_KEYS},
         [],
     )
 
     # ============ 回调稳定化:ToolArea / RawEditor 回调 ============
-    _tool_cb_ref = ft.use_ref({})
+    _tool_cb_ref = ui.use_ref({})
     _tool_cb_ref.current = {
         "on_new": on_new or _noop,
         "on_open": on_open or _noop,
@@ -876,7 +876,7 @@ def MarkdownEditor(
         "toggle_focus_mode", "on_toggle_theme",
         "on_raw_change",
     )
-    _tool_stable = ft.use_memo(
+    _tool_stable = ui.use_memo(
         lambda: {k: _make_stable_cb(_tool_cb_ref, k) for k in _TOOL_CB_KEYS},
         [],
     )
@@ -914,13 +914,13 @@ def MarkdownEditor(
         line_controls = []
 
     # ============ 渲染树 ============
-    return ft.KeyboardListener(
+    return ui.KeyboardListener(
         autofocus=keyboard_autofocus,
         on_key_down=key_cbs["on_key_down"],
         on_key_up=key_cbs["on_key_up"],
         on_key_repeat=key_cbs["on_key_repeat"],
         expand=True,
-        content=ft.Column(
+        content=ui.Column(
             controls=[
                 ToolArea(
                     theme_mode=theme_mode,
@@ -950,11 +950,11 @@ def MarkdownEditor(
                     body_font_size=body_font_size,
                 )
                 if effective_raw_mode
-                else ft.SelectionArea(
+                else ui.SelectionArea(
                     expand=True,
                     on_change=clipboard_cbs["on_selection_area_change"],
-                    content=ft.Container(
-                        content=ft.ListView(
+                    content=ui.Container(
+                        content=ui.ListView(
                             ref=list_view_ref,
                             controls=line_controls,
                             expand=True,
@@ -969,7 +969,7 @@ def MarkdownEditor(
                             # 落在 Flutter 布局窗口之外就不计入 maxScrollExtent，
                             # 实测会让 1555 行文档的滚动范围只剩 4793px（真值 ≈5 万），
                             # 文档后段滚不到；padding 是常量，直接计入总高。
-                            padding=ft.Padding.only(
+                            padding=ui.Padding.only(
                                 left=content_padding,
                                 right=content_padding,
                                 top=_pad_top,
@@ -979,17 +979,17 @@ def MarkdownEditor(
                             # 仅构建视口内可见行,数千行文档不卡顿。maxScrollExtent
                             # 由首项高度估算,_scroll.py 的两步滚动逻辑已为此设计
                             # (视口外行无实测高度 → 先估算滚动触发构建再精确贴顶)。
-                            on_scroll=scroll_cbs["on_scroll"],
+                            on_scroll=scroll_cbs["on_scroll"], clip_behavior=ui.ClipBehavior.HARD_EDGE,
                         ),
                         expand=True,
-                        alignment=ft.Alignment.TOP_LEFT,
+                        alignment=ui.Alignment.TOP_LEFT,
                         # 源码视图的编辑区底色 = 代码块底色：代码只写到文件末尾，
                         # 下面那段"没有内容"的区域若还是页面白，视觉上就成了
                         # "代码块被截断"（灰块 + 白块）。整片同色才像 VSCode 里
                         # 一个铺满视口的编辑器（也顺带解释了"这里可以继续写"）。
                         bgcolor=c.code_block_bg if _is_plain_doc else c.bg,
                         # 垂直留白固定不随内容滚动（顶部呼吸空间 + 底部结束留白）
-                        padding=ft.Padding.symmetric(vertical=content_padding_top),
+                        padding=ui.Padding.symmetric(vertical=content_padding_top),
                         on_size_change=scroll_cbs["on_content_resize"],
                     ),
                 ),

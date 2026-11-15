@@ -25,7 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import flet as ft
+from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

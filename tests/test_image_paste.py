@@ -21,8 +21,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flet as ft
 from PIL import Image as PILImage
+from ui import ft
 
 from parser import parse_markdown
 from views.editor._image import (
@@ -33,7 +33,6 @@ from views.editor._image import (
     _unique_image_path,
     build_image,
 )
-
 
 # ---------------- 辅助函数 ----------------
 

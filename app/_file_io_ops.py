@@ -37,7 +37,7 @@ import asyncio
 import logging
 import os
 
-import flet as ft
+import ui
 
 import parser
 from app._contracts import FileIoEnv
@@ -359,7 +359,7 @@ def build_file_io_ops(ctx: FileIoEnv):
             # 任意文件类型：编辑器支持 Markdown 与各类纯文本（.txt/.py/.cpp…），
             # 逐个列扩展名会在 Windows 对话框里堆成几十项。选到非文本类型时
             # 由 open_file_by_path 分流（交系统默认程序）并给出提示。
-            file_type=ft.FilePickerFileType.ANY,
+            file_type=ui.FilePickerFileType.ANY,
         )
         if not files:
             return
@@ -491,7 +491,7 @@ def build_file_io_ops(ctx: FileIoEnv):
                 dialog_title="保存文件",
                 file_name="未命名.txt" if _plain else "未命名.md",
                 allowed_extensions=_save_dialog_exts(doc, path),
-                file_type=ft.FilePickerFileType.CUSTOM,
+                file_type=ui.FilePickerFileType.CUSTOM,
             )
             if not path:
                 return False
@@ -530,7 +530,7 @@ def build_file_io_ops(ctx: FileIoEnv):
             ctx.set_file_dialog({
                 "mode": "confirm",
                 "title": "保存失败",
-                "icon": ft.Icons.SAVE_OUTLINED,
+                "icon": ui.Icons.SAVE_OUTLINED,
                 "message": (
                     f"保存 {os.path.basename(path)} 时出错：\n{e}\n\n"
                     "当前内容已自动备份到恢复目录。\n"
@@ -685,7 +685,7 @@ def build_file_io_ops(ctx: FileIoEnv):
             ctx.set_file_dialog({
                 "mode": "confirm",
                 "title": "保存失败",
-                "icon": ft.Icons.SAVE_OUTLINED,
+                "icon": ui.Icons.SAVE_OUTLINED,
                 "message": (
                     f"保存 {file_name(path)}（{side_label}）时出错：\n{e}\n\n"
                     "当前内容已自动备份到恢复目录。\n"
@@ -826,7 +826,7 @@ def build_file_io_ops(ctx: FileIoEnv):
             dialog_title="另存为",
             file_name=default_name,
             allowed_extensions=_save_dialog_exts(doc, cur_path),
-            file_type=ft.FilePickerFileType.CUSTOM,
+            file_type=ui.FilePickerFileType.CUSTOM,
         )
         if not new_path:
             return False
@@ -900,7 +900,7 @@ def build_file_io_ops(ctx: FileIoEnv):
             dialog_title=dialog_title_map[fmt],
             file_name=default_name,
             allowed_extensions=[ext],
-            file_type=ft.FilePickerFileType.CUSTOM,
+            file_type=ui.FilePickerFileType.CUSTOM,
         )
         if not path:
             return

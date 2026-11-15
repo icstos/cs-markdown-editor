@@ -21,15 +21,14 @@ import json
 import sys
 from pathlib import Path
 
-import flet as ft
 import pytest
+from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flet.components.component import Component
-
 import config.settings as cs
 from app import App
+from tests._flet_internals import Component
 from tests.harness import RenderHarness, walk
 
 _SANDBOX = Path(__file__).resolve().parent / ".git-render-sandbox"

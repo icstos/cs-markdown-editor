@@ -12,10 +12,9 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import Radius, Spacing, _current_colors
-
 
 # 修饰键集合：capitalize 显示（Ctrl/Shift/Alt），与 settings_dialog._format_combo_display 一致
 _MOD_KEYS = {"ctrl", "shift", "alt"}
@@ -42,31 +41,31 @@ def _format_combo(combo: str) -> str:
 
 def _btn(
     icon: str, tooltip: str, on_click: Callable[[], None], toggle_on: bool = False
-) -> ft.Control:
+) -> ui.Control:
     c = _current_colors()  # 当前主题颜色（亮/暗）
-    return ft.IconButton(
+    return ui.IconButton(
         icon=icon,
         tooltip=tooltip,
         on_click=lambda e: on_click(),
         icon_size=18,
-        style=ft.ButtonStyle(
+        style=ui.ButtonStyle(
             color=c.link if toggle_on else c.muted,
-            bgcolor=ft.Colors.with_opacity(0.10 if toggle_on else 0.0, c.link),
+            bgcolor=ui.Colors.with_opacity(0.10 if toggle_on else 0.0, c.link),
             padding=Spacing.SM,
-            shape=ft.RoundedRectangleBorder(radius=Radius.LG),
+            shape=ui.RoundedRectangleBorder(radius=Radius.LG),
             animation_duration=160,
         ),
     )
 
 
-def _divider() -> ft.Control:
+def _divider() -> ui.Control:
     c = _current_colors()  # 当前主题颜色（亮/暗）
-    return ft.Container(
-        width=1, height=20, bgcolor=c.border, margin=ft.Margin.symmetric(horizontal=Spacing.SM)
+    return ui.Container(
+        width=1, height=20, bgcolor=c.border, margin=ui.Margin.symmetric(horizontal=Spacing.SM)
     )
 
 
-@ft.component
+@ui.component
 def Toolbar(
     shortcut_mgr,
     on_h1: Callable[[], None],
@@ -104,28 +103,28 @@ def Toolbar(
         combo = _combo(action_id)
         return f"{label}  {combo}" if combo else label
 
-    return ft.Row(
+    return ui.Row(
         controls=[
-            _btn(ft.Icons.TITLE, "一级标题  Ctrl+1", on_h1),
-            _btn(ft.Icons.FORMAT_SIZE, "二级标题  Ctrl+2", on_h2),
-            _btn(ft.Icons.TEXT_FIELDS, "三级标题  Ctrl+3", on_h3),
-            _btn(ft.Icons.FORMAT_ALIGN_LEFT, "正文段落", on_paragraph),
+            _btn(ui.Icons.TITLE, "一级标题  Ctrl+1", on_h1),
+            _btn(ui.Icons.FORMAT_SIZE, "二级标题  Ctrl+2", on_h2),
+            _btn(ui.Icons.TEXT_FIELDS, "三级标题  Ctrl+3", on_h3),
+            _btn(ui.Icons.FORMAT_ALIGN_LEFT, "正文段落", on_paragraph),
             _divider(),
-            _btn(ft.Icons.FORMAT_LIST_BULLETED, "无序列表", on_list),
-            _btn(ft.Icons.CHECK_BOX_OUTLINED, _tip("任务列表", "format_task"), on_task),
-            _btn(ft.Icons.FORMAT_QUOTE, "引用", on_quote),
-            _btn(ft.Icons.CODE, "代码块", on_code_block),
-            _btn(ft.Icons.FUNCTIONS, "公式块  Ctrl+Shift+M", on_math_block),
-            _btn(ft.Icons.TABLE_CHART, _tip("表格", "format_table"), on_table),
-            _btn(ft.Icons.HORIZONTAL_RULE, "分隔线", on_hr),
+            _btn(ui.Icons.FORMAT_LIST_BULLETED, "无序列表", on_list),
+            _btn(ui.Icons.CHECK_BOX_OUTLINED, _tip("任务列表", "format_task"), on_task),
+            _btn(ui.Icons.FORMAT_QUOTE, "引用", on_quote),
+            _btn(ui.Icons.CODE, "代码块", on_code_block),
+            _btn(ui.Icons.FUNCTIONS, "公式块  Ctrl+Shift+M", on_math_block),
+            _btn(ui.Icons.TABLE_CHART, _tip("表格", "format_table"), on_table),
+            _btn(ui.Icons.HORIZONTAL_RULE, "分隔线", on_hr),
             _divider(),
-            _btn(ft.Icons.FORMAT_BOLD, _tip("加粗", "format_bold"), on_bold),
-            _btn(ft.Icons.FORMAT_ITALIC, _tip("斜体", "format_italic"), on_italic),
-            _btn(ft.Icons.HIGHLIGHT, _tip("高亮", "format_highlight"), on_highlight),
-            _btn(ft.Icons.CODE, _tip("行内代码", "format_code"), on_code),
-            _btn(ft.Icons.LINK, _tip("链接", "format_link"), on_link),
-            _btn(ft.Icons.FUNCTIONS, _tip("行内公式", "format_inline_math"), on_inline_math),
-            _btn(ft.Icons.FORMAT_STRIKETHROUGH, _tip("删除线", "format_strike"), on_strike),
+            _btn(ui.Icons.FORMAT_BOLD, _tip("加粗", "format_bold"), on_bold),
+            _btn(ui.Icons.FORMAT_ITALIC, _tip("斜体", "format_italic"), on_italic),
+            _btn(ui.Icons.HIGHLIGHT, _tip("高亮", "format_highlight"), on_highlight),
+            _btn(ui.Icons.CODE, _tip("行内代码", "format_code"), on_code),
+            _btn(ui.Icons.LINK, _tip("链接", "format_link"), on_link),
+            _btn(ui.Icons.FUNCTIONS, _tip("行内公式", "format_inline_math"), on_inline_math),
+            _btn(ui.Icons.FORMAT_STRIKETHROUGH, _tip("删除线", "format_strike"), on_strike),
         ],
         spacing=2,
         wrap=True,

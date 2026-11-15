@@ -10,7 +10,7 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import (
     FONT_MAIN,
@@ -26,12 +26,12 @@ from views.native_scope import native_focus_hooks
 _DANGER_COLOR = "#E5484D"
 
 
-@ft.component
+@ui.component
 def FileActionDialog(
     visible: bool,
     mode: str,
     title: str,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     confirm_label: str,
     on_confirm: Callable,
     on_cancel: Callable[[], None],
@@ -44,10 +44,10 @@ def FileActionDialog(
     # confirm 模式专用
     message: str = "",
     danger: bool = False,
-    icon: str = ft.Icons.HELP_OUTLINE,
+    icon: str = ui.Icons.HELP_OUTLINE,
     # 外部输入焦点域 ref：输入框聚焦时置 token，KeyDispatcher 据此不再把
     # 文档编辑快捷键（Ctrl+A 等）误作用到编辑器
-    native_input_ref: ft.Ref | None = None,
+    native_input_ref: ui.Ref | None = None,
 ):
     """文件操作统一对话框。
 
@@ -62,15 +62,15 @@ def FileActionDialog(
     location_hint 用于 input 模式，显示目标路径（如"在 /path/to/dir 创建"）。
     """
     c = get_colors(theme_mode)
-    is_dark = theme_mode == ft.ThemeMode.DARK
+    is_dark = theme_mode == ui.ThemeMode.DARK
     # input 模式内部 state 跟踪输入值（不受外部 input_value 限制，支持自由编辑）
-    text_value, set_text_value = ft.use_state(input_value)
+    text_value, set_text_value = ui.use_state(input_value)
 
-    def _text_btn(label: str, on_click: Callable, color: str) -> ft.Control:
-        return ft.TextButton(
+    def _text_btn(label: str, on_click: Callable, color: str) -> ui.Control:
+        return ui.TextButton(
             label,
             on_click=lambda e: on_click(),
-            style=ft.ButtonStyle(color=color),
+            style=ui.ButtonStyle(color=color),
         )
 
     def _on_submit(e):
@@ -86,9 +86,9 @@ def FileActionDialog(
     icon_color = _DANGER_COLOR if danger else c.link
 
     # ---- 确认按钮 ----
-    confirm_color = _DANGER_COLOR if danger else ft.Colors.WHITE
+    confirm_color = _DANGER_COLOR if danger else ui.Colors.WHITE
     confirm_bgcolor = _DANGER_COLOR if danger else c.link
-    confirm_btn = ft.Button(
+    confirm_btn = ui.ft.Button(
         confirm_label,
         on_click=lambda e: _on_submit(e),
         color=confirm_color,
@@ -98,27 +98,27 @@ def FileActionDialog(
     # ---- 内容区 ----
     focus_h, blur_h = native_focus_hooks(native_input_ref)
     if mode == "input":
-        content_body = ft.Column(
+        content_body = ui.Column(
             controls=[
-                ft.Text(
+                ui.Text(
                     value=location_hint,
                     size=11,
                     color=c.muted,
                     font_family=FONT_MAIN,
                     max_lines=2,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                 )
                 if location_hint
-                else ft.Container(height=0),
-                ft.Container(height=Spacing.SM),
-                ft.TextField(
+                else ui.Container(height=0),
+                ui.Container(height=Spacing.SM),
+                ui.TextField(
                     value=text_value,
                     hint_text=input_hint,
                     label=input_label,
                     dense=True,
-                    border=ft.InputBorder.OUTLINE,
+                    border=ui.InputBorder.OUTLINE,
                     text_size=13,
-                    text_style=ft.TextStyle(font_family=FONT_MAIN),
+                    text_style=ui.TextStyle(font_family=FONT_MAIN),
                     autofocus=True,
                     on_change=lambda e: set_text_value(e.control.value or ""),
                     on_focus=focus_h,
@@ -130,9 +130,9 @@ def FileActionDialog(
             tight=True,
         )
     else:
-        content_body = ft.Column(
+        content_body = ui.Column(
             controls=[
-                ft.Text(
+                ui.Text(
                     value=message,
                     size=13,
                     color=c.text,
@@ -143,44 +143,44 @@ def FileActionDialog(
             tight=True,
         )
 
-    return ft.Container(
+    return ui.Container(
         visible=visible,
         expand=True,
-        bgcolor=ft.Colors.with_opacity(0.28, ft.Colors.BLACK),
-        alignment=ft.Alignment.CENTER,
-        content=ft.Container(
+        bgcolor=ui.Colors.with_opacity(0.28, ui.Colors.BLACK),
+        alignment=ui.Alignment.CENTER,
+        content=ui.Container(
             width=440,
             bgcolor=c.toolbar_bg,
             border_radius=Radius.XL,
             padding=Spacing.XXXL,
             shadow=card_shadow(Elevation.DIALOG, is_dark),
-            content=ft.Column(
+            content=ui.Column(
                 controls=[
-                    ft.Row(
+                    ui.Row(
                         controls=[
-                            ft.Icon(icon, color=icon_color, size=24),
-                            ft.Text(
+                            ui.Icon(icon, color=icon_color, size=24),
+                            ui.Text(
                                 value=title,
                                 size=16,
-                                weight=ft.FontWeight.W_600,
+                                weight=ui.FontWeight.W_600,
                                 color=c.text,
                                 font_family=FONT_MAIN,
                             ),
                         ],
                         spacing=Spacing.XL,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Container(height=Spacing.SM),
+                    ui.Container(height=Spacing.SM),
                     content_body,
-                    ft.Container(height=Spacing.XXL),
-                    ft.Row(
+                    ui.Container(height=Spacing.XXL),
+                    ui.Row(
                         controls=[
-                            ft.Container(expand=True),
+                            ui.Container(expand=True),
                             _text_btn(cancel_label, on_cancel, c.muted),
                             confirm_btn,
                         ],
                         spacing=Spacing.LG,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=0,

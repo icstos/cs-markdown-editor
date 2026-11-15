@@ -28,11 +28,10 @@
 
 import contextlib
 
-import flet as ft
-
-from views.key_bindings import KeyDispatcher
+import ui
 
 from app._contracts import KeyboardEnv
+from views.key_bindings import KeyDispatcher
 
 
 def build_keyboard(ctx: KeyboardEnv):
@@ -116,7 +115,7 @@ def build_keyboard(ctx: KeyboardEnv):
 
         通过 dispatcher_ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例。
         """
-        page = ft.context.page
+        page = ui.context.page
         ctx.page_ref.current = page
         if page is None:
             return lambda: None

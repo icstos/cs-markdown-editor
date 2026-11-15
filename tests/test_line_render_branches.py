@@ -14,13 +14,14 @@
 import sys
 from pathlib import Path
 
-import flet as ft
+from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from models.document import BlockType, Line  # noqa: E402
 from tests.harness import RenderHarness  # noqa: E402
-from views import _block_frame, _frontmatter, line_view as lv  # noqa: E402
+from views import _block_frame, _frontmatter  # noqa: E402
+from views import line_view as lv
 
 # 渲染分支所在模块（拆分后散落多处，故显式映射：调用点函数名 → 模块内实际名）
 BRANCH_MODULES = {

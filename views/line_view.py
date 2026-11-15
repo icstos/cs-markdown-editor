@@ -14,7 +14,7 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from models.document import BlockType, Line
 from styles import (
@@ -54,7 +54,7 @@ def _cursor_overlay(
     content_width: float | None,
     li: int,
     nav_seq: int,
-    field_ref: ft.Ref | None,
+    field_ref: ui.Ref | None,
     cursor_value: str,
     on_change: Callable[[str], None],
     on_submit: Callable[[str], None] | None,
@@ -66,7 +66,7 @@ def _cursor_overlay(
     precomputed_wrap_width: float | None = None,
     pos_value: str | None = None,
     wrap_sel_seq: int = 0,
-) -> ft.TextField:
+) -> ui.TextField:
     """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off（2D 视觉行）。
 
     软换行 2D 定位（与渲染层 _maybe_stack_multi 共用 _line_visual_layout，
@@ -157,7 +157,7 @@ def _cursor_overlay(
     # （caret 在 value 末尾），清掉该选区；仅此一次（use_effect 随即复位）。
     selection = None
     if wrap_sel_seq > 0 and _eff_value:
-        selection = ft.TextSelection(len(_eff_value), len(_eff_value))
+        selection = ui.TextSelection(len(_eff_value), len(_eff_value))
 
     return cursor_text_field(
         li=li,
@@ -187,13 +187,13 @@ def _render_math_block(
     on_change_math: Callable[[int, str], None] | None,
     on_math_focus: Callable[[int], None] | None,
     on_math_blur: Callable[[int], None] | None,
-    math_field_ref: ft.Ref | None,
+    math_field_ref: ui.Ref | None,
     is_editing: bool,
     is_current_line: bool,
     is_flash: bool = False,
     on_line_size_change: Callable[[int, float], None] | None = None,
     diff_mark: str | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """公式块：浏览态 ft.Markdown 渲染 LaTeX；编辑态源码 + 实时预览。
 
     双态切换由 editor 端 math_focus_li state 驱动（Typora 式：点击进入编辑，
@@ -214,7 +214,7 @@ def _render_math_block(
         # 编辑态：源码编辑器 + 实时预览（垂直堆叠）
         # on_change_math 更新 line.segments[0].text 触发 observable 重渲染，
         # 本函数重新执行读取最新 formula，preview_md 的 value 自动同步刷新。
-        text_field = ft.TextField(
+        text_field = ui.TextField(
             key=f"math-edit-{line_idx}",
             # ref 必须在构造时传入：flet 的 ref 是 InitVar，只在 __init__ 里绑定
             # （BaseControl.__post_init__ 的 `ref.current = self`），事后 `text_field.ref = x`
@@ -224,9 +224,9 @@ def _render_math_block(
             multiline=True,
             min_lines=2,
             max_lines=6,
-            border=ft.NoInputBorder(),
+            border=ui.NoInputBorder(),
             text_size=14,
-            text_style=ft.TextStyle(font_family=FONT_MONO, color=c.math_fg),
+            text_style=ui.TextStyle(font_family=FONT_MONO, color=c.math_fg),
             on_change=lambda e: (
                 on_change_math(line_idx, e.control.value) if on_change_math else None
             ),
@@ -234,69 +234,69 @@ def _render_math_block(
             on_blur=lambda e: on_math_blur(line_idx) if on_math_blur else None,
             expand=True,
         )
-        header = ft.Row(
+        header = ui.Row(
             [
-                ft.Icon(ft.Icons.FUNCTIONS, size=13, color=c.math_fg),
-                ft.Text(
+                ui.Icon(ui.Icons.FUNCTIONS, size=13, color=c.math_fg),
+                ui.Text(
                     "公式编辑",
                     size=11,
                     color=c.muted,
                     font_family=FONT_MONO,
-                    weight=ft.FontWeight.W_600,
+                    weight=ui.FontWeight.W_600,
                 ),
-                ft.Container(expand=True),
-                ft.Text("点击外部完成", size=11, color=c.muted),
+                ui.Container(expand=True),
+                ui.Text("点击外部完成", size=11, color=c.muted),
             ],
             spacing=Spacing.SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         )
 
-        source_label = ft.Text(
+        source_label = ui.Text(
             "源码",
             size=10,
             color=c.muted,
             font_family=FONT_MONO,
-            weight=ft.FontWeight.W_500,
+            weight=ui.FontWeight.W_500,
         )
 
-        source_section = ft.Container(
+        source_section = ui.Container(
             content=text_field,
             border_radius=Radius.SM,
-            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+            padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
         )
 
-        divider = ft.Divider(
+        divider = ui.Divider(
             height=1,
             thickness=1,
-            color=ft.Colors.with_opacity(0.2, c.math_fg),
+            color=ui.Colors.with_opacity(0.2, c.math_fg),
             leading_indent=0,
             trailing_indent=0,
         )
 
-        preview_label = ft.Text(
+        preview_label = ui.Text(
             "预览",
             size=10,
             color=c.muted,
             font_family=FONT_MONO,
-            weight=ft.FontWeight.W_500,
+            weight=ui.FontWeight.W_500,
         )
 
-        preview_md = ft.Markdown(
+        preview_md = ui.ft.Markdown(
             value=f"$$\n{formula}\n$$",
             selectable=False,
-            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+            extension_set=ui.MarkdownExtensionSet.GITHUB_WEB,
             soft_line_break=True,
-            latex_style=ft.TextStyle(color=c.text),
+            latex_style=ui.TextStyle(color=c.text),
         )
 
-        preview_section = ft.Container(
+        preview_section = ui.Container(
             content=preview_md,
-            alignment=ft.Alignment.CENTER_LEFT,
-            padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+            alignment=ui.Alignment.CENTER_LEFT,
+            padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
         )
 
-        content = ft.Container(
-            content=ft.Column(
+        content = ui.Container(
+            content=ui.Column(
                 controls=[
                     header,
                     source_label,
@@ -311,23 +311,23 @@ def _render_math_block(
             bgcolor=c.math_bg,
             border_radius=Radius.MD,
             width=float("inf"),
-            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-            border=only_border(left=ft.BorderSide(3, c.math_fg)),
+            padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            border=only_border(left=ui.BorderSide(3, c.math_fg)),
         )
     else:
         # 浏览态：ft.Markdown 渲染 LaTeX（ selectable 便于复制）
-        md = ft.Markdown(
+        md = ui.ft.Markdown(
             value=f"$$\n{formula}\n$$",
             selectable=True,
-            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+            extension_set=ui.MarkdownExtensionSet.GITHUB_WEB,
         )
-        content = ft.Container(
+        content = ui.Container(
             content=md,
             bgcolor=c.math_bg,
             border_radius=Radius.MD,
             width=float("inf"),
-            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-            alignment=ft.Alignment.CENTER,
+            padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            alignment=ui.Alignment.CENTER,
             ink=True,
             on_click=lambda e: on_math_focus(line_idx) if on_math_focus else None,
         )
@@ -344,18 +344,18 @@ def _render_math_block(
     )
 
 
-@ft.memo
-@ft.component
+@ui.memo
+@ui.component
 def LineView(
     line: Line,
     line_idx: int,
     *,
     cursor_off: int | None = None,
-    cursor_ref: ft.Ref | None = None,
+    cursor_ref: ui.Ref | None = None,
     nav_seq: int = 0,
     wrap_sel_seq: int = 0,  # >0 时给 overlay 传 collapsed 选区（软换行一次性折叠）
-    field_ref: ft.Ref | None = None,
-    input_session_ref: ft.Ref | None = None,
+    field_ref: ui.Ref | None = None,
+    input_session_ref: ui.Ref | None = None,
     cursor_value: str = "",
     content_width: float | None = None,
     # 软换行总开关（settings.word_wrap）：代码块浏览态据此决定折行 / 横向滚动
@@ -375,7 +375,7 @@ def LineView(
     # 通过 theme_mode 变化触发 memo 失效，重新执行函数体取色。LineView
     # 内部不读取此值（_current_colors 直接读 page.theme_mode，已由 App
     # 在渲染期同步写入），仅作 memo 触发用。
-    theme_mode: ft.ThemeMode = ft.ThemeMode.LIGHT,
+    theme_mode: ui.ThemeMode = ui.ThemeMode.LIGHT,
     # 光标输入（激活行用）
     on_cursor_change: Callable[[str], None] | None = None,
     on_cursor_submit: Callable[[str], None] | None = None,
@@ -392,15 +392,15 @@ def LineView(
     on_code_focus: Callable[[int], None] | None = None,
     on_code_blur: Callable[[int], None] | None = None,
     on_code_selection: Callable[..., None] | None = None,
-    code_field_ref: ft.Ref | None = None,
+    code_field_ref: ui.Ref | None = None,
     on_change_lang: Callable[[int, str], None] | None = None,
     # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，编辑态 TextField 编辑源码
     is_math_editing: bool = False,
     on_change_math: Callable[[int, str], None] | None = None,
     on_math_focus: Callable[[int], None] | None = None,
     on_math_blur: Callable[[int], None] | None = None,
-    math_field_ref: ft.Ref | None = None,
-    clipboard_ref: ft.Ref | None = None,
+    math_field_ref: ui.Ref | None = None,
+    clipboard_ref: ui.Ref | None = None,
     # TOC
     toc_entries: list[tuple[int, int, str]] | None = None,
     on_jump_to: Callable[[int], None] | None = None,
@@ -410,9 +410,9 @@ def LineView(
     outward_range: tuple[int, int] | None = None,
     on_extend_outward: Callable[[int, int], None] | None = None,
     on_clear_outward: Callable[[], None] | None = None,
-    shift_pressed_ref: ft.Ref | None = None,
-    ctrl_pressed_ref: ft.Ref | None = None,
-    alt_pressed_ref: ft.Ref | None = None,
+    shift_pressed_ref: ui.Ref | None = None,
+    ctrl_pressed_ref: ui.Ref | None = None,
+    alt_pressed_ref: ui.Ref | None = None,
     on_hit_test_x: Callable[[int, float], int] | None = None,
     on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
     on_double_tap: Callable[[int, int], None] | None = None,
@@ -453,7 +453,7 @@ def LineView(
     # 行内字符级变更区间（只有改行才有）：叠加在行底色之上，见 views/code_block
     code_diff_ranges: dict[int, list[tuple[int, int]]] | None = None,
     diff_side: int = 0,
-) -> ft.Control:
+) -> ui.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
     is_current_line：唯一激活标志（替代原 cursor_li == line_idx 比较）。
@@ -554,15 +554,15 @@ def LineView(
 
     # ============ 分隔线 HR（Typora 式 WYSIWYG：浏览态横线，激活态 fall through 显示源码）============
     if line.block_type == BlockType.HR and not is_active:
-        content = ft.Container(
-            content=ft.Container(
+        content = ui.Container(
+            content=ui.Container(
                 height=1,
-                bgcolor=ft.Colors.with_opacity(0.25, c.muted),
+                bgcolor=ui.Colors.with_opacity(0.25, c.muted),
                 border_radius=0.5,
                 width=float("inf"),
             ),
-            padding=ft.Padding.symmetric(vertical=Spacing.LG),
-            alignment=ft.Alignment.CENTER,
+            padding=ui.Padding.symmetric(vertical=Spacing.LG),
+            alignment=ui.Alignment.CENTER,
             ink=True,
             on_click=lambda e, raw=line.raw: (
                 on_tap(line_idx, len(raw) if raw else 0) if on_tap else None
@@ -588,18 +588,18 @@ def LineView(
         # 同级别条目左对齐到同一缩进位置，色条作为级别强调。
         # 头部含图标 + 标题 + 计数，清爽卡片边框，科学有序。
         entries = toc_entries or []
-        header = ft.Row(
+        header = ui.Row(
             controls=[
-                ft.Icon(ft.Icons.FORMAT_LIST_BULLETED, size=14, color=c.muted),
-                ft.Text(
+                ui.Icon(ui.Icons.FORMAT_LIST_BULLETED, size=14, color=c.muted),
+                ui.Text(
                     value="目录",
                     size=base - 5,
                     color=c.muted,
                     font_family=FONT_MAIN,
-                    weight=ft.FontWeight.W_600,
+                    weight=ui.FontWeight.W_600,
                 ),
-                ft.Container(expand=True),
-                ft.Text(
+                ui.Container(expand=True),
+                ui.Text(
                     value=f"{len(entries)} 项",
                     size=base - 6,
                     color=c.muted,
@@ -607,46 +607,46 @@ def LineView(
                 ),
             ],
             spacing=Spacing.SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         )
 
         if not entries:
-            body = ft.Container(
-                content=ft.Text(
+            body = ui.Container(
+                content=ui.Text(
                     value="文档无标题，目录为空",
                     size=base - 4,
                     color=c.muted,
                     font_family=FONT_MAIN,
                 ),
-                padding=ft.Padding.symmetric(vertical=Spacing.XL),
-                alignment=ft.Alignment.CENTER,
+                padding=ui.Padding.symmetric(vertical=Spacing.XL),
+                alignment=ui.Alignment.CENTER,
                 width=float("inf"),
             )
         else:
-            items: list[ft.Control] = []
+            items: list[ui.Control] = []
             for li, lvl, text in entries:
                 level_color = heading_text_color(lvl, c)
-                bar = ft.Container(width=2, height=14, bgcolor=level_color, border_radius=2)
-                txt = ft.Text(
+                bar = ui.Container(width=2, height=14, bgcolor=level_color, border_radius=2)
+                txt = ui.Text(
                     value=text,
                     size=base - 3,
                     color=level_color,
                     font_family=FONT_MAIN,
                     weight=outline_heading_weight(lvl),
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                     expand=True,
                 )
-                row = ft.Row(
+                row = ui.Row(
                     controls=[bar, txt],
                     spacing=Spacing.MD,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
                 )
                 # 同级别左对齐：缩进 = (lvl-1) * Spacing.XXL，色条作为级别标识
                 items.append(
-                    ft.Container(
+                    ui.Container(
                         content=row,
-                        padding=ft.Padding.only(
+                        padding=ui.Padding.only(
                             left=(lvl - 1) * Spacing.XXL,
                             top=Spacing.SM,
                             bottom=Spacing.SM,
@@ -657,26 +657,26 @@ def LineView(
                         border_radius=Radius.SM,
                     )
                 )
-            body = ft.Column(controls=items, spacing=0)
+            body = ui.Column(controls=items, spacing=0)
 
-        content = ft.Container(
-            content=ft.Column(
+        content = ui.Container(
+            content=ui.Column(
                 controls=[
                     header,
-                    ft.Divider(height=1, thickness=1, color=c.border),
+                    ui.Divider(height=1, thickness=1, color=c.border),
                     body,
                 ],
                 spacing=Spacing.SM,
             ),
             width=float("inf"),
-            padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
             bgcolor=c.code_bg,
             border_radius=Radius.LG,
             border=only_border(
-                top=ft.BorderSide(1, c.border),
-                bottom=ft.BorderSide(1, c.border),
-                left=ft.BorderSide(1, c.border),
-                right=ft.BorderSide(1, c.border),
+                top=ui.BorderSide(1, c.border),
+                bottom=ui.BorderSide(1, c.border),
+                left=ui.BorderSide(1, c.border),
+                right=ui.BorderSide(1, c.border),
             ),
         )
         return _block_frame.wrap_block(
@@ -804,7 +804,7 @@ def LineView(
         # 光标竖条垂直居中偏移：text 内文字在 line_height 行框内垂直居中，
         # 竖条 height=base 需下移 (text_h - base) / 2 才对齐文字基线区域。
         cursor_y_off = (text_h - base) / 2
-        sec_overlays: list[ft.Control] = []
+        sec_overlays: list[ui.Control] = []
         # 主光标选区高亮（多光标模式 Shift+Arrow 扩展的选区）
         if _has_primary_sel:
             pbase = cursor_ref.current.base
@@ -824,12 +824,12 @@ def LineView(
                         psx -= pv.offsets_x[prefix_len]
                         pex -= pv.offsets_x[prefix_len]
                 sec_overlays.append(
-                    ft.Container(
+                    ui.Container(
                         width=max(pex - psx, 2),
                         height=text_h,
                         left=psx,
                         top=pv.vline_idx * text_h,
-                        bgcolor=ft.Colors.with_opacity(0.25, c.link),
+                        bgcolor=ui.Colors.with_opacity(0.25, c.link),
                         border_radius=2,
                     )
                 )
@@ -865,18 +865,18 @@ def LineView(
                         sel_x_end -= vline.offsets_x[prefix_len]
                 sel_width = max(sel_x_end - sel_x_start, 2)
                 sec_overlays.append(
-                    ft.Container(
+                    ui.Container(
                         width=sel_width,
                         height=text_h,
                         left=sel_x_start,
                         top=px_y,
-                        bgcolor=ft.Colors.with_opacity(0.25, c.link),
+                        bgcolor=ui.Colors.with_opacity(0.25, c.link),
                         border_radius=2,
                     )
                 )
             # 副光标竖条标记（垂直居中于行框）
             sec_overlays.append(
-                ft.Container(
+                ui.Container(
                     width=2,
                     height=base,
                     left=px_x,
@@ -886,7 +886,7 @@ def LineView(
                 )
             )
         if sec_overlays:
-            inner = ft.Stack(
+            inner = ui.Stack(
                 controls=[inner] + sec_overlays,
                 width=float("inf"),
             )

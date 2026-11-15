@@ -11,26 +11,24 @@
 无需 Flet 运行时（仅测量函数 + 数据结构，不触发 UI 渲染）。
 """
 
-import sys
 import os
+import sys
 
 # 确保项目根目录在 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Line, SegType, Segment
+from models.document import BlockType, Line, Segment, SegType
+from views._spans import build_raw_to_flat_map, slice_spans_for_visual_line
 from views.pixel_layout import (
     LineLayoutCache,
     VisualLine,
     _compute_wrap_width,
     _find_vline_for_raw,
     _layout_last_raw_off,
+    _make_visual_line,
     _value_linear_width,
     _wrap_offsets_into_visual_lines,
-    _make_visual_line,
 )
-from views._spans import build_raw_to_flat_map, slice_spans_for_visual_line
-
-
 
 # ============ 辅助构造 ============
 
@@ -471,7 +469,7 @@ def test_raw_to_flat_skip_prefix():
 
 def test_slice_single_vline():
     """单视觉行：切片后 spans 拼接 == 原 flat 文本。"""
-    import flet as ft
+    from ui import ft
     style = ft.TextStyle(size=16)
     flat_spans = [ft.TextSpan("hello world", style=style)]
     r2f = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -484,7 +482,7 @@ def test_slice_single_vline():
 
 def test_slice_multi_vline():
     """多视觉行：各 vline spans 拼接 == 原 flat 文本。"""
-    import flet as ft
+    from ui import ft
     style = ft.TextStyle(size=16)
     flat_spans = [ft.TextSpan("hello world", style=style)]
     r2f = list(range(12))
@@ -503,7 +501,7 @@ def test_slice_multi_vline():
 
 def test_slice_preserves_style():
     """切片保留 span style。"""
-    import flet as ft
+    from ui import ft
     style_a = ft.TextStyle(size=16, color=ft.Colors.RED)
     style_b = ft.TextStyle(size=16, color=ft.Colors.BLUE)
     flat_spans = [
@@ -521,7 +519,7 @@ def test_slice_preserves_style():
 
 def test_slice_empty_range():
     """空 flat 范围：返回单个空格 span（保持行高）。"""
-    import flet as ft
+    from ui import ft
     style = ft.TextStyle(size=16)
     flat_spans = [ft.TextSpan("hello", style=style)]
     r2f = [0, 0, 0, 0, 0, 0]  # 全折叠（如纯标记段）
@@ -534,7 +532,7 @@ def test_slice_empty_range():
 
 def test_slice_straddling_span():
     """跨边界 span 被正确拆分。"""
-    import flet as ft
+    from ui import ft
     style = ft.TextStyle(size=16)
     # 一个长 span 跨 2 视觉行
     flat_spans = [ft.TextSpan("ABCDEF", style=style)]

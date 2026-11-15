@@ -1,20 +1,22 @@
 [project]
 name = "cs-markdown-editor"
 version = "0.1.0"
-description = "Typora 式段级所见即所得 Markdown 编辑器，基于 Flet 1.0 声明式组件与 mistune 实时渲染"
+description = "Typora 式段级所见即所得 Markdown 编辑器，基于 cs-ui（Flet 1.1 声明式组件）、flet-datatable2 与 mistune 实时渲染"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "CSTOS" }]
-keywords = ["markdown", "editor", "flet", "wysiwyg", "typora"]
+keywords = ["markdown", "editor", "cs-ui", "flet", "wysiwyg", "typora"]
 
 dependencies = [
-    "flet==1.0.4",
+    # UI 只声明 cs-ui 这一个门面：它自带受版本约束的 flet 1.1.x，
+    # 并把未覆写的 flet 名字透传出来。应用不再直接依赖 flet。
+    "cs-ui>=0.2.0,<0.3",
+    "flet-datatable2==1.1.2",
     "mistune>=3.3.4",
     "pillow>=12.3.0",
     "uharfbuzz>=0.40.0",
     "pygments>=2.19.0",
-    "flet-datatable2==1.0.4",
     "watchdog>=4.0.0",
 ]
 

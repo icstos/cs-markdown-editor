@@ -26,7 +26,7 @@ IME 友好策略（key = li + nav_seq）：
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import FONT_MAIN, _current_colors
 from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING
@@ -34,14 +34,14 @@ from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING
 
 def make_strut(
     base_size: int, line_height: float, font_family: str = FONT_MAIN
-) -> ft.StrutStyle:
+) -> ui.StrutStyle:
     """构造与渲染层 Text 共用的 StrutStyle 实例。
 
     force_strut_height=True 强制行高 = size * height，忽略字体内置 ascent/descent
     差异；leading=0 不额外加行间距。渲染层 ft.Text 与 cursor TextField 必须传
     同一实例（或同参数构造），否则二者行高不一致会导致光标 Y 偏移。
     """
-    return ft.StrutStyle(
+    return ui.StrutStyle(
         force_strut_height=True,
         height=line_height,
         leading=0,
@@ -64,11 +64,11 @@ def cursor_text_field(
     on_focus: Callable | None = None,
     on_blur: Callable | None = None,
     on_selection_change: Callable | None = None,
-    field_ref: ft.Ref | None = None,
+    field_ref: ui.Ref | None = None,
     nav_seq: int = 0,
-    selection: ft.TextSelection | None = None,
+    selection: ui.TextSelection | None = None,
     content_width: float | None = None,
-) -> ft.TextField:
+) -> ui.TextField:
     """构造透明光标 TextField（Stack 顶层绝对定位）。
 
     参数：
@@ -134,15 +134,15 @@ def cursor_text_field(
         "min_lines": 1,
         "max_lines": 1,
         # 无边框、透明背景、零内边距，绝不遮挡渲染层
-        "border": ft.NoInputBorder(),
+        "border": ui.NoInputBorder(),
         "border_radius": 0,
         "filled": False,
-        "content_padding": ft.Padding.all(0),
+        "content_padding": ui.Padding.all(0),
         # 文字透明：输入字符不可见，仅光标可见
         "text_size": base_size,
-        "text_style": ft.TextStyle(
+        "text_style": ui.TextStyle(
             font_family=FONT_MAIN,
-            color=ft.Colors.TRANSPARENT,
+            color=ui.Colors.TRANSPARENT,
             # letter_spacing 必须与 HarfBuzz 测量端（_FLET_DEFAULT_LETTER_SPACING）
             # 及渲染层 ft.Text 默认值（0.25）对齐。TextField 的 text_style 默认
             # letter_spacing=None（Flutter 标准 0.0），若不显式设置，TextField
@@ -178,4 +178,4 @@ def cursor_text_field(
         kwargs["on_selection_change"] = on_selection_change
     if field_ref is not None:
         kwargs["ref"] = field_ref
-    return ft.TextField(**kwargs)
+    return ui.TextField(**kwargs)

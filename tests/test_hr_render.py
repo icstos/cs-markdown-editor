@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flet as ft  # noqa: E402
+from ui import ft  # noqa: E402
 
 from parser import parse_markdown  # noqa: E402
 from styles import _current_colors  # noqa: E402

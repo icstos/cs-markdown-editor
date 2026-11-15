@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-import flet as ft
+import ui
 
 from cmsite import _content as K
 from cmsite._shortcuts import ShortcutGroup, load_groups
@@ -31,19 +31,19 @@ from cmsite._ui import (
 from cmsite._widgets import CodePanel
 
 
-@ft.component
-def DocsSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
+@ui.component
+def DocsSection(width: int, clipboard_ref: ui.Ref | None = None) -> ui.Control:
     """文档区块。"""
-    active, set_active = ft.use_state(K.DOCS[0].anchor)
+    active, set_active = ui.use_state(K.DOCS[0].anchor)
     c = current_colors()
     narrow = width < 860
     entry = next((d for d in K.DOCS if d.anchor == active), K.DOCS[0])
 
-    body = ft.Column(
+    body = ui.Column(
         spacing=14,
         tight=True,
         controls=[
-            text(entry.title, size=Type.H3, weight=ft.FontWeight.W_700),
+            text(entry.title, size=Type.H3, weight=ui.FontWeight.W_700),
             text(entry.summary, size=Type.SMALL, color=c.muted),
             divider(c),
             *_render_blocks(entry, clipboard_ref, c),
@@ -51,7 +51,7 @@ def DocsSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
     )
 
     if narrow:
-        content: ft.Control = ft.Column(
+        content: ui.Control = ui.Column(
             spacing=14,
             tight=True,
             controls=[
@@ -60,12 +60,12 @@ def DocsSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
             ],
         )
     else:
-        content = ft.Row(
+        content = ui.Row(
             spacing=Layout.GRID,
-            vertical_alignment=ft.CrossAxisAlignment.START,
+            vertical_alignment=ui.CrossAxisAlignment.START,
             controls=[
-                ft.Container(width=196, content=_nav(active, set_active, c)),
-                ft.Container(
+                ui.Container(width=196, content=_nav(active, set_active, c)),
+                ui.Container(
                     expand=True,
                     content=card(
                         body,
@@ -90,46 +90,46 @@ def DocsSection(width: int, clipboard_ref: ft.Ref | None = None) -> ft.Control:
     )
 
 
-def _nav(active: str, on_select, c) -> ft.Control:
+def _nav(active: str, on_select, c) -> ui.Control:
     """左侧目录：选中项用左竖条 + 浅底标记。"""
-    rows: list[ft.Control] = []
+    rows: list[ui.Control] = []
     for item in K.DOCS:
         selected = item.anchor == active
         rows.append(
-            ft.Container(
-                padding=ft.Padding.symmetric(vertical=8, horizontal=10),
+            ui.Container(
+                padding=ui.Padding.symmetric(vertical=8, horizontal=10),
                 border_radius=Radius.SM,
                 bgcolor=tint(c.link, 0.07) if selected else None,
                 ink=True,
                 on_click=lambda _e=None, a=item.anchor: on_select(a),
-                content=ft.Row(
+                content=ui.Row(
                     spacing=8,
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             width=2,
                             height=15,
                             border_radius=1,
                             bgcolor=c.link if selected else tint(c.border, 1.0),
                         ),
-                        ft.Container(
+                        ui.Container(
                             expand=True,
                             content=text(
                                 item.title,
                                 size=Type.SMALL,
                                 color=c.link if selected else c.text,
-                                weight=ft.FontWeight.W_600 if selected else ft.FontWeight.W_400,
+                                weight=ui.FontWeight.W_600 if selected else ui.FontWeight.W_400,
                             ),
                         ),
                     ],
                 ),
             )
         )
-    return ft.Container(
-        padding=ft.Padding.all(8),
+    return ui.Container(
+        padding=ui.Padding.all(8),
         bgcolor=tint(c.text, 0.02),
         border_radius=Radius.LG,
-        border=only_border(left=ft.BorderSide(0, c.border)),
-        content=ft.Column(spacing=2, tight=True, controls=rows),
+        border=only_border(left=ui.BorderSide(0, c.border)),
+        content=ui.Column(spacing=2, tight=True, controls=rows),
     )
 
 
@@ -138,50 +138,50 @@ def _nav(active: str, on_select, c) -> ft.Control:
 # ---------------------------------------------------------------------------
 
 
-def _render_blocks(entry: K.DocEntry, clipboard_ref: ft.Ref | None, c) -> list[ft.Control]:
+def _render_blocks(entry: K.DocEntry, clipboard_ref: ui.Ref | None, c) -> list[ui.Control]:
     """把一个 DocEntry 的块列表渲染成控件。"""
     if entry.anchor == "docs-keys":
         return _shortcut_views(clipboard_ref, c)
-    out: list[ft.Control] = []
+    out: list[ui.Control] = []
     for block in entry.blocks:
         out.append(_render_block(block, clipboard_ref, c))
-        out.append(ft.Container(height=2))
+        out.append(ui.Container(height=2))
     return out
 
 
-def _render_block(block: K.DocBlock, clipboard_ref: ft.Ref | None, c) -> ft.Control:
+def _render_block(block: K.DocBlock, clipboard_ref: ui.Ref | None, c) -> ui.Control:
     if block.kind == "p":
         return rich(block.text, size=Type.SMALL, color=c.muted)
     if block.kind == "ul":
-        return ft.Column(
+        return ui.Column(
             spacing=6,
             tight=True,
             controls=[_point(str(item), c) for item in block.items],
         )
     if block.kind == "steps":
-        return ft.Column(
+        return ui.Column(
             spacing=10,
             tight=True,
             controls=[
-                ft.Row(
+                ui.Row(
                     spacing=10,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    vertical_alignment=ui.CrossAxisAlignment.START,
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             width=20,
                             height=20,
                             border_radius=10,
                             bgcolor=tint(c.link, 0.10),
-                            alignment=ft.Alignment.CENTER,
+                            alignment=ui.Alignment.CENTER,
                             content=text(f"{i + 1}", size=Type.TINY, color=c.link, mono=True),
                         ),
-                        ft.Container(
+                        ui.Container(
                             expand=True,
-                            content=ft.Column(
+                            content=ui.Column(
                                 spacing=2,
                                 tight=True,
                                 controls=[
-                                    text(title, size=Type.SMALL, weight=ft.FontWeight.W_600),
+                                    text(title, size=Type.SMALL, weight=ui.FontWeight.W_600),
                                     rich(desc, size=Type.TINY, color=c.muted),
                                 ],
                             ),
@@ -192,22 +192,22 @@ def _render_block(block: K.DocBlock, clipboard_ref: ft.Ref | None, c) -> ft.Cont
             ],
         )
     if block.kind == "kv":
-        return ft.Column(
+        return ui.Column(
             spacing=0,
             tight=True,
             controls=[
-                ft.Container(
-                    padding=ft.Padding.symmetric(vertical=7),
-                    border=only_border(bottom=ft.BorderSide(1, tint(c.border, 0.7))),
-                    content=ft.Row(
+                ui.Container(
+                    padding=ui.Padding.symmetric(vertical=7),
+                    border=only_border(bottom=ui.BorderSide(1, tint(c.border, 0.7))),
+                    content=ui.Row(
                         spacing=14,
-                        vertical_alignment=ft.CrossAxisAlignment.START,
+                        vertical_alignment=ui.CrossAxisAlignment.START,
                         controls=[
-                            ft.Container(
+                            ui.Container(
                                 width=210,
                                 content=text(str(key), size=Type.TINY, color=c.text, mono=True),
                             ),
-                            ft.Container(
+                            ui.Container(
                                 expand=True,
                                 content=rich(str(val), size=Type.TINY, color=c.muted),
                             ),
@@ -220,17 +220,17 @@ def _render_block(block: K.DocBlock, clipboard_ref: ft.Ref | None, c) -> ft.Cont
     if block.kind == "code":
         return CodePanel(block.text, clipboard_ref=clipboard_ref, label="terminal")
     if block.kind == "note":
-        return ft.Container(
-            padding=ft.Padding.all(11),
+        return ui.Container(
+            padding=ui.Padding.all(11),
             bgcolor=tint(c.heading_colors.get(3, c.link), 0.07),
             border_radius=Radius.MD,
-            border=only_border(left=ft.BorderSide(2, c.heading_colors.get(3, c.link))),
-            content=ft.Row(
+            border=only_border(left=ui.BorderSide(2, c.heading_colors.get(3, c.link))),
+            content=ui.Row(
                 spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.START,
+                vertical_alignment=ui.CrossAxisAlignment.START,
                 controls=[
                     icon("INFO_OUTLINE", size=15, color=c.heading_colors.get(3, c.link)),
-                    ft.Container(expand=True, content=rich(block.text, size=Type.TINY, color=c.muted)),
+                    ui.Container(expand=True, content=rich(block.text, size=Type.TINY, color=c.muted)),
                 ],
             ),
         )
@@ -238,66 +238,66 @@ def _render_block(block: K.DocBlock, clipboard_ref: ft.Ref | None, c) -> ft.Cont
     return text(block.text, size=Type.SMALL, color=c.muted)
 
 
-def _point(content: str, c) -> ft.Control:
-    return ft.Row(
+def _point(content: str, c) -> ui.Control:
+    return ui.Row(
         spacing=8,
-        vertical_alignment=ft.CrossAxisAlignment.START,
+        vertical_alignment=ui.CrossAxisAlignment.START,
         controls=[
-            ft.Container(width=4, height=4, border_radius=2, bgcolor=c.link,
-                         margin=ft.Margin.only(top=6)),
-            ft.Container(expand=True, content=rich(content, size=Type.SMALL, color=c.muted)),
+            ui.Container(width=4, height=4, border_radius=2, bgcolor=c.link,
+                         margin=ui.Margin.only(top=6)),
+            ui.Container(expand=True, content=rich(content, size=Type.SMALL, color=c.muted)),
         ],
     )
 
 
-def _shortcut_views(clipboard_ref: ft.Ref | None, c) -> list[ft.Control]:
+def _shortcut_views(clipboard_ref: ui.Ref | None, c) -> list[ui.Control]:
     """快捷键页：按注册表的分类分组，每组一张卡。"""
     groups: tuple[ShortcutGroup, ...] = load_groups()
     total = sum(len(g.rows) for g in groups)
-    out: list[ft.Control] = [
-        ft.Row(
+    out: list[ui.Control] = [
+        ui.Row(
             spacing=8,
             wrap=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
                 tag(f"{total} 个动作"),
                 text("按用途分组；默认键位来自程序注册表，可在「设置 → 快捷键」修改。",
                      size=Type.TINY, color=c.muted),
-            ],
+            ], run_spacing=10,
         )
     ]
     for group in groups:
         out.append(
-            ft.Column(
+            ui.Column(
                 spacing=6,
                 tight=True,
                 controls=[
-                    ft.Row(
+                    ui.Row(
                         spacing=8,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                         controls=[
-                            ft.Container(width=3, height=12, bgcolor=c.link, border_radius=2),
-                            text(group.name, size=Type.SMALL, weight=ft.FontWeight.W_600),
+                            ui.Container(width=3, height=12, bgcolor=c.link, border_radius=2),
+                            text(group.name, size=Type.SMALL, weight=ui.FontWeight.W_600),
                             tag(str(len(group.rows))),
                         ],
                     ),
-                    ft.Column(
+                    ui.Column(
                         spacing=0,
                         tight=True,
                         controls=[
-                            ft.Container(
-                                padding=ft.Padding.symmetric(vertical=6),
-                                border=only_border(bottom=ft.BorderSide(1, tint(c.border, 0.55))),
+                            ui.Container(
+                                padding=ui.Padding.symmetric(vertical=6),
+                                border=only_border(bottom=ui.BorderSide(1, tint(c.border, 0.55))),
                                 tooltip=row.desc,
-                                content=ft.Row(
+                                content=ui.Row(
                                     spacing=12,
                                     controls=[
-                                        ft.Container(
+                                        ui.Container(
                                             width=132,
                                             content=text(row.label, size=Type.TINY),
                                         ),
-                                        ft.Container(width=140, content=keycap(row.combo, c)),
-                                        ft.Container(
+                                        ui.Container(width=140, content=keycap(row.combo, c)),
+                                        ui.Container(
                                             expand=True,
                                             content=text(row.desc, size=Type.TINY, color=c.muted,
                                                           max_lines=1),

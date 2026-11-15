@@ -22,8 +22,8 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flet as ft
 import pytest
+from ui import ft
 
 import parser
 from app._diff_controller import build_diff_controller

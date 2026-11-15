@@ -27,11 +27,12 @@ import sys
 from utils import diagnostics
 from utils.log import attach_asyncio, attach_flet, session_header, setup
 
-# 日志必须最先安装：早于 `import flet` / `import app`，否则 flet 与 app 在导入期、
+# 日志必须最先安装：早于 `import ui` / `import app`，否则 UI 框架与 app 在导入期、
 # 启动期抛出的异常只能表现为「窗口没出来」，没有任何可供定位的痕迹。
 LOG = setup()
 
-import flet as ft  # noqa: E402
+import ui  # noqa: E402
+
 from app import App  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ async def _heartbeat() -> None:
         await asyncio.sleep(1.0)
 
 
-async def main(page: ft.Page):
+async def main(page: ui.Page):
     # ---- 诊断接线：会话头 → 异常钩子 → 看门狗 → 心跳 ----
     log.info(session_header())
     attach_flet(page)
@@ -110,23 +111,23 @@ async def main(page: ft.Page):
         # 背景色由 App.apply_theme 通过 page.bgcolor 单独设置，不放在 ColorScheme
         # ColorScheme.surface 与 styles._LIGHT/_DARK.bg 对齐，保证 Flet 原生控件
         # （按钮 / 对话框 / 弹窗）与文档画布同色，无色块错位
-        page.theme = ft.Theme(
+        page.theme = ui.Theme(
             font_family="Alibaba",
-            color_scheme=ft.ColorScheme(
+            color_scheme=ui.ColorScheme(
                 surface="#FAFBFC",
                 on_surface="#1F2329",
                 primary="#1677FF",
             ),
         )
-        page.dark_theme = ft.Theme(
+        page.dark_theme = ui.Theme(
             font_family="Alibaba",
-            color_scheme=ft.ColorScheme(
+            color_scheme=ui.ColorScheme(
                 surface="#14161A",
                 on_surface="#E6EDF3",
                 primary="#6BA0F5",
             ),
         )
-        page.theme_mode = ft.ThemeMode.LIGHT
+        page.theme_mode = ui.ThemeMode.LIGHT
         # 去四周边缘留白：Flet 根视图默认 padding/spacing 各 10px，会在窗口四周留下
         # 空白带——最左活动栏不贴左、顶栏与窗口框架之间有空隙、大纲列右侧与窗口
         # 边缘分离、状态栏下方悬空。置 0 后四列布局与窗口四边严格贴合（VSCode /
@@ -148,12 +149,12 @@ async def main(page: ft.Page):
 
 def main_sync():
     """同步入口，供 console_scripts 调用。"""
-    ft.run(main)
+    ui.run(main)
 
 
 if __name__ == "__main__":
     try:
-        ft.run(main)
+        ui.run(main)
     except BaseException:
         # `ft.run` 自身抛错（端口占用、Flutter 客户端缺失等）也要留下记录：
         # 此时 sys.excepthook 尚未被 Python 调用到，得在这里主动记一笔。

@@ -14,9 +14,18 @@ import difflib
 import os
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
-from styles import FONT_MAIN, FONT_MONO, Elevation, Radius, Spacing, card_shadow, get_colors, only_border
+from styles import (
+    FONT_MAIN,
+    FONT_MONO,
+    Elevation,
+    Radius,
+    Spacing,
+    card_shadow,
+    get_colors,
+    only_border,
+)
 
 _MAX_DIFF_ROWS = 3000  # 防止超大文件卡顿
 # 行内字符级细化（compute_changed_ranges）的行数上限：它是"整行红绿"之上的
@@ -178,7 +187,7 @@ def _diff_colors(c, is_dark: bool) -> dict:
             "added_char": "#7ee787",
             "removed_char": "#f47067",
             "equal_text": c.text,
-            "empty_bg": ft.Colors.with_opacity(0.03, c.text),
+            "empty_bg": ui.Colors.with_opacity(0.03, c.text),
         }
     return {
         "added_bg": "#e6ffed",
@@ -186,7 +195,7 @@ def _diff_colors(c, is_dark: bool) -> dict:
         "added_char": "#1a7f37",
         "removed_char": "#cf222e",
         "equal_text": c.text,
-        "empty_bg": ft.Colors.with_opacity(0.02, c.text),
+        "empty_bg": ui.Colors.with_opacity(0.02, c.text),
     }
 
 
@@ -199,41 +208,41 @@ def _char_diff_spans(left: str, right: str, colors: dict) -> tuple[list, list]:
     if not left and not right:
         return [], []
     matcher = difflib.SequenceMatcher(None, left, right, autojunk=False)
-    left_spans: list[ft.TextSpan] = []
-    right_spans: list[ft.TextSpan] = []
+    left_spans: list[ui.TextSpan] = []
+    right_spans: list[ui.TextSpan] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             text = left[i1:i2]
             if text:
-                style = ft.TextStyle(color=colors["equal_text"])
-                left_spans.append(ft.TextSpan(text=text, style=style))
-                right_spans.append(ft.TextSpan(text=text, style=style))
+                style = ui.TextStyle(color=colors["equal_text"])
+                left_spans.append(ui.TextSpan(text=text, style=style))
+                right_spans.append(ui.TextSpan(text=text, style=style))
         elif tag == "replace":
             l_text = left[i1:i2]
             r_text = right[j1:j2]
             if l_text:
-                left_spans.append(ft.TextSpan(
+                left_spans.append(ui.TextSpan(
                     text=l_text,
-                    style=ft.TextStyle(color=colors["removed_char"], weight=ft.FontWeight.W_700),
+                    style=ui.TextStyle(color=colors["removed_char"], weight=ui.FontWeight.W_700),
                 ))
             if r_text:
-                right_spans.append(ft.TextSpan(
+                right_spans.append(ui.TextSpan(
                     text=r_text,
-                    style=ft.TextStyle(color=colors["added_char"], weight=ft.FontWeight.W_700),
+                    style=ui.TextStyle(color=colors["added_char"], weight=ui.FontWeight.W_700),
                 ))
         elif tag == "delete":
             l_text = left[i1:i2]
             if l_text:
-                left_spans.append(ft.TextSpan(
+                left_spans.append(ui.TextSpan(
                     text=l_text,
-                    style=ft.TextStyle(color=colors["removed_char"], weight=ft.FontWeight.W_700),
+                    style=ui.TextStyle(color=colors["removed_char"], weight=ui.FontWeight.W_700),
                 ))
         elif tag == "insert":
             r_text = right[j1:j2]
             if r_text:
-                right_spans.append(ft.TextSpan(
+                right_spans.append(ui.TextSpan(
                     text=r_text,
-                    style=ft.TextStyle(color=colors["added_char"], weight=ft.FontWeight.W_700),
+                    style=ui.TextStyle(color=colors["added_char"], weight=ui.FontWeight.W_700),
                 ))
     return left_spans, right_spans
 
@@ -299,7 +308,7 @@ def _compute_diff_rows(left_text: str, right_text: str) -> list[dict]:
     return rows
 
 
-def _build_diff_row(row: dict, c, colors: dict) -> ft.Control:
+def _build_diff_row(row: dict, c, colors: dict) -> ui.Control:
     """构建单行 diff 控件：[左行号 | 左内容 | 右行号 | 右内容]。"""
     rtype = row["type"]
     left_ln = str(row["left_ln"]) if row["left_ln"] is not None else ""
@@ -324,39 +333,39 @@ def _build_diff_row(row: dict, c, colors: dict) -> ft.Control:
     # 内容：replace 行做字符级 diff
     if rtype == "replace" and left_text and right_text:
         left_spans, right_spans = _char_diff_spans(left_text, right_text, colors)
-        left_ctrl = ft.Text(spans=left_spans, font_family=FONT_MONO, size=12,
-                            expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
-        right_ctrl = ft.Text(spans=right_spans, font_family=FONT_MONO, size=12,
-                             expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        left_ctrl = ui.Text(spans=left_spans, font_family=FONT_MONO, size=12,
+                            expand=True, max_lines=1, overflow=ui.TextOverflow.ELLIPSIS)
+        right_ctrl = ui.Text(spans=right_spans, font_family=FONT_MONO, size=12,
+                             expand=True, max_lines=1, overflow=ui.TextOverflow.ELLIPSIS)
     else:
-        left_ctrl = ft.Text(
+        left_ctrl = ui.Text(
             value=left_text or " ", font_family=FONT_MONO, size=12,
             color=colors["equal_text"], expand=True,
-            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+            max_lines=1, overflow=ui.TextOverflow.ELLIPSIS,
         )
-        right_ctrl = ft.Text(
+        right_ctrl = ui.Text(
             value=right_text or " ", font_family=FONT_MONO, size=12,
             color=colors["equal_text"], expand=True,
-            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+            max_lines=1, overflow=ui.TextOverflow.ELLIPSIS,
         )
 
-    def _ln_cell(text: str, bg) -> ft.Control:
-        return ft.Container(
+    def _ln_cell(text: str, bg) -> ui.Control:
+        return ui.Container(
             width=_LN_WIDTH, bgcolor=bg,
-            content=ft.Text(
+            content=ui.Text(
                 value=text, size=10, color=c.muted, font_family=FONT_MONO,
-                text_align=ft.TextAlign.RIGHT,
+                text_align=ui.TextAlign.RIGHT,
             ),
-            padding=ft.Padding.only(right=4, left=4),
+            padding=ui.Padding.only(right=4, left=4),
         )
 
-    def _content_cell(ctrl: ft.Control, bg) -> ft.Control:
-        return ft.Container(
+    def _content_cell(ctrl: ui.Control, bg) -> ui.Control:
+        return ui.Container(
             expand=True, bgcolor=bg, content=ctrl,
-            padding=ft.Padding.only(right=8, left=4),
+            padding=ui.Padding.only(right=8, left=4),
         )
 
-    return ft.Row(
+    return ui.Row(
         controls=[
             _ln_cell(left_ln, left_bg),
             _content_cell(left_ctrl, left_bg),
@@ -368,14 +377,14 @@ def _build_diff_row(row: dict, c, colors: dict) -> ft.Control:
     )
 
 
-@ft.component
+@ui.component
 def DiffView(
     visible: bool,
     left_path: str,
     right_path: str,
     left_text: str,
     right_text: str,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     on_close: Callable[[], None],
 ):
     """文件对比视图：全屏 overlay，左右并排显示行级 diff。
@@ -386,7 +395,7 @@ def DiffView(
     - 统计信息：增删行数
     """
     c = get_colors(theme_mode)
-    is_dark = theme_mode == ft.ThemeMode.DARK
+    is_dark = theme_mode == ui.ThemeMode.DARK
     colors = _diff_colors(c, is_dark)
 
     # 计算 diff
@@ -405,9 +414,9 @@ def DiffView(
     # 空文件/相同文件提示
     if not row_controls:
         row_controls = [
-            ft.Container(
-                expand=True, alignment=ft.Alignment.CENTER,
-                content=ft.Text(
+            ui.Container(
+                expand=True, alignment=ui.Alignment.CENTER,
+                content=ui.Text(
                     "文件内容相同，无差异" if left_text == right_text else "无内容",
                     size=14, color=c.muted, font_family=FONT_MAIN,
                 ),
@@ -417,79 +426,79 @@ def DiffView(
     # 头部：文件名 + 统计 + 关闭
     left_name = os.path.basename(left_path) if left_path else "未命名"
     right_name = os.path.basename(right_path) if right_path else "未命名"
-    header = ft.Container(
+    header = ui.Container(
         bgcolor=c.toolbar_bg,
-        border=only_border(bottom=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-        content=ft.Row(
+        border=only_border(bottom=ui.BorderSide(1, c.border)),
+        padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+        content=ui.Row(
             controls=[
-                ft.Icon(ft.Icons.COMPARE_ARROWS, color=c.link, size=18),
-                ft.Text(
+                ui.Icon(ui.Icons.COMPARE_ARROWS, color=c.link, size=18),
+                ui.Text(
                     value=f"{left_name}  →  {right_name}",
                     size=13, color=c.text, font_family=FONT_MAIN,
-                    weight=ft.FontWeight.W_600,
+                    weight=ui.FontWeight.W_600,
                 ),
-                ft.Container(width=Spacing.MD),
+                ui.Container(width=Spacing.MD),
                 # 统计徽章
-                ft.Container(
+                ui.Container(
                     bgcolor=colors["added_bg"],
                     border_radius=Radius.SM,
-                    padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
-                    content=ft.Text(f"+{added}", size=11, color=colors["added_char"],
-                                    font_family=FONT_MONO, weight=ft.FontWeight.W_600),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                    content=ui.Text(f"+{added}", size=11, color=colors["added_char"],
+                                    font_family=FONT_MONO, weight=ui.FontWeight.W_600),
                 ),
-                ft.Container(
+                ui.Container(
                     bgcolor=colors["removed_bg"],
                     border_radius=Radius.SM,
-                    padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
-                    content=ft.Text(f"-{removed}", size=11, color=colors["removed_char"],
-                                    font_family=FONT_MONO, weight=ft.FontWeight.W_600),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                    content=ui.Text(f"-{removed}", size=11, color=colors["removed_char"],
+                                    font_family=FONT_MONO, weight=ui.FontWeight.W_600),
                 ),
-                ft.Container(expand=True),
-                ft.IconButton(
-                    icon=ft.Icons.CLOSE,
+                ui.Container(expand=True),
+                ui.IconButton(
+                    icon=ui.Icons.CLOSE,
                     tooltip="关闭对比",
                     on_click=lambda e: on_close(),
                     icon_size=18,
-                    style=ft.ButtonStyle(color=c.muted),
+                    style=ui.ButtonStyle(color=c.muted),
                 ),
             ],
             spacing=Spacing.SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )
 
     # 截断提示
-    footer_hint = ft.Container(
+    footer_hint = ui.Container(
         visible=truncated,
-        bgcolor=ft.Colors.with_opacity(0.1, _DIFF_WARN_COLOR),
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.XS),
-        content=ft.Text(
+        bgcolor=ui.Colors.with_opacity(0.1, _DIFF_WARN_COLOR),
+        padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.XS),
+        content=ui.Text(
             f"文件过大，仅显示前 {_MAX_DIFF_ROWS} 行差异",
             size=11, color=_DIFF_WARN_COLOR, font_family=FONT_MAIN,
         ),
-    ) if truncated else ft.Container(height=0)
+    ) if truncated else ui.Container(height=0)
 
     # diff 内容：左右列头 + 滚动行列表
     # 列头
-    col_header = ft.Container(
+    col_header = ui.Container(
         bgcolor=c.toolbar_bg,
-        border=only_border(bottom=ft.BorderSide(1, c.border)),
-        content=ft.Row(
+        border=only_border(bottom=ui.BorderSide(1, c.border)),
+        content=ui.Row(
             controls=[
-                ft.Container(width=_LN_WIDTH),
-                ft.Container(
+                ui.Container(width=_LN_WIDTH),
+                ui.Container(
                     expand=True,
-                    padding=ft.Padding.only(left=4, right=8),
-                    content=ft.Text(left_name, size=11, color=c.muted, font_family=FONT_MONO,
-                                    weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                    padding=ui.Padding.only(left=4, right=8),
+                    content=ui.Text(left_name, size=11, color=c.muted, font_family=FONT_MONO,
+                                    weight=ui.FontWeight.W_600, max_lines=1, overflow=ui.TextOverflow.ELLIPSIS),
                 ),
-                ft.Container(width=_LN_WIDTH),
-                ft.Container(
+                ui.Container(width=_LN_WIDTH),
+                ui.Container(
                     expand=True,
-                    padding=ft.Padding.only(left=4, right=8),
-                    content=ft.Text(right_name, size=11, color=c.muted, font_family=FONT_MONO,
-                                    weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                    padding=ui.Padding.only(left=4, right=8),
+                    content=ui.Text(right_name, size=11, color=c.muted, font_family=FONT_MONO,
+                                    weight=ui.FontWeight.W_600, max_lines=1, overflow=ui.TextOverflow.ELLIPSIS),
                 ),
             ],
             spacing=0,
@@ -497,31 +506,31 @@ def DiffView(
         ),
     )
 
-    diff_body = ft.Container(
+    diff_body = ui.Container(
         expand=True,
         bgcolor=c.surface,
-        content=ft.Column(
+        content=ui.Column(
             controls=[col_header] + row_controls,
             spacing=0,
-            scroll=ft.ScrollMode.AUTO,
+            scroll=ui.ScrollMode.AUTO,
             expand=True,
         ),
     )
 
-    return ft.Container(
+    return ui.Container(
         visible=visible,
         expand=True,
-        bgcolor=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
-        alignment=ft.Alignment.CENTER,
-        content=ft.Container(
+        bgcolor=ui.Colors.with_opacity(0.4, ui.Colors.BLACK),
+        alignment=ui.Alignment.CENTER,
+        content=ui.Container(
             width=float("inf"),
             height=float("inf"),
-            margin=ft.Margin.all(16),
+            margin=ui.Margin.all(16),
             bgcolor=c.toolbar_bg,
             border_radius=Radius.XL,
             shadow=card_shadow(Elevation.DIALOG, is_dark),
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            content=ft.Column(
+            clip_behavior=ui.ClipBehavior.HARD_EDGE,
+            content=ui.Column(
                 controls=[header, diff_body, footer_hint],
                 spacing=0,
                 expand=True,

@@ -5,7 +5,7 @@
 按钮回调可驱动状态。
 """
 
-import flet as ft
+from ui import ft
 
 from tests.harness import RenderHarness
 

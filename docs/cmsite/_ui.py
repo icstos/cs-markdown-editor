@@ -17,7 +17,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
-import flet as ft
+import ui
 
 from cmsite import _content as K
 from cmsite._theme import (
@@ -85,15 +85,15 @@ def on_event(fn: Callable[[], Any]) -> Callable[..., Any]:
     return _sync
 
 
-def icon(name: str, size: int = 18, color: str | None = None) -> ft.Icon:
+def icon(name: str, size: int = 18, color: str | None = None) -> ui.Icon:
     """按名字取 Material 图标。
 
     站点的内容层不 import flet（保持可无渲染断言），图标只存名字字符串，
     在这里一次性解析成 `ft.Icons` 成员——**必须用枚举而不是字符串**：
     字符串名在 1.0.4 里不会渲染成字形。
     """
-    glyph = getattr(ft.Icons, name, None) or ft.Icons.CIRCLE
-    return ft.Icon(glyph, size=size, color=color)
+    glyph = getattr(ui.Icons, name, None) or ui.Icons.CIRCLE
+    return ui.Icon(glyph, size=size, color=color)
 
 
 def text(
@@ -101,14 +101,14 @@ def text(
     *,
     size: float = Type.BODY,
     color: str | None = None,
-    weight: ft.FontWeight | None = None,
+    weight: ui.FontWeight | None = None,
     mono: bool = False,
     selectable: bool = False,
     max_lines: int | None = None,
-) -> ft.Text:
+) -> ui.Text:
     """统一文字样式（字体族、字号、颜色集中在这里，避免各处手写）。"""
     c = current_colors()
-    return ft.Text(
+    return ui.Text(
         value,
         size=size,
         color=color or c.text,
@@ -116,14 +116,14 @@ def text(
         font_family=FONT_MONO if mono else FONT_MAIN,
         selectable=selectable,
         max_lines=max_lines,
-        overflow=ft.TextOverflow.ELLIPSIS if max_lines else None,
+        overflow=ui.TextOverflow.ELLIPSIS if max_lines else None,
     )
 
 
-def divider(c: Colors | None = None) -> ft.Control:
+def divider(c: Colors | None = None) -> ui.Control:
     """1px 分隔线。"""
     colors = c or current_colors()
-    return ft.Container(height=1, bgcolor=colors.border)
+    return ui.Container(height=1, bgcolor=colors.border)
 
 
 #: 反引号包起来的片段按行内代码渲染（只支持这一种行内标记，够用且不会写歪）
@@ -135,8 +135,8 @@ def rich(
     *,
     size: float = Type.BODY,
     color: str | None = None,
-    weight: ft.FontWeight | None = None,
-) -> ft.Control:
+    weight: ui.FontWeight | None = None,
+) -> ui.Control:
     """支持 `` `code` `` 行内代码的文字。
 
     站点的文案里经常要写 Ctrl+S、settings.json 这类片段。与其在数据层
@@ -147,15 +147,15 @@ def rich(
     parts = _CODE_SPAN.split(value)
     if len(parts) <= 1:
         return text(value, size=size, color=base, weight=weight)
-    spans: list[ft.TextSpan] = []
+    spans: list[ui.TextSpan] = []
     for i, part in enumerate(parts):
         if not part:
             continue
         if i % 2:  # 反引号内的片段
             spans.append(
-                ft.TextSpan(
+                ui.TextSpan(
                     f"\u2009{part}\u2009",  # 细空格撑一点内边距（TextSpan 无 padding）
-                    ft.TextStyle(
+                    ui.TextStyle(
                         size=size * 0.94,
                         color=c.code_fg,
                         bgcolor=c.code_bg,
@@ -165,15 +165,15 @@ def rich(
             )
         else:
             spans.append(
-                ft.TextSpan(part, ft.TextStyle(size=size, color=base, weight=weight,
+                ui.TextSpan(part, ui.TextStyle(size=size, color=base, weight=weight,
                                                font_family=FONT_MAIN))
             )
-    return ft.Text(spans=spans)
+    return ui.Text(spans=spans)
 
 
-def spacer(height: int) -> ft.Control:
+def spacer(height: int) -> ui.Control:
     """定高留白（比 `Column.spacing` 更好控制节奏的地方用它）。"""
-    return ft.Container(height=height)
+    return ui.Container(height=height)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ def spacer(height: int) -> ft.Control:
 # ---------------------------------------------------------------------------
 
 
-def section(anchor: str, width: int, *children: ft.Control) -> ft.Control:
+def section(anchor: str, width: int, *children: ui.Control) -> ui.Control:
     """带锚点的内容区块。
 
     `anchor` 就是 `ScrollKey`：顶栏导航滚到这里，不依赖像素偏移，
@@ -190,11 +190,11 @@ def section(anchor: str, width: int, *children: ft.Control) -> ft.Control:
     顶部留 20px：`scroll_to(scroll_key=...)` 会把容器顶边对齐视口顶边，
     不留白的话区块标题会贴着顶栏下沿，看起来像被切掉。
     """
-    return ft.Container(
-        key=ft.ScrollKey(anchor),
+    return ui.Container(
+        key=ui.ScrollKey(anchor),
         width=width,
-        padding=ft.Padding.only(top=20, bottom=Layout.SECTION_GAP),
-        content=ft.Column(spacing=Spacing.XXXL, tight=True, controls=list(children)),
+        padding=ui.Padding.only(top=20, bottom=Layout.SECTION_GAP),
+        content=ui.Column(spacing=Spacing.XXXL, tight=True, controls=list(children)),
     )
 
 
@@ -205,24 +205,24 @@ def section_header(
     *,
     accent: str | None = None,
     width: int | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """区块标题：编号 + 大标题 + 一句说明。"""
     c = current_colors()
     tone = accent or c.link
-    body: list[ft.Control] = [
-        ft.Row(
+    body: list[ui.Control] = [
+        ui.Row(
             spacing=10,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Container(width=22, height=2, bgcolor=tone, border_radius=1),
-                text(eyebrow, size=Type.TINY, color=tone, weight=ft.FontWeight.W_600),
+                ui.Container(width=22, height=2, bgcolor=tone, border_radius=1),
+                text(eyebrow, size=Type.TINY, color=tone, weight=ui.FontWeight.W_600),
             ],
         ),
-        text(title, size=Type.H2, weight=ft.FontWeight.W_700),
+        text(title, size=Type.H2, weight=ui.FontWeight.W_700),
     ]
     if desc:
-        body.append(ft.Container(width=width or 720, content=text(desc, color=c.muted)))
-    return ft.Column(spacing=12, tight=True, controls=body)
+        body.append(ui.Container(width=width or 720, content=text(desc, color=c.muted)))
+    return ui.Column(spacing=12, tight=True, controls=body)
 
 
 # ---------------------------------------------------------------------------
@@ -231,46 +231,46 @@ def section_header(
 
 
 def card(
-    *children: ft.Control,
+    *children: ui.Control,
     pad: int = 20,
     bgcolor: str | None = None,
     border: bool = True,
     on_click: Callable[[], None] | None = None,
     width: int | None = None,
     spacing: int = 10,
-    alignment: ft.Alignment | None = None,
-) -> ft.Control:
+    alignment: ui.Alignment | None = None,
+) -> ui.Control:
     """通用卡片：圆角 + 1px 边框 + 表面色。
 
     默认不加阴影：长页面靠边框与底色分层就够了，加阴影容易显得脏。
     """
     c = current_colors()
-    return ft.Container(
+    return ui.Container(
         width=width,
-        padding=ft.Padding.all(pad),
+        padding=ui.Padding.all(pad),
         bgcolor=bgcolor or c.surface,
         border_radius=Radius.LG,
-        border=ft.Border.all(1, c.border) if border else None,
+        border=ui.Border.all(1, c.border) if border else None,
         ink=on_click is not None,
         on_click=on_event(on_click) if on_click is not None else None,
         alignment=alignment,
-        content=ft.Column(spacing=spacing, tight=True, controls=list(children)),
+        content=ui.Column(spacing=spacing, tight=True, controls=list(children)),
     )
 
 
-def icon_tile(name: str, tone: str, size: int = 36, glyph: int = 19) -> ft.Control:
+def icon_tile(name: str, tone: str, size: int = 36, glyph: int = 19) -> ui.Control:
     """图标底板：浅色圆角方块 + 居中图标。"""
-    return ft.Container(
+    return ui.Container(
         width=size,
         height=size,
         border_radius=Radius.MD,
         bgcolor=tint(tone, 0.10),
-        alignment=ft.Alignment.CENTER,
+        alignment=ui.Alignment.CENTER,
         content=icon(name, size=glyph, color=tone),
     )
 
 
-def feature_card(feature: K.Feature, tone: str | None = None) -> ft.Control:
+def feature_card(feature: K.Feature, tone: str | None = None) -> ui.Control:
     """特性卡片：图标 + 标题 + 一句重点 + 细节。
 
     层级刻意拉开：标题最重（16 / W600），重点句用正文色（不是灰），细节才压灰。
@@ -279,28 +279,28 @@ def feature_card(feature: K.Feature, tone: str | None = None) -> ft.Control:
     c = current_colors()
     accent = tone or c.link
     return card(
-        ft.Row(
+        ui.Row(
             spacing=10,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
                 icon_tile(feature.icon, accent),
-                ft.Container(
+                ui.Container(
                     expand=True,
-                    content=text(feature.title, size=Type.H4, weight=ft.FontWeight.W_600),
+                    content=text(feature.title, size=Type.H4, weight=ui.FontWeight.W_600),
                 ),
             ],
         ),
-        ft.Container(
+        ui.Container(
             content=rich(
                 feature.summary,
                 size=Type.SMALL + 0.5,
                 color=c.text,
-                weight=ft.FontWeight.W_500,
+                weight=ui.FontWeight.W_500,
             )
         ),
         *(
             [
-                ft.Column(
+                ui.Column(
                     spacing=5,
                     tight=True,
                     controls=[_bullet(point, c) for point in feature.points],
@@ -313,20 +313,20 @@ def feature_card(feature: K.Feature, tone: str | None = None) -> ft.Control:
     )
 
 
-def _bullet(content: str, c: Colors) -> ft.Control:
+def _bullet(content: str, c: Colors) -> ui.Control:
     """要点行：小圆点 + 文字（圆点是并列关系，不用编号）。"""
-    return ft.Row(
+    return ui.Row(
         spacing=8,
-        vertical_alignment=ft.CrossAxisAlignment.START,
+        vertical_alignment=ui.CrossAxisAlignment.START,
         controls=[
-            ft.Container(
-                margin=ft.Margin.only(top=6),
+            ui.Container(
+                margin=ui.Margin.only(top=6),
                 width=4,
                 height=4,
                 bgcolor=tint(c.muted, 0.9),
                 border_radius=2,
             ),
-            ft.Container(expand=True, content=rich(content, size=Type.TINY, color=c.muted)),
+            ui.Container(expand=True, content=rich(content, size=Type.TINY, color=c.muted)),
         ],
     )
 
@@ -336,60 +336,60 @@ def _bullet(content: str, c: Colors) -> ft.Control:
 # ---------------------------------------------------------------------------
 
 
-def badge(label: str, tone: str | None = None, filled: bool = False) -> ft.Control:
+def badge(label: str, tone: str | None = None, filled: bool = False) -> ui.Control:
     """小徽标（版本号、分类）。"""
     c = current_colors()
     color = tone or c.link
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=7, vertical=2),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=7, vertical=2),
         border_radius=Radius.SM,
         bgcolor=color if filled else tint(color, 0.10),
         content=text(
             label,
             size=Type.TINY,
             color=c.bg if filled else color,
-            weight=ft.FontWeight.W_500,
+            weight=ui.FontWeight.W_500,
             mono=True,
         ),
     )
 
 
-def tag(label: str, plain: bool = False) -> ft.Control:
+def tag(label: str, plain: bool = False) -> ui.Control:
     """等宽小标签（语法片段、模块名）。
 
     `plain=True` 走中性色：像块级类型表那样十行连排时，代码风格的红底会连成
     一条色带，把「说明」这一列压下去。红色只该出现在真正需要被注意的少数位置。
     """
     c = current_colors()
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=6, vertical=2),
         border_radius=Radius.SM,
         bgcolor=tint(c.text, 0.045) if plain else c.code_bg,
         content=text(label, size=Type.TINY, color=c.text if plain else c.code_fg, mono=True),
     )
 
 
-def keycap(combo: str, c: Colors | None = None) -> ft.Control:
+def keycap(combo: str, c: Colors | None = None) -> ui.Control:
     """键帽。"""
     colors = c or current_colors()
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=7, vertical=3),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=7, vertical=3),
         border_radius=Radius.SM,
         bgcolor=colors.bg,
-        border=ft.Border.all(1, colors.border),
+        border=ui.Border.all(1, colors.border),
         content=text(combo, size=Type.TINY, color=colors.text, mono=True),
     )
 
 
-def stat(metric: K.Metric) -> ft.Control:
+def stat(metric: K.Metric) -> ui.Control:
     """首屏指标：大数字 + 说明。"""
     c = current_colors()
-    return ft.Column(
+    return ui.Column(
         spacing=2,
         tight=True,
         controls=[
-            text(metric.value, size=Type.STAT, weight=ft.FontWeight.W_700),
-            text(metric.label, size=Type.SMALL, weight=ft.FontWeight.W_500),
+            text(metric.value, size=Type.STAT, weight=ui.FontWeight.W_700),
+            text(metric.label, size=Type.SMALL, weight=ui.FontWeight.W_500),
             text(metric.hint, size=Type.TINY, color=c.muted),
         ],
     )
@@ -404,25 +404,25 @@ def primary_button(
     label: str,
     on_click: Callable[[], None],
     glyph: str = "",
-) -> ft.Control:
+) -> ui.Control:
     """实心主按钮（显式定高 40，避免被文字行盒算出不一致的高度）。"""
     c = current_colors()
-    return ft.Container(
+    return ui.Container(
         height=40,
-        padding=ft.Padding.symmetric(horizontal=18),
+        padding=ui.Padding.symmetric(horizontal=18),
         border_radius=Radius.MD,
         bgcolor=c.link,
         ink=True,
         on_click=on_event(on_click),
         tooltip=label,
-        content=ft.Row(
+        content=ui.Row(
             spacing=8,
             tight=True,
-            alignment=ft.MainAxisAlignment.CENTER,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ui.MainAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
                 *([icon(glyph, size=17, color=c.bg)] if glyph else []),
-                text(label, size=Type.SMALL, color=c.bg, weight=ft.FontWeight.W_600),
+                text(label, size=Type.SMALL, color=c.bg, weight=ui.FontWeight.W_600),
             ],
         ),
     )
@@ -432,26 +432,26 @@ def ghost_button(
     label: str,
     on_click: Callable[[], None],
     glyph: str = "",
-) -> ft.Control:
+) -> ui.Control:
     """描边次按钮。"""
     c = current_colors()
-    return ft.Container(
+    return ui.Container(
         height=40,
-        padding=ft.Padding.symmetric(horizontal=16),
+        padding=ui.Padding.symmetric(horizontal=16),
         border_radius=Radius.MD,
         bgcolor=tint(c.text, 0.03),
-        border=ft.Border.all(1, c.border),
+        border=ui.Border.all(1, c.border),
         ink=True,
         on_click=on_event(on_click),
         tooltip=label,
-        content=ft.Row(
+        content=ui.Row(
             spacing=8,
             tight=True,
-            alignment=ft.MainAxisAlignment.CENTER,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ui.MainAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
             controls=[
                 *([icon(glyph, size=17, color=c.muted)] if glyph else []),
-                text(label, size=Type.SMALL, weight=ft.FontWeight.W_500),
+                text(label, size=Type.SMALL, weight=ui.FontWeight.W_500),
             ],
         ),
     )
@@ -461,20 +461,20 @@ def pill_tabs(
     items: Sequence[tuple[str, str]],
     active: str,
     on_select: Callable[[str], None],
-) -> ft.Control:
+) -> ui.Control:
     """胶囊页签组（演示样例切换、文档目录共用）。
 
     `items` 是 `(key, label)`。选中态实心、未选中透明——页签是二态控件，
     反差要够强，否则看不出当前在哪一页。
     """
     c = current_colors()
-    return ft.Row(
+    return ui.Row(
         spacing=4,
         wrap=True,
         run_spacing=4,
         controls=[
-            ft.Container(
-                padding=ft.Padding.symmetric(horizontal=12, vertical=7),
+            ui.Container(
+                padding=ui.Padding.symmetric(horizontal=12, vertical=7),
                 border_radius=Radius.MD,
                 bgcolor=c.link if key == active else None,
                 ink=True,
@@ -484,7 +484,7 @@ def pill_tabs(
                     label,
                     size=Type.SMALL,
                     color=c.bg if key == active else c.muted,
-                    weight=ft.FontWeight.W_600 if key == active else ft.FontWeight.W_400,
+                    weight=ui.FontWeight.W_600 if key == active else ui.FontWeight.W_400,
                 ),
             )
             for key, label in items
@@ -497,7 +497,7 @@ def pill_tabs(
 # ---------------------------------------------------------------------------
 
 
-def grid(width: int, columns: int, children: Sequence[ft.Control], gap: int | None = None) -> ft.Control:
+def grid(width: int, columns: int, children: Sequence[ui.Control], gap: int | None = None) -> ui.Control:
     """等宽网格：按内容宽度自己算列宽。
 
     不用 `ResponsiveRow` 的原因：它的断点看的是**页面**宽度，而这里的可用宽度
@@ -507,21 +507,21 @@ def grid(width: int, columns: int, children: Sequence[ft.Control], gap: int | No
     gap = Layout.GRID if gap is None else gap
     cols = max(1, min(columns, width // 320))
     cell = (width - gap * (cols - 1)) // cols
-    return ft.Row(
+    return ui.Row(
         spacing=gap,
         run_spacing=gap,
         wrap=True,
-        controls=[ft.Container(width=cell, content=child) for child in children],
+        controls=[ui.Container(width=cell, content=child) for child in children],
     )
 
 
-def inset_panel(*children: ft.Control, bgcolor: str | None = None) -> ft.Control:
+def inset_panel(*children: ui.Control, bgcolor: str | None = None) -> ui.Control:
     """内嵌面板：比卡片再浅一层的容器（用于卡片内部的次级区域）。"""
     c = current_colors()
-    return ft.Container(
-        padding=ft.Padding.all(14),
+    return ui.Container(
+        padding=ui.Padding.all(14),
         bgcolor=bgcolor or tint(c.text, 0.025),
         border_radius=Radius.MD,
-        border=only_border(left=ft.BorderSide(2, tint(c.link, 0.5))),
-        content=ft.Column(spacing=8, tight=True, controls=list(children)),
+        border=only_border(left=ui.BorderSide(2, tint(c.link, 0.5))),
+        content=ui.Column(spacing=8, tight=True, controls=list(children)),
     )

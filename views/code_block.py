@@ -155,7 +155,7 @@ raw 里），按偏移取色必然错位；而拖选命中本块时目标偏移�
 import contextlib
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from models.document import Line
 from services.clipboard import copy_code_to_clipboard
@@ -306,7 +306,7 @@ def _lang_entries(current_lang: str) -> list[tuple[str, str]]:
     return entries
 
 
-def _span_style(color: str, size: int, bgcolor: str | None = None) -> ft.TextStyle:
+def _span_style(color: str, size: int, bgcolor: str | None = None) -> ui.TextStyle:
     """代码片段文字样式：等宽 + 固定行高倍数 + 语义色 + 显式字距。
 
     字体族 / 字号 / 行高 / 字距在 span 上重复声明（而非仅依赖 Text 的 style 继承）：
@@ -320,7 +320,7 @@ def _span_style(color: str, size: int, bgcolor: str | None = None) -> ft.TextSty
     bgcolor：对比视图的行内变更强调（半透明叠加在行底色之上）。None = 不设，
     序列化时该字段被省略，普通文档的 span 与加这一层之前逐字节相同。
     """
-    return ft.TextStyle(
+    return ui.TextStyle(
         color=color,
         font_family=FONT_MONO,
         size=size,
@@ -379,7 +379,7 @@ def _emphasize_spec(
     return out
 
 
-def _edit_strut(size: int) -> ft.StrutStyle:
+def _edit_strut(size: int) -> ui.StrutStyle:
     """编辑框的行盒 strut：**必须显式给出，且 `force_strut_height=False`**。
 
     为什么这不是可选项：`TextField` 在未指定 strut 时，Flutter 会自造一个
@@ -400,7 +400,7 @@ def _edit_strut(size: int) -> ft.StrutStyle:
     与浏览层**逐一相等**：纯 ASCII 1 行 24 / 2 行 48、中文 1 行 25 / 2 行 50、
     `x = 1  # 注释` 混合 2 行 51、emoji 1 行 27。
     """
-    return ft.StrutStyle(
+    return ui.StrutStyle(
         font_family=FONT_MONO,
         size=size,
         height=_CODE_LINE_HEIGHT,
@@ -490,13 +490,13 @@ def render_code_block(
     line_idx: int,
     base: int,
     content_width: float | None,
-    clipboard_ref: ft.Ref | None,
+    clipboard_ref: ui.Ref | None,
     on_change_code: Callable[[int, str], None] | None,
     on_code_focus: Callable[[int], None] | None,
     on_code_blur: Callable[[int], None] | None,
     on_change_lang: Callable[[int, str], None] | None,
     on_code_selection: Callable[..., None] | None,
-    code_field_ref: ft.Ref | None,
+    code_field_ref: ui.Ref | None,
     is_current_line: bool,
     is_flash: bool = False,
     on_line_size_change: Callable[[int, float], None] | None = None,
@@ -511,7 +511,7 @@ def render_code_block(
     code_diff_ranges: dict[int, list[tuple[int, int]]] | None = None,
     diff_side: int = 0,
     is_selected: bool = False,
-) -> ft.Control:
+) -> ui.Control:
     """渲染代码块（CODE 围栏岛屿）：浏览态语法高亮 + 点击进入原生编辑。
 
     软换行：`word_wrap=True` 时浏览态按容器宽度折行（续行与首行同列），
@@ -564,14 +564,14 @@ def render_code_block(
     c = _current_colors()
     code = line.segments[0].text if line.segments else ""
     lang = line.lang or ""
-    page = ft.context.page
-    is_dark = page is not None and page.theme_mode == ft.ThemeMode.DARK
+    page = ui.context.page
+    is_dark = page is not None and page.theme_mode == ui.ThemeMode.DARK
 
     # ---- 组件内状态：浏览 ⇄ 编辑 / 复制反馈 / 折叠 ----
-    is_editing, set_editing = ft.use_state(False)
-    copied, set_copied = ft.use_state(False)
-    is_collapsed, set_collapsed = ft.use_state(False)
-    edit_field_ref = ft.use_ref(None)
+    is_editing, set_editing = ui.use_state(False)
+    copied, set_copied = ui.use_state(False)
+    is_collapsed, set_collapsed = ui.use_state(False)
+    edit_field_ref = ui.use_ref(None)
 
     # ---- Tab 缩进所需的本地状态 ----
     # caret_ref：(文本, 选区起点, 选区终点)——组件内留一份最近的光标位，Tab 缩进据此
@@ -588,24 +588,24 @@ def render_code_block(
     #   敲的"的判据（与文档文本比对），见 `_build_edit_body` 里的下发规则。
     #   注意它**不是**"待下发的文本"：不下发时要传的是 `edit_field_ref.current.value`
     #   （客户端手里的那份），见该处注释——两者差一层 flet 的差分语义，混用即回灌。
-    caret_ref = ft.use_ref(None)
-    shift_ref = ft.use_ref(False)
-    ctrl_ref = ft.use_ref(False)
-    tab_pending_ref = ft.use_ref(False)
-    pending_caret_ref = ft.use_ref(None)
-    tap_pos_ref = ft.use_ref(None)
-    client_text_ref = ft.use_ref(None)
-    tab_epoch, set_tab_epoch = ft.use_state(0)
+    caret_ref = ui.use_ref(None)
+    shift_ref = ui.use_ref(False)
+    ctrl_ref = ui.use_ref(False)
+    tab_pending_ref = ui.use_ref(False)
+    pending_caret_ref = ui.use_ref(None)
+    tap_pos_ref = ui.use_ref(None)
+    client_text_ref = ui.use_ref(None)
+    tab_epoch, set_tab_epoch = ui.use_state(0)
     # 编辑框是否已真正取得焦点（进入编辑态时复位）。
     # 待写入的光标只能在**聚焦之后**下发，原因见 `_build_edit_body`：
     # 挂载当次带 selection，Flutter 会在随后聚焦时把光标重置到文末。
-    edit_focused, set_edit_focused = ft.use_state(False)
+    edit_focused, set_edit_focused = ui.use_state(False)
     # 编辑态光标所在逻辑行（行号高亮用）。
     # 必须是 state 而不是渲染期现算：`on_selection_change` 只写 ref、不触发重渲染，
     # 用 ref 现算的话，在代码块内按 ↑/↓ 移动光标时行号高亮会停在旧行——比不做更糟。
     # 成本受控：只在**折叠光标跨了逻辑行**时才 set_state（见 `_remember_caret`），
     # 所以正常打字（行号不变）与拖选（base != extent）都不产生额外渲染。
-    caret_line, set_caret_line = ft.use_state(-1)
+    caret_line, set_caret_line = ui.use_state(-1)
 
     def _consume_enter_request() -> None:
         """方向键把光标从相邻行送进本代码块 → 切到编辑态并把光标放到请求位置。
@@ -636,7 +636,7 @@ def render_code_block(
         # 光标本身照旧等"聚焦之后"再下发，理由见 _build_edit_body。
         _enter_edit()
 
-    ft.use_effect(_consume_enter_request, [enter_seq])
+    ui.use_effect(_consume_enter_request, [enter_seq])
 
     # 软换行开关：word_wrap=False 时 content_width 为 inf（编辑器侧不变量）
     wrap = bool(word_wrap) and content_width != float("inf")
@@ -648,8 +648,8 @@ def render_code_block(
     # 行号列宽 = 位数 × 单字宽 + 与代码的间距。单字宽取 0.5 字号：FONT_MONO
     # （Noto Sans Mono CJK SC）的拉丁字宽实测恒为 0.5em，行号是纯数字故适用。
     gutter_w = max(26, round(digits * code_size * 0.5) + Spacing.LG)
-    gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.04, c.text)
-    border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
+    gutter_bg = ui.Colors.with_opacity(0.18 if is_dark else 0.04, c.text)
+    border_color = ui.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
     # 对比视图的行级配色表：只有拿到行级标记时才构造（普通文档零开销、不取色）
     diff_palette = diff_line_palette(c, diff_side) if code_diff_marks else None
 
@@ -682,7 +682,7 @@ def render_code_block(
         #   点击有水波反馈、悬停有 tooltip，全局观感一致。
         def _header_icon(
             icon: str, tooltip: str, color: str, on_click, bgcolor: str | None = None
-        ) -> ft.Control:
+        ) -> ui.Control:
             """固定 _HEADER_H 见方的头部图标按钮。
 
             bgcolor 用于"已复制"这类一次性的状态反馈：静态赋值，不引入 on_hover
@@ -690,58 +690,58 @@ def render_code_block(
             代码（含每一行高亮 span）重建一遍，几十行以上的代码块在快速划过时会明显
             掉帧。头部按钮自带水波（ink=True），已经够表达"可按"。
             """
-            return ft.Container(
+            return ui.Container(
                 width=_HEADER_H,
                 height=_HEADER_H,
                 border_radius=Radius.SM,
                 bgcolor=bgcolor,
-                alignment=ft.Alignment.CENTER,
+                alignment=ui.Alignment.CENTER,
                 ink=True,
                 tooltip=tooltip,
                 on_click=lambda e: on_click(),
-                content=ft.Icon(icon, size=14, color=color),
+                content=ui.Icon(icon, size=14, color=color),
             )
 
         # 语言选择器：当前语言是可点的紧凑标签（Typora 同款位置与交互直觉）。
         # 菜单项用 `on_click` 而非 `on_select`：后者只给被选项的控件 ID 字符串，
         # 还得反查映射；前者可闭包捕获标识，是项目既有写法（tool_area / tab_bar）。
-        lang_button = ft.PopupMenuButton(
+        lang_button = ui.PopupMenuButton(
             height=_HEADER_H,
-            padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
+            padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=0),
             tooltip="选择代码语言",
             # UNDER：菜单向下展开，不遮住代码本身（默认 OVER 会盖住正文前几行）
-            menu_position=ft.PopupMenuPosition.UNDER,
-            shape=ft.RoundedRectangleBorder(radius=Radius.MD),
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=Radius.SM),
-                padding=ft.Padding.all(0),
+            menu_position=ui.PopupMenuPosition.UNDER,
+            shape=ui.RoundedRectangleBorder(radius=Radius.MD),
+            style=ui.ButtonStyle(
+                shape=ui.RoundedRectangleBorder(radius=Radius.SM),
+                padding=ui.Padding.all(0),
                 # 淡底 pill：让"当前语言"在紧凑头部里成为一个可点的实体，而不是一段
                 # 悬空的文字（VSCode 的 language mode 指示器同理）；hover 叠一层更亮的
                 # overlay，按钮的悬停反馈由客户端完成，不产生任何服务端往返。
-                bgcolor=ft.Colors.with_opacity(0.05, c.text),
-                overlay_color=ft.Colors.with_opacity(0.10, c.text),
+                bgcolor=ui.Colors.with_opacity(0.05, c.text),
+                overlay_color=ui.Colors.with_opacity(0.10, c.text),
             ),
-            content=ft.Row(
+            content=ui.Row(
                 controls=[
-                    ft.Text(
+                    ui.Text(
                         value=_lang_display(lang),
                         size=12,
                         color=c.text,
                         font_family=FONT_MONO,
                         max_lines=1,
-                        overflow=ft.TextOverflow.ELLIPSIS,
+                        overflow=ui.TextOverflow.ELLIPSIS,
                     ),
-                    ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=c.muted),
+                    ui.Icon(ui.Icons.ARROW_DROP_DOWN, size=14, color=c.muted),
                 ],
                 spacing=1,
                 tight=True,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
             items=[
-                ft.PopupMenuItem(
+                ui.PopupMenuItem(
                     # 压缩项高（默认 48）：26 个语言的菜单因此不必滚动太多
                     height=28,
-                    content=ft.Text(value=text, size=12, font_family=FONT_MONO),
+                    content=ui.Text(value=text, size=12, font_family=FONT_MONO),
                     # 勾选当前语言：菜单一打开就能确认当前状态，无需记忆
                     checked=key == lang,
                     on_click=(
@@ -756,9 +756,9 @@ def render_code_block(
 
         # ---- 复制按钮 ----
         copy_btn = _header_icon(
-            ft.Icons.CHECK if copied else ft.Icons.CONTENT_COPY,
+            ui.Icons.CHECK if copied else ui.Icons.CONTENT_COPY,
             "已复制" if copied else "复制代码",
-            ft.Colors.GREEN if copied else c.muted,
+            ui.Colors.GREEN if copied else c.muted,
             lambda: (
                 page.run_task(copy_code_to_clipboard, clipboard_ref, code, set_copied)
                 if page is not None and not copied
@@ -766,7 +766,7 @@ def render_code_block(
             ),
             # "已复制"给一个静态底色，比只换图标颜色更容易被余光捕捉到
             bgcolor=(
-                ft.Colors.with_opacity(0.14, ft.Colors.GREEN) if copied else None
+                ui.Colors.with_opacity(0.14, ui.Colors.GREEN) if copied else None
             ),
         )
 
@@ -776,7 +776,7 @@ def render_code_block(
         # 纯文本文档不提供折叠：整篇就是这个块，折叠后既没有"别的行"可落光标，
         # 也没有任何信息可读（只剩一行摘要），是一个纯粹的死路。
         collapse_btn = _header_icon(
-            ft.Icons.EXPAND_MORE if is_collapsed else ft.Icons.EXPAND_LESS,
+            ui.Icons.EXPAND_MORE if is_collapsed else ui.Icons.EXPAND_LESS,
             "展开" if is_collapsed else "折叠",
             c.muted,
             lambda: _toggle_collapse(),
@@ -787,13 +787,13 @@ def render_code_block(
         # 行高不会悄悄膨胀（tests/test_code_block_native.py 有用例守住每个子项的高度）。
         # 左侧刻意不放装饰性图标（原 DATA_OBJECT）：语言标签紧邻其右，语义重复，
         # 紧凑头部里多一个字形只会让起点更乱。
-        header = ft.Container(
-            content=ft.Row(
+        header = ui.Container(
+            content=ui.Row(
                 controls=[
                     *([] if is_plain_doc else [collapse_btn]),
                     lang_button,
-                    ft.Container(expand=True),
-                    ft.Text(
+                    ui.Container(expand=True),
+                    ui.Text(
                         value=f"{line_count} 行",
                         size=11,
                         color=c.muted,
@@ -803,19 +803,19 @@ def render_code_block(
                 ],
                 spacing=Spacing.SM,
                 height=_HEADER_H,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
             # 工具栏的左右缩进由本层承担：块容器不再留水平内边距（见下方组装的说明），
             # 否则图标会贴到块边框上。行号色带与细分隔线要贴边，工具栏不需要——
             # 这正是"内边距按内容分工"的落点。
-            padding=ft.Padding.only(left=Spacing.MD, right=Spacing.MD),
+            padding=ui.Padding.only(left=Spacing.MD, right=Spacing.MD),
         )
 
     # ============================ 浏览态 ============================
 
     def _gutter_cell(
         n: int, active: bool = False, mark: str | None = None, selected: bool = False
-    ) -> ft.Container:
+    ) -> ui.Container:
         """行号单元格：固定列宽 + 顶右对齐 + 行号底色（同列拼接成"装订线"色带）。
 
         height=text_h 固定为**一个视觉行**的高度，不由交叉轴拉伸决定：
@@ -861,16 +861,16 @@ def render_code_block(
         由行容器的选中底色贯通整行 —— 两个来源同时上色会在行号列叠出一块深浅不同的
         色带，看起来像"代码被选中、行号没被选中"。
         """
-        num_color = c.link if active else ft.Colors.with_opacity(0.55, c.muted)
+        num_color = c.link if active else ui.Colors.with_opacity(0.55, c.muted)
         bar = diff_palette.get(mark, ("", ""))[1] if (diff_palette and mark) else ""
-        return ft.Container(
-            content=ft.Text(
+        return ui.Container(
+            content=ui.Text(
                 value=str(n),
                 size=max(9, round(code_size * 0.78)),
                 color=num_color,
                 font_family=FONT_MONO,
-                weight=ft.FontWeight.W_500 if active else ft.FontWeight.NORMAL,
-                text_align=ft.TextAlign.RIGHT,
+                weight=ui.FontWeight.W_500 if active else ui.FontWeight.NORMAL,
+                text_align=ui.TextAlign.RIGHT,
                 height=text_h,
                 # 见上方 docstring：行号摘出外层 SelectionArea 的唯一办法
                 selectable=True,
@@ -881,18 +881,18 @@ def render_code_block(
             # 选中（整块在向外选区里）时不铺自己的色带，让行容器的选中底色贯通整行
             # —— 否则行号列比代码列多一层半透明灰，"整块被选中"就变成两段不同颜色。
             bgcolor=(
-                ft.Colors.with_opacity(0.26, c.link)
+                ui.Colors.with_opacity(0.26, c.link)
                 if active
                 else (None if selected else gutter_bg)
             ),
             # 装订线：行号列与代码之间一条 1px 竖线，桌面编辑器惯用的分栏提示；
             # 左缘那条 3px 是对比视图的差异标记条（无标记时不存在）
             border=only_border(
-                right=ft.BorderSide(1, border_color),
-                left=ft.BorderSide(3, bar) if bar else None,
+                right=ui.BorderSide(1, border_color),
+                left=ui.BorderSide(3, bar) if bar else None,
             ),
-            alignment=ft.Alignment.TOP_RIGHT,
-            padding=ft.Padding.only(top=Spacing.XS, right=Spacing.MD),
+            alignment=ui.Alignment.TOP_RIGHT,
+            padding=ui.Padding.only(top=Spacing.XS, right=Spacing.MD),
         )
 
     def _record_tap(row_idx: int, e) -> None:
@@ -965,7 +965,7 @@ def render_code_block(
         longest = max(code.split("\n"), key=len, default="")
         return max(_EDIT_MIN_WIDTH, _measure_mono_width(longest, code_size))
 
-    def _read_column() -> ft.Column:
+    def _read_column() -> ui.Column:
         """高亮正文列：逐逻辑行高亮渲染，折行由 Flutter 按容器宽度原生完成。
 
         浏览态与编辑态**共用本层**：编辑态把它作为底层高亮，上面叠一个文字透明的
@@ -986,7 +986,7 @@ def render_code_block(
           退出编辑立即恢复——与"编辑时失去高亮"（大文件单层态）同一取舍。
         """
         active_line = caret_line if is_editing else -1
-        rows: list[ft.Control] = []
+        rows: list[ui.Control] = []
         gap_rows = code_diff_gaps if (code_diff_gaps and not is_editing) else None
         # 选中底色：只在**浏览态**铺。编辑态里可见选区由原生编辑框自己画
         # （`selection_color`），底层再叠一层会在光标闪烁时露出双重色块。
@@ -994,30 +994,30 @@ def render_code_block(
         # 整块选中与"选中一段正文"在视觉上必须是同一个颜色。
         sel_bg = selection_highlight_bg() if (is_selected and not is_editing) else ""
 
-        def _gap_row(bg: str) -> ft.Control:
+        def _gap_row(bg: str) -> ui.Control:
             """对侧有、本侧没有的行：等高空白占位，托一层更浅的差异底色。"""
-            return ft.Container(
-                content=ft.Row(
+            return ui.Container(
+                content=ui.Row(
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             width=gutter_w,
                             height=text_h,
                             bgcolor=gutter_bg,
-                            border=only_border(right=ft.BorderSide(1, border_color)),
+                            border=only_border(right=ui.BorderSide(1, border_color)),
                         ),
                         # 折行模式 expand 吃满剩余宽度；不折行模式父级宽度无界，
                         # flex 子项会报错，改为按最长行量出的固定宽度。
                         (
-                            ft.Container(height=text_h, expand=True)
+                            ui.Container(height=text_h, expand=True)
                             if wrap
-                            else ft.Container(height=text_h, width=_nowrap_fill_width())
+                            else ui.Container(height=text_h, width=_nowrap_fill_width())
                         ),
                     ],
                     spacing=Spacing.MD,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    vertical_alignment=ui.CrossAxisAlignment.START,
                 ),
                 bgcolor=bg,
-                padding=ft.Padding.only(right=Spacing.MD),
+                padding=ui.Padding.only(right=Spacing.MD),
             )
 
         def _emit_gaps(after_idx: int) -> None:
@@ -1042,9 +1042,9 @@ def render_code_block(
                 else None
             )
             if ranges:
-                emph_bg = ft.Colors.with_opacity(0.30, diff_palette["modified"][1])
+                emph_bg = ui.Colors.with_opacity(0.30, diff_palette["modified"][1])
                 spans = [
-                    ft.TextSpan(
+                    ui.TextSpan(
                         text=t,
                         style=_span_style(
                             _syn_color(c, k), code_size, emph_bg if emph else None
@@ -1055,7 +1055,7 @@ def render_code_block(
                 ]
             else:
                 spans = [
-                    ft.TextSpan(text=t, style=_span_style(_syn_color(c, k), code_size))
+                    ui.TextSpan(text=t, style=_span_style(_syn_color(c, k), code_size))
                     for t, k in spec
                     if t
                 ]
@@ -1063,13 +1063,13 @@ def render_code_block(
                 # 空行：给一个空格 span 撑出与普通行等高的行盒，否则行高塌陷会让
                 # 行号与代码逐行错位（行号单元格高度恒为 text_h，行高由代码行决定）
                 spans = [
-                    ft.TextSpan(
+                    ui.TextSpan(
                         text=" ", style=_span_style(c.code_block_fg, code_size)
                     )
                 ]
             rows.append(
-                ft.Container(
-                    content=ft.Row(
+                ui.Container(
+                    content=ui.Row(
                         controls=[
                             _gutter_cell(
                                 i + 1,
@@ -1077,10 +1077,10 @@ def render_code_block(
                                 mark=mark,
                                 selected=bool(sel_bg),
                             ),
-                            ft.Text(
+                            ui.Text(
                                 spans=spans,
                                 style=_span_style(c.code_block_fg, code_size),
-                                text_align=ft.TextAlign.LEFT,
+                                text_align=ui.TextAlign.LEFT,
                                 # 折行模式用 expand 占满行号列右侧、由框架按宽度折行；
                                 # 不折行模式必须关掉 expand（父 Row 在横向滚动容器内宽度
                                 # 无界，Expanded 在无界约束下会报错），并显式 no_wrap。
@@ -1091,7 +1091,7 @@ def render_code_block(
                         spacing=Spacing.MD,
                         # 必须 START 而非 STRETCH：本行位于滚动 Column 内、交叉轴约束无界，
                         # STRETCH 会把子控件高度约束成 infinity（整行高度 inf）。
-                        vertical_alignment=ft.CrossAxisAlignment.START,
+                        vertical_alignment=ui.CrossAxisAlignment.START,
                     ),
                     # 底色优先级：**选中 > 对比差异**。
                     # - 选中：整行铺满（含行号列），因为围栏块是原子选区单元——按字形
@@ -1104,7 +1104,7 @@ def render_code_block(
                     # 代码列右缘的行内边距：块容器已不留水平内边距（行号色带要贴左边框），
                     # 故右侧留白改由本层承担——它不动左缘，行号色带依旧从块内缘开始，
                     # 点击坐标原点是本容器左缘这一点也不变（padding 只是右缘）。
-                    padding=ft.Padding.only(right=Spacing.MD),
+                    padding=ui.Padding.only(right=Spacing.MD),
                     # 位置与动作分两个 handler：坐标只在 TapEvent（on_tap_down）上，
                     # 而 on_click 收的是不带坐标的 ControlEvent（见 _record_tap/_click_row）。
                     on_tap_down=lambda e, i=i: _record_tap(i, e),
@@ -1112,23 +1112,23 @@ def render_code_block(
                 )
             )
             _emit_gaps(i)
-        return ft.Column(controls=rows, spacing=0, tight=True)
+        return ui.Column(controls=rows, spacing=0, tight=True)
 
-    def _build_read_body() -> ft.Control:
+    def _build_read_body() -> ui.Control:
         """浏览态正文：换行开关只决定"要不要再套一层横向滚动"。"""
         column = _read_column()
         if wrap:
             return column
         # 不换行：整块横向滚动（行号随内容滚动，行为与"关闭换行"的段落一致）
-        return ft.Row(
+        return ui.Row(
             controls=[column],
-            scroll=ft.ScrollMode.AUTO,
-            vertical_alignment=ft.CrossAxisAlignment.START,
+            scroll=ui.ScrollMode.AUTO,
+            vertical_alignment=ui.CrossAxisAlignment.START, spacing=10,
         )
 
     # ============================ 编辑态 ============================
 
-    def _build_edit_body() -> ft.Control:
+    def _build_edit_body() -> ui.Control:
         """编辑态：高亮层垫底 + 文字透明的原生编辑框叠加。
 
         字符由底层高亮层呈现，编辑框只提供光标 / 选区 / IME / 撤销——因此编辑时
@@ -1195,7 +1195,7 @@ def render_code_block(
         else:
             field_value = code
             client_text_ref.current = code
-        field = ft.TextField(
+        field = ui.TextField(
             # key 稳定（不含 is_editing）：on_change 触发的全量重渲染按 key 复用控件，
             # 不重挂载，从而不打断 IME 组合态与原生撤销栈。
             key=f"code-edit-{line_idx}",
@@ -1205,19 +1205,19 @@ def render_code_block(
             ref=edit_field_ref,
             value=field_value,
             selection=(
-                ft.TextSelection(base_offset=pending_caret[0], extent_offset=pending_caret[1])
+                ui.TextSelection(base_offset=pending_caret[0], extent_offset=pending_caret[1])
                 if pending_caret is not None
                 else None
             ),
             multiline=True,
             min_lines=line_count,
             max_lines=None,
-            border=ft.NoInputBorder(),
+            border=ui.NoInputBorder(),
             filled=False,
-            bgcolor=ft.Colors.TRANSPARENT,
+            bgcolor=ui.Colors.TRANSPARENT,
             dense=True,
             text_size=code_size,
-            text_style=ft.TextStyle(
+            text_style=ui.TextStyle(
                 font_family=FONT_MONO,
                 size=code_size,
                 height=_CODE_LINE_HEIGHT,
@@ -1226,21 +1226,21 @@ def render_code_block(
                 letter_spacing=_FLET_DEFAULT_LETTER_SPACING,
                 # 叠层态：文字透明，字符不可见、只留光标与选区——可见字符由底层
                 # 高亮层负责。单层态（纯文本大文件）：这里就是唯一一层，必须可见。
-                color=c.code_block_fg if visible_edit else ft.Colors.TRANSPARENT,
+                color=c.code_block_fg if visible_edit else ui.Colors.TRANSPARENT,
             ),
             # 行盒 strut：不显式给的话 Flutter 会自造一个强制 strut，把含中文/emoji 的
             # 行压到 24px，而高亮层同一行是 25px → 光标逐行上飘（见 _edit_strut）。
             strut_style=_edit_strut(code_size),
             cursor_color=c.link,
             cursor_width=2,
-            selection_color=ft.Colors.with_opacity(0.25, c.link),
+            selection_color=ui.Colors.with_opacity(0.25, c.link),
             # 左内边距 = 行号列宽 + 间距，让编辑框的**文本区**与浏览态代码列严格同 x；
             # 右内边距 = 代码列右缘的行内边距，让两侧**可用宽度**也相等（浏览态由行容器
             # 的 padding 承担）。块容器已不留水平内边距（行号色带贴左边框），编辑框的
             # 外框因此与块内缘同宽，这段右内边距必须由它自己给——漏掉的话每行可用宽度
             # 比浏览态多一个 Spacing.MD，折行点会比浏览态靠后。
             # 真机探针实测：两侧文本区同为 728px 时折行点完全一致。
-            content_padding=ft.Padding.only(
+            content_padding=ui.Padding.only(
                 left=gutter_w + Spacing.MD, right=Spacing.MD, top=0, bottom=0
             ),
             on_change=_on_field_change,
@@ -1261,9 +1261,9 @@ def render_code_block(
         # 注意不能改用 `KeyboardListener(expand=True)` 承载：它只把自己撑开，传给
         # content 的是松约束（实测编辑框仍缩到 300px），监听器必须放到 Stack 外层。
         if wrap:
-            field_layer: ft.Control = ft.Row(
-                controls=[ft.Container(expand=True, content=field)],
-                vertical_alignment=ft.CrossAxisAlignment.START,
+            field_layer: ui.Control = ui.Row(
+                controls=[ui.Container(expand=True, content=field)],
+                vertical_alignment=ui.CrossAxisAlignment.START, spacing=10,
             )
         else:
             # 不换行：按最长行给编辑框固定宽度（无界约束下不能用 flex），与浏览态
@@ -1281,22 +1281,22 @@ def render_code_block(
                 + _measure_mono_width(longest, code_size)
                 + Spacing.MD,
             )
-            field_layer = ft.Row(
-                controls=[field], vertical_alignment=ft.CrossAxisAlignment.START
+            field_layer = ui.Row(
+                controls=[field], vertical_alignment=ui.CrossAxisAlignment.START, spacing=10
             )
 
         # 单层态：编辑框即所见（没有高亮层可对），直接返回，不构造 _read_column()
         # —— 这一行的省略正是"大文件打字不卡"的全部来源。
         if visible_edit:
-            body: ft.Control = field_layer
+            body: ui.Control = field_layer
             if not wrap:
                 # 不换行：与浏览态一致，整块横向滚动
-                body = ft.Row(
+                body = ui.Row(
                     controls=[field_layer],
-                    scroll=ft.ScrollMode.AUTO,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    scroll=ui.ScrollMode.AUTO,
+                    vertical_alignment=ui.CrossAxisAlignment.START, spacing=10,
                 )
-            return ft.KeyboardListener(
+            return ui.KeyboardListener(
                 content=body,
                 on_key_down=_on_edit_key_down,
                 on_key_up=_on_edit_key_up,
@@ -1304,21 +1304,21 @@ def render_code_block(
 
         # 高亮层与编辑层同处一个 Stack：Stack 用默认 LOOSE 按子项尺寸定型
         # （EXPAND 在滚动 Column 内交叉轴无界 → 高度会算成 inf，整块渲不出来）。
-        overlay = ft.Stack(
-            alignment=ft.Alignment.TOP_LEFT,
+        overlay = ui.Stack(
+            alignment=ui.Alignment.TOP_LEFT,
             controls=[_read_column(), field_layer],
         )
-        body: ft.Control = overlay
+        body: ui.Control = overlay
         if not wrap:
             # 不换行：高亮层与编辑层共用同一个横向滚动容器，滚动位置天然同步。
-            body = ft.Row(
+            body = ui.Row(
                 controls=[overlay],
-                scroll=ft.ScrollMode.AUTO,
-                vertical_alignment=ft.CrossAxisAlignment.START,
+                scroll=ui.ScrollMode.AUTO,
+                vertical_alignment=ui.CrossAxisAlignment.START, spacing=10,
             )
         # 键盘监听器包住整个正文（而不仅编辑框）：焦点落在代码块内才触发，因此 Tab
         # 缩进既不会干扰正文光标的 Tab（段首缩进/表格跳格），也不需要把事件通道上抛。
-        return ft.KeyboardListener(
+        return ui.KeyboardListener(
             content=body,
             on_key_down=_on_edit_key_down,
             on_key_up=_on_edit_key_up,
@@ -1460,7 +1460,7 @@ def render_code_block(
             with contextlib.suppress(Exception):
                 await field.focus()
 
-    ft.use_effect(_focus_edit_field, [is_editing, tab_epoch])
+    ui.use_effect(_focus_edit_field, [is_editing, tab_epoch])
 
     def _on_edit_focus(e) -> None:
         """编辑框取得焦点：Tab 的焦点往返结束，之后的失焦都按真实失焦处理。
@@ -1522,19 +1522,19 @@ def render_code_block(
     # 折叠态摘要：首行预览 + 行数（保持与展开态同一层级结构，避免布局跳动）
     first_line = code.split("\n")[0]
     preview_text = first_line[:60] + ("…" if len(first_line) > 60 else "")
-    collapsed_preview = ft.Container(
-        content=ft.Row(
+    collapsed_preview = ui.Container(
+        content=ui.Row(
             controls=[
-                ft.Text(
+                ui.Text(
                     value=preview_text or "(空代码块)",
                     size=12,
                     color=c.muted,
                     font_family=FONT_MONO,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                     expand=True,
                 ),
-                ft.Text(
+                ui.Text(
                     value=f"{line_count} 行",
                     size=11,
                     color=c.muted,
@@ -1542,26 +1542,26 @@ def render_code_block(
                 ),
             ],
             spacing=Spacing.MD,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
-        bgcolor=ft.Colors.with_opacity(0.5, c.code_block_bg),
+        padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+        bgcolor=ui.Colors.with_opacity(0.5, c.code_block_bg),
         border_radius=Radius.MD,
         # 折叠态**不是**代码窗格：它是一张嵌在块里的圆角卡片（自带底色 + 圆角），
         # 直接贴到块边框会与框架线叠成双层边。块容器已不留水平内边距、下边也不再留
         # 内边距（见下方组装的说明），故这里用 margin 把原先那圈留白补回来
         # （左右各 Spacing.MD；下方补一个 Spacing.SM —— 卡片容器下边已归零，
         # 不补的话圆角会压在下边框上。上方不用补：Column 的 spacing 已隔开头部）。
-        margin=ft.Margin.only(left=Spacing.MD, right=Spacing.MD, bottom=Spacing.SM),
+        margin=ui.Margin.only(left=Spacing.MD, right=Spacing.MD, bottom=Spacing.SM),
         # 左侧强调条：折叠态只剩一行摘要，靠它把自己和普通段落区分开
         # （border 画在盒子内，不改变宽度，也就不影响任何基于宽度的测量）
-        border=only_border(left=ft.BorderSide(2, ft.Colors.with_opacity(0.45, c.link))),
+        border=only_border(left=ui.BorderSide(2, ui.Colors.with_opacity(0.45, c.link))),
     )
 
     if is_collapsed:
-        body: ft.Control = collapsed_preview
+        body: ui.Control = collapsed_preview
     else:
-        body = ft.Container(
+        body = ui.Container(
             content=_build_edit_body() if is_editing else _build_read_body(),
             # **上下也不留内边距**：行号色带是紧贴窗格的装饰条，而窗格的上界就是这条
             # 细分隔线、下界就是块的下边框 —— 所以色带要**通高**，从分隔线一路铺到
@@ -1574,7 +1574,7 @@ def render_code_block(
             # px（= 5.5 逻辑 px）。去掉本层那 4px 之后，这段 leading 就是字形与分隔线
             # 之间的全部留白（5px 左右，够用且不局促）。所以去掉的是**重复留白**：
             # 与左缘"色带贴边、文字靠行内边距内缩"是同一条规则在纵轴上的落实。
-            padding=ft.Padding.all(0),
+            padding=ui.Padding.all(0),
             # 头部与正文之间的细分隔线：只画上边（横向 1px，不改变文本区宽度），
             # 让"工具栏 / 代码"两段在视觉上分开——桌面编辑器里这两个区域是不同层的
             # 东西，靠间距区分不够。刻意不用 ft.Divider：它会给自己加高度，
@@ -1586,7 +1586,7 @@ def render_code_block(
             # 源码视图没有头部，也就没有"要分开的两段"：这条线跟着头部一起去掉，
             # 否则代码区上方会凭空多出一条悬空的横线。
             border=(
-                None if is_plain_doc else only_border(top=ft.BorderSide(1, border_color))
+                None if is_plain_doc else only_border(top=ui.BorderSide(1, border_color))
             ),
         )
 
@@ -1597,10 +1597,10 @@ def render_code_block(
         # "编辑器视口"里画出一个"卡片"，与桌面端编辑器直觉冲突。
         # 上下内边距一并归零：外层 wrap_block 已传 pad_v=0，若这里再留
         # Spacing.XS，代码首行就会离工具栏空出 4px（顶部留白 = 两个来源相加）。
-        content = ft.Container(content=body, bgcolor=c.code_block_bg)
+        content = ui.Container(content=body, bgcolor=c.code_block_bg)
     else:
-        content = ft.Container(
-            content=ft.Column(controls=[header, body], spacing=Spacing.XS),
+        content = ui.Container(
+            content=ui.Column(controls=[header, body], spacing=Spacing.XS),
             bgcolor=c.code_block_bg,
             border_radius=Radius.MD,
             # **左右不留内边距**：行号色带与头部细分隔线因此直接贴到块的左右边框，
@@ -1612,13 +1612,13 @@ def render_code_block(
             # 顶到上边框会显得局促；它与 Column 的 spacing 一起构成工具栏上下各 2px 的
             # 呼吸位），**下不留** —— 代码窗格的下界就是块的下边框，行号色带要通到那条
             # 线上（见 body 的说明）。
-            padding=ft.Padding.only(top=Spacing.XS),
+            padding=ui.Padding.only(top=Spacing.XS),
             shadow=card_shadow(Elevation.LOW, is_dark),
             border=only_border(
-                top=ft.BorderSide(1, border_color),
-                bottom=ft.BorderSide(1, border_color),
-                left=ft.BorderSide(1, border_color),
-                right=ft.BorderSide(1, border_color),
+                top=ui.BorderSide(1, border_color),
+                bottom=ui.BorderSide(1, border_color),
+                left=ui.BorderSide(1, border_color),
+                right=ui.BorderSide(1, border_color),
             ),
         )
 

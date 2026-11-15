@@ -22,9 +22,9 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
-from models.document import BlockType, Line, SegType, Segment
+from models.document import BlockType, Line, Segment, SegType
 from styles import (
     _current_colors,
     block_weight,
@@ -45,12 +45,12 @@ def _open_link_url(url: str) -> None:
     target = (url or "").strip()
     if not target:
         return
-    page = ft.context.page
+    page = ui.context.page
     if page is None:
         return
 
     async def _launch():
-        await page.launch_url(target, web_popup_window_name=ft.UrlTarget.BLANK)
+        await page.launch_url(target, web_popup_window_name=ui.UrlTarget.BLANK)
 
     page.run_task(_launch)
 
@@ -62,7 +62,7 @@ def segment_to_span(
     base_size: int,
     heading_level: int = 0,
     highlight_bg: str | None = None,
-) -> ft.TextSpan:
+) -> ui.TextSpan:
     """渲染态：段 -> TextSpan（可点击激活）。on_activate=None 时不绑定 on_click。
 
     heading_level > 0 时覆盖文字颜色为标题级别色（红橙绿青蓝紫）。
@@ -79,7 +79,7 @@ def segment_to_span(
         raw = seg.raw.lstrip()
         if raw and raw[0] in "-*+":
             lvl = list_color_level(seg.level)
-            style = ft.TextStyle(
+            style = ui.TextStyle(
                 size=style.size,
                 weight=style.weight,
                 color=c.heading_colors.get(lvl, c.muted),
@@ -90,7 +90,7 @@ def segment_to_span(
             )
     elif highlight_bg is not None:
         # 非 LIST_PREFIX 分支：若需高亮，覆盖 bgcolor
-        style = ft.TextStyle(
+        style = ui.TextStyle(
             size=style.size,
             weight=style.weight,
             color=style.color,
@@ -102,11 +102,11 @@ def segment_to_span(
     if heading_level > 0:
         is_strong = seg.seg_type == SegType.STRONG or SegType.STRONG in (seg.marks or ())
         weight = (
-            ft.FontWeight.BOLD
+            ui.FontWeight.BOLD
             if is_strong
             else block_weight(BlockType.HEADING, heading_level)
         )
-        style = ft.TextStyle(
+        style = ui.TextStyle(
             size=style.size,
             weight=weight,
             color=heading_text_color(heading_level, c),
@@ -123,13 +123,13 @@ def segment_to_span(
         kwargs["tooltip"] = seg.url
     elif on_activate is not None:
         kwargs["on_click"] = lambda e: on_activate(seg_idx)
-    return ft.TextSpan(**kwargs)
+    return ui.TextSpan(**kwargs)
 
 
 def selection_highlight_bg() -> str:
     """向外选区高亮背景色（主题相关）。"""
     c = _current_colors()
-    return ft.Colors.with_opacity(0.22, c.link)
+    return ui.Colors.with_opacity(0.22, c.link)
 
 
 def segment_to_spans_partial(
@@ -140,7 +140,7 @@ def segment_to_spans_partial(
     heading_level: int,
     hl_start_local: int,
     hl_end_local: int,
-) -> list[ft.TextSpan]:
+) -> list[ui.TextSpan]:
     """渲染段为多个 TextSpan，在 hl_start_local/hl_end_local 处做字符级高亮拆分。
 
     用于向外选区部分覆盖某内容段时，只高亮选中部分而非整段。
@@ -166,11 +166,11 @@ def segment_to_spans_partial(
     if heading_level > 0:
         is_strong = seg.seg_type == SegType.STRONG or SegType.STRONG in (seg.marks or ())
         weight = (
-            ft.FontWeight.BOLD
+            ui.FontWeight.BOLD
             if is_strong
             else block_weight(BlockType.HEADING, heading_level)
         )
-        base_style = ft.TextStyle(
+        base_style = ui.TextStyle(
             size=base_style.size,
             weight=weight,
             color=heading_text_color(heading_level, c),
@@ -181,7 +181,7 @@ def segment_to_spans_partial(
         )
 
     # 高亮样式 = 基础样式 + highlight bgcolor
-    hl_style = ft.TextStyle(
+    hl_style = ui.TextStyle(
         size=base_style.size,
         weight=base_style.weight,
         color=base_style.color,
@@ -198,13 +198,13 @@ def segment_to_spans_partial(
     elif on_activate is not None:
         on_click = lambda e: on_activate(seg_idx)
 
-    def _mk_span(text: str, style: ft.TextStyle, attach_click: bool) -> ft.TextSpan:
+    def _mk_span(text: str, style: ui.TextStyle, attach_click: bool) -> ui.TextSpan:
         if attach_click and on_click is not None:
-            return ft.TextSpan(text=text, style=style, on_click=on_click)
-        return ft.TextSpan(text=text, style=style)
+            return ui.TextSpan(text=text, style=style, on_click=on_click)
+        return ui.TextSpan(text=text, style=style)
 
     pieces = split_seg_for_display(seg)
-    spans: list[ft.TextSpan] = []
+    spans: list[ui.TextSpan] = []
     raw_offset = 0  # 段内 raw 偏移
 
     for text, is_marker in pieces:
@@ -259,7 +259,7 @@ def raw_to_visible_spans(
     cursor_raw_offset: int | None = None,
     heading_level: int = 0,
     skip_seg0: bool = False,
-) -> list[ft.TextSpan]:
+) -> list[ui.TextSpan]:
     """把一行的 segments 渲染为可见 TextSpan 列表（Typora 式 WYSIWYG）。
 
     - 光标不在段内：标记完全折叠（零宽度），仅显示 display_text 内容
@@ -271,7 +271,7 @@ def raw_to_visible_spans(
     cursor_raw_offset=None 表示无光标（浏览态），所有段标记折叠。
     """
     c = _current_colors()
-    spans: list[ft.TextSpan] = []
+    spans: list[ui.TextSpan] = []
     raw_offset = 0
     seg_count = len(line.segments)
 
@@ -306,7 +306,7 @@ def raw_to_visible_spans(
                 raw_ls = seg.raw.lstrip()
                 if raw_ls and raw_ls[0] in "-*+":
                     lvl = list_color_level(seg.level)
-                    base_style = ft.TextStyle(
+                    base_style = ui.TextStyle(
                         size=base_style.size,
                         weight=base_style.weight,
                         color=c.heading_colors.get(lvl, c.muted),
@@ -321,7 +321,7 @@ def raw_to_visible_spans(
             # （Typora 式语法字符淡化，与 # - > 前缀灰色设计语言一致；
             # 仅此渲染路径生效，浏览态走 line_view 横线分支不调用本函数）
             if line.block_type == BlockType.HR:
-                base_style = ft.TextStyle(
+                base_style = ui.TextStyle(
                     size=base_style.size,
                     weight=base_style.weight,
                     color=c.muted,
@@ -334,11 +334,11 @@ def raw_to_visible_spans(
             if heading_level > 0:
                 is_strong = seg.seg_type == SegType.STRONG or SegType.STRONG in (seg.marks or ())
                 weight = (
-                    ft.FontWeight.BOLD
+                    ui.FontWeight.BOLD
                     if is_strong
                     else block_weight(BlockType.HEADING, heading_level)
                 )
-                base_style = ft.TextStyle(
+                base_style = ui.TextStyle(
                     size=base_style.size,
                     weight=weight,
                     color=heading_text_color(heading_level, c),
@@ -357,19 +357,19 @@ def raw_to_visible_spans(
                 if not text:
                     continue
                 if is_marker:
-                    style = ft.TextStyle(
+                    style = ui.TextStyle(
                         size=base_style.size,
                         weight=base_style.weight,
                         color=c.muted,
                         italic=base_style.italic,
                         font_family=base_style.font_family,
                     )
-                    spans.append(ft.TextSpan(text=text, style=style))
+                    spans.append(ui.TextSpan(text=text, style=style))
                 else:
                     span_kwargs = {"text": text, "style": base_style}
                     if seg.seg_type == SegType.LINK and seg.url:
                         span_kwargs["tooltip"] = seg.url
-                    spans.append(ft.TextSpan(**span_kwargs))
+                    spans.append(ui.TextSpan(**span_kwargs))
         else:
             # 光标不在段内：标记折叠，仅显示 display_text（零宽度标记）
             # HEADING_PREFIX 例外：光标在本行任意位置时显示 # 前缀（Typora 式：
@@ -382,21 +382,21 @@ def raw_to_visible_spans(
                 for text, is_marker in pieces:
                     if not text:
                         continue
-                    style = ft.TextStyle(
+                    style = ui.TextStyle(
                         size=base_style.size,
                         weight=base_style.weight,
                         color=c.muted,
                         italic=base_style.italic,
                         font_family=base_style.font_family,
                     )
-                    spans.append(ft.TextSpan(text=text, style=style))
+                    spans.append(ui.TextSpan(text=text, style=style))
             else:
                 display = display_text(seg)
                 if display:
                     span_kwargs = {"text": display, "style": base_style}
                     if seg.seg_type == SegType.LINK and seg.url:
                         span_kwargs["tooltip"] = seg.url
-                    spans.append(ft.TextSpan(**span_kwargs))
+                    spans.append(ui.TextSpan(**span_kwargs))
                 # display 为空时不添加 span（引用 > 前缀完全消失）
 
         raw_offset = seg_end

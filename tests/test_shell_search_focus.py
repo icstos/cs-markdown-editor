@@ -17,8 +17,8 @@ import sys
 import types
 from pathlib import Path
 
-import flet as ft
 import pytest
+from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -60,7 +60,7 @@ def dispatcher(h: RenderHarness):
 
 def sidebar_props(h: RenderHarness) -> dict:
     """当前渲染中 Sidebar 组件收到的 props。"""
-    from flet.components.component import Component
+    from tests._flet_internals import Component
 
     sides = [
         n for n in walk(h.tree)
@@ -131,7 +131,7 @@ def test_ctrl_f_keeps_document_overlay_and_leaves_sidebar_alone(app_harness):
     press(app_harness, "F", ctrl=True)
     assert read_settings() == before
 
-    from flet.components.component import Component
+    from tests._flet_internals import Component
 
     overlay = next(
         n for n in walk(app_harness.tree)

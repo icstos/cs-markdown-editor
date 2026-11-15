@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import flet as ft
+import ui
 
 from app._tab_helpers import Tab, tab_is_dirty, tab_paths
 
@@ -64,8 +64,8 @@ class AutosaveContext:
     """
 
     settings: dict[str, Any]
-    page_ref: ft.Ref
-    tabs_ref: ft.Ref
+    page_ref: ui.Ref
+    tabs_ref: ui.Ref
     save_doc_fn: Callable[[int], Any]
     set_status_fn: Callable[[str, str], None] | None = None
     save_doc_sync_fn: Callable[[int], Any] | None = None

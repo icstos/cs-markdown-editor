@@ -2,14 +2,14 @@
 
 依赖项：
 - 标准库 dataclasses、enum
-- flet（@ft.observable 装饰器）
+- cs-ui（`@ui.observable` 装饰器，经 `ui` 门面透传 flet 声明式原语）
 
 对外接口：
 - SegType：段（Span）类型枚举（StrEnum）
 - BlockType：行（Block）类型枚举（StrEnum）
-- Segment：行内的一个子文本段（@ft.observable dataclass）
-- Line：文档中的一行（@ft.observable dataclass）
-- Document：整个文档（@ft.observable dataclass）
+- Segment：行内的一个子文本段（@ui.observable dataclass）
+- Line：文档中的一行（@ui.observable dataclass）
+- Document：整个文档（@ui.observable dataclass）
 
 设计要点：
 - Segment：行内的一个子文本段，对应最小可编辑单元（一段纯文本、加粗、斜体、
@@ -17,7 +17,7 @@
 - Line：文档中的一行，持有块类型与有序的 Segment 列表。
 - Document：整个文档，持有行列表与文件元信息。
 
-三者均用 @ft.observable 装饰，字段变更会自动触发依赖组件重绘，
+三者均用 @ui.observable 装饰，字段变更会自动触发依赖组件重绘，
 符合 UI = f(state) 的声明式范式。
 
 段类型与块类型使用 StrEnum（Python 3.11+）分组管理，兼顾类型安全与字符串兼容。
@@ -26,8 +26,8 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-import flet as ft
-from flet.components.observable import ObservableList
+import ui
+from ui import ObservableList
 
 
 class SegType(StrEnum):
@@ -74,7 +74,7 @@ class BlockType(StrEnum):
 
 
 @dataclass
-@ft.observable
+@ui.observable
 class Segment:
     """行内的一个子文本段。
 
@@ -100,7 +100,7 @@ class Segment:
 
 
 @dataclass
-@ft.observable
+@ui.observable
 class Line:
     """文档中的一行。
 
@@ -130,7 +130,7 @@ class Line:
 
 
 @dataclass
-@ft.observable
+@ui.observable
 class Document:
     """整个文档。
 

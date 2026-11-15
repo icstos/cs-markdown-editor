@@ -18,7 +18,7 @@ App 设置 recovery_open=True 弹出本面板。用户可：
 import os
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from services.backup import BackupInfo
 from styles import (
@@ -53,11 +53,11 @@ def _backup_kind_label(info: BackupInfo) -> str:
     return "未命名草稿" if info.is_untitled else "已命名文档"
 
 
-@ft.component
+@ui.component
 def RecoveryDialog(
     open_state: bool,
     backups: list[BackupInfo],
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     on_open: Callable[[str], None],
     on_delete: Callable[[str], None],
     on_close: Callable[[], None],
@@ -74,28 +74,28 @@ def RecoveryDialog(
     empty_hint: 无可恢复草稿时的提示文案。
     """
     c = get_colors(theme_mode)
-    is_dark = theme_mode == ft.ThemeMode.DARK
+    is_dark = theme_mode == ui.ThemeMode.DARK
 
-    def _text_btn(label: str, on_click: Callable, color: str) -> ft.Control:
-        return ft.TextButton(
+    def _text_btn(label: str, on_click: Callable, color: str) -> ui.Control:
+        return ui.TextButton(
             label,
             on_click=lambda e: on_click(),
-            style=ft.ButtonStyle(color=color),
+            style=ui.ButtonStyle(color=color),
         )
 
     # 备份条目卡片
-    items: list[ft.Control] = []
+    items: list[ui.Control] = []
     if not backups:
         items.append(
-            ft.Container(
+            ui.Container(
                 padding=Spacing.XXXL,
-                alignment=ft.Alignment.CENTER,
-                content=ft.Text(
+                alignment=ui.Alignment.CENTER,
+                content=ui.Text(
                     empty_hint,
                     size=13,
                     color=c.muted,
                     font_family=FONT_MAIN,
-                    text_align=ft.TextAlign.CENTER,
+                    text_align=ui.TextAlign.CENTER,
                 ),
             )
         )
@@ -103,75 +103,75 @@ def RecoveryDialog(
         for info in backups:
             items.append(_backup_card(info, c, on_open, on_delete))
 
-    return ft.Container(
+    return ui.Container(
         visible=open_state,
         expand=True,
-        bgcolor=ft.Colors.with_opacity(0.28, ft.Colors.BLACK),
-        alignment=ft.Alignment.CENTER,
-        content=ft.Container(
+        bgcolor=ui.Colors.with_opacity(0.28, ui.Colors.BLACK),
+        alignment=ui.Alignment.CENTER,
+        content=ui.Container(
             width=720,
             height=560,
             bgcolor=c.toolbar_bg,
             border_radius=Radius.XXXL,
             shadow=card_shadow(Elevation.DIALOG, is_dark),
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            clip_behavior=ui.ClipBehavior.ANTI_ALIAS,
             padding=Spacing.XXXL,
-            content=ft.Column(
+            content=ui.Column(
                 controls=[
                     # 顶部标题 + 关闭按钮
-                    ft.Row(
+                    ui.Row(
                         controls=[
-                            ft.Icon(
-                                ft.Icons.RESTORE_PAGE,
+                            ui.Icon(
+                                ui.Icons.RESTORE_PAGE,
                                 color=c.link,
                                 size=24,
                             ),
-                            ft.Text(
+                            ui.Text(
                                 value=title,
                                 size=18,
-                                weight=ft.FontWeight.W_600,
+                                weight=ui.FontWeight.W_600,
                                 color=c.text,
                                 font_family=FONT_MAIN,
                             ),
-                            ft.Container(expand=True),
-                            ft.IconButton(
-                                icon=ft.Icons.CLOSE,
+                            ui.Container(expand=True),
+                            ui.IconButton(
+                                icon=ui.Icons.CLOSE,
                                 on_click=lambda e: on_close(),
                                 icon_size=18,
                             ),
                         ],
                         spacing=Spacing.XL,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Container(height=Spacing.SM),
-                    ft.Text(
+                    ui.Container(height=Spacing.SM),
+                    ui.Text(
                         value="下列草稿来自上次会话或历史备份，可选择打开或删除。",
                         size=12,
                         color=c.muted,
                         font_family=FONT_MAIN,
                     ),
-                    ft.Container(height=Spacing.LG),
+                    ui.Container(height=Spacing.LG),
                     # 备份列表（可滚动）
-                    ft.Container(
+                    ui.Container(
                         expand=True,
                         border_radius=Radius.XL,
-                        bgcolor=ft.Colors.with_opacity(0.04, c.text),
-                        padding=ft.Padding.all(Spacing.LG),
-                        content=ft.Column(
+                        bgcolor=ui.Colors.with_opacity(0.04, c.text),
+                        padding=ui.Padding.all(Spacing.LG),
+                        content=ui.Column(
                             controls=items,
                             spacing=Spacing.MD,
-                            scroll=ft.ScrollMode.AUTO,
+                            scroll=ui.ScrollMode.AUTO,
                         ),
                     ),
-                    ft.Container(height=Spacing.LG),
+                    ui.Container(height=Spacing.LG),
                     # 底部按钮
-                    ft.Row(
+                    ui.Row(
                         controls=[
-                            ft.Container(expand=True),
+                            ui.Container(expand=True),
                             _text_btn("跳过", on_close, c.muted),
                         ],
                         spacing=Spacing.LG,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        vertical_alignment=ui.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=0,
@@ -185,7 +185,7 @@ def _backup_card(
     c,
     on_open: Callable[[str], None],
     on_delete: Callable[[str], None],
-) -> ft.Control:
+) -> ui.Control:
     """单条备份卡片：预览 + 元信息 + 打开 / 删除按钮。"""
     kind_label = _backup_kind_label(info)
     kind_color = c.link if info.is_untitled else c.muted
@@ -203,53 +203,53 @@ def _backup_card(
     # 预览文本
     preview_text = info.preview or "(空文档)"
 
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
         border_radius=Radius.LG,
-        bgcolor=ft.Colors.with_opacity(0.06, c.border),
-        content=ft.Row(
+        bgcolor=ui.Colors.with_opacity(0.06, c.border),
+        content=ui.Row(
             controls=[
                 # 左侧：预览 + 元信息
-                ft.Column(
+                ui.Column(
                     controls=[
-                        ft.Row(
+                        ui.Row(
                             controls=[
-                                ft.Container(
-                                    padding=ft.Padding.symmetric(
+                                ui.Container(
+                                    padding=ui.Padding.symmetric(
                                         horizontal=Spacing.SM, vertical=Spacing.XS
                                     ),
                                     border_radius=Radius.SM,
-                                    bgcolor=ft.Colors.with_opacity(0.10, kind_color),
-                                    content=ft.Text(
+                                    bgcolor=ui.Colors.with_opacity(0.10, kind_color),
+                                    content=ui.Text(
                                         kind_label,
                                         size=10,
                                         color=kind_color,
-                                        weight=ft.FontWeight.W_600,
+                                        weight=ui.FontWeight.W_600,
                                     ),
                                 ),
-                                ft.Text(
+                                ui.Text(
                                     value=preview_text,
                                     size=13,
                                     color=c.text,
                                     font_family=FONT_MAIN,
                                     max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    overflow=ui.TextOverflow.ELLIPSIS,
                                     expand=True,
                                 ),
                             ],
                             spacing=Spacing.MD,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            vertical_alignment=ui.CrossAxisAlignment.CENTER,
                         ),
-                        ft.Row(
+                        ui.Row(
                             controls=[
-                                ft.Text(
+                                ui.Text(
                                     value=time_str,
                                     size=11,
                                     color=c.muted,
                                     font_family=FONT_MAIN,
                                 ),
-                                ft.Container(width=Spacing.LG),
-                                ft.Text(
+                                ui.Container(width=Spacing.LG),
+                                ui.Text(
                                     value=size_str,
                                     size=11,
                                     color=c.muted,
@@ -257,14 +257,14 @@ def _backup_card(
                                 ),
                                 *(
                                     [
-                                        ft.Container(width=Spacing.LG),
-                                        ft.Text(
+                                        ui.Container(width=Spacing.LG),
+                                        ui.Text(
                                             value=path_text,
                                             size=11,
                                             color=c.muted,
                                             font_family=FONT_MAIN,
                                             max_lines=1,
-                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                            overflow=ui.TextOverflow.ELLIPSIS,
                                             tooltip=path_hint,
                                         ),
                                     ]
@@ -273,30 +273,30 @@ def _backup_card(
                                 ),
                             ],
                             spacing=0,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            vertical_alignment=ui.CrossAxisAlignment.CENTER,
                         ),
                     ],
                     spacing=Spacing.XS,
                     expand=True,
                 ),
                 # 右侧：操作按钮
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.TextButton(
+                        ui.TextButton(
                             "打开",
                             on_click=lambda e, p=info.backup_path: on_open(p),
-                            style=ft.ButtonStyle(color=c.link),
+                            style=ui.ButtonStyle(color=c.link),
                         ),
-                        ft.TextButton(
+                        ui.TextButton(
                             "删除",
                             on_click=lambda e, p=info.backup_path: on_delete(p),
-                            style=ft.ButtonStyle(color=c.muted),
+                            style=ui.ButtonStyle(color=c.muted),
                         ),
                     ],
                     spacing=Spacing.SM,
                 ),
             ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ui.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER, spacing=10,
         ),
     )

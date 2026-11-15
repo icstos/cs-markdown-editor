@@ -15,7 +15,7 @@
 
 from dataclasses import dataclass, field
 
-import flet as ft
+import ui
 
 from models.document import (
     BlockType,
@@ -240,9 +240,9 @@ _DARK = Colors(
 )
 
 
-def get_colors(mode: ft.ThemeMode | str | None) -> Colors:
+def get_colors(mode: ui.ThemeMode | str | None) -> Colors:
     """根据主题模式返回颜色集合。"""
-    if mode == ft.ThemeMode.DARK:
+    if mode == ui.ThemeMode.DARK:
         return _DARK
     return _LIGHT
 
@@ -250,7 +250,7 @@ def get_colors(mode: ft.ThemeMode | str | None) -> Colors:
 def _current_colors() -> Colors:
     """读取当前 page.theme_mode 取色；非渲染上下文回退亮色。"""
     try:
-        page = ft.context.page
+        page = ui.context.page
         if page is not None:
             return get_colors(page.theme_mode)
     except Exception:
@@ -277,20 +277,20 @@ def block_text_size(block_type: BlockType, level: int = 0, base_size: int = 16) 
 
 # 字重递进：W_800→W_700→W_700→W_600→W_600→W_500
 # 相邻级别差异 ≥100，避免 H4/H5/H6 同字重导致层级模糊
-_HEADING_WEIGHTS: dict[int, ft.FontWeight] = {
-    1: ft.FontWeight.W_800,
-    2: ft.FontWeight.W_700,
-    3: ft.FontWeight.W_700,
-    4: ft.FontWeight.W_600,
-    5: ft.FontWeight.W_600,
-    6: ft.FontWeight.W_500,
+_HEADING_WEIGHTS: dict[int, ui.FontWeight] = {
+    1: ui.FontWeight.W_800,
+    2: ui.FontWeight.W_700,
+    3: ui.FontWeight.W_700,
+    4: ui.FontWeight.W_600,
+    5: ui.FontWeight.W_600,
+    6: ui.FontWeight.W_500,
 }
 
 
-def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
+def block_weight(block_type: BlockType, level: int = 0) -> ui.FontWeight:
     if block_type == BlockType.HEADING:
-        return _HEADING_WEIGHTS.get(level, ft.FontWeight.NORMAL)
-    return ft.FontWeight.NORMAL
+        return _HEADING_WEIGHTS.get(level, ui.FontWeight.NORMAL)
+    return ui.FontWeight.NORMAL
 
 
 # 大纲条目的字重递进：把上面的编辑区字重**整体降一档**（800→700…500→400）。
@@ -298,19 +298,19 @@ def block_weight(block_type: BlockType, level: int = 0) -> ft.FontWeight:
 # 30→15px，大纲条目只有 12px，照搬 W_800 会糊成一团。降档后「大纲里的粗细顺序」
 # 与「正文里的粗细顺序」逐级一致，且相邻级别仍差 ≥100（不产生同重级别）。
 # tests/test_outline_color.py 守护这条对应关系。
-_OUTLINE_HEADING_WEIGHTS: dict[int, ft.FontWeight] = {
-    1: ft.FontWeight.W_700,
-    2: ft.FontWeight.W_600,
-    3: ft.FontWeight.W_600,
-    4: ft.FontWeight.W_500,
-    5: ft.FontWeight.W_500,
-    6: ft.FontWeight.W_400,
+_OUTLINE_HEADING_WEIGHTS: dict[int, ui.FontWeight] = {
+    1: ui.FontWeight.W_700,
+    2: ui.FontWeight.W_600,
+    3: ui.FontWeight.W_600,
+    4: ui.FontWeight.W_500,
+    5: ui.FontWeight.W_500,
+    6: ui.FontWeight.W_400,
 }
 
 
-def outline_heading_weight(level: int) -> ft.FontWeight:
+def outline_heading_weight(level: int) -> ui.FontWeight:
     """大纲条目字重（侧栏大纲 / 文档内 [toc] 卡片共用）。"""
-    return _OUTLINE_HEADING_WEIGHTS.get(level, ft.FontWeight.NORMAL)
+    return _OUTLINE_HEADING_WEIGHTS.get(level, ui.FontWeight.NORMAL)
 
 
 def heading_text_color(level: int, c: Colors | None = None) -> str:
@@ -343,7 +343,7 @@ def git_status_color(kind: object, c: Colors | None = None) -> str:
     return colors.git.get(str(kind), colors.muted)
 
 
-def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
+def segment_style(seg: Segment, base_size: int = 16) -> ui.TextStyle:
     """把段类型映射为 TextStyle（渲染态）。
 
     支持组合格式：seg.marks 记录作用于整段的所有包裹器（如 (EMPHASIS, STRONG)
@@ -354,7 +354,7 @@ def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
 
     # 原子类型（不参与组合）
     if t == SegType.INLINE_MATH:
-        return ft.TextStyle(
+        return ui.TextStyle(
             size=base_size - 1,
             color=c.math_fg,
             bgcolor=c.math_bg,
@@ -362,56 +362,56 @@ def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
             italic=True,
         )
     if t == SegType.CODESPAN:
-        return ft.TextStyle(
+        return ui.TextStyle(
             size=base_size - 1,
             color=c.code_fg,
             bgcolor=c.code_bg,
             font_family=FONT_MONO,
         )
     if t == SegType.LINK:
-        return ft.TextStyle(
-            size=base_size, color=c.link, decoration=ft.TextDecoration.UNDERLINE
+        return ui.TextStyle(
+            size=base_size, color=c.link, decoration=ui.TextDecoration.UNDERLINE
         )
     if t == SegType.IMAGE:
-        return ft.TextStyle(size=base_size, color=c.link, italic=True)
+        return ui.TextStyle(size=base_size, color=c.link, italic=True)
 
     # 包裹器类型：单一沿用原样式，组合按 marks 累加
     marks = seg.marks
     if not marks or len(marks) == 1:
         single = marks[0] if marks else t
         if single == SegType.STRONG:
-            return ft.TextStyle(size=base_size, weight=ft.FontWeight.BOLD, color=c.text)
+            return ui.TextStyle(size=base_size, weight=ui.FontWeight.BOLD, color=c.text)
         if single == SegType.EMPHASIS:
-            return ft.TextStyle(size=base_size, italic=True, color=c.text)
+            return ui.TextStyle(size=base_size, italic=True, color=c.text)
         if single == SegType.STRIKE:
-            return ft.TextStyle(
+            return ui.TextStyle(
                 size=base_size,
                 color=c.strike,
-                decoration=ft.TextDecoration.LINE_THROUGH,
+                decoration=ui.TextDecoration.LINE_THROUGH,
             )
         if single == SegType.HIGHLIGHT:
-            return ft.TextStyle(size=base_size, color=c.text, bgcolor=c.highlight_bg)
+            return ui.TextStyle(size=base_size, color=c.text, bgcolor=c.highlight_bg)
         if single == SegType.SUPERSCRIPT:
-            return ft.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
+            return ui.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
         if single == SegType.SUBSCRIPT:
-            return ft.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
+            return ui.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
         # TEXT / 其它
-        return ft.TextStyle(size=base_size, color=c.text)
+        return ui.TextStyle(size=base_size, color=c.text)
 
     # 组合格式：累加各 mark 效果
-    weight = ft.FontWeight.NORMAL
+    weight = ui.FontWeight.NORMAL
     italic = False
-    decoration = ft.TextDecoration.NONE
+    decoration = ui.TextDecoration.NONE
     color = c.text
     bgcolor = None
     size = base_size
     for m in marks:
         if m == SegType.STRONG:
-            weight = ft.FontWeight.BOLD
+            weight = ui.FontWeight.BOLD
         elif m == SegType.EMPHASIS:
             italic = True
         elif m == SegType.STRIKE:
-            decoration = ft.TextDecoration.LINE_THROUGH
+            decoration = ui.TextDecoration.LINE_THROUGH
             color = c.strike
         elif m == SegType.HIGHLIGHT:
             bgcolor = c.highlight_bg
@@ -420,32 +420,32 @@ def segment_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
     kwargs: dict = {"size": size, "weight": weight, "color": color}
     if italic:
         kwargs["italic"] = True
-    if decoration != ft.TextDecoration.NONE:
+    if decoration != ui.TextDecoration.NONE:
         kwargs["decoration"] = decoration
     if bgcolor is not None:
         kwargs["bgcolor"] = bgcolor
-    return ft.TextStyle(**kwargs)
+    return ui.TextStyle(**kwargs)
 
 
-def prefix_style(seg: Segment, base_size: int = 16) -> ft.TextStyle:
+def prefix_style(seg: Segment, base_size: int = 16) -> ui.TextStyle:
     """块级前缀段（# - >）的样式：弱化显示。"""
-    return ft.TextStyle(
-        size=base_size, color=_current_colors().muted, weight=ft.FontWeight.BOLD
+    return ui.TextStyle(
+        size=base_size, color=_current_colors().muted, weight=ui.FontWeight.BOLD
     )
 
 
-_NO_BORDER = ft.BorderSide.none()
+_NO_BORDER = ui.BorderSide.none()
 
 
 def only_border(
     *,
-    top: ft.BorderSide | None = None,
-    bottom: ft.BorderSide | None = None,
-    left: ft.BorderSide | None = None,
-    right: ft.BorderSide | None = None,
-) -> ft.Border:
+    top: ui.BorderSide | None = None,
+    bottom: ui.BorderSide | None = None,
+    left: ui.BorderSide | None = None,
+    right: ui.BorderSide | None = None,
+) -> ui.Border:
     """便捷构造单边 Border。"""
-    return ft.Border(
+    return ui.Border(
         top=top or _NO_BORDER,
         right=right or _NO_BORDER,
         bottom=bottom or _NO_BORDER,
@@ -499,7 +499,7 @@ class Elevation:
 
 def card_shadow(
     elevation: int = Elevation.LOW, is_dark: bool = False
-) -> list[ft.BoxShadow]:
+) -> list[ui.BoxShadow]:
     """按海拔返回阴影列表。
 
     亮色：低 opacity（0.06）淡黑阴影，微妙层次感
@@ -511,59 +511,53 @@ def card_shadow(
         opacity = 0.30 if is_dark else 0.06
         blur = 8 if is_dark else 6
         return [
-            ft.BoxShadow(
+            ui.BoxShadow(
                 spread_radius=0,
                 blur_radius=blur,
-                color=ft.Colors.with_opacity(opacity, ft.Colors.BLACK),
-                offset=ft.Offset(0, 1),
+                color=ui.Colors.with_opacity(opacity, ui.Colors.BLACK),
+                offset=ui.Offset(0, 1),
             )
         ]
     if elevation == Elevation.MEDIUM:
         opacity = 0.40 if is_dark else 0.10
         blur = 12 if is_dark else 10
         return [
-            ft.BoxShadow(
+            ui.BoxShadow(
                 spread_radius=0,
                 blur_radius=blur,
-                color=ft.Colors.with_opacity(opacity, ft.Colors.BLACK),
-                offset=ft.Offset(0, 2),
+                color=ui.Colors.with_opacity(opacity, ui.Colors.BLACK),
+                offset=ui.Offset(0, 2),
             )
         ]
     # HIGH / DIALOG
     opacity = 0.50 if is_dark else 0.18
     blur = 24 if is_dark else 20
     return [
-        ft.BoxShadow(
+        ui.BoxShadow(
             spread_radius=0,
             blur_radius=blur,
-            color=ft.Colors.with_opacity(opacity, ft.Colors.BLACK),
-            offset=ft.Offset(0, 8),
+            color=ui.Colors.with_opacity(opacity, ui.Colors.BLACK),
+            offset=ui.Offset(0, 8),
         )
     ]
 
 
-def hairline_border(color: str, opacity: float = 1.0) -> ft.BorderSide:
+def hairline_border(color: str, opacity: float = 1.0) -> ui.BorderSide:
     """1px 细线边框（表格分割线、弱化边框）。"""
-    return ft.BorderSide(1, ft.Colors.with_opacity(opacity, color))
+    return ui.BorderSide(1, ui.Colors.with_opacity(opacity, color))
 
 
-def focus_ring(color: str, is_dark: bool = False) -> list[ft.BoxShadow]:
+def focus_ring(color: str, is_dark: bool = False) -> list[ui.BoxShadow]:
     """输入框聚焦时的外扩描边（focus ring）。
 
-    用 `spread_radius` 的**实心**外扩而不是模糊光晕：模糊光晕在浅色底上会糊成
-    一团灰，实心 1.5~2px 外扩读起来就是"多了一圈描边"，与 1px 边框同色系，
-    层次清楚又不喧哗。暗色底需要更高的不透明度才看得见。
+    实现委托给 cs-ui 公共令牌 ``ui.focus_ring``：用 `spread_radius` 的**实心**
+    外扩而不是模糊光晕，浅色底上不会糊成一团灰，与 1px 边框同色系、层次清楚。
+    暗色底需要更高的不透明度才看得见。这里只保留「返回列表 + 明暗档位」这层
+    项目内的调用约定，几何与取色只有 cs-ui 一个事实源。
     """
-    return [
-        ft.BoxShadow(
-            spread_radius=2,
-            blur_radius=0,
-            color=ft.Colors.with_opacity(0.45 if is_dark else 0.18, color),
-            offset=ft.Offset(0, 0),
-        )
-    ]
+    return [ui.focus_ring(color, opacity=0.45 if is_dark else 0.18)]
 
 
-def accent_border(color: str, width: int = 2) -> ft.BorderSide:
+def accent_border(color: str, width: int = 2) -> ui.BorderSide:
     """强调边框（当前行/激活态）。"""
-    return ft.BorderSide(width, color)
+    return ui.BorderSide(width, color)

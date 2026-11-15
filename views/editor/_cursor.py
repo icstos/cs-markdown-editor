@@ -29,7 +29,7 @@ import asyncio
 import contextlib
 import time
 
-import flet as ft
+import ui
 
 import parser
 from models.document import BlockType
@@ -38,6 +38,7 @@ from utils.segment_helpers import PREFIX_SEGTYPES
 from utils.segment_helpers import is_fence as _is_fence
 from utils.segment_helpers import line_raw as _line_raw
 from views._editor_helpers import _fix_ime_doubling
+from views.editor._contracts import CursorEnv
 from views.editor._helpers import (
     _RE_FENCE_TRIGGER,
     _RE_O_PREFIX,
@@ -46,7 +47,6 @@ from views.editor._helpers import (
     _make_code_line,
     _next_line_raw,
 )
-from views.editor._contracts import CursorEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
 _reparse_atomic = parser.reparse_line_atomic
@@ -317,7 +317,7 @@ def build_cursor(ctx: CursorEnv):
         if getattr(ctx, "set_wrap_sel_seq", None) is not None:
             ctx.set_wrap_sel_seq(getattr(ctx, "wrap_sel_seq", 0) + 1)
         try:
-            page = ft.context.page
+            page = ui.context.page
         except Exception:
             page = None
         if page is not None:

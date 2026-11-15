@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-import flet as ft
+import ui
 
 # 仓库根目录（docs/ 的上一级）
 _ROOT = Path(__file__).resolve().parent.parent
@@ -66,8 +66,8 @@ def main(argv: list[str] | None = None) -> None:
     set_start_anchor(args.start)
     set_start_theme(args.theme)
     set_start_size(args.width, args.height)
-    view = ft.AppView.FLET_APP if args.desktop else ft.AppView.WEB_BROWSER
-    ft.run(
+    view = ui.AppView.FLET_APP if args.desktop else ui.AppView.WEB_BROWSER
+    ui.run(
         site_main,
         view=view,
         host=None if args.desktop else args.host,

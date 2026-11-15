@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-import flet as ft
+import ui
 
 from cmsite import _content
 from cmsite._shell import SiteShell
@@ -57,7 +57,7 @@ def inject_runtime_facts() -> None:
     _content.RUNTIME["runtime"] = runtime_summary()
 
 
-async def main(page: ft.Page) -> None:
+async def main(page: ui.Page) -> None:
     """页面配置：字体、主题、滚动与首帧。
 
     Web 与桌面共用这一个入口——`ft.run(..., view=AppView.WEB_BROWSER)` 走浏览器，
@@ -70,20 +70,20 @@ async def main(page: ft.Page) -> None:
         "Alibaba": "fonts/AlibabaPuHuiTi-3-55-Regular.otf",
         "NotoSansMonoCJKsc": "fonts/NotoSansMonoCJKsc-Regular.otf",
     }
-    page.theme = ft.Theme(
+    page.theme = ui.Theme(
         font_family="Alibaba",
-        color_scheme=ft.ColorScheme(
+        color_scheme=ui.ColorScheme(
             surface="#FAFBFC", on_surface="#1F2329", primary="#1677FF"
         ),
     )
-    page.dark_theme = ft.Theme(
+    page.dark_theme = ui.Theme(
         font_family="Alibaba",
-        color_scheme=ft.ColorScheme(
+        color_scheme=ui.ColorScheme(
             surface="#14161A", on_surface="#E6EDF3", primary="#6BA0F5"
         ),
     )
     page.theme_mode = (
-        ft.ThemeMode.DARK if _content.START_THEME == "dark" else ft.ThemeMode.LIGHT
+        ui.ThemeMode.DARK if _content.START_THEME == "dark" else ui.ThemeMode.LIGHT
     )
     page.title = f"{_content.APP_NAME} · {_content.APP_TAGLINE}"
     # 站点自己管滚动（顶栏固定 + 内容区滚动），页面级滚动必须关掉：
@@ -92,7 +92,7 @@ async def main(page: ft.Page) -> None:
     page.scroll = None
     page.padding = 0
     page.spacing = 0
-    page.bgcolor = get_colors(ft.ThemeMode.LIGHT).bg
+    page.bgcolor = get_colors(ui.ThemeMode.LIGHT).bg
     page.window.width = _content.START_SIZE[0]
     page.window.height = _content.START_SIZE[1]
     page.window.min_width = 420

@@ -21,8 +21,8 @@ import contextlib
 import types
 from pathlib import Path
 
-import flet as ft
 import pytest
+from ui import ft
 
 from config import app_meta
 from config.settings import DEFAULT_SETTINGS

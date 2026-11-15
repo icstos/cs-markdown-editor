@@ -35,7 +35,7 @@ import os
 import shutil
 import urllib.request
 
-import flet as ft
+import ui
 
 import parser
 from utils.segment_helpers import is_fence as _is_fence
@@ -167,7 +167,7 @@ def build_image(ctx: ImageEnv):
         page.run_task 期望协程函数 + 参数（内部调用 coro_fn(*args)），
         故传入函数引用而非已调用的协程对象。
         """
-        page = ft.context.page
+        page = ui.context.page
         if page is not None:
             page.run_task(coro_fn, *args, **kwargs)
 
@@ -236,7 +236,7 @@ def build_image(ctx: ImageEnv):
                 dialog_title="图像另存为",
                 file_name=default_name,
                 allowed_extensions=["png", "jpg", "jpeg", "gif", "bmp", "webp"],
-                file_type=ft.FilePickerFileType.CUSTOM,
+                file_type=ui.FilePickerFileType.CUSTOM,
             )
         except Exception:
             return
@@ -309,7 +309,7 @@ def build_image(ctx: ImageEnv):
             # 防御性捕获：无法弹提示时静默返回 True（仍阻止回退到文本粘贴，
             # 避免剪贴板位图二进制数据被当文本插入文档）
             try:
-                page = ft.context.page
+                page = ui.context.page
             except RuntimeError:
                 page = None
             if page is not None:

@@ -1,13 +1,18 @@
 """进程内声明式渲染夹具：不依赖 Flutter 前端即可渲染组件树并驱动状态变更。
 
-用途：验证 ``@ft.component`` 组件的渲染树、按钮回调、effect 与状态联动——
+用途：验证 ``@ui.component`` 组件的渲染树、按钮回调、effect 与状态联动——
 这是重构期间唯一能覆盖「App/编辑器装配 + 交互回调」的自动化手段
 （``flet.testing`` 需要 scikit-image + Flutter 集成测试宿主，本环境不可用）。
 
-原理：Flet 0.86 的 ``Session`` 把「组件重渲染」与「effect 执行」都投递到
+原理：flet 1.1 的 ``Session`` 把「组件重渲染」与「effect 执行」都投递到
 ``__pending_updates`` / ``__pending_effects`` 队列，由后台调度任务消费。
 夹具构造一个**无传输**的 ``Session``：出站消息被吞掉，队列被取出后同步 drain，
 从而在纯 Python 中复现 ``page.session`` 的调度与挂载语义。
+
+版本护栏：``_HarnessSession.schedule_effect`` 必须覆写。flet 1.1 父类往队列里放的是
+``(hook, hook.setup | None)``，夹具的 ``_drain`` 要的是布尔 ``is_cleanup``；不接管就会
+把函数对象当成 truthy，导致**所有重渲染期 effect 静默跑成 cleanup**（聚焦、滚动落地
+全消失，测试还全绿）。私有 API 的导入统一收敛在 ``tests/_flet_internals.py``。
 """
 
 from __future__ import annotations
@@ -18,10 +23,9 @@ import types
 from collections.abc import Iterator
 from typing import Any
 
-import flet as ft
-from flet.components.component import Component, Renderer
-from flet.controls.context import _context_page
-from flet.messaging.session import Session
+from ui import ft
+
+from tests._flet_internals import Component, EffectHook, Renderer, Session, _context_page
 
 _F = "_Session__"
 
@@ -69,9 +73,22 @@ class _HarnessSession(Session):
     发了才会让客户端重设文本、光标跳走）。留档让这类断言不必去猜。
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, effects: list[tuple[Any, bool]], **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.sent: list[Any] = []
+        self._harness_effects = effects
+
+    def schedule_effect(self, hook: Any, is_cleanup: bool) -> None:
+        """把不同 flet 版本的 effect 入队格式统一成夹具的 ``(hook, is_cleanup)``。
+
+        flet 1.1 的 ``Session.schedule_effect`` 往私有队列里放的是
+        ``(hook, hook.setup | None)`` —— 第二项是 setup 函数快照，不是布尔量。
+        夹具若直接沿用父类实现，``_drain`` 会把函数对象当成 truthy 的
+        ``is_cleanup``，于是**所有重渲染期 effect 都跑成 cleanup**：聚焦、
+        滚动落地这些副作用一声不响地消失，测试还全绿。这里覆写入队口，
+        夹具只认自己定义的布尔语义，不再随上游私有队列的结构漂移。
+        """
+        self._harness_effects.append((hook, bool(is_cleanup)))
 
     def _Session__send_message(self, message: Any) -> None:
         """吞掉出站消息（夹具没有前端可发），同时记进 `sent` 供协议层断言。"""
@@ -99,11 +116,13 @@ class RenderHarness:
 
     def __init__(self) -> None:
         self.conn = _StubConn()
-        self.session = _HarnessSession(self.conn)  # type: ignore[arg-type]
-        self.page = self.session.page
         self._max_rounds = 50
         self._effects: list[tuple[Any, bool]] = []
         self._updates: set[Any] = set()
+        self.session = _HarnessSession(self.conn, effects=self._effects)  # type: ignore[arg-type]
+        self.page = self.session.page
+        # pending_updates 仍由 flet 的 schedule_update 直接写；pending_effects 改由
+        # _HarnessSession.schedule_effect 接管，这里保留覆写只为兼容其它写入路径。
         setattr(self.session, _F + "pending_effects", self._effects)
         setattr(self.session, _F + "pending_updates", self._updates)
 
@@ -155,8 +174,6 @@ class RenderHarness:
         （真实运行时不会，那时 mounted 还是 False）。所以这里按 **hook 身份去重**，
         只补登记尚未进队列的那些，避免 ``deps=None`` 的 effect 首渲染跑两遍。
         """
-        from flet.components.hooks.use_effect import EffectHook
-
         for control in walk(self.page.views[0].controls):
             if not isinstance(control, Component):
                 continue

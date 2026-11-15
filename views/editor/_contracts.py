@@ -15,7 +15,7 @@
 from collections.abc import Callable
 from typing import Any, Protocol
 
-import flet as ft
+import ui
 
 from models.document import Document
 
@@ -25,31 +25,31 @@ class CursorEnv(Protocol):
 
     add_column_cursors: Callable[..., Any]
     add_secondary_cursor: Callable[..., Any]
-    alt_pressed_ref: ft.Ref
+    alt_pressed_ref: ui.Ref
     broadcast_backspace: Callable[..., Any]
     broadcast_char_input: Callable[..., Any]
     broadcast_delete: Callable[..., Any]
     broadcast_submit: Callable[..., Any]
     clear_secondary_cursors: Callable[..., Any]
-    cursor_field_ref: ft.Ref
+    cursor_field_ref: ui.Ref
     cursor_li: int | None
     cursor_off: int
-    cursor_pulse_ref: ft.Ref
-    cursor_ref: ft.Ref
+    cursor_pulse_ref: ui.Ref
+    cursor_ref: ui.Ref
     document: Document
     ensure_visible: Callable[..., Any]
     focus_seq: int
     handle_outward_delete: Callable[..., Any]
-    input_session_ref: ft.Ref
+    input_session_ref: ui.Ref
     mark_dirty: Callable[..., None]
     math_focus_li: int
     nav_seq: int
-    outward_sel_ref: ft.Ref
-    paste_in_progress_ref: ft.Ref
-    preferred_col_ref: ft.Ref
+    outward_sel_ref: ui.Ref
+    paste_in_progress_ref: ui.Ref
+    preferred_col_ref: ui.Ref
     push_history: Callable[..., Any]
     push_line_edit: Callable[..., Any]
-    secondary_cursors_ref: ft.Ref
+    secondary_cursors_ref: ui.Ref
     set_cursor: Callable[..., None]
     set_cursor_field_value: Callable[..., None]
     set_cursor_li: Callable[..., None]
@@ -60,7 +60,7 @@ class CursorEnv(Protocol):
     set_nav_seq: Callable[..., None]
     set_outward_sel: Callable[..., None]
     set_wrap_sel_seq: Callable[..., None]
-    shift_pressed_ref: ft.Ref
+    shift_pressed_ref: ui.Ref
     suppress_blur: Any
     undo_push_pending: Any
 
@@ -73,7 +73,7 @@ class HistoryEnv(Protocol):
     cursor_base: Callable[..., Any]
     cursor_li: int | None
     document: Document
-    history_ref: ft.Ref
+    history_ref: ui.Ref
     mark_dirty: Callable[..., None]
     nav_seq: int
     raw_draft: str
@@ -121,24 +121,24 @@ class ScrollEnv(Protocol):
     cursor_off: int
     cursor_vline_info: Any
     document: Document
-    layout_cache_ref: ft.Ref
+    layout_cache_ref: ui.Ref
     line_height: float
-    line_heights_ref: ft.Ref
-    list_view_ref: ft.Ref
-    max_scroll_ref: ft.Ref
+    line_heights_ref: ui.Ref
+    list_view_ref: ui.Ref
+    max_scroll_ref: ui.Ref
     move_vline: Callable[..., Any]
-    offset_prefix_ref: ft.Ref
+    offset_prefix_ref: ui.Ref
     on_scroll_change: Callable[..., Any]
     outward_sel: tuple[int, int, int, int] | None
     request_line_window: Callable[..., None]
-    scroll_offset_ref: ft.Ref
+    scroll_offset_ref: ui.Ref
     set_cursor: Callable[..., None]
     set_cursor_li: Callable[..., None]
     set_cursor_line: Callable[..., None]
     set_flash_li: Callable[..., None]
     set_viewport_w: Callable[..., None]
-    viewport_h_ref: ft.Ref
-    viewport_w_ref: ft.Ref
+    viewport_h_ref: ui.Ref
+    viewport_w_ref: ui.Ref
 
 
 class NavigationEnv(Protocol):
@@ -153,10 +153,10 @@ class NavigationEnv(Protocol):
     cursor_li: int | None
     document: Document
     ensure_visible: Callable[..., Any]
-    layout_cache_ref: ft.Ref
+    layout_cache_ref: ui.Ref
     line_height: float
-    preferred_col_ref: ft.Ref
-    secondary_cursors_ref: ft.Ref
+    preferred_col_ref: ui.Ref
+    secondary_cursors_ref: ui.Ref
     set_code_enter: Callable[..., None]
     set_cursor: Callable[..., None]
     set_cursor_li: Callable[..., None]
@@ -166,7 +166,7 @@ class NavigationEnv(Protocol):
 class OutwardEnv(Protocol):
     """向外选区 的依赖契约（build_outward 实际读取的 19 个字段）。"""
 
-    clipboard_ref: ft.Ref
+    clipboard_ref: ui.Ref
     cursor_base: Callable[..., Any]
     cursor_li: int | None
     cursor_vline_info: Any
@@ -176,8 +176,8 @@ class OutwardEnv(Protocol):
     mark_dirty: Callable[..., None]
     on_submit: Callable[..., None]
     outward_sel: tuple[int, int, int, int] | None
-    outward_sel_ref: ft.Ref
-    preferred_col_ref: ft.Ref
+    outward_sel_ref: ui.Ref
+    preferred_col_ref: ui.Ref
     push_history: Callable[..., Any]
     set_cursor: Callable[..., None]
     set_cursor_li: Callable[..., None]
@@ -213,7 +213,7 @@ class BlocksEnv(Protocol):
     mark_dirty: Callable[..., None]
     math_edit_changed: bool
     math_edit_snapshot: Any
-    math_focus_ref: ft.Ref
+    math_focus_ref: ui.Ref
     maybe_push_history: Callable[..., Any]
     push_history: Callable[..., Any]
     set_cursor: Callable[..., None]
@@ -233,7 +233,7 @@ class InlineFormatEnv(Protocol):
     document: Document
     mark_dirty: Callable[..., None]
     nav_seq: int
-    outward_sel_ref: ft.Ref
+    outward_sel_ref: ui.Ref
     push_history: Callable[..., Any]
     set_cursor: Callable[..., None]
     set_nav_seq: Callable[..., None]
@@ -245,7 +245,7 @@ class ClipboardEnv(Protocol):
     """剪贴板 / SelectionArea 选区 的依赖契约（build_clipboard 实际读取的 20 个字段）。"""
 
     apply_inline_format: Callable[..., Any]
-    clipboard_ref: ft.Ref
+    clipboard_ref: ui.Ref
     cursor_base: Callable[..., Any]
     cursor_li: int | None
     cursor_line: int
@@ -254,10 +254,10 @@ class ClipboardEnv(Protocol):
     insert_inline_at: Callable[..., Any]
     mark_dirty: Callable[..., None]
     nav_seq: int
-    outward_sel_ref: ft.Ref
+    outward_sel_ref: ui.Ref
     push_history: Callable[..., Any]
     raw_mode: bool
-    selection_text_ref: ft.Ref
+    selection_text_ref: ui.Ref
     set_cursor: Callable[..., None]
     set_cursor_li: Callable[..., None]
     set_cursor_line: Callable[..., None]
@@ -269,18 +269,18 @@ class ClipboardEnv(Protocol):
 class FenceEnv(Protocol):
     """围栏岛屿（代码 / 公式 / 表格） 的依赖契约（build_fence 实际读取的 21 个字段）。"""
 
-    code_caret_ref: ft.Ref
+    code_caret_ref: ui.Ref
     code_edit_changed: bool
     code_edit_snapshot: Any
-    code_focus_ref: ft.Ref
+    code_focus_ref: ui.Ref
     cursor_li: int | None
     document: Document
-    history_ref: ft.Ref
+    history_ref: ui.Ref
     make_snapshot: Callable[..., Any]
     mark_dirty: Callable[..., None]
     math_edit_changed: bool
     math_edit_snapshot: Any
-    math_focus_ref: ft.Ref
+    math_focus_ref: ui.Ref
     maybe_push_history: Callable[..., Any]
     push_history: Callable[..., Any]
     restoring: bool
@@ -302,7 +302,7 @@ class RawModeEnv(Protocol):
     push_history: Callable[..., Any]
     raw_draft: str
     raw_mode: bool
-    selection_text_ref: ft.Ref
+    selection_text_ref: ui.Ref
     set_cursor_li: Callable[..., None]
     set_raw_draft: Callable[..., None]
     set_raw_mode: Callable[..., None]
@@ -313,32 +313,32 @@ class RawModeEnv(Protocol):
 class FocusEnv(Protocol):
     """光标 / 公式输入框聚焦 的依赖契约（build_focus 实际读取的 6 个字段）。"""
 
-    cursor_field_ref: ft.Ref
+    cursor_field_ref: ui.Ref
     cursor_li: int | None
     ensure_visible: Callable[..., Any]
-    line_heights_ref: ft.Ref
-    math_field_ref: ft.Ref
+    line_heights_ref: ui.Ref
+    math_field_ref: ui.Ref
     math_focus_li: int
 
 
 class KeyEnv(Protocol):
     """组件级键盘事件 的依赖契约（build_key 实际读取的 9 个字段）。"""
 
-    alt_pressed_ref: ft.Ref
-    arrow_repeat_ref: ft.Ref
+    alt_pressed_ref: ui.Ref
+    arrow_repeat_ref: ui.Ref
     clear_secondary_cursors: Callable[..., Any]
-    ctrl_pressed_ref: ft.Ref
-    nav_ref: ft.Ref
-    secondary_cursors_ref: ft.Ref
-    shift_pressed_ref: ft.Ref
-    table_focus_ref: ft.Ref
-    table_nav_ref: ft.Ref
+    ctrl_pressed_ref: ui.Ref
+    nav_ref: ui.Ref
+    secondary_cursors_ref: ui.Ref
+    shift_pressed_ref: ui.Ref
+    table_focus_ref: ui.Ref
+    table_nav_ref: ui.Ref
 
 
 class ImageEnv(Protocol):
     """图片交互 的依赖契约（build_image 实际读取的 14 个字段）。"""
 
-    clipboard_ref: ft.Ref
+    clipboard_ref: ui.Ref
     cursor_base: Callable[..., Any]
     cursor_li: int | None
     cursor_line: int
@@ -346,7 +346,7 @@ class ImageEnv(Protocol):
     file_path: str | None
     mark_dirty: Callable[..., None]
     nav_seq: int
-    picker_ref: ft.Ref
+    picker_ref: ui.Ref
     push_history: Callable[..., Any]
     set_cursor: Callable[..., None]
     set_cursor_line: Callable[..., None]
@@ -357,21 +357,21 @@ class ImageEnv(Protocol):
 class MultiCursorEnv(Protocol):
     """多光标 的依赖契约（build_multi_cursor 实际读取的 24 个字段）。"""
 
-    clipboard_ref: ft.Ref
+    clipboard_ref: ui.Ref
     cursor_li: int | None
     cursor_off: int
-    cursor_ref: ft.Ref
+    cursor_ref: ui.Ref
     document: Document
     end_input_session: Callable[..., None]
     handle_paste: Callable[..., Any]
-    input_session_ref: ft.Ref
+    input_session_ref: ui.Ref
     mark_dirty: Callable[..., None]
     nav_seq: int
-    paste_in_progress_ref: ft.Ref
-    preferred_col_ref: ft.Ref
+    paste_in_progress_ref: ui.Ref
+    preferred_col_ref: ui.Ref
     push_history: Callable[..., Any]
     push_line_edit: Callable[..., Any]
-    secondary_cursors_ref: ft.Ref
+    secondary_cursors_ref: ui.Ref
     secondary_cursors_version: int
     set_cursor_field_value: Callable[..., None]
     set_cursor_off: Callable[..., None]
@@ -396,20 +396,20 @@ class ReplaceEnv(Protocol):
 class ActionsEnv(Protocol):
     """EditorActions 装配（对外动作契约） 的依赖契约（build_actions 实际读取的 83 个字段）。"""
 
-    alt_pressed_ref: ft.Ref
+    alt_pressed_ref: ui.Ref
     apply_inline_format: Callable[..., Any]
     apply_inline_format_to_selection: Callable[..., Any]
     backspace_core: Callable[..., None]
     clear_outward_sel: Callable[..., None]
     clear_secondary_cursors: Callable[..., Any]
-    code_caret_ref: ft.Ref
-    code_focus_ref: ft.Ref
+    code_caret_ref: ui.Ref
+    code_focus_ref: ui.Ref
     compute_markdown_from_text: Callable[..., Any]
     copy_multi_cursor_selection: Any
-    ctrl_pressed_ref: ft.Ref
+    ctrl_pressed_ref: ui.Ref
     cursor_li: int | None
     cursor_off: int
-    cursor_ref: ft.Ref
+    cursor_ref: ui.Ref
     cut_current_line: Any
     cut_multi_cursor_selection: Any
     delete_core: Callable[..., None]
@@ -442,7 +442,7 @@ class ActionsEnv(Protocol):
     insert_text: Callable[..., Any]
     jump_to: Callable[..., Any]
     link_tab_jump: Callable[..., bool]
-    math_focus_ref: ft.Ref
+    math_focus_ref: ui.Ref
     move_doc_end: Callable[..., None]
     move_doc_start: Callable[..., None]
     move_down: Callable[..., None]
@@ -451,13 +451,13 @@ class ActionsEnv(Protocol):
     move_left: Callable[..., None]
     move_right: Callable[..., None]
     move_up: Callable[..., None]
-    nav_ref: ft.Ref
+    nav_ref: ui.Ref
     nav_seq: int
     outward_sel: tuple[int, int, int, int] | None
     page_down: Callable[..., None]
     page_up: Callable[..., None]
     paste_image_from_clipboard: Any
-    paste_in_progress_ref: ft.Ref
+    paste_in_progress_ref: ui.Ref
     paste_to_multi_cursors: Callable[..., Any]
     paste_to_multi_cursors_plain: Callable[..., Any]
     raw_mode: bool
@@ -466,16 +466,16 @@ class ActionsEnv(Protocol):
     replace_match_in_doc: Callable[..., Any]
     scroll_to_offset: Callable[..., Any]
     select_all: Callable[..., None]
-    selection_text_ref: ft.Ref
+    selection_text_ref: ui.Ref
     set_block: Callable[..., None]
-    shift_pressed_ref: ft.Ref
+    shift_pressed_ref: ui.Ref
     step_down: Callable[..., Any]
     step_end: Callable[..., Any]
     step_home: Callable[..., Any]
     step_left: Callable[..., Any]
     step_right: Callable[..., Any]
     step_up: Callable[..., Any]
-    table_focus_ref: ft.Ref
+    table_focus_ref: ui.Ref
     toggle_focus_mode: Callable[..., None]
     toggle_raw: Callable[..., None]
     toggle_task_at_cursor: Callable[..., Any]
@@ -490,21 +490,21 @@ class LineControlsEnv(Protocol):
     同源，保证滚动总高、列表项位置与跳转落点三者一致。
     """
 
-    alt_pressed_ref: ft.Ref
+    alt_pressed_ref: ui.Ref
     body_font_size: float
     c: Any
-    clipboard_ref: ft.Ref
+    clipboard_ref: ui.Ref
     code_diff_gaps: dict[int, list[float]] | None
     code_diff_marks: dict[int, str] | None
     code_diff_ranges: dict[int, list[tuple[int, int]]] | None
     content_width: float
-    ctrl_pressed_ref: ft.Ref
-    cursor_field_ref: ft.Ref
+    ctrl_pressed_ref: ui.Ref
+    cursor_field_ref: ui.Ref
     cursor_field_value: str
     cursor_li: int | None
     cursor_line: int
     cursor_off: int
-    cursor_ref: ft.Ref
+    cursor_ref: ui.Ref
     diff_gaps: dict[int, list[float]] | None
     diff_marks: dict[int, str] | None
     diff_side: int
@@ -513,9 +513,9 @@ class LineControlsEnv(Protocol):
     file_path: str | None
     flash_li: int
     handle_char_input: Callable[..., Any]
-    input_session_ref: ft.Ref
+    input_session_ref: ui.Ref
     line_height: float
-    math_field_ref: ft.Ref
+    math_field_ref: ui.Ref
     math_focus_li: int
     nav_seq: int
     on_blur: Callable[..., None]
@@ -525,8 +525,8 @@ class LineControlsEnv(Protocol):
     search_hits_version: Any
     secondary_cursors: list
     secondary_cursors_version: int
-    shift_pressed_ref: ft.Ref
+    shift_pressed_ref: ui.Ref
     table_focus_li: int
-    table_nav_ref: ft.Ref
+    table_nav_ref: ui.Ref
     theme_mode: Any
     wrap_sel_seq: int

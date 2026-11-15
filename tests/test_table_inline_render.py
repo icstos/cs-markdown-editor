@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flet as ft  # noqa: E402
+from ui import ft  # noqa: E402
 
 from views.table_view import _render_cell_spans  # noqa: E402
 

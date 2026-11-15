@@ -18,7 +18,6 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.file_tree import collect_text_paths
@@ -31,7 +30,6 @@ from services.search import (
 )
 from views.editor._scroll import build_scroll
 from views.sidebar import _build_preview_spans
-
 
 # ---- build_query_regex：4 选项组合 ----
 
@@ -229,7 +227,7 @@ def _make_colors():
 
 def test_build_preview_spans_creates_match_spans():
     """匹配段生成带 bgcolor 的 TextSpan。"""
-    import flet as ft
+    from ui import ft
     c = _make_colors()
     raw = "hello world hello"
     matches = [(0, 5), (12, 17)]
@@ -256,7 +254,7 @@ def test_build_preview_spans_adds_ellipsis_on_truncation():
 
 def test_build_preview_spans_no_match_fallback():
     """无匹配时退化展示前若干字符。"""
-    import flet as ft
+    from ui import ft
     c = _make_colors()
     text = _build_preview_spans("some text", [], c)
     assert isinstance(text, ft.Text)
@@ -266,7 +264,7 @@ def test_build_preview_spans_no_match_fallback():
 
 def test_build_preview_spans_empty_raw():
     """空 raw 返回空 Text。"""
-    import flet as ft
+    from ui import ft
     c = _make_colors()
     text = _build_preview_spans("", [(0, 0)], c)
     assert isinstance(text, ft.Text)
@@ -275,7 +273,7 @@ def test_build_preview_spans_empty_raw():
 # ---- 跳转链路向后兼容：jump_to(li, off=None) ----
 
 
-@patch("views.editor._scroll.ft")
+@patch("views.editor._scroll.ui")
 def test_jump_to_off_none_uses_zero(mock_ft):
     """off=None 退化为 off=0（向后兼容大纲等仅传 li 的调用方）。"""
     from models.document import BlockType
@@ -288,7 +286,7 @@ def test_jump_to_off_none_uses_zero(mock_ft):
     ctx.set_cursor.assert_called_once_with(0, 0)
 
 
-@patch("views.editor._scroll.ft")
+@patch("views.editor._scroll.ui")
 def test_jump_to_with_off_uses_provided_offset(mock_ft):
     """off=int 时跳到精确 raw 偏移。"""
     from models.document import BlockType
@@ -301,7 +299,7 @@ def test_jump_to_with_off_uses_provided_offset(mock_ft):
     ctx.set_cursor.assert_called_once_with(0, 5)
 
 
-@patch("views.editor._scroll.ft")
+@patch("views.editor._scroll.ui")
 def test_jump_to_fence_falls_back_to_browse_mode(mock_ft):
     """围栏块 fallback 到浏览态（set_cursor_line + set_cursor_li(None)）。"""
     from models.document import BlockType
@@ -316,7 +314,7 @@ def test_jump_to_fence_falls_back_to_browse_mode(mock_ft):
     ctx.set_cursor.assert_not_called()
 
 
-@patch("views.editor._scroll.ft")
+@patch("views.editor._scroll.ui")
 def test_jump_to_out_of_range_li_does_nothing(mock_ft):
     """越界 li 静默返回。"""
     ctx = MagicMock()

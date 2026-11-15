@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flet as ft
+from ui import ft
 
 from services import shortcut
 from services.file_ops import open_external

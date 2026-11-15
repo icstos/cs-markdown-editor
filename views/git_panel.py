@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-import flet as ft
+import ui
 
 from services.git.models import ChangeKind, FileChange, GitStatus
 from services.git.repository import GitRepository
@@ -117,132 +117,132 @@ def git_panel_props(ctx) -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 
 
-def _branch_button(state: dict, actions: dict, c) -> ft.Control:
+def _branch_button(state: dict, actions: dict, c) -> ui.Control:
     """分支按钮：``⎇ main ↑2 ↓1``，点击唤起分支管理面板。"""
     st: GitStatus | None = state.get("status")
     branch = (st.branch if st else None) or ("（分离 HEAD）" if st and st.detached else "无分支")
-    badges: list[ft.Control] = []
+    badges: list[ui.Control] = []
     if st and st.ahead:
         badges.append(
-            ft.Text(f"↑{st.ahead}", size=10, color=git_status_color("added", c),
+            ui.Text(f"↑{st.ahead}", size=10, color=git_status_color("added", c),
                     font_family=FONT_MONO, tooltip=f"领先远端 {st.ahead} 个提交")
         )
     if st and st.behind:
         badges.append(
-            ft.Text(f"↓{st.behind}", size=10, color=git_status_color("deleted", c),
+            ui.Text(f"↓{st.behind}", size=10, color=git_status_color("deleted", c),
                     font_family=FONT_MONO, tooltip=f"落后远端 {st.behind} 个提交")
         )
-    return ft.Container(
+    return ui.Container(
         height=24,
         border_radius=Radius.SM,
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD),
+        padding=ui.Padding.symmetric(horizontal=Spacing.MD),
         ink=True,
         tooltip="切换分支 / 新建分支",
         on_click=lambda e: actions["open_branch_dialog"](),
-        content=ft.Row(
+        content=ui.Row(
             controls=[
-                ft.Icon(ft.Icons.ACCOUNT_TREE, size=13, color=c.link),
-                ft.Text(
+                ui.Icon(ui.Icons.ACCOUNT_TREE, size=13, color=c.link),
+                ui.Text(
                     branch,
                     size=11,
                     color=c.text,
                     font_family=FONT_MAIN,
-                    weight=ft.FontWeight.W_600,
+                    weight=ui.FontWeight.W_600,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                 ),
                 *badges,
             ],
             spacing=Spacing.SM,
             tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )
 
 
-def _more_menu(state: dict, actions: dict, c, on_view_change) -> ft.Control:
+def _more_menu(state: dict, actions: dict, c, on_view_change) -> ui.Control:
     """⋯ 更多菜单：视图切换、撤销提交、中止合并、初始化仓库、刷新。"""
     st: GitStatus | None = state.get("status")
     has_repo = bool(state.get("root"))
-    items: list[ft.PopupMenuItem] = [
-        ft.PopupMenuItem(
+    items: list[ui.PopupMenuItem] = [
+        ui.PopupMenuItem(
             content="更改视图" if state.get("view") == VIEW_HISTORY else "历史记录",
-            icon=ft.Icons.HISTORY if state.get("view") == VIEW_CHANGES else ft.Icons.EDIT_NOTE,
+            icon=ui.Icons.HISTORY if state.get("view") == VIEW_CHANGES else ui.Icons.EDIT_NOTE,
             on_click=lambda e: on_view_change(
                 VIEW_CHANGES if state.get("view") == VIEW_HISTORY else VIEW_HISTORY
             ),
         ),
-        ft.PopupMenuItem(),
-        ft.PopupMenuItem(
+        ui.PopupMenuItem(),
+        ui.PopupMenuItem(
             content="撤销上一次提交",
-            icon=ft.Icons.UNDO,
+            icon=ui.Icons.UNDO,
             disabled=not has_repo,
             on_click=lambda e: actions["undo_commit"](),
         ),
     ]
     if st is not None and st.in_operation:
         items.append(
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content=f"中止{GitRepository.operation_label(st.op)}",
-                icon=ft.Icons.CANCEL,
+                icon=ui.Icons.CANCEL,
                 on_click=lambda e: actions["abort_operation"](),
             )
         )
     items.extend(
         [
-            ft.PopupMenuItem(),
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(),
+            ui.PopupMenuItem(
                 content="刷新状态",
-                icon=ft.Icons.REFRESH,
+                icon=ui.Icons.REFRESH,
                 on_click=lambda e: actions["refresh"](),
             ),
         ]
     )
     if state.get("workspace") and not has_repo:
         items.append(
-            ft.PopupMenuItem(
+            ui.PopupMenuItem(
                 content="初始化仓库…",
-                icon=ft.Icons.PLAYLIST_ADD,
+                icon=ui.Icons.PLAYLIST_ADD,
                 on_click=lambda e: actions["init_repo"](),
             )
         )
-    return ft.PopupMenuButton(
+    return ui.PopupMenuButton(
         items=items,
         tooltip="更多 Git 操作",
-        icon=ft.Icons.MORE_VERT,
+        icon=ui.Icons.MORE_VERT,
         icon_size=16,
     )
 
 
-def _sync_bar(state: dict, actions: dict, c) -> ft.Control:
+def _sync_bar(state: dict, actions: dict, c) -> ui.Control:
     """获取 / 拉取 / 推送 三个核心同步入口。"""
     busy = state.get("busy", False)
     has_repo = bool(state.get("root"))
     disabled = busy or not has_repo
-    return ft.Row(
+    return ui.Row(
         controls=[
             git_text_button(
                 "获取", "获取远端更新（不改动本地分支）",
                 actions["fetch"] if not disabled else None, c,
-                icon=ft.Icons.CLOUD_SYNC,
+                icon=ui.Icons.CLOUD_SYNC,
             ),
             git_text_button(
                 "拉取", "拉取并合并远端更新（Pull）",
                 actions["pull"] if not disabled else None, c,
-                icon=ft.Icons.CLOUD_DOWNLOAD,
+                icon=ui.Icons.CLOUD_DOWNLOAD,
             ),
             git_text_button(
                 "推送", "推送本地提交到远端（Push）",
                 actions["push"] if not disabled else None, c,
-                icon=ft.Icons.CLOUD_UPLOAD,
+                icon=ui.Icons.CLOUD_UPLOAD,
             ),
         ],
         spacing=Spacing.SM,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        vertical_alignment=ui.CrossAxisAlignment.CENTER,
     )
 
 
-def _commit_box(state: dict, actions: dict, c, message: str, set_message) -> ft.Control:
+def _commit_box(state: dict, actions: dict, c, message: str, set_message) -> ui.Control:
     """提交信息输入 + 两个提交按钮 + 自动推送开关。
 
     - 「提交暂存区」：只提交已暂存内容（``git commit``）
@@ -257,11 +257,11 @@ def _commit_box(state: dict, actions: dict, c, message: str, set_message) -> ft.
     can_commit_staged = bool(staged_count) and not busy
     can_commit_all = bool(staged_count or changed_count) and not busy and st is not None and not st.is_clean
 
-    return ft.Container(
-        padding=ft.Padding.only(
+    return ui.Container(
+        padding=ui.Padding.only(
             left=Spacing.LG, right=Spacing.LG, top=Spacing.MD, bottom=Spacing.MD
         ),
-        content=ft.Column(
+        content=ui.Column(
             controls=[
                 multiline_box(
                     message,
@@ -270,15 +270,15 @@ def _commit_box(state: dict, actions: dict, c, message: str, set_message) -> ft.
                     c,
                     native_ref=state.get("native_ref"),
                 ),
-                ft.Container(height=Spacing.SM),
-                ft.Row(
+                ui.Container(height=Spacing.SM),
+                ui.Row(
                     controls=[
                         git_text_button(
                             f"提交暂存区 ({staged_count})",
                             "提交已暂存的更改",
                             (lambda: actions["commit"](False)) if can_commit_staged else None,
                             c,
-                            icon=ft.Icons.CHECK,
+                            icon=ui.Icons.CHECK,
                             expand=True,
                         ),
                         git_text_button(
@@ -286,28 +286,28 @@ def _commit_box(state: dict, actions: dict, c, message: str, set_message) -> ft.
                             "提交所有更改（含未暂存，等价 git commit -a）",
                             (lambda: actions["commit"](True)) if can_commit_all else None,
                             c,
-                            icon=ft.Icons.DONE_ALL,
+                            icon=ui.Icons.DONE_ALL,
                             expand=True,
                         ),
                     ],
                     spacing=Spacing.SM,
                 ),
-                ft.Container(height=Spacing.XS),
-                ft.Container(
+                ui.Container(height=Spacing.XS),
+                ui.Container(
                     ink=True,
                     on_click=lambda e: actions["toggle_commit_push"](),
                     border_radius=Radius.SM,
-                    padding=ft.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
+                    padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=2),
                     tooltip="提交成功后自动推送到远端",
-                    content=ft.Row(
+                    content=ui.Row(
                         controls=[
-                            ft.Icon(
-                                ft.Icons.CHECK_BOX if state.get("commit_push")
-                                else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                            ui.Icon(
+                                ui.Icons.CHECK_BOX if state.get("commit_push")
+                                else ui.Icons.CHECK_BOX_OUTLINE_BLANK,
                                 size=13,
                                 color=c.link if state.get("commit_push") else c.muted,
                             ),
-                            ft.Text(
+                            ui.Text(
                                 "提交后自动推送",
                                 size=11,
                                 color=c.text if state.get("commit_push") else c.muted,
@@ -331,14 +331,14 @@ def _entry_actions(
     actions: dict,
     c,
     busy: bool,
-) -> list[ft.Control]:
+) -> list[ui.Control]:
     """单个文件行的右侧操作按钮（暂存 / 取消暂存 / 丢弃）。"""
     on_click_none = None if busy else True
     name = entry.basename
     if staged:
         return [
             git_icon_button(
-                ft.Icons.REMOVE,
+                ui.Icons.REMOVE,
                 f"取消暂存 {name}",
                 (lambda: actions["unstage"]([entry.path])) if on_click_none else None,
                 c.muted,
@@ -347,14 +347,14 @@ def _entry_actions(
         ]
     return [
         git_icon_button(
-            ft.Icons.UNDO,
+            ui.Icons.UNDO,
             f"丢弃 {name} 的更改",
             (lambda: actions["discard"](entry.path)) if on_click_none else None,
             c.muted,
             size=13,
         ),
         git_icon_button(
-            ft.Icons.ADD,
+            ui.Icons.ADD,
             f"暂存 {name}",
             (lambda: actions["stage"]([entry.path])) if on_click_none else None,
             c.link,
@@ -370,8 +370,8 @@ def _file_list(
     actions: dict,
     c,
     busy: bool,
-) -> ft.Control:
-    rows: list[ft.Control] = []
+) -> ui.Control:
+    rows: list[ui.Control] = []
     for entry in entries:
         subtitle = None
         if entry.orig_path and entry.orig_path != entry.path:
@@ -389,7 +389,7 @@ def _file_list(
                 actions=_entry_actions(entry, staged=staged, actions=actions, c=c, busy=busy),
             )
         )
-    return ft.Column(controls=rows, spacing=0)
+    return ui.Column(controls=rows, spacing=0)
 
 
 def _collapsible(
@@ -401,8 +401,8 @@ def _collapsible(
     set_collapsed,
     actions: dict,
     c,
-    header_actions: list[ft.Control] | None = None,
-) -> list[ft.Control]:
+    header_actions: list[ui.Control] | None = None,
+) -> list[ui.Control]:
     """折叠分区头；返回 [header, （未折叠时的内容占位）]。
 
     内容由调用方在返回后追加（保持「头 + 列表」的平铺结构，避免嵌套
@@ -442,7 +442,7 @@ def _render_changes_view(
     set_message,
     collapsed: frozenset,
     set_collapsed,
-) -> ft.Control:
+) -> ui.Control:
     """「更改」视图：提交框 + 过滤 + 三个分区。"""
     st: GitStatus | None = state.get("status")
     busy = state.get("busy", False)
@@ -457,14 +457,14 @@ def _render_changes_view(
     staged = [e for e in (st.staged if st else []) if _match(e) and not e.is_conflicted]
     unstaged = [e for e in (st.unstaged if st else []) if _match(e) and not e.is_conflicted]
 
-    rows: list[ft.Control] = [
+    rows: list[ui.Control] = [
         _commit_box(state, actions, c, message, set_message),
-        ft.Container(height=1, bgcolor=c.border),
-        ft.Container(
-            padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-            content=ft.Row(
+        ui.Container(height=1, bgcolor=c.border),
+        ui.Container(
+            padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+            content=ui.Row(
                 controls=[
-                    ft.Container(
+                    ui.Container(
                         expand=True,
                         content=filter_box(
                             filter_text, set_filter_text, "过滤变更文件…", c,
@@ -472,11 +472,11 @@ def _render_changes_view(
                         ),
                     ),
                     git_icon_button(
-                        ft.Icons.REFRESH, "刷新状态", actions["refresh"], c.muted, size=13
+                        ui.Icons.REFRESH, "刷新状态", actions["refresh"], c.muted, size=13
                     ),
                 ],
                 spacing=Spacing.SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
         ),
     ]
@@ -492,7 +492,7 @@ def _render_changes_view(
                 collapsed=collapsed, set_collapsed=set_collapsed, actions=actions, c=c,
                 header_actions=[
                     git_icon_button(
-                        ft.Icons.CALL_MERGE,
+                        ui.Icons.CALL_MERGE,
                         "中止进行中的合并/变基",
                         actions["abort_operation"] if st and st.in_operation else None,
                         c.muted, size=13,
@@ -501,7 +501,7 @@ def _render_changes_view(
             )
         )
         if _SEC_CONFLICTS not in collapsed:
-            conflict_rows: list[ft.Control] = []
+            conflict_rows: list[ui.Control] = []
             for entry in conflicted:
                 # 默认参数绑定 entry：循环变量的闭包默认晚绑定，不绑定会把所有
                 # 行的回调都指向最后一个冲突文件。
@@ -523,7 +523,7 @@ def _render_changes_view(
                         subtitle="存在冲突标记，点击跳转到冲突位置",
                         actions=[
                             git_icon_button(
-                                ft.Icons.ADD, f"标记 {entry.basename} 已解决（暂存）",
+                                ui.Icons.ADD, f"标记 {entry.basename} 已解决（暂存）",
                                 _mark if not busy else None,
                                 c.link, size=13,
                             ),
@@ -541,7 +541,7 @@ def _render_changes_view(
                 collapsed=collapsed, set_collapsed=set_collapsed, actions=actions, c=c,
                 header_actions=[
                     git_icon_button(
-                        ft.Icons.REMOVE_DONE,
+                        ui.Icons.REMOVE_DONE,
                         "全部取消暂存",
                         (lambda: actions["unstage_all"]()) if staged and not busy else None,
                         c.muted, size=13,
@@ -554,9 +554,9 @@ def _render_changes_view(
                 rows.append(_file_list(staged, staged=True, actions=actions, c=c, busy=busy))
             else:
                 rows.append(
-                    ft.Container(
-                        padding=ft.Padding.only(left=Spacing.XL, top=2, bottom=Spacing.SM),
-                        content=ft.Text(
+                    ui.Container(
+                        padding=ui.Padding.only(left=Spacing.XL, top=2, bottom=Spacing.SM),
+                        content=ui.Text(
                             "暂无暂存的更改", size=11, color=c.muted, font_family=FONT_MAIN
                         ),
                     )
@@ -569,13 +569,13 @@ def _render_changes_view(
             collapsed=collapsed, set_collapsed=set_collapsed, actions=actions, c=c,
             header_actions=[
                 git_icon_button(
-                    ft.Icons.UNDO,
+                    ui.Icons.UNDO,
                     "丢弃所有工作区更改",
                     (lambda: actions["discard_all"]()) if unstaged and not busy else None,
                     c.muted, size=13,
                 ),
                 git_icon_button(
-                    ft.Icons.ADD,
+                    ui.Icons.ADD,
                     "全部暂存",
                     (lambda: actions["stage_all"]()) if unstaged and not busy else None,
                     c.link, size=13,
@@ -588,19 +588,19 @@ def _render_changes_view(
             rows.append(_file_list(unstaged, staged=False, actions=actions, c=c, busy=busy))
         else:
             rows.append(
-                ft.Container(
-                    padding=ft.Padding.only(left=Spacing.XL, top=2, bottom=Spacing.SM),
-                    content=ft.Text(
+                ui.Container(
+                    padding=ui.Padding.only(left=Spacing.XL, top=2, bottom=Spacing.SM),
+                    content=ui.Text(
                         "没有检测到更改" if not text else "无匹配的变更文件",
                         size=11, color=c.muted, font_family=FONT_MAIN,
                     ),
                 )
             )
 
-    return ft.Column(controls=rows, spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
+    return ui.Column(controls=rows, spacing=0, scroll=ui.ScrollMode.AUTO, expand=True)
 
 
-def _render_history_filters(state: dict, actions: dict, c, local: dict) -> ft.Control:
+def _render_history_filters(state: dict, actions: dict, c, local: dict) -> ui.Control:
     """历史筛选：作者 / 关键词 / 文件名，各自「回车生效」。
 
     输入变化即时写入 App 侧筛选条件（``set_history_filter``），但**不**触发查询
@@ -617,13 +617,13 @@ def _render_history_filters(state: dict, actions: dict, c, local: dict) -> ft.Co
         return _handler
 
     submit = lambda: actions["load_history"]()  # noqa: E731 - 单表达式回调
-    return ft.Container(
-        padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-        content=ft.Column(
+    return ui.Container(
+        padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+        content=ui.Column(
             controls=[
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             expand=True,
                             content=filter_box(
                                 local["author"], _on_change("author", local["set_author"]),
@@ -635,9 +635,9 @@ def _render_history_filters(state: dict, actions: dict, c, local: dict) -> ft.Co
                     ],
                     spacing=Spacing.SM,
                 ),
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             expand=True,
                             content=filter_box(
                                 local["keyword"], _on_change("keyword", local["set_keyword"]),
@@ -649,9 +649,9 @@ def _render_history_filters(state: dict, actions: dict, c, local: dict) -> ft.Co
                     ],
                     spacing=Spacing.SM,
                 ),
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.Container(
+                        ui.Container(
                             expand=True,
                             content=filter_box(
                                 local["path"], _on_change("path", local["set_path"]),
@@ -661,20 +661,20 @@ def _render_history_filters(state: dict, actions: dict, c, local: dict) -> ft.Co
                             ),
                         ),
                         git_icon_button(
-                            ft.Icons.PLAY_ARROW, "应用筛选", actions["load_history"], c.link, size=13
+                            ui.Icons.PLAY_ARROW, "应用筛选", actions["load_history"], c.link, size=13
                         ),
                         git_icon_button(
-                            ft.Icons.CLEAR_ALL, "清除筛选", actions["clear_history_filter"], c.muted, size=13
+                            ui.Icons.CLEAR_ALL, "清除筛选", actions["clear_history_filter"], c.muted, size=13
                         ),
                     ],
                     spacing=Spacing.SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
                 ),
                 *(
                     [
-                        ft.Row(
+                        ui.Row(
                             controls=[
-                                ft.Text(
+                                ui.Text(
                                     "已应用筛选：" + "、".join(
                                         f"{k}={v}" for k, v in applied.items() if v
                                     ),
@@ -682,9 +682,9 @@ def _render_history_filters(state: dict, actions: dict, c, local: dict) -> ft.Co
                                     color=c.link,
                                     font_family=FONT_MAIN,
                                     max_lines=1,
-                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    overflow=ui.TextOverflow.ELLIPSIS,
                                 )
-                            ]
+                            ], spacing=10
                         )
                     ]
                     if any(applied.values())
@@ -701,47 +701,47 @@ def _render_history_view(
     actions: dict,
     c,
     local: dict,
-) -> ft.Control:
+) -> ui.Control:
     """「历史」视图：筛选 + 倒序提交列表（分页加载，点击展开变更文件）。"""
     history = state.get("history") or []
     details = state.get("commit_details") or {}
     expanded = state.get("expanded_commits") or frozenset()
 
-    rows: list[ft.Control] = [
-        ft.Container(
-            padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-            content=ft.Row(
+    rows: list[ui.Control] = [
+        ui.Container(
+            padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+            content=ui.Row(
                 controls=[
-                    ft.Icon(ft.Icons.HISTORY, size=14, color=c.muted),
-                    ft.Text(
+                    ui.Icon(ui.Icons.HISTORY, size=14, color=c.muted),
+                    ui.Text(
                         "提交历史",
                         size=11,
                         color=c.text,
                         font_family=FONT_MAIN,
-                        weight=ft.FontWeight.W_700,
+                        weight=ui.FontWeight.W_700,
                         expand=True,
                     ),
-                    ft.Text(
+                    ui.Text(
                         f"{len(history)} 条",
                         size=10,
                         color=c.muted,
                         font_family=FONT_MONO,
                     ),
                     git_icon_button(
-                        ft.Icons.REFRESH, "重新加载历史", actions["load_history"], c.muted, size=13
+                        ui.Icons.REFRESH, "重新加载历史", actions["load_history"], c.muted, size=13
                     ),
                 ],
                 spacing=Spacing.SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
         ),
         _render_history_filters(state, actions, c, local),
-        ft.Container(height=1, bgcolor=c.border),
+        ui.Container(height=1, bgcolor=c.border),
     ]
 
     if state.get("history_loading") and not history:
         rows.append(_empty_hint("正在加载提交历史…", c))
-        return ft.Column(controls=rows, spacing=0, expand=True)
+        return ui.Column(controls=rows, spacing=0, expand=True)
 
     if not history:
         rows.append(
@@ -751,9 +751,9 @@ def _render_history_view(
                 c,
             )
         )
-        return ft.Column(controls=rows, spacing=0, expand=True)
+        return ui.Column(controls=rows, spacing=0, expand=True)
 
-    items: list[ft.Control] = []
+    items: list[ui.Control] = []
     for commit in history:
         is_open = commit.sha in expanded
         files = details.get(commit.sha)
@@ -763,93 +763,93 @@ def _render_history_view(
                 items.append(_commit_file_row(commit, f, actions, c))
         elif is_open:
             items.append(
-                ft.Container(
-                    padding=ft.Padding.only(left=Spacing.XXXL, top=2, bottom=Spacing.SM),
-                    content=ft.Text("正在加载变更文件…", size=10, color=c.muted,
+                ui.Container(
+                    padding=ui.Padding.only(left=Spacing.XXXL, top=2, bottom=Spacing.SM),
+                    content=ui.Text("正在加载变更文件…", size=10, color=c.muted,
                                     font_family=FONT_MAIN),
                 )
             )
 
     rows.append(
-        ft.ListView(
+        ui.ListView(
             controls=items,
             spacing=0,
             expand=True,
-            padding=ft.Padding.symmetric(vertical=Spacing.XS),
+            padding=ui.Padding.symmetric(vertical=Spacing.XS), clip_behavior=ui.ClipBehavior.HARD_EDGE,
         )
     )
     if state.get("history_has_more"):
         rows.append(
-            ft.Container(
-                padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-                content=ft.Row(
+            ui.Container(
+                padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+                content=ui.Row(
                     controls=[
                         git_text_button(
                             "加载更多" if not state.get("history_loading") else "加载中…",
                             "继续加载更早的提交",
                             actions["load_more_history"] if not state.get("history_loading") else None,
                             c,
-                            icon=ft.Icons.EXPAND_MORE,
+                            icon=ui.Icons.EXPAND_MORE,
                             expand=True,
                         )
-                    ]
+                    ], spacing=10
                 ),
             )
         )
-    return ft.Column(controls=rows, spacing=0, expand=True)
+    return ui.Column(controls=rows, spacing=0, expand=True)
 
 
-def _commit_row(commit, is_open: bool, actions: dict, c) -> ft.Control:
+def _commit_row(commit, is_open: bool, actions: dict, c) -> ui.Control:
     """单条提交行：短哈希 · 摘要 · 作者 · 时间（点击展开变更文件）。"""
     refs = [r for r in commit.refs if r]
     subtitle = f"{commit.author_name} · {commit.time_text}"
-    return ft.Container(
-        padding=ft.Padding.only(
+    return ui.Container(
+        padding=ui.Padding.only(
             left=Spacing.LG, right=Spacing.LG, top=Spacing.MD, bottom=Spacing.MD
         ),
         ink=True,
         tooltip=f"{commit.short_sha}\n{subtitle}\n{commit.absolute_time_text}",
         on_click=lambda e: actions["toggle_commit"](commit.sha),
-        content=ft.Column(
+        content=ui.Column(
             controls=[
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.Icon(
-                            ft.Icons.ARROW_DROP_DOWN if is_open else ft.Icons.CHEVRON_RIGHT,
+                        ui.Icon(
+                            ui.Icons.ARROW_DROP_DOWN if is_open else ui.Icons.CHEVRON_RIGHT,
                             size=14,
                             color=c.muted,
                         ),
-                        ft.Text(
+                        ui.Text(
                             commit.summary or "(无提交信息)",
                             size=12,
                             color=c.text,
                             font_family=FONT_MAIN,
                             max_lines=1,
-                            overflow=ft.TextOverflow.ELLIPSIS,
+                            overflow=ui.TextOverflow.ELLIPSIS,
                             expand=True,
                         ),
                     ],
                     spacing=Spacing.SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
                 ),
-                ft.Row(
+                ui.Row(
                     controls=[
-                        ft.Container(width=14),
-                        ft.Text(
+                        ui.Container(width=14),
+                        ui.Text(
                             commit.short_sha,
                             size=10,
                             color=c.link,
                             font_family=FONT_MONO,
                         ),
-                        ft.Text(subtitle, size=10, color=c.muted, font_family=FONT_MAIN,
-                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                        ui.Text(subtitle, size=10, color=c.muted, font_family=FONT_MAIN,
+                                max_lines=1, overflow=ui.TextOverflow.ELLIPSIS, expand=True),
                         *(
                             [
-                                ft.Container(
-                                    bgcolor=ft.Colors.with_opacity(0.12, c.link),
+                                ui.Container(
+                                    bgcolor=ui.Colors.with_opacity(0.12, c.link),
                                     border_radius=Radius.SM,
-                                    padding=ft.Padding.symmetric(horizontal=4, vertical=0),
-                                    content=ft.Text(
+                                    padding=ui.Padding.symmetric(horizontal=4, vertical=0),
+                                    content=ui.Text(
                                         refs[0].replace("HEAD -> ", ""),
                                         size=9,
                                         color=c.link,
@@ -862,7 +862,7 @@ def _commit_row(commit, is_open: bool, actions: dict, c) -> ft.Control:
                         ),
                     ],
                     spacing=Spacing.SM,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
                 ),
             ],
             spacing=2,
@@ -870,42 +870,42 @@ def _commit_row(commit, is_open: bool, actions: dict, c) -> ft.Control:
     )
 
 
-def _commit_file_row(commit, change: FileChange, actions: dict, c) -> ft.Control:
+def _commit_file_row(commit, change: FileChange, actions: dict, c) -> ui.Control:
     """提交详情中的单个变更文件：点击查看该提交下此文件的差异。"""
     stats = ""
     if change.additions is not None or change.deletions is not None:
         stats = f"+{change.additions or 0} -{change.deletions or 0}"
-    return ft.Container(
-        padding=ft.Padding.only(
+    return ui.Container(
+        padding=ui.Padding.only(
             left=Spacing.XXXL, right=Spacing.LG, top=2, bottom=2
         ),
         border_radius=Radius.MD,
         ink=True,
         tooltip=f"{change.display_name}（点击查看该提交下的差异）{(' ' + stats) if stats else ''}",
         on_click=lambda e: actions["history_file_diff"](commit.sha, change.path),
-        content=ft.Row(
+        content=ui.Row(
             controls=[
-                ft.Icon(ft.Icons.DESCRIPTION_OUTLINED, size=12, color=c.muted),
-                ft.Text(
+                ui.Icon(ui.Icons.DESCRIPTION_OUTLINED, size=12, color=c.muted),
+                ui.Text(
                     change.basename,
                     size=11,
                     color=c.text,
                     font_family=FONT_MAIN,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                 ),
-                ft.Text(
+                ui.Text(
                     change.dirname,
                     size=10,
                     color=c.muted,
                     font_family=FONT_MAIN,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                     expand=True,
                 ),
                 *(
                     [
-                        ft.Text(stats, size=10, color=git_status_color(change.kind, c),
+                        ui.Text(stats, size=10, color=git_status_color(change.kind, c),
                                 font_family=FONT_MONO)
                     ]
                     if stats
@@ -914,27 +914,27 @@ def _commit_file_row(commit, change: FileChange, actions: dict, c) -> ft.Control
                 letter_badge(change.letter, change.kind, c),
             ],
             spacing=Spacing.SM,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )
 
 
-def _render_gate(state: dict, actions: dict, c) -> ft.Control:
+def _render_gate(state: dict, actions: dict, c) -> ui.Control:
     """前置状态：git 缺失 / 无工作区 / 非仓库 → 引导态。"""
     if not state.get("available"):
-        return ft.Column(
+        return ui.Column(
             controls=[
-                ft.Container(height=Spacing.XXL),
+                ui.Container(height=Spacing.XXL),
                 _empty_hint(
                     "未检测到 Git\n\n请先安装 Git 并确保其在 PATH 中，\n"
                     "安装后点击下方按钮重新检测。",
                     c,
                 ),
-                ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=Spacing.XXL, vertical=Spacing.LG),
+                ui.Container(
+                    padding=ui.Padding.symmetric(horizontal=Spacing.XXL, vertical=Spacing.LG),
                     content=git_text_button(
                         "重新检测", "重新探测 git 可执行文件",
-                        actions["refresh"], c, icon=ft.Icons.REFRESH, expand=True,
+                        actions["refresh"], c, icon=ui.Icons.REFRESH, expand=True,
                     ),
                 ),
             ],
@@ -944,9 +944,9 @@ def _render_gate(state: dict, actions: dict, c) -> ft.Control:
 
     workspace = state.get("workspace")
     if not workspace:
-        return ft.Column(
+        return ui.Column(
             controls=[
-                ft.Container(height=Spacing.XXL),
+                ui.Container(height=Spacing.XXL),
                 _empty_hint(
                     "尚未打开文件夹\n\n打开一个文件夹作为工作区后，\n此处会显示 Git 更改。",
                     c,
@@ -958,29 +958,29 @@ def _render_gate(state: dict, actions: dict, c) -> ft.Control:
 
     root = state.get("root")
     if not root:
-        return ft.Column(
+        return ui.Column(
             controls=[
-                ft.Container(height=Spacing.XXL),
+                ui.Container(height=Spacing.XXL),
                 _empty_hint(
                     f"当前文件夹不是 Git 仓库\n\n{workspace}",
                     c,
                 ),
-                ft.Container(
-                    padding=ft.Padding.symmetric(horizontal=Spacing.XXL, vertical=Spacing.LG),
-                    content=ft.Column(
+                ui.Container(
+                    padding=ui.Padding.symmetric(horizontal=Spacing.XXL, vertical=Spacing.LG),
+                    content=ui.Column(
                         controls=[
                             git_text_button(
                                 "初始化仓库",
                                 "在当前位置执行 git init",
-                                actions["init_repo"], c, icon=ft.Icons.PLAYLIST_ADD, expand=True,
+                                actions["init_repo"], c, icon=ui.Icons.PLAYLIST_ADD, expand=True,
                             ),
-                            ft.Container(height=Spacing.SM),
-                            ft.Text(
+                            ui.Container(height=Spacing.SM),
+                            ui.Text(
                                 "也可用「打开文件夹」切换到已有仓库的上级目录",
                                 size=10,
                                 color=c.muted,
                                 font_family=FONT_MAIN,
-                                text_align=ft.TextAlign.CENTER,
+                                text_align=ui.TextAlign.CENTER,
                             ),
                         ],
                         spacing=0,
@@ -990,7 +990,7 @@ def _render_gate(state: dict, actions: dict, c) -> ft.Control:
             spacing=0,
             expand=True,
         )
-    return git_icon_button(ft.Icons.REFRESH, "刷新", actions["refresh"], c.muted, size=13)
+    return git_icon_button(ui.Icons.REFRESH, "刷新", actions["refresh"], c.muted, size=13)
 
 
 # ---------------------------------------------------------------------------
@@ -998,12 +998,12 @@ def _render_gate(state: dict, actions: dict, c) -> ft.Control:
 # ---------------------------------------------------------------------------
 
 
-@ft.component
+@ui.component
 def GitPanel(
     state: dict,
     actions: dict,
-    theme_mode: ft.ThemeMode,
-) -> ft.Control:
+    theme_mode: ui.ThemeMode,
+) -> ui.Control:
     """Git 侧边栏面板。
 
     ``state`` / ``actions`` 由 :func:`git_panel_props` 从 AppContext 打包
@@ -1015,14 +1015,14 @@ def GitPanel(
     # 提交信息草稿从 commit_ref 恢复：面板在「文件 ↔ 源代码管理」之间切换时会
     # 卸载重挂（use_state 归零），只有 ref 里的镜像能保住用户已经敲了一半的信息。
     commit_ref = state.get("commit_ref")
-    message, set_message = ft.use_state(
+    message, set_message = ui.use_state(
         lambda: (commit_ref.current or "") if commit_ref is not None else ""
     )
-    filter_text, set_filter_text = ft.use_state("")
-    author_text, set_author_text = ft.use_state("")
-    keyword_text, set_keyword_text = ft.use_state("")
-    path_text, set_path_text = ft.use_state("")
-    collapsed, set_collapsed = ft.use_state(frozenset())
+    filter_text, set_filter_text = ui.use_state("")
+    author_text, set_author_text = ui.use_state("")
+    keyword_text, set_keyword_text = ui.use_state("")
+    path_text, set_path_text = ui.use_state("")
+    collapsed, set_collapsed = ui.use_state(frozenset())
 
     # 提交信息镜像到 App 的 ref：Ctrl+Enter 等全局快捷键经 ref 读取最新草稿
     if commit_ref is not None:
@@ -1037,7 +1037,7 @@ def GitPanel(
             if commit_ref is not None:
                 commit_ref.current = ""
 
-    ft.use_effect(_clear_after_commit, [commit_seq])
+    ui.use_effect(_clear_after_commit, [commit_seq])
 
     def _on_view_change(view: str):
         actions["set_view"](view)
@@ -1052,18 +1052,18 @@ def GitPanel(
     st: GitStatus | None = state.get("status")
 
     # ---- 仓库头 ----
-    header = ft.Container(
-        padding=ft.Padding.only(
+    header = ui.Container(
+        padding=ui.Padding.only(
             left=Spacing.LG, right=Spacing.SM, top=Spacing.MD, bottom=Spacing.MD
         ),
-        content=ft.Column(
+        content=ui.Column(
             controls=[
-                ft.Row(
+                ui.Row(
                     controls=[
                         _branch_button(state, actions, c),
-                        ft.Container(expand=True),
+                        ui.Container(expand=True),
                         git_icon_button(
-                            ft.Icons.EDIT_NOTE if view == VIEW_CHANGES else ft.Icons.HISTORY,
+                            ui.Icons.EDIT_NOTE if view == VIEW_CHANGES else ui.Icons.HISTORY,
                             "切换到历史记录" if view == VIEW_CHANGES else "切换到更改视图",
                             (lambda: _on_view_change(
                                 VIEW_HISTORY if view == VIEW_CHANGES else VIEW_CHANGES
@@ -1074,22 +1074,22 @@ def GitPanel(
                         _more_menu(state, actions, c, _on_view_change),
                     ],
                     spacing=Spacing.XS,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
                 ),
-                ft.Container(height=Spacing.SM),
+                ui.Container(height=Spacing.SM),
                 _sync_bar(state, actions, c),
                 *(
                     [
-                        ft.Container(height=Spacing.SM),
-                        ft.Container(
-                            bgcolor=ft.Colors.with_opacity(0.10, git_status_color("modified", c)),
+                        ui.Container(height=Spacing.SM),
+                        ui.Container(
+                            bgcolor=ui.Colors.with_opacity(0.10, git_status_color("modified", c)),
                             border_radius=Radius.MD,
-                            padding=ft.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
-                            content=ft.Row(
+                            padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+                            content=ui.Row(
                                 controls=[
-                                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=13,
+                                    ui.Icon(ui.Icons.WARNING_AMBER_ROUNDED, size=13,
                                             color=git_status_color("modified", c)),
-                                    ft.Text(
+                                    ui.Text(
                                         f"{st.op_label if st else '操作'}进行中",
                                         size=10,
                                         color=git_status_color("modified", c),
@@ -1109,7 +1109,7 @@ def GitPanel(
         ),
     )
 
-    body: ft.Control
+    body: ui.Control
     if view == VIEW_HISTORY:
         body = _render_history_view(
             state, actions, c,
@@ -1127,40 +1127,40 @@ def GitPanel(
             collapsed=collapsed, set_collapsed=set_collapsed,
         )
 
-    children: list[ft.Control] = [header]
+    children: list[ui.Control] = [header]
     if state.get("error"):
         children.append(
-            ft.Container(
-                bgcolor=ft.Colors.with_opacity(0.10, git_status_color("deleted", c)),
-                padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
-                content=ft.Row(
+            ui.Container(
+                bgcolor=ui.Colors.with_opacity(0.10, git_status_color("deleted", c)),
+                padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=Spacing.SM),
+                content=ui.Row(
                     controls=[
-                        ft.Icon(ft.Icons.ERROR_OUTLINE, size=13,
+                        ui.Icon(ui.Icons.ERROR_OUTLINE, size=13,
                                 color=git_status_color("deleted", c)),
-                        ft.Text(
+                        ui.Text(
                             state["error"],
                             size=10,
                             color=git_status_color("deleted", c),
                             font_family=FONT_MAIN,
                             max_lines=3,
-                            overflow=ft.TextOverflow.ELLIPSIS,
+                            overflow=ui.TextOverflow.ELLIPSIS,
                             expand=True,
                         ),
                     ],
                     spacing=Spacing.SM,
-                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    vertical_alignment=ui.CrossAxisAlignment.START,
                 ),
             )
         )
     if state.get("busy"):
         children.append(
-            ft.Container(
-                padding=ft.Padding.symmetric(horizontal=Spacing.LG, vertical=2),
-                content=ft.Text(
+            ui.Container(
+                padding=ui.Padding.symmetric(horizontal=Spacing.LG, vertical=2),
+                content=ui.Text(
                     "正在执行 Git 操作…", size=10, color=c.muted, font_family=FONT_MAIN
                 ),
             )
         )
     children.append(body)
 
-    return ft.Column(controls=children, spacing=0, expand=True)
+    return ui.Column(controls=children, spacing=0, expand=True)

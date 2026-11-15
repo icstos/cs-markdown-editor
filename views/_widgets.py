@@ -8,7 +8,7 @@
 import os
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import FONT_MAIN, FONT_MONO, Radius, Spacing, focus_ring
 from views.native_scope import native_focus_hooks
@@ -17,14 +17,14 @@ from views.native_scope import native_focus_hooks
 
 
 def _wrap_context_menu(
-    content: ft.Control,
+    content: ui.Control,
     path: str,
     is_dir: bool,
     on_action: Callable[[str, str], None],
     compare_source: str | None = None,
     key: str | None = None,
     menu_state: dict | None = None,
-) -> ft.ContextMenu:
+) -> ui.ContextMenu:
     """将列表项包裹在右键菜单中。
 
     文件菜单：打开 / 选择以进行比较 / 与已选项目进行比较 /
@@ -40,13 +40,13 @@ def _wrap_context_menu(
     供外层在 on_secondary_tap_up（抬起阶段）判断右键是否命中文件项——
     避免右键文件项时内外两层菜单同时弹出。
     """
-    items: list[ft.PopupMenuItem] = []
+    items: list[ui.PopupMenuItem] = []
 
     # 打开：文件用 OPEN_IN_NEW，文件夹用 FOLDER_OPEN（区分语义）
     items.append(
-        ft.PopupMenuItem(
+        ui.PopupMenuItem(
             content="打开",
-            icon=ft.Icons.FOLDER_OPEN if is_dir else ft.Icons.OPEN_IN_NEW,
+            icon=ui.Icons.FOLDER_OPEN if is_dir else ui.Icons.OPEN_IN_NEW,
             on_click=lambda e, p=path: on_action("open", p),
         )
     )
@@ -54,84 +54,84 @@ def _wrap_context_menu(
     if not is_dir:
         # 文件比较：选择以进行比较 / 与已选项目进行比较（VSCode 风格）
         items.append(
-            ft.PopupMenuItem(
-                content="选择以进行比较", icon=ft.Icons.DIFFERENCE,
+            ui.PopupMenuItem(
+                content="选择以进行比较", icon=ui.Icons.DIFFERENCE,
                 on_click=lambda e, p=path: on_action("select_for_compare", p),
             )
         )
         if compare_source and os.path.abspath(compare_source) != os.path.abspath(path):
             items.append(
-                ft.PopupMenuItem(
-                    content="与已选项目进行比较", icon=ft.Icons.COMPARE_ARROWS,
+                ui.PopupMenuItem(
+                    content="与已选项目进行比较", icon=ui.Icons.COMPARE_ARROWS,
                     on_click=lambda e, p=path: on_action("compare_with_selected", p),
                 )
             )
-    items.append(ft.PopupMenuItem())  # 分隔
+    items.append(ui.PopupMenuItem())  # 分隔
 
     # 新建文件/文件夹
     items.append(
-        ft.PopupMenuItem(
-            content="新建文件", icon=ft.Icons.NOTE_ADD,
+        ui.PopupMenuItem(
+            content="新建文件", icon=ui.Icons.NOTE_ADD,
             on_click=lambda e, p=path: on_action("new_file", p),
         )
     )
     items.append(
-        ft.PopupMenuItem(
-            content="新建文件夹", icon=ft.Icons.CREATE_NEW_FOLDER,
+        ui.PopupMenuItem(
+            content="新建文件夹", icon=ui.Icons.CREATE_NEW_FOLDER,
             on_click=lambda e, p=path: on_action("new_folder", p),
         )
     )
-    items.append(ft.PopupMenuItem())  # 分隔
+    items.append(ui.PopupMenuItem())  # 分隔
 
     # 路径操作
     items.append(
-        ft.PopupMenuItem(
-            content="复制路径", icon=ft.Icons.CONTENT_COPY,
+        ui.PopupMenuItem(
+            content="复制路径", icon=ui.Icons.CONTENT_COPY,
             on_click=lambda e, p=path: on_action("copy_path", p),
         )
     )
     items.append(
-        ft.PopupMenuItem(
-            content="打开文件位置", icon=ft.Icons.FOLDER_OPEN,
+        ui.PopupMenuItem(
+            content="打开文件位置", icon=ui.Icons.FOLDER_OPEN,
             on_click=lambda e, p=path: on_action("reveal", p),
         )
     )
-    items.append(ft.PopupMenuItem())  # 分隔
+    items.append(ui.PopupMenuItem())  # 分隔
 
     # Git：单文件专属修改历史（对齐 VS Code 资源管理器的「File History」，仅文件）
     if not is_dir:
         items.append(
-            ft.PopupMenuItem(
-                content="查看文件历史", icon=ft.Icons.HISTORY,
+            ui.PopupMenuItem(
+                content="查看文件历史", icon=ui.Icons.HISTORY,
                 on_click=lambda e, p=path: on_action("git_history", p),
             )
         )
-        items.append(ft.PopupMenuItem())  # 分隔
+        items.append(ui.PopupMenuItem())  # 分隔
 
     # 文件操作
     items.append(
-        ft.PopupMenuItem(
-            content="重命名", icon=ft.Icons.DRIVE_FILE_RENAME_OUTLINE,
+        ui.PopupMenuItem(
+            content="重命名", icon=ui.Icons.DRIVE_FILE_RENAME_OUTLINE,
             on_click=lambda e, p=path: on_action("rename", p),
         )
     )
     if not is_dir:
         items.append(
-            ft.PopupMenuItem(
-                content="创建副本", icon=ft.Icons.FILE_COPY_OUTLINED,
+            ui.PopupMenuItem(
+                content="创建副本", icon=ui.Icons.FILE_COPY_OUTLINED,
                 on_click=lambda e, p=path: on_action("duplicate", p),
             )
         )
     items.append(
-        ft.PopupMenuItem(
-            content="删除", icon=ft.Icons.DELETE_OUTLINE,
+        ui.PopupMenuItem(
+            content="删除", icon=ui.Icons.DELETE_OUTLINE,
             on_click=lambda e, p=path: on_action("delete", p),
         )
     )
 
     if menu_state is None:
         # 最近文件列表模式：无外层空白菜单，保持默认自动触发即可
-        return ft.ContextMenu(
+        return ui.ContextMenu(
             content=content,
             secondary_items=items,
             key=key,
@@ -147,11 +147,11 @@ def _wrap_context_menu(
     def _on_inner_close(_e):
         menu_state["inner_active"] = False
 
-    detector = ft.GestureDetector(
+    detector = ui.GestureDetector(
         content=content,
         on_secondary_tap_down=_on_inner_secondary,
     )
-    return ft.ContextMenu(
+    return ui.ContextMenu(
         content=detector,
         secondary_items=items,
         key=key,
@@ -161,12 +161,12 @@ def _wrap_context_menu(
 
 
 def _wrap_blank_context_menu(
-    content: ft.Control,
+    content: ui.Control,
     root_dir: str,
     on_action: Callable[[str, str], None],
     c,
     menu_state: dict,
-) -> tuple[ft.GestureDetector, ft.ContextMenu]:
+) -> tuple[ui.GestureDetector, ui.ContextMenu]:
     """文件面板空白区域右键菜单（VSCode 资源管理器风格）。
 
     仅包含不依赖具体文件项的操作：新建文件 / 新建文件夹 / 复制路径 / 打开文件位置。
@@ -188,22 +188,22 @@ def _wrap_blank_context_menu(
     inner_active 标志为非拖拽模式的兜底（无 DragTarget 时行内标志 GD 存活，
     置位后此处跳过；行菜单 on_dismiss/on_select 复位，无残留）。
     """
-    items: list[ft.PopupMenuItem] = [
-        ft.PopupMenuItem(
-            content="新建文件", icon=ft.Icons.NOTE_ADD,
+    items: list[ui.PopupMenuItem] = [
+        ui.PopupMenuItem(
+            content="新建文件", icon=ui.Icons.NOTE_ADD,
             on_click=lambda e, p=root_dir: on_action("new_file", p),
         ),
-        ft.PopupMenuItem(
-            content="新建文件夹", icon=ft.Icons.CREATE_NEW_FOLDER,
+        ui.PopupMenuItem(
+            content="新建文件夹", icon=ui.Icons.CREATE_NEW_FOLDER,
             on_click=lambda e, p=root_dir: on_action("new_folder", p),
         ),
-        ft.PopupMenuItem(),  # 分隔
-        ft.PopupMenuItem(
-            content="复制路径", icon=ft.Icons.CONTENT_COPY,
+        ui.PopupMenuItem(),  # 分隔
+        ui.PopupMenuItem(
+            content="复制路径", icon=ui.Icons.CONTENT_COPY,
             on_click=lambda e, p=root_dir: on_action("copy_path", p),
         ),
-        ft.PopupMenuItem(
-            content="打开文件位置", icon=ft.Icons.FOLDER_OPEN,
+        ui.PopupMenuItem(
+            content="打开文件位置", icon=ui.Icons.FOLDER_OPEN,
             on_click=lambda e, p=root_dir: on_action("reveal", p),
         ),
     ]
@@ -216,13 +216,13 @@ def _wrap_blank_context_menu(
             return
         await holder.open(global_position=e.global_position)
 
-    blank_body = ft.GestureDetector(
+    blank_body = ui.GestureDetector(
         content=content,
         on_secondary_tap_down=_on_blank_secondary_down,
         expand=True,
     )
-    holder = ft.ContextMenu(
-        content=ft.Container(width=0, height=0),
+    holder = ui.ContextMenu(
+        content=ui.Container(width=0, height=0),
         items=items,
         key="blank-area",
     )
@@ -254,23 +254,23 @@ def _drop_allowed(src: str, dst_dir: str) -> bool:
     return True
 
 
-def _drag_feedback(name: str, icon_name: str, icon_color, c) -> ft.Control:
+def _drag_feedback(name: str, icon_name: str, icon_color, c) -> ui.Control:
     """拖拽时跟随指针的紧凑预览标签（图标 + 名称）。"""
-    return ft.Container(
-        bgcolor=ft.Colors.with_opacity(0.95, c.surface),
-        border=ft.Border.all(1, c.border),
+    return ui.Container(
+        bgcolor=ui.Colors.with_opacity(0.95, c.surface),
+        border=ui.Border.all(1, c.border),
         border_radius=Radius.MD,
-        padding=ft.Padding.symmetric(horizontal=10, vertical=5),
-        content=ft.Row(
+        padding=ui.Padding.symmetric(horizontal=10, vertical=5),
+        content=ui.Row(
             controls=[
-                ft.Icon(icon_name, size=13, color=icon_color),
-                ft.Text(
+                ui.Icon(icon_name, size=13, color=icon_color),
+                ui.Text(
                     name,
                     size=12,
                     color=c.text,
                     font_family=FONT_MAIN,
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                 ),
             ],
             spacing=Spacing.SM,
@@ -280,13 +280,13 @@ def _drag_feedback(name: str, icon_name: str, icon_color, c) -> ft.Control:
 
 
 def _wrap_draggable(
-    row: ft.Control,
-    ghost: ft.Control,
-    feedback: ft.Control,
+    row: ui.Control,
+    ghost: ui.Control,
+    feedback: ui.Control,
     drag_registry: dict,
     path: str,
     key: str | None = None,
-) -> ft.Draggable:
+) -> ui.Draggable:
     """将文件树行包装为可拖拽项。
 
     - content_when_dragging：拖起后原位置显示半透明占位（VSCode 直觉）；
@@ -294,7 +294,7 @@ def _wrap_draggable(
       （拖拽会话期间行不重建，id 映射稳定）；
     - key 供 ListView 按路径复用行实例（虚拟化 reconciliation）。
     """
-    d = ft.Draggable(
+    d = ui.Draggable(
         group=_DRAG_GROUP,
         content=row,
         content_when_dragging=ghost,
@@ -306,13 +306,13 @@ def _wrap_draggable(
 
 
 def _wrap_drop_target(
-    content: ft.Control,
+    content: ui.Control,
     dst_dir: str | None,
     drag_registry: dict,
     on_drop: Callable[[str, str], None],
     set_highlight: Callable[[str | None], None],
     key: str | None = None,
-) -> ft.DragTarget:
+) -> ui.DragTarget:
     """将文件夹行（或根区域）包装为放置目标。
 
     dst_dir=None 时为「拒绝型」目标（文件行占位）：_drop_allowed 恒 False，
@@ -347,7 +347,7 @@ def _wrap_drop_target(
         if src is not None and _drop_allowed(src, dst_dir):
             on_drop(src, dst_dir)
 
-    return ft.DragTarget(
+    return ui.DragTarget(
         group=_DRAG_GROUP,
         content=content,
         on_will_accept=on_will_accept,
@@ -357,7 +357,7 @@ def _wrap_drop_target(
     )
 
 
-def _wrap_row_gesture(row: ft.Control, key: str | None = None) -> ft.GestureDetector:
+def _wrap_row_gesture(row: ui.Control, key: str | None = None) -> ui.GestureDetector:
     """行级「竞技场占位」GestureDetector（拖拽模式下行的最外层包装）。
 
     背景（Flet 0.86 / Flutter 实测行为）：DragTarget 会吞掉其子孙
@@ -371,7 +371,7 @@ def _wrap_row_gesture(row: ft.Control, key: str | None = None) -> ft.GestureDete
     ContextMenu 原生弹出，外层空白 GD 被竞技场拒绝，空白菜单只在真正
     的空白区域触发。key 供 ListView 按路径复用行实例（虚拟化 reconciliation）。
     """
-    return ft.GestureDetector(
+    return ui.GestureDetector(
         content=row,
         on_secondary_tap_down=lambda _e: None,
         key=key,
@@ -379,16 +379,16 @@ def _wrap_row_gesture(row: ft.Control, key: str | None = None) -> ft.GestureDete
 
 
 def _search_shell(
-    content: ft.Control,
+    content: ui.Control,
     c,
     *,
     focused: bool = False,
     radius: int = Radius.LG,
     height: int | None = None,
     bgcolor: str | None = None,
-    shadow: list[ft.BoxShadow] | None = None,
-    padding: ft.Padding | None = None,
-) -> ft.Container:
+    shadow: list[ui.BoxShadow] | None = None,
+    padding: ui.Padding | None = None,
+) -> ui.Container:
     """搜索框外壳（全应用统一）：填底 + 1px 细边 + 圆角，聚焦时整体换主题色。
 
     **单一着色来源**：输入框自身 `border=None`、`filled=False`，底色与描边只
@@ -401,14 +401,14 @@ def _search_shell(
     fill = bgcolor if bgcolor is not None else (
         c.surface if focused else c.input_bg
     )
-    return ft.Container(
+    return ui.Container(
         height=height,
         bgcolor=fill,
-        border=ft.Border.all(1, border_color),
+        border=ui.Border.all(1, border_color),
         border_radius=radius,
-        padding=padding or ft.Padding.symmetric(horizontal=Spacing.LG),
+        padding=padding or ui.Padding.symmetric(horizontal=Spacing.LG),
         shadow=(shadow or []) + (focus_ring(c.link) if focused else []),
-        alignment=ft.Alignment.CENTER_LEFT,
+        alignment=ui.Alignment.CENTER_LEFT,
         content=content,
     )
 
@@ -424,7 +424,7 @@ def _compact_btn(
     disabled: bool = False,
     active: bool = False,
     radius: int = Radius.MD,
-) -> ft.Control:
+) -> ui.Control:
     """紧凑图标按钮（搜索条 / 选项行专用）。
 
     不用 `ft.IconButton`：Material 的最小点击区 40×40 压不动，会把所在行顶高
@@ -433,17 +433,17 @@ def _compact_btn(
     """
     color = c.link if active else c.muted
     if disabled:
-        color = ft.Colors.with_opacity(0.38, c.muted)
-    return ft.Container(
+        color = ui.Colors.with_opacity(0.38, c.muted)
+    return ui.Container(
         width=box,
         height=box,
         border_radius=radius,
-        bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
-        alignment=ft.Alignment.CENTER,
+        bgcolor=ui.Colors.with_opacity(0.12, c.link) if active else None,
+        alignment=ui.Alignment.CENTER,
         tooltip=tooltip,
         ink=not disabled,
         on_click=None if disabled else on_click,
-        content=ft.Icon(icon, size=icon_size, color=color),
+        content=ui.Icon(icon, size=icon_size, color=color),
     )
 
 
@@ -456,26 +456,26 @@ def _option_pill(
     *,
     height: int = 22,
     icon: str | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """搜索选项开关（Aa / ab / .* / 文件夹）：激活时主题色淡底 + 主题色文字。"""
     color = c.link if active else c.muted
     child = (
-        ft.Icon(icon, size=13, color=color)
+        ui.Icon(icon, size=13, color=color)
         if icon is not None
-        else ft.Text(
+        else ui.Text(
             label,
             size=11,
-            weight=ft.FontWeight.W_600,
+            weight=ui.FontWeight.W_600,
             color=color,
             font_family=FONT_MONO,
         )
     )
-    return ft.Container(
+    return ui.Container(
         height=height,
         border_radius=Radius.SM,
-        padding=ft.Padding.symmetric(horizontal=Spacing.MD),
-        bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
-        alignment=ft.Alignment.CENTER,
+        padding=ui.Padding.symmetric(horizontal=Spacing.MD),
+        bgcolor=ui.Colors.with_opacity(0.12, c.link) if active else None,
+        alignment=ui.Alignment.CENTER,
         ink=True,
         tooltip=tooltip,
         on_click=lambda e: on_toggle(not active),
@@ -483,20 +483,24 @@ def _option_pill(
     )
 
 
-@ft.component
+@ui.component
 def _search_box(
     value: str,
     on_change: Callable[[str], None],
     placeholder: str,
     c,
-    ref: ft.Ref | None = None,
-    native_ref: ft.Ref | None = None,
+    ref: ui.Ref | None = None,
+    native_ref: ui.Ref | None = None,
     *,
-    icon: str | None = ft.Icons.SEARCH,
+    icon: str | None = ui.Icons.SEARCH,
     height: int = 30,
     on_submit: Callable[[], None] | None = None,
-) -> ft.Control:
-    """侧边栏搜索 / 过滤 / 替换输入框（圆角填底 + 聚焦描边，全应用同一语言）。
+) -> ui.Control:
+    """侧边栏搜索 / 过滤 / 替换输入框（全应用同一语言）。
+
+    外观实现已提取成 cs-ui 公共组件 ``ui.SearchField``。这里只保留两件项目相关的事：
+    把 ``styles.Colors`` 映射成 ``ui.SearchFieldPalette``，以及把键盘焦点域
+    （``native_ref``）接到组件的 on_focus / on_blur。对外签名与所有调用点不变。
 
     ref：外部持有输入框控件引用，供 Ctrl+F 聚焦（App → Sidebar 桥接）。
     native_ref：外部输入焦点域 ref（非 None 时挂 on_focus/on_blur 跟踪，
@@ -504,100 +508,71 @@ def _search_box(
     icon：左侧前置图标；替换框传 None（不需要放大镜，图标会误导为"再搜一次"）。
     height：外壳高度。替换框与搜索框同高（30），保持同一个面板里的两条输入对齐。
     on_submit：回车回调（Git 面板的「回车生效」筛选需要）。
-
-    组件化的原因：聚焦态需要重渲染（外壳描边 + 图标转主题色），普通工厂
-    函数没有 hook 上下文。对外签名向后兼容，调用点无需改动。
     """
-    focused, set_focused = ft.use_state(False)
     focus_h, blur_h = native_focus_hooks(native_ref)
-
-    def _on_focus(e=None):
-        set_focused(True)
-        if focus_h is not None:
-            focus_h(e)
-
-    def _on_blur(e=None):
-        set_focused(False)
-        if blur_h is not None:
-            blur_h(e)
-
-    field = ft.TextField(
+    return ui.SearchField(
         value=value,
-        hint_text=placeholder,
-        hint_style=ft.TextStyle(size=12, color=c.muted, font_family=FONT_MAIN),
-        dense=True,
-        border=ft.NoInputBorder(),
-        filled=False,
-        text_size=12,
-        text_style=ft.TextStyle(size=12, color=c.text, font_family=FONT_MAIN),
-        # 行首内缩由外壳的 padding 统一给：`filled=True` 会自带约 4 逻辑 px 的
-        # 额外内缩（Material 属性），这里保持 filled=False + 0 内边距。
-        content_padding=ft.Padding.symmetric(horizontal=0, vertical=Spacing.SM),
-        cursor_color=c.link,
-        on_change=lambda e: on_change(e.control.value or ""),
-        on_focus=_on_focus,
-        on_blur=_on_blur,
-        on_submit=(lambda e: on_submit()) if on_submit is not None else None,
-        ref=ref,
-        expand=True,
-    )
-
-    controls: list[ft.Control] = []
-    if icon is not None:
-        controls.append(
-            ft.Icon(icon, size=14, color=c.link if focused else c.muted)
-        )
-    controls.append(field)
-
-    return _search_shell(
-        ft.Row(
-            controls=controls,
-            spacing=Spacing.MD,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        ),
-        c,
-        focused=focused,
+        on_change=on_change,
+        on_submit=on_submit,
+        on_focus=focus_h,
+        on_blur=blur_h,
+        placeholder=placeholder,
+        icon=icon,
         height=height,
-        padding=ft.Padding.only(
-            left=Spacing.LG, right=Spacing.MD, top=0, bottom=0
+        radius=Radius.LG,
+        palette=ui.SearchFieldPalette(
+            fill=c.input_bg,
+            focused_fill=c.surface,
+            border=c.border,
+            accent=c.link,
+            text=c.text,
+            hint=c.muted,
         ),
+        field_ref=ref,
+        focus_shadow=focus_ring(c.link),
+        padding=ui.Padding.only(left=Spacing.LG, right=Spacing.MD, top=0, bottom=0),
+        content_padding=ui.Padding.symmetric(horizontal=0, vertical=Spacing.SM),
+        text_size=12,
+        icon_size=14,
+        gap=Spacing.MD,
+        font_family=FONT_MAIN,
     )
 
 
-def _empty_hint(text: str, c) -> ft.Control:
+def _empty_hint(text: str, c) -> ui.Control:
     """居中浅色提示。"""
-    return ft.Container(
+    return ui.Container(
         expand=True,
-        alignment=ft.Alignment.CENTER,
-        content=ft.Text(
+        alignment=ui.Alignment.CENTER,
+        content=ui.Text(
             value=text,
             size=12,
             color=c.muted,
             font_family=FONT_MAIN,
-            text_align=ft.TextAlign.CENTER,
+            text_align=ui.TextAlign.CENTER,
         ),
     )
 
 
 def _list_item(
-    content: ft.Control,
+    content: ui.Control,
     c,
     on_click: Callable | None = None,
     indent: int = Spacing.XL,
     active: bool = False,
     key: str | None = None,
-) -> ft.Control:
+) -> ui.Control:
     """通用列表项：左侧缩进、hover ink 反馈。
 
     active=True 时以主题色半透明背景高亮（用于标记当前打开的文件）。
     key 透传至 Container，供 ListView 按唯一标识复用项实例。
     """
-    return ft.Container(
+    return ui.Container(
         content=content,
-        padding=ft.Padding.only(left=indent, top=Spacing.SM, bottom=Spacing.SM, right=Spacing.LG),
+        padding=ui.Padding.only(left=indent, top=Spacing.SM, bottom=Spacing.SM, right=Spacing.LG),
         on_click=on_click,
         ink=True,
-        bgcolor=ft.Colors.with_opacity(0.12, c.link) if active else None,
+        bgcolor=ui.Colors.with_opacity(0.12, c.link) if active else None,
         border_radius=Radius.LG,
         key=key,
     )

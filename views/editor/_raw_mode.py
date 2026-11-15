@@ -16,7 +16,7 @@ suppress_blur_for_click / _on_raw_change
 - flet（ft.context.page）
 """
 
-import flet as ft
+import ui
 
 import parser
 from views._editor_helpers import parse_draft_lines
@@ -47,7 +47,7 @@ def build_raw_mode(ctx: RawModeEnv):
             ctx.set_raw_mode(False)
 
     def toggle_focus_mode():
-        page = ft.context.page
+        page = ui.context.page
         if page is None:
             return
         try:

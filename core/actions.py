@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-import flet as ft
+import ui
 
 from models.document import BlockType, Line
 
@@ -52,8 +52,8 @@ class EditorActions:
     cursor_off: int  # 行级 raw 偏移 0..len(line.raw)
     active_line: Line | None  # = lines[cursor_li] if cursor_li is not None else None
     raw_mode: bool
-    cursor_ref: ft.Ref  # ft.Ref[CursorState]：实时光标位置（main.py 读 .current.base/.extent）
-    selection_text_ref: ft.Ref
+    cursor_ref: ui.Ref  # ft.Ref[CursorState]：实时光标位置（main.py 读 .current.base/.extent）
+    selection_text_ref: ui.Ref
     nav_seq: int  # 撤销/重做时递增以强制 cursor_text_field key 重建
 
     # ---- 行间光标导航 ----
@@ -97,18 +97,18 @@ class EditorActions:
     format_document: Callable[[], None]  # Shift+Alt+F：全文 Markdown 格式化（含撤销）
 
     # ---- 代码块（Flet 原生双态独立岛屿：高亮浏览 / 原生编辑）----
-    code_focus_ref: ft.Ref
+    code_focus_ref: ui.Ref
     # 空代码块聚焦时 Backspace → 删除整个代码块（Typora 式）。
     # 返回 True 已处理（消费按键），False 未处理（继续原生编辑框删除）。
     handle_code_backspace: Callable[[int], bool]
     # 代码块边界方向键跳出（Typora 式）：↑/← 从第一行跳出、↓/→ 从最后一行跳出，
     # 无相邻行时创建新行。code_caret_ref 为代码块编辑框的光标跟踪
     # (value, base_offset, extent_offset)；handle_code_exit(norm) 返回 True 已消费。
-    code_caret_ref: ft.Ref
+    code_caret_ref: ui.Ref
     handle_code_exit: Callable[[str], bool]
 
     # ---- 表格（始终可编辑 DataTable2 独立岛屿）----
-    table_focus_ref: ft.Ref
+    table_focus_ref: ui.Ref
 
     # ---- 状态栏 ----
     get_cursor_row_col: Callable[[], tuple[int, int]]
@@ -117,10 +117,10 @@ class EditorActions:
     # outward_sel = (anchor_li, anchor_off, active_li, active_off) | None
     outward_sel: OutwardSel = None
     # ---- 块级公式（点击进入编辑态的独立岛屿）----
-    math_focus_ref: ft.Ref | None = None
-    shift_pressed_ref: ft.Ref | None = None  # Shift 键状态（editor 内部跟踪）
-    ctrl_pressed_ref: ft.Ref | None = None  # Ctrl 键状态（主同步源 KeyDispatcher.e.ctrl）
-    alt_pressed_ref: ft.Ref | None = None  # Alt 键状态（KeyDispatcher.e.alt 同步，供 Alt+Click 分发）
+    math_focus_ref: ui.Ref | None = None
+    shift_pressed_ref: ui.Ref | None = None  # Shift 键状态（editor 内部跟踪）
+    ctrl_pressed_ref: ui.Ref | None = None  # Ctrl 键状态（主同步源 KeyDispatcher.e.ctrl）
+    alt_pressed_ref: ui.Ref | None = None  # Alt 键状态（KeyDispatcher.e.alt 同步，供 Alt+Click 分发）
     extend_outward_left: Callable[[], None] | None = None
     extend_outward_right: Callable[[], None] | None = None
     extend_outward_up: Callable[[], None] | None = None
@@ -185,7 +185,7 @@ class EditorActions:
     # Ctrl+V 时 KeyDispatcher 置 True；handle_char_input 入口检测到 True 则跳过，
     # 由 _do_paste_check 走 handle_paste 统一处理（避免单行 TextField 把多行文本
     # 拼接成一行触发 on_change 与 handle_paste 重复插入）。
-    paste_in_progress_ref: ft.Ref | None = None
+    paste_in_progress_ref: ui.Ref | None = None
 
     # ---- 文档内搜索（浮层）扩展动作（可选装配，无则 None）----
     # 跳转到指定行并把该行滚动到视口中部（搜索上一个/下一个，平滑 200ms+）。

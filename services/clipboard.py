@@ -9,15 +9,15 @@ import asyncio
 import contextlib
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 
-def _clipboard(clipboard_ref: ft.Ref | None):
+def _clipboard(clipboard_ref: ui.Ref | None):
     return clipboard_ref.current if clipboard_ref is not None else None
 
 
 async def copy_code_to_clipboard(
-    clipboard_ref: ft.Ref | None,
+    clipboard_ref: ui.Ref | None,
     text: str,
     set_copied: Callable[[bool], None],
 ) -> None:
@@ -34,7 +34,7 @@ async def copy_code_to_clipboard(
     set_copied(False)
 
 
-async def copy_text_to_clipboard(clipboard_ref: ft.Ref | None, text: str) -> None:
+async def copy_text_to_clipboard(clipboard_ref: ui.Ref | None, text: str) -> None:
     """把文本写入系统剪贴板（无反馈闪烁版本，供前置元数据行复制/剪切）。"""
     clipboard = _clipboard(clipboard_ref)
     if clipboard is None:
@@ -44,7 +44,7 @@ async def copy_text_to_clipboard(clipboard_ref: ft.Ref | None, text: str) -> Non
 
 
 async def paste_row_from_clipboard(
-    clipboard_ref: ft.Ref | None,
+    clipboard_ref: ui.Ref | None,
     on_insert: Callable[[str, str], None],
 ) -> None:
     """读取剪贴板文本，按 "key: value" 解析后插入新属性行。

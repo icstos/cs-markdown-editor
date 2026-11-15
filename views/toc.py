@@ -20,7 +20,7 @@ tests/test_outline_color.py 直接对比「大纲渲染出的色/重」与「编
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from styles import (
     FONT_MAIN,
@@ -37,9 +37,9 @@ _BAR_RADIUS = 2
 _TEXT_SIZE = 12  # 条目标题字号
 
 
-def outline_color_bar(level: int, c) -> ft.Control:
+def outline_color_bar(level: int, c) -> ui.Control:
     """大纲级别色条：细竖线，与条目标题文字同色（heading_text_color）。"""
-    return ft.Container(
+    return ui.Container(
         width=_BAR_W,
         height=_BAR_H,
         bgcolor=heading_text_color(level, c),
@@ -47,12 +47,12 @@ def outline_color_bar(level: int, c) -> ft.Control:
     )
 
 
-def _empty_hint(text: str, c) -> ft.Control:
+def _empty_hint(text: str, c) -> ui.Control:
     """空态提示文本（居中弱化样式）。"""
-    return ft.Container(
-        alignment=ft.Alignment.CENTER,
-        padding=ft.Padding.symmetric(vertical=Spacing.XXL),
-        content=ft.Text(text, size=11, color=c.muted, font_family=FONT_MAIN),
+    return ui.Container(
+        alignment=ui.Alignment.CENTER,
+        padding=ui.Padding.symmetric(vertical=Spacing.XXL),
+        content=ui.Text(text, size=11, color=c.muted, font_family=FONT_MAIN),
     )
 
 
@@ -62,15 +62,15 @@ def _outline_row(
     text: str,
     on_jump_to_line: Callable[[int], None],
     c,
-) -> ft.Control:
+) -> ui.Control:
     """单条大纲行：级别色条 + 标题文本，点击跳转到对应行。
 
     文字的颜色与字重都按级别取自「与正文标题同源」的两个 styles 取色口，
     因此同级条目在侧栏与正文里的观感一致（色条只是同一颜色的短竖线强调）。
     """
-    return ft.Container(
+    return ui.Container(
         border_radius=Radius.MD,
-        padding=ft.Padding.only(
+        padding=ui.Padding.only(
             left=(lvl - 1) * _INDENT_STEP + Spacing.XL,
             right=Spacing.SM,
             top=Spacing.XS,
@@ -78,17 +78,17 @@ def _outline_row(
         ),
         on_click=lambda e, i=li: on_jump_to_line(i),
         key=f"toc-{li}",
-        content=ft.Row(
+        content=ui.Row(
             controls=[
                 outline_color_bar(lvl, c),
-                ft.Text(
+                ui.Text(
                     value=text,
                     size=_TEXT_SIZE,
                     color=heading_text_color(lvl, c),
                     font_family=FONT_MAIN,
                     weight=outline_heading_weight(lvl),
                     max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS,
+                    overflow=ui.TextOverflow.ELLIPSIS,
                     expand=True,
                 ),
             ],
@@ -101,7 +101,7 @@ def render_outline_panel(
     toc_entries: list[tuple[int, int, str]],
     on_jump_to_line: Callable[[int], None],
     c,
-) -> ft.Control:
+) -> ui.Control:
     """大纲面板：标题按级别缩进，左侧细竖线色条着色，点击跳转。
 
     同级别条目左对齐到同一缩进位置（(lvl-1)*14 + Spacing.XL）；
@@ -110,7 +110,7 @@ def render_outline_panel(
     """
     if not toc_entries:
         return _empty_hint("文档无标题", c)
-    return ft.ListView(
+    return ui.ListView(
         controls=[
             _outline_row(li, lvl, text, on_jump_to_line, c)
             for li, lvl, text in toc_entries
@@ -118,5 +118,5 @@ def render_outline_panel(
         spacing=0,
         expand=True,
         first_item_prototype=True,
-        padding=ft.Padding.symmetric(vertical=Spacing.XS),
+        padding=ui.Padding.symmetric(vertical=Spacing.XS), clip_behavior=ui.ClipBehavior.HARD_EDGE,
     )

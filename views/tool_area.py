@@ -15,18 +15,19 @@
 
 from collections.abc import Callable
 
-import flet as ft
+import ui
 
 from models.document import BlockType
 from styles import Spacing, get_colors, only_border
-from views.toolbar import Toolbar, _btn, _divider as _tb_divider
+from views.toolbar import Toolbar, _btn
+from views.toolbar import _divider as _tb_divider
 
 
-@ft.memo
-@ft.component
+@ui.memo
+@ui.component
 def ToolArea(
     *,
-    theme_mode: ft.ThemeMode,
+    theme_mode: ui.ThemeMode,
     show_toolbar: bool,
     shortcut_mgr,
     raw_mode: bool,
@@ -55,62 +56,62 @@ def ToolArea(
     c = get_colors(theme_mode)
 
     if not show_toolbar:
-        return ft.Container(height=0)
+        return ui.Container(height=0)
 
     menu_items = [
-        ft.PopupMenuItem(content="新建", on_click=lambda e: on_new()),
-        ft.PopupMenuItem(content="打开...", on_click=lambda e: on_open()),
-        ft.PopupMenuItem(content="打开文件夹...", on_click=lambda e: on_open_folder()),
-        ft.PopupMenuItem(content="保存", on_click=lambda e: on_save()),
-        ft.PopupMenuItem(),
-        ft.PopupMenuItem(content="设置", on_click=lambda e: on_open_settings()),
+        ui.PopupMenuItem(content="新建", on_click=lambda e: on_new()),
+        ui.PopupMenuItem(content="打开...", on_click=lambda e: on_open()),
+        ui.PopupMenuItem(content="打开文件夹...", on_click=lambda e: on_open_folder()),
+        ui.PopupMenuItem(content="保存", on_click=lambda e: on_save()),
+        ui.PopupMenuItem(),
+        ui.PopupMenuItem(content="设置", on_click=lambda e: on_open_settings()),
     ]
 
     # 导出菜单：HTML / Word / PDF 三格式分入口
     export_items = [
-        ft.PopupMenuItem(
-            content=ft.Row(
+        ui.PopupMenuItem(
+            content=ui.Row(
                 controls=[
-                    ft.Icon(ft.Icons.CODE, size=18, color=c.muted),
-                    ft.Text("HTML", size=14),
+                    ui.Icon(ui.Icons.CODE, size=18, color=c.muted),
+                    ui.Text("HTML", size=14),
                 ],
                 spacing=Spacing.SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
             on_click=lambda e: on_export_html(),
         ),
-        ft.PopupMenuItem(
-            content=ft.Row(
+        ui.PopupMenuItem(
+            content=ui.Row(
                 controls=[
-                    ft.Icon(ft.Icons.DESCRIPTION, size=18, color=c.muted),
-                    ft.Text("Word", size=14),
+                    ui.Icon(ui.Icons.DESCRIPTION, size=18, color=c.muted),
+                    ui.Text("Word", size=14),
                 ],
                 spacing=Spacing.SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
             on_click=lambda e: on_export_docx(),
         ),
-        ft.PopupMenuItem(
-            content=ft.Row(
+        ui.PopupMenuItem(
+            content=ui.Row(
                 controls=[
-                    ft.Icon(ft.Icons.PICTURE_AS_PDF, size=18, color=c.muted),
-                    ft.Text("PDF", size=14),
+                    ui.Icon(ui.Icons.PICTURE_AS_PDF, size=18, color=c.muted),
+                    ui.Text("PDF", size=14),
                 ],
                 spacing=Spacing.SM,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                vertical_alignment=ui.CrossAxisAlignment.CENTER,
             ),
             on_click=lambda e: on_export_pdf(),
         ),
     ]
 
-    return ft.Container(
-        bgcolor=ft.Colors.with_opacity(0.96, c.toolbar_bg),
-        border=only_border(bottom=ft.BorderSide(1, c.border)),
-        padding=ft.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
-        content=ft.Row(
+    return ui.Container(
+        bgcolor=ui.Colors.with_opacity(0.96, c.toolbar_bg),
+        border=only_border(bottom=ui.BorderSide(1, c.border)),
+        padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+        content=ui.Row(
             controls=[
-                ft.PopupMenuButton(
-                    icon=ft.Icons.MENU,
+                ui.PopupMenuButton(
+                    icon=ui.Icons.MENU,
                     tooltip="文件菜单",
                     items=menu_items,
                 ),
@@ -136,27 +137,27 @@ def ToolArea(
                     on_inline_math=lambda: apply_inline_format("inline_math"),
                     on_strike=lambda: apply_inline_format("strike"),
                 ),
-                ft.Container(expand=True),
+                ui.Container(expand=True),
                 _btn(
-                    ft.Icons.VISIBILITY if not raw_mode else ft.Icons.EDIT,
+                    ui.Icons.VISIBILITY if not raw_mode else ui.Icons.EDIT,
                     "原文模式" if not raw_mode else "返回编辑",
                     on_toggle_raw,
                     toggle_on=raw_mode,
                 ),
-                ft.PopupMenuButton(
-                    icon=ft.Icons.FILE_DOWNLOAD,
+                ui.PopupMenuButton(
+                    icon=ui.Icons.FILE_DOWNLOAD,
                     tooltip="导出",
                     items=export_items,
                 ),
-                _btn(ft.Icons.CENTER_FOCUS_STRONG, "聚焦模式", on_toggle_focus_mode),
+                _btn(ui.Icons.CENTER_FOCUS_STRONG, "聚焦模式", on_toggle_focus_mode),
                 _btn(
-                    ft.Icons.DARK_MODE if theme_mode == ft.ThemeMode.LIGHT else ft.Icons.LIGHT_MODE,
-                    "切换暗色" if theme_mode == ft.ThemeMode.LIGHT else "切换亮色",
+                    ui.Icons.DARK_MODE if theme_mode == ui.ThemeMode.LIGHT else ui.Icons.LIGHT_MODE,
+                    "切换暗色" if theme_mode == ui.ThemeMode.LIGHT else "切换亮色",
                     on_toggle_theme,
                 ),
-                _btn(ft.Icons.SETTINGS, "设置  Ctrl+,", on_open_settings),
+                _btn(ui.Icons.SETTINGS, "设置  Ctrl+,", on_open_settings),
             ],
             spacing=Spacing.MD,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
         ),
     )

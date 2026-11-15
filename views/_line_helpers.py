@@ -4,7 +4,7 @@
 与组件状态无关，独立后可单独推理与测试。
 """
 
-import flet as ft
+import ui
 
 from models.document import Line, SegType
 from styles import FONT_MAIN, _current_colors
@@ -46,10 +46,10 @@ def _image_seg_indices(line: Line) -> list[int]:
     return idxs
 
 
-def _line_style(base: int, weight: ft.FontWeight, line_height: float) -> ft.TextStyle:
+def _line_style(base: int, weight: ui.FontWeight, line_height: float) -> ui.TextStyle:
     """渲染层 Text 基础样式（与 cursor_text_field 的 strut 参数对齐）。"""
     c = _current_colors()
-    return ft.TextStyle(
+    return ui.TextStyle(
         size=base, weight=weight, color=c.text, font_family=FONT_MAIN, height=line_height
     )
 
@@ -59,8 +59,8 @@ def _line_raw_len(line: Line) -> int:
     return len(line.raw) if line.raw else sum(len(s.raw) for s in line.segments)
 
 
-def _open_link_if_ctrl(e: ft.TapEvent, line: Line, raw_off: int,
-                       ctrl_pressed_ref: ft.Ref | None) -> bool:
+def _open_link_if_ctrl(e: ui.TapEvent, line: Line, raw_off: int,
+                       ctrl_pressed_ref: ui.Ref | None) -> bool:
     """Ctrl+Click 链接段 → 系统浏览器打开。返回是否消费了事件。
 
     Typora 式交互：普通点击定位光标，Ctrl+Click 打开链接。

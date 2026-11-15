@@ -12,25 +12,25 @@
 from collections.abc import Callable
 from typing import Any, Protocol
 
-import flet as ft
+import ui
 
 
 class TabManagementEnv(Protocol):
     """多文档标签与拆分组的 CRUD / 激活 / 关闭（build_tab_management 实际读取的 26 个字段）。"""
 
     active_index: int
-    active_index_left_ref: ft.Ref
-    active_index_ref: ft.Ref
-    active_index_right_ref: ft.Ref
-    active_pane_ref: ft.Ref
-    closed_tabs_ref: ft.Ref
+    active_index_left_ref: ui.Ref
+    active_index_ref: ui.Ref
+    active_index_right_ref: ui.Ref
+    active_pane_ref: ui.Ref
+    closed_tabs_ref: ui.Ref
     confirm_close: list | None
-    page_ref: ft.Ref
+    page_ref: ui.Ref
     save_doc: Callable[..., Any]
     save_doc_sync: Callable[..., Any]
     session: int
-    session_left_ref: ft.Ref
-    session_right_ref: ft.Ref
+    session_left_ref: ui.Ref
+    session_right_ref: ui.Ref
     set_active_index: Callable[..., None]
     set_active_index_left: Callable[..., None]
     set_active_index_right: Callable[..., None]
@@ -43,28 +43,28 @@ class TabManagementEnv(Protocol):
     set_tabs: Callable[..., None]
     split_editor: bool
     tabs: list
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
 
 
 class FileIoEnv(Protocol):
     """文件读写 / 打开 / 保存 / 导出 / 最近文件 / 重新打开（build_file_io_ops 实际读取的 29 个字段）。"""
 
     activate_index: Callable[..., Any]
-    active_index_left_ref: ft.Ref
-    active_index_ref: ft.Ref
-    active_index_right_ref: ft.Ref
-    active_pane_ref: ft.Ref
+    active_index_left_ref: ui.Ref
+    active_index_ref: ui.Ref
+    active_index_right_ref: ui.Ref
+    active_pane_ref: ui.Ref
     append_and_activate: Callable[..., Any]
     apply_content_layout: Callable[..., Any]
     bump_fs_version: Callable[..., Any]
     bump_tab_session: Callable[..., Any]
-    closed_tabs_ref: ft.Ref
+    closed_tabs_ref: ui.Ref
     document: Any
     file_path: str | None
-    is_diff_tab_ref: ft.Ref
+    is_diff_tab_ref: ui.Ref
     open_external: Callable[..., Any]
-    page_ref: ft.Ref
-    pending_jump_ref: ft.Ref
+    page_ref: ui.Ref
+    pending_jump_ref: ui.Ref
     pending_jump_sig: int
     picker_holder: Any
     set_file_dialog: Callable[..., None]
@@ -75,7 +75,7 @@ class FileIoEnv(Protocol):
     settings: dict
     show_snack: Callable[..., Any]
     split_editor: bool
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
     update_setting: Callable[..., Any]
     update_tab: Callable[..., Any]
 
@@ -88,7 +88,7 @@ class FileDialogsEnv(Protocol):
     clipboard_holder: Any
     close_tab: Callable[..., Any]
     compare_with_selected: Any
-    diff_active_pane_ref: ft.Ref
+    diff_active_pane_ref: ui.Ref
     do_close_many: Callable[..., Any]
     file_dialog: dict | None
     force_save_doc: Any
@@ -96,7 +96,7 @@ class FileDialogsEnv(Protocol):
     git_open_file_history: Callable[..., Any]
     open_external: Callable[..., Any]
     open_file_by_path: Callable[..., Any]
-    page_ref: ft.Ref
+    page_ref: ui.Ref
     request_close: Callable[..., Any]
     save_doc: Callable[..., Any]
     select_for_compare: Callable[..., Any]
@@ -104,24 +104,24 @@ class FileDialogsEnv(Protocol):
     set_diff_active_pane: Callable[..., None]
     set_file_dialog: Callable[..., None]
     set_tabs: Callable[..., None]
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
 
 
 class DiffEnv(Protocol):
     """文件对比标签的创建与脏状态（build_diff_controller 实际读取的 12 个字段）。"""
 
     activate_index: Callable[..., Any]
-    active_index_left_ref: ft.Ref
-    active_index_ref: ft.Ref
+    active_index_left_ref: ui.Ref
+    active_index_ref: ui.Ref
     append_and_activate: Callable[..., Any]
     bump_tab_session: Callable[..., Any]
     compare_source: str | None
-    diff_active_pane_ref: ft.Ref
+    diff_active_pane_ref: ui.Ref
     set_compare_source: Callable[..., None]
     set_diff_active_pane: Callable[..., None]
     set_tabs: Callable[..., None]
     show_snack: Callable[..., Any]
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
 
 
 class SettingsEnv(Protocol):
@@ -129,8 +129,8 @@ class SettingsEnv(Protocol):
 
     apply_content_layout: Callable[..., Any]
     clipboard_holder: Any
-    native_input_ref: ft.Ref
-    page_ref: ft.Ref
+    native_input_ref: ui.Ref
+    page_ref: ui.Ref
     picker_holder: Any
     save_doc: Callable[..., Any]
     scan_recent_backups: Callable[..., Any]
@@ -144,11 +144,11 @@ class SettingsEnv(Protocol):
     set_status_message: Callable[..., None]
     set_theme_mode: Callable[..., None]
     settings: dict
-    settings_ref: ft.Ref
+    settings_ref: ui.Ref
     shortcut_mgr: Any
     show_snack: Callable[..., Any]
-    tabs_ref: ft.Ref
-    theme_mode: ft.ThemeMode
+    tabs_ref: ui.Ref
+    theme_mode: ui.ThemeMode
 
 
 class SplitEnv(Protocol):
@@ -160,18 +160,18 @@ class SplitEnv(Protocol):
     切换拆分会让两个视口一起重建，锚点让它们停在原浏览行而非文档首行。
     """
 
-    active_index_left_ref: ft.Ref
-    active_index_ref: ft.Ref
-    active_index_right_ref: ft.Ref
-    active_pane_ref: ft.Ref
+    active_index_left_ref: ui.Ref
+    active_index_ref: ui.Ref
+    active_index_right_ref: ui.Ref
+    active_pane_ref: ui.Ref
     append_and_activate: Callable[..., Any]
-    diff_active_pane_ref: ft.Ref
-    is_diff_tab_ref: ft.Ref
-    nav_ref: ft.Ref
-    nav_ref_split: ft.Ref
+    diff_active_pane_ref: ui.Ref
+    is_diff_tab_ref: ui.Ref
+    nav_ref: ui.Ref
+    nav_ref_split: ui.Ref
     session: int
-    session_left_ref: ft.Ref
-    session_right_ref: ft.Ref
+    session_left_ref: ui.Ref
+    session_right_ref: ui.Ref
     set_active_index: Callable[..., None]
     set_active_index_left: Callable[..., None]
     set_active_index_right: Callable[..., None]
@@ -182,36 +182,36 @@ class SplitEnv(Protocol):
     set_split_scroll: Callable[..., None]
     set_tabs: Callable[..., None]
     split_editor: bool
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
 
 
 class FocusRouterEnv(Protocol):
     """焦点路由 / 跳转 / 脏状态按组同步（build_focus_router 实际读取的 14 个字段）。"""
 
-    active_index_left_ref: ft.Ref
-    active_index_right_ref: ft.Ref
-    active_pane_ref: ft.Ref
-    diff_active_pane_ref: ft.Ref
+    active_index_left_ref: ui.Ref
+    active_index_right_ref: ui.Ref
+    active_pane_ref: ui.Ref
+    diff_active_pane_ref: ui.Ref
     diff_nav_left: Any
     diff_nav_right: Any
-    is_diff_tab_ref: ft.Ref
-    nav_ref: ft.Ref
+    is_diff_tab_ref: ui.Ref
+    nav_ref: ui.Ref
     nav_ref_split: Any
-    page_ref: ft.Ref
+    page_ref: ui.Ref
     schedule_autosave: Callable[..., Any]
     split_editor: bool
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
     update_tab: Callable[..., Any]
 
 
 class BackupEnv(Protocol):
     """自动备份 / 自动保存 / 崩溃恢复（build_backup_controller 实际读取的 17 个字段）。"""
 
-    active_index_ref: ft.Ref
-    active_pane_ref: ft.Ref
+    active_index_ref: ui.Ref
+    active_pane_ref: ui.Ref
     append_and_activate: Callable[..., Any]
     file_dialog: dict | None
-    page_ref: ft.Ref
+    page_ref: ui.Ref
     recovery_list: Any
     save_doc: Callable[..., Any]
     save_doc_sync: Callable[..., Any]
@@ -220,10 +220,10 @@ class BackupEnv(Protocol):
     set_recovery_open: Callable[..., None]
     set_status_message: Callable[..., None]
     settings: dict
-    settings_ref: ft.Ref
+    settings_ref: ui.Ref
     show_snack: Callable[..., Any]
     split_editor: bool
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
 
 
 class GitEnv(Protocol):
@@ -235,30 +235,30 @@ class GitEnv(Protocol):
     用 ``asyncio.to_thread`` 线程化。
     """
 
-    active_index_ref: ft.Ref
+    active_index_ref: ui.Ref
     bump_fs_version: Callable[..., Any]
     git_active_path: str | None
     git_available: bool
     git_branch_menu_open: bool
-    git_busy_ref: ft.Ref
+    git_busy_ref: ui.Ref
     git_commit_details: dict
-    git_commit_message_ref: ft.Ref
+    git_commit_message_ref: ui.Ref
     git_commit_push: bool
     git_commit_seq: int
-    git_dialog_seq_ref: ft.Ref
+    git_dialog_seq_ref: ui.Ref
     git_diff_meta: dict
     git_diff_open: bool
     git_expanded_commits: frozenset
     git_history: list
     git_history_filter: dict
     git_history_loading: bool
-    git_refresh_token: ft.Ref
+    git_refresh_token: ui.Ref
     git_root: str | None
-    git_service_ref: ft.Ref
+    git_service_ref: ui.Ref
     git_status: Any
     git_view: str
     open_file_and_jump: Callable[..., Any]
-    page_ref: ft.Ref
+    page_ref: ui.Ref
     set_file_dialog: Callable[..., None]
     set_git_active_path: Callable[..., None]
     set_git_available: Callable[..., None]
@@ -286,16 +286,16 @@ class GitEnv(Protocol):
     set_status_message: Callable[..., None]
     settings: dict
     show_snack: Callable[..., Any]
-    tabs_ref: ft.Ref
+    tabs_ref: ui.Ref
     update_setting: Callable[..., Any]
 
 
 class KeyboardEnv(Protocol):
     """键盘分发装配（KeyDispatcher + page 绑定）（build_keyboard 实际读取的 46 个字段）。"""
 
-    active_index_ref: ft.Ref
+    active_index_ref: ui.Ref
     active_pane: int
-    arrow_repeat_ref: ft.Ref
+    arrow_repeat_ref: ui.Ref
     capturing: tuple
     clipboard_holder: Any
     close_doc_search: Callable[..., Any]
@@ -304,9 +304,9 @@ class KeyboardEnv(Protocol):
     diff_active_pane: int
     diff_nav_left: Any
     diff_nav_right: Any
-    dispatcher_ref: ft.Ref
+    dispatcher_ref: ui.Ref
     doc_search_next: Any
-    doc_search_open_ref: ft.Ref
+    doc_search_open_ref: ui.Ref
     doc_search_prev: Any
     focus_mode: Callable[..., Any]
     focus_search: Callable[..., Any]
@@ -315,8 +315,8 @@ class KeyboardEnv(Protocol):
     git_open_panel: Callable[..., Any]
     global_search: Any
     is_diff_tab: bool
-    native_input_ref: ft.Ref
-    nav_ref: ft.Ref
+    native_input_ref: ui.Ref
+    nav_ref: ui.Ref
     nav_ref_split: Any
     new_doc: Callable[..., Any]
     on_cancel_capture: Callable[..., Any]
@@ -325,7 +325,7 @@ class KeyboardEnv(Protocol):
     open_doc_search: Callable[..., Any]
     open_folder: Callable[..., Any]
     open_settings: Callable[..., Any]
-    page_ref: ft.Ref
+    page_ref: ui.Ref
     paste_old_draft: Any
     reopen_closed_tab: Callable[..., Any]
     replace_all: Callable[..., Any]

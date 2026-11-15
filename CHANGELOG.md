@@ -4,6 +4,120 @@
 
 ## [未发布]
 
+### 2026-11-01 修复：从代码块前/后拖动鼠标时选不上代码块
+
+诉求原文：「优化对代码块的支持：鼠标从代码块前/后点击拖动选中代码块区域时当前无法选中代码块（需要可以正常选中）」。
+
+两条成因，都靠真机探针（`.workbuddy/probe/app_code_sel_probe.py`）打点定位，
+缺一条症状就复现：
+
+1. **命中错位** —— 浏览态拖选不经过 `SelectionArea`，而是每行的
+   `GestureDetector.on_pan_start/on_pan_update` → `on_hit_test_xy` →
+   `LineLayoutCache.hit_test` 反算 (行号, raw 偏移)。而 `LineLayoutCache` 把围栏岛屿
+   按**一行文本**占位：一个 216px 高的代码块在它眼里只有 ~26px。指针落在代码块中部，
+   反算出来却是块下面好几行的段落，`outward_sel` 直接跳到下一个段落。
+2. **不渲染选中态** —— 即使行号算对了，代码块岛屿（`views/code_block.py`）根本不接收
+   选区信息，整块照旧无底色。
+
+#### 改了什么
+
+| 位置 | 改动 |
+|---|---|
+| `views/pixel_layout.py` | `LineLayoutCache` 接受 `fence_height(li) -> float \| None`：围栏块占位高度优先用实测值（`on_size_change` 上报），拿不到才退回单行估算 |
+| `views/editor/_scroll.py` | 把 `_estimate_line_height` 接成 `fence_height`；围栏行高度变化时**额外作废** `LineLayoutCache`（该缓存只在行数变化时清空，而"改代码"不改行数） |
+| `views/_editor_helpers.py` | `_build_highlight_map`：围栏行在选区范围内即整块 `(0, len(raw))`；新增纯函数 `range_hits_fence(lines, li_a, li_b)` |
+| `parser/selection.py` | `extract_outward_text` 对围栏行取整块 raw（不按偏移裁切） |
+| `views/editor/_outward.py` | `handle_outward_delete` / `handle_outward_cut` / `handle_outward_enter` 覆盖围栏块时直接让路 |
+| `views/code_block.py` | `render_code_block(..., is_selected=…)` 逐行铺选区底色；选中时行号列让出自己的色带 |
+| `views/line_view.py` | `is_selected=outward_range is not None`（围栏块只吃布尔值） |
+
+#### 围栏块的选区语义是原子的
+
+代码内部没有"第 N 个字符的 raw 偏移"这种东西（行号列、软折行、头部工具栏都不在 raw 里），
+所以围栏块整块要么全选中要么全不选：
+
+- 命中：块内任意 (x, y) 都折算到该行行首。不需要特判分支 —— 围栏行的占位是单视觉行、
+  `offsets_x=[0.0]`，`hit_test_line_x_raw` 对任何 x 都落到唯一起点，行为天然如此
+  （这条不变量由 `test_fence_hit_ignores_x` 守着，变异 n=113 把占位改成多视觉行即变红）。
+- 复制：取整块 raw（含开闭围栏），`text.count("```") == 2`。按偏移切会得到空串或半截围栏，
+  粘回去就是坏掉的 markdown。
+- 删除 / 剪切 / 回车：一律让路。`_compute_delete_result` 只拼首尾行的 raw，把
+  ```` ```python ```` 并进上一段会让文档直接坏掉。
+
+#### 验收
+
+- `tests/test_code_block_selection.py`（16 条）：真实高度使块内 y 命中本块 / 反证不给
+  `fence_height` 时同一 y 落到别的行 / 块内 x 无关 / `build_scroll` 真的接上了
+  `fence_height` / 映射整块 + 普通行仍字符级 / 复制含完整围栏（零长度端点也取整块）/
+  `range_hits_fence` 正反向 / 渲染层每行铺底色且行号列让位 / 未选中时逐像素不变 /
+  删除·剪切·回车三条让路的**接线**（从 `handle_*` 入口进，不只测纯函数）。
+- 变异 n=112–122 **全部 KILLED**（新增 11 条）。
+- 真机：段落→代码块（向下）`HILITE outward_sel=(0,26,2,0)`、`CODE_RENDER is_selected=True`，
+  截图里段落尾部 + 4 行代码整宽淡蓝；段落下→代码块（向上）`outward_sel=(4,26,2,0)`，
+  代码块 + 下方段落开头一起高亮。探针里"注入动作"与"截图"必须分两段、各自 sleep 后再拍，
+  否则 `CODE_RENDER` 日志会晚于截图（第一版假证据就是这么来的）。
+- 全量 `pytest -q`：1869 → 1873 passed。
+
+### 2026-11-01 优化：非 Markdown 文档的「与已选项目进行比较」（对齐 VSCode 并排对比）
+
+诉求原文：「参考VSCode的效果优化非Markdown文档的 与已选项目进行比较 功能（与常规编辑文档效果保持一致性，实现高亮等）」。
+
+两处不一致，一处信息缺失：
+
+1. **同一个文件两种长相** —— 对比标签把两侧内容一律 `parse_markdown`。`.py` 在编辑标签里是
+   带语法高亮的代码块，在对比标签里 `# 注释` 变成一级标题、`- x` 变成列表，成了散文。
+2. **编码 / 换行没跟过来** —— `read_text_auto` 只返回 `(正文, 换行)`，`Document.encoding`
+   一直是默认 UTF-8。对比标签两侧也能编辑保存，这会静默把 GBK 的 `.py` 改写成 UTF-8，
+   源码里的 `# -*- coding: gbk -*-` 当场失效。
+3. **差异高亮看不见** —— 纯文本文档整篇只有**一个**文档行，而 diff 标记是按文档行索引挂的，
+   于是整块代码被染成一种颜色（或者干脆没有颜色）。
+
+#### 改了什么
+
+| 位置 | 改动 |
+|---|---|
+| `services/document_loader.py` | 新增 `parse_document_text(path, text, eol, encoding)`：把「内存里的文本」按扩展名解析成文档（`.py/.txt` → 纯文本单代码块，`.md` → 行结构），`load_document` 改为复用它，两个入口不再可能给出不同形态 |
+| `app/_diff_controller.py` | `compare_with_selected` 两侧改走 `parse_document_text`，并把读盘拿到的 `eol` / `encoding` 一起落进文档；新增 `_payload_for_compare` 统一「内存优先、磁盘兜底」的取材 |
+| `views/diff_view.py` | 新增 `compute_changed_ranges`：行内**字符级**变更区间（只算改行），带 `_MAX_CHAR_DIFF_LINES`（4000）规模上限 |
+| `views/editor/__init__.py` | 新增 `_plain_diff` 分流：纯文本文档的 marks/gaps 不再进块级，改投 `code_diff_marks/gaps/ranges`；新增 `diff_side` prop（0=左 1=右） |
+| `views/code_block.py` | 逐逻辑行差异底色（左红右绿）+ 行号列左缘 3px 标记条 + 对侧缺失行的等高占位行（仅浏览态）+ 行内字符强调（只切 span 样式，不重排文本） |
+| `views/line_view.py` / `editor/_render.py` / `editor/_context.py` / `editor/_contracts.py` / `app/_render.py` | 把 `code_diff_marks/gaps/ranges` 与 `diff_side` 透传到位；App 的 diff memo 扩展为 9 元组（多出 ranges），统计徽章语义不变 |
+
+#### 为什么占位行只在浏览态插
+
+编辑态会换成原生 `TextField`，它的文本是连续的、无法在中间留空行。插了占位行的话，
+底色与字形就会错位（文本上移、色块留在原处）。因此进编辑时对齐暂停、退出编辑立即恢复，
+与「大文件单层编辑失去高亮」是同一类取舍。
+
+#### 验收
+
+- `tests/test_plain_diff.py`（31 条）：解析分派 / 对比建出纯文本文档 / GBK 编码保留 /
+  配色侧别语义 / 逐行底色 / 块级不染色 / 占位行与编辑态开关 / gutter 标记条 /
+  字符强调 / 切片不吞字 / 规模上限 / 恢复草稿与编辑标签同形。
+- 变异 n=99–111 **全部 KILLED**（含"对比继续 parse_markdown"、"不插占位行"、
+  "切片少取一个字符"、"恢复时丢掉 original_path"等 13 条）；顺带修好失效的 n=26
+  （片段因上一轮改动失配，一直是 SKIP）。
+- 真机探针新增 `diff` 模式（`plain_doc_shot.py diff`）与像素判据 `diff_panes_ok`：
+  代码块底色占比 60%（证明确实是代码块而非散文）、删除色 51896px / 新增色 153775px、
+  两者横坐标中位数 1213 < 2719（左红右绿）、彩色种类 44（语法高亮仍在）；`rc=0`。
+  既有 `verify` 回归 `rc=0`（gap=0px、colors py=37 / txt=2）。
+
+#### 顺手补掉的同源缺口：恢复草稿
+
+排查「还有哪些入口把文本变成 `Document`」时找到一个：`app/_backup_controller.py` 的
+`open_backup_in_new_tab` 用 `parser.parse_markdown(body)` 恢复备份 —— 崩溃恢复回来的
+`.py` 草稿又变回 Markdown 行结构（`# 注释` 成标题、失去高亮），与编辑标签里不是同一个东西。
+
+备份文件是纯文本落盘的，类型信息在元数据的 `original_path` 里（`services/backup.py`
+一直有写、只是读取侧被 `load_backup_content` 丢掉了）。因此新增
+`services/recovery.load_backup_document`：取到 `original_path` 后交给
+`parse_document_text`，与 Ctrl+O / 文件树 / 对比标签走同一个分派。未命名草稿没有
+`original_path`，按 Markdown 兜底（与保存对话框的默认值一致）。恢复出的标签仍是
+`file_path=None` 的未命名草稿，不会覆盖原文件。
+
+顺带修掉恢复提示的行数读数：原先数正文行，纯文本文档「整篇一行」这点只在 `doc.lines`
+上成立，改用序列化后的正文计数（与状态栏「按非空逻辑行数」的语义一致）。
+
 ### 2026-10-22 修复：源码视图顶部仍有一条缝（第五层留白 = 根 Column 的 spacing）
 
 诉求原文：「非Markdown文档时，代码块顶部与整体框架间无边距（当前仍有边距）」。

@@ -189,6 +189,11 @@ def build_line_controls(
     table_nav_ref = ctx.table_nav_ref
     diff_marks = ctx.diff_marks
     diff_gaps = ctx.diff_gaps
+    # 代码块行级 diff（纯文本文档）：整篇一个逻辑行，差异落在代码行而不是块上
+    code_diff_marks = ctx.code_diff_marks
+    code_diff_gaps = ctx.code_diff_gaps
+    code_diff_ranges = ctx.code_diff_ranges
+    diff_side = ctx.diff_side
 
     win_lo, win_hi = resolve_window(document, window)
 
@@ -321,6 +326,11 @@ def build_line_controls(
                     search_hits_version=ctx.search_hits_version,
                     # 纯文本文档：整篇一个代码块（代码块据此调整交互与编辑路径）
                     plain_document=bool(getattr(document, "plain", False)),
+                    # 代码块行级 diff：纯文本文档的差异高亮在这里（块级 diff_mark 为空）
+                    code_diff_marks=code_diff_marks,
+                    code_diff_gaps=code_diff_gaps,
+                    code_diff_ranges=code_diff_ranges,
+                    diff_side=diff_side,
                 )
             )
         i += 1

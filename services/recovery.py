@@ -27,6 +27,8 @@
 - dedupe_backups_by_doc(infos) -> list[BackupInfo]：按文档 ID 去重，每组保留最新
 - load_backup_content(path) -> tuple[str, tuple[int, int], float] | None：读取备份内容
   返回 (markdown 正文, 光标位置, 滚动偏移)；失败返回 None
+- load_backup_document(path) -> tuple[Document, tuple[int, int], float] | None：恢复草稿
+  的入口——按备份元数据里的 original_path 分派解析器，.py 草稿恢复回来仍是代码块
 """
 
 from __future__ import annotations
@@ -38,12 +40,16 @@ import os
 import time
 from typing import Any
 
+from models.document import Document
 from services.backup import (
     BackupInfo,
     get_backup_root,
     parse_backup_file,
     scan_backups,
 )
+# 解析入口与普通打开同源（按扩展名分派），不能在这里自己再写一份分派逻辑
+from services.document_loader import parse_document_text
+
 # _build_backup_info 延迟导入（见 find_recoverable_on_startup），避免循环引用
 
 # sentinel 文件名（位于备份根目录）
@@ -207,6 +213,19 @@ def dedupe_backups_by_doc(infos: list[BackupInfo]) -> list[BackupInfo]:
     return result
 
 
+def _cursor_and_scroll(metadata: dict[str, Any] | None) -> tuple[tuple[int, int], float]:
+    """从备份元数据取 (光标, 滚动)；缺字段时回退到文档开头。"""
+    cursor = (
+        int((metadata or {}).get("cursor_row", 1) or 1),
+        int((metadata or {}).get("cursor_col", 1) or 1),
+    )
+    try:
+        scroll = float((metadata or {}).get("scroll_offset", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        scroll = 0.0
+    return cursor, scroll
+
+
 def load_backup_content(
     path: str,
 ) -> tuple[str, tuple[int, int], float] | None:
@@ -218,12 +237,30 @@ def load_backup_content(
     metadata, body = parse_backup_file(path)
     if not body:
         return None
-    cursor = (
-        int((metadata or {}).get("cursor_row", 1) or 1),
-        int((metadata or {}).get("cursor_col", 1) or 1),
-    )
-    try:
-        scroll = float((metadata or {}).get("scroll_offset", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        scroll = 0.0
+    cursor, scroll = _cursor_and_scroll(metadata)
     return body, cursor, scroll
+
+
+def load_backup_document(
+    path: str,
+) -> tuple[Document, tuple[int, int], float] | None:
+    """读取备份并按其**原始文件类型**解析成 Document（恢复草稿的唯一入口）。
+
+    为什么不能直接 `parse_markdown(body)`：备份是纯文本落盘的，.py 草稿恢复回来会
+    变成 Markdown 行结构——`# 注释` 成一级标题、`- x` 成列表、语法高亮消失，和
+    用户在编辑标签里看到的那个文件不是同一个东西。类型信息由备份元数据的
+    `original_path` 带出（未命名草稿没有它，按 Markdown，与保存对话框的默认值一致），
+    解析交给 `parse_document_text`，与 Ctrl+O / 文件树 / 对比标签同源。
+
+    换行 / 编码用默认值：正文来自 `parser.serialize`，本身就是 `\\n` + UTF-8 的
+    备份文件，不是原文件字节（原编码由用户在保存时重新决定）。
+
+    返回 (Document, 光标, 滚动)；正文为空或文件损坏返回 None。
+    """
+    metadata, body = parse_backup_file(path)
+    if not body:
+        return None
+    original_path = str((metadata or {}).get("original_path") or "")
+    doc = parse_document_text(original_path, body)
+    cursor, scroll = _cursor_and_scroll(metadata)
+    return doc, cursor, scroll

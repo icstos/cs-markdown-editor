@@ -22,7 +22,13 @@
 
 from models.document import Line, Segment, SegType
 from parser.reparse import reparse_line
-from utils.segment_helpers import PREFIX_SEGTYPES, WRAP_SYNTAX, display_text, line_raw
+from utils.segment_helpers import (
+    PREFIX_SEGTYPES,
+    WRAP_SYNTAX,
+    display_text,
+    is_fence,
+    line_raw,
+)
 
 
 def _wrap_partial(seg: Segment, selected_text: str) -> str:
@@ -489,16 +495,28 @@ def extract_outward_text(
 
     偏移约定：a_off / b_off 为行级 raw 偏移（与 editor 光标/选区偏移一致）。
     边界无效时返回空串（与原 editor 闭包行为一致，吞异常）。
+
+    **围栏块（代码块/表格/公式/TOC）整块纳入**，不按偏移裁切：
+    - 选区命中围栏块时，目标偏移恒为该行行首（`LineLayoutCache.hit_test`），
+      照偏移裁切会得到空串 —— 于是"拖着选中了一个代码块，复制出来什么都没有"；
+    - 即使偏移落在块中间，按 raw 切出来的也是半截围栏（`` ```python `` 后面没有
+      收尾），粘回去就是坏掉的 markdown。
+    整块取 raw 则两端围栏齐全，粘贴后还原成同一个代码块。
     """
     try:
         if not (0 <= a_li < len(lines) and 0 <= b_li < len(lines)):
             return ""
+
+        def _slice(li: int, start: int, end: int) -> str:
+            raw = line_raw(lines[li])
+            return raw if is_fence(lines[li]) else raw[start:end]
+
         if a_li == b_li:
-            return line_raw(lines[a_li])[a_off:b_off]
-        parts = [line_raw(lines[a_li])[a_off:]]
+            return _slice(a_li, a_off, b_off)
+        parts = [_slice(a_li, a_off, len(line_raw(lines[a_li])))]
         for i in range(a_li + 1, b_li):
             parts.append(line_raw(lines[i]))
-        parts.append(line_raw(lines[b_li])[:b_off])
+        parts.append(_slice(b_li, 0, b_off))
         return "\n".join(parts)
     except Exception:
         return ""

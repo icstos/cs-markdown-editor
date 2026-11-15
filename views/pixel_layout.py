@@ -28,9 +28,10 @@ VisualLine。渲染层与光标测量共用同一换行函数，换行点天然�
 - utils.text_layout：measure_text_offsets（cluster 级光标偏移）/ measure_text_width（文本像素宽度）
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from models.document import BlockType, Line, SegType, Segment
+from models.document import BlockType, Line, Segment, SegType
 from styles import FONT_MAIN, FONT_MONO, block_text_size
 from utils.segment_helpers import (
     FENCE_BLOCK_TYPES,
@@ -90,12 +91,29 @@ class LineLayoutCache:
     单独计算（line_view.py）。content_width 现用于计算 wrap_width 实现软换行。
     """
 
-    def __init__(self, lines: list[Line], content_width: float, line_height: float = 1.6, body_font_size: int = 16):
+    def __init__(
+        self,
+        lines: list[Line],
+        content_width: float,
+        line_height: float = 1.6,
+        body_font_size: int = 16,
+        fence_height: Callable[[int], float | None] | None = None,
+    ):
+        """fence_height：围栏岛屿（代码块 / 表格 / 公式…）的**真实高度**提供者。
+
+        为什么必须由外部给：围栏块的高度由原生控件决定（代码块 = 头部 + 每个代码
+        行 + 边框），一行文本的估算值差着几十到几百像素。估算错了，`hit_test` 的
+        Y 二分会在围栏块处**整段错位**——鼠标明明在代码块里，反算出来的却是它下面
+        好几行的段落（真机实测：指针在 216px 高的代码块中部，得到的是下一段的行号），
+        于是"从段落后拖选跨过代码块"永远选不上代码块。
+        未提供或返回 None 时退回旧的单行占位估算（保持纯文本视图等场景的行为）。
+        """
         self._layouts: list[LineLayout] = []
         self._total_height: float = 0.0
         self._line_height = line_height
         self._content_width = content_width
         self._body_font_size = body_font_size
+        self._fence_height = fence_height
         self._build(lines)
 
     def get(self, li: int) -> LineLayout | None:
@@ -149,6 +167,14 @@ class LineLayoutCache:
                 lo = mid
                 break
         layout = self._layouts[lo]
+        # 围栏岛屿在块内是**原子命中目标**：一律折算到该行行首，与 X 无关。
+        # 这不需要特判分支 —— `_build` 给围栏行的占位是单视觉行、offsets_x=[0.0]
+        # （`hit_test_line_x_raw` 对任何 x 都会落到唯一起点），行为天然如此。
+        # 为什么围栏块不该做行内命中：它的 raw 是 ```` ```lang\ncode\n``` ```` 这种
+        # 围栏文本，与屏幕上的代码列不是同一套坐标（行号列、软折行、头部工具栏
+        # 都不在 raw 里），反算出来的偏移没有意义；选区语义上围栏块本来就按整块
+        # 参与（见 views/_editor_helpers._build_highlight_map 与 parser.selection）。
+        # 该不变量由 tests/test_code_block_selection.py::test_fence_hit_ignores_x 守。
         local_x = x - layout.left_pad
         # 定视觉行：Y 相对文字区顶部，按单视觉行高整除
         local_y = y - layout.text_top
@@ -170,8 +196,8 @@ class LineLayoutCache:
         """逐行累加 Y + 计算视觉行布局（浏览态：标记折叠）。
 
         变量高度：num_vlines * text_h + pad_top + pad_bottom。
-        围栏块短路：占位单 vline，高度仍按 text_h + padding 估算
-        （围栏块实际高度由原生控件决定，hit_test 走原生控件，估算仅用于 Y 累加）。
+        围栏块短路：占位单 vline，**高度优先用外部给的真实高度**（见 __init__ 的
+        `fence_height`）；拿不到时才退回 text_h + padding 的单行估算。
         """
         y_acc = 0.0
         cw = self._content_width
@@ -179,10 +205,15 @@ class LineLayoutCache:
             base = block_text_size(line.block_type, line.level, self._body_font_size)
             text_h = base * self._line_height
             pad_top, pad_bottom, left_pad = _block_padding(line)
-            if line.block_type in FENCE_BLOCK_TYPES:
+            is_fence = line.block_type in FENCE_BLOCK_TYPES
+            if is_fence:
                 # 围栏岛屿：不参与换行，占位单 vline
                 visual_lines = [VisualLine(0, 0, 0, [0.0], 0.0)]
                 num_vlines = 1
+                real_h = self._fence_height(li) if self._fence_height is not None else None
+                total_h = real_h if (real_h is not None and real_h > 0) else (
+                    num_vlines * text_h + pad_top + pad_bottom
+                )
             else:
                 wrap_width = _compute_wrap_width(cw, left_pad)
                 visual_lines = _line_visual_layout(
@@ -191,7 +222,7 @@ class LineLayoutCache:
                     line_height=self._line_height,
                 )
                 num_vlines = len(visual_lines)
-            total_h = num_vlines * text_h + pad_top + pad_bottom
+                total_h = num_vlines * text_h + pad_top + pad_bottom
             self._layouts.append(
                 LineLayout(
                     li=li,

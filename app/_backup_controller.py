@@ -35,7 +35,7 @@ open_backup_in_new_tab / delete_backup / cleanup_expired_backups
 - app.autosave（AutosaveContext / autosave_all_dirty）
 - services.backup（write_backup / cleanup_old_backups / delete_backup / is_large_content）
 - services.recovery（find_recoverable_on_startup / find_recent_backups /
-  load_backup_content / write_last_session_sentinel）
+  load_backup_document / write_last_session_sentinel）
 """
 
 import asyncio
@@ -59,7 +59,7 @@ from services.backup import (
 from services.recovery import (
     find_recoverable_on_startup,
     find_recent_backups,
-    load_backup_content,
+    load_backup_document,
     write_last_session_sentinel,
 )
 
@@ -653,18 +653,20 @@ def build_backup_controller(ctx: BackupEnv):
     def open_backup_in_new_tab(backup_path: str):
         """在新标签页打开备份内容（用户主动恢复）。
 
-        - 读取备份正文（含元数据，但仅载入正文到文档）
+        - 读取备份正文，并按**原始文件类型**解析（.py 草稿恢复回来仍是代码块，
+          与编辑标签里的形态一致；见 services.recovery.load_backup_document）
         - 新建标签页载入，不强制保存（由用户决定）
         - 标签 file_path=None（未命名草稿），dirty=True（有内容需用户确认）
         - 失败时 show_snack 提示
         - 恢复后关闭恢复面板（用户已选择操作，面板不再需要遮挡）
         """
-        result = load_backup_content(backup_path)
+        result = load_backup_document(backup_path)
         if result is None:
             ctx.show_snack("恢复失败：备份文件已损坏或不存在")
             return
-        body, _cursor, _scroll = result
-        doc = parser.parse_markdown(body)
+        doc, _cursor, _scroll = result
+        # 行数以序列化后的正文为准（纯文本文档整篇只有一个文档行，不能数 doc.lines）
+        line_count = len(parser.serialize(doc).splitlines())
         # 新建标签载入备份内容（file_path=None 表示未命名草稿），
         # 在焦点侧组打开（拆分下恢复到正在编辑的那一侧）
         g = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
@@ -675,7 +677,7 @@ def build_backup_controller(ctx: BackupEnv):
             "group": g,
         })
         ctx.set_recovery_open(False)
-        ctx.show_snack(f"已恢复草稿（共 {len(body.splitlines())} 行），请确认是否保存")
+        ctx.show_snack(f"已恢复草稿（共 {line_count} 行），请确认是否保存")
 
     def delete_backup(backup_path: str):
         """删除指定备份文件。删除后刷新恢复列表。"""

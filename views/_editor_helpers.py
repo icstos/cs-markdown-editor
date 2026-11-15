@@ -269,13 +269,38 @@ def _select_word_bounds(raw: str, off: int) -> tuple[int, int] | None:
 
 
 # ============ 向外选区高亮映射 ============
+def range_hits_fence(lines: list[Line], li_a: int, li_b: int) -> bool:
+    """选区 [li_a..li_b]（无序，自动归一化）是否覆盖了围栏岛屿。
+
+    为什么要整段检查而不是只看起点：拖选能命中围栏块（`LineLayoutCache.hit_test`
+    把块内任意点折成该行行首），于是"从段落后拖过代码块"会得到 b_li = 代码块行。
+    而 `_compute_delete_result` 只会把首尾行的 raw 拼起来 —— 半截围栏文本会被并进
+    上一段，文档直接坏掉（`` ```python `` 残留、代码行变正文）。删除 / 剪切 / 回车
+    三条破坏性操作因此一律让路（复制不受影响，围栏块整块参与选区）。
+    纯函数，供 `views/editor/_outward.py` 调用并可单测。
+    """
+    lo, hi = (li_a, li_b) if li_a <= li_b else (li_b, li_a)
+    lo, hi = max(lo, 0), min(hi, len(lines) - 1)
+    return any(is_fence(lines[i]) for i in range(lo, hi + 1))
+
+
 def _build_highlight_map(
     lines: list[Line], outward_sel: tuple[int, int, int, int] | None,
 ) -> dict[int, tuple[int, int]]:
     """预计算向外选区高亮映射 {li: (start_off, end_off)}。
 
-    选区边界自动归一化（a <= b）。围栏行不参与（调用方保证 outward_sel 不跨围栏）。
+    选区边界自动归一化（a <= b）。
     返回稳定 dict，供 LineView 的 @ft.memo 命中（身份比较稳定，避免逐行重算）。
+
+    **围栏岛屿（代码块/表格/公式/TOC）按整块参与**：只要它的行号落在选区范围内，
+    映射里就是整块的范围 (0, len(raw))，而不是边界行被裁出来的那一小截。
+    原因有两条，都是围栏块的结构决定的：
+    - 屏幕上没有"代码内部第 N 个字符的 raw 偏移"这种东西（行号列、软折行、
+      头部工具栏都不在 raw 里），按 raw 偏移做字符级高亮只会错位；
+    - 拖选命中围栏块时目标偏移恒为该行行首（见 `LineLayoutCache.hit_test`），
+      若照抄边界规则，块会得到 (0, 0) 这种零长度区间 —— 整块渲染不出任何选中态，
+      而它明明是选区的一部分。
+    整块参与后，`outward_range` 非空即"本块被选中"，渲染层据此整块着色。
     """
     if outward_sel is None:
         return {}
@@ -288,7 +313,10 @@ def _build_highlight_map(
     result: dict[int, tuple[int, int]] = {}
     for li in range(lo, hi + 1):
         line_raw_len = len(line_raw(lines[li]))
-        if li == a_li and li == b_li:
+        if is_fence(lines[li]):
+            # 围栏块：整块原子参与（见 docstring）
+            result[li] = (0, line_raw_len)
+        elif li == a_li and li == b_li:
             result[li] = (a_off, b_off)
         elif li == a_li:
             result[li] = (a_off, line_raw_len)

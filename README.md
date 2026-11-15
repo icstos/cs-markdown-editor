@@ -21,6 +21,7 @@
 - **自适应宽度与软换行**：长行超出视口时按可用宽度自动断行（CJK 逐字、西文按词），`Alt+Z` 一键切换自动换行开关（VSCode 风格，设置持久化）；窗口尺寸变化时段落宽度实时自适应重排
 - **向右拆分编辑器（左右独立标签组）**：`Ctrl+\` 开启 VSCode 风格拆分——标签行与编辑区同步分左右两栏，各自拥有**独立标签列表**，可同时打开不同文件并行编辑；开启时右侧默认以当前文件创建副本。交互直觉对齐 VSCode：点击某组标签即聚焦该组、`Ctrl+Tab` 仅焦点组内循环、右键「关闭其他 / 关闭全部」仅影响当前组、点哪组「+」就在哪组新建、打开 / 新建 / 恢复备份均定向到焦点侧组；右组标签全部关闭时自动收起拆分。同一文件左右各开一份时两侧**共享同一文档对象**——任一侧编辑实时同步到另一侧（光标 / 滚动 / 撤销历史仍独立），脏状态 / 保存 / 外部重载联动一致；再次 `Ctrl+\` 合并：右组空白标签丢弃、非空白标签并入左组
 - **文件对比（标签化双编辑器 diff）**：VSCode 风格的文件对比以标签形式管理——在标签或侧边栏文件上右键「选择以进行比较」标记源文件，再在另一文件上右键「与已选项目进行比较」即创建对比标签（`type: "diff"`）。对比标签内左右并排两个原生可编辑 `MarkdownEditor`，行级 diff 背景着色标识差异（绿色=新增、红色=删除、灰色=修改），缺失侧行高间隙对齐保持视觉对应。对比头部显示「左文件名 → 右文件名」及差异统计（`+新增` / `-删除` / `~修改`）。两侧均可直接编辑，差异标记实时重算；`Ctrl+S` 分别保存两侧脏文档到各自路径。左右侧像素级同步滚动（VSCode 行为：一侧到底时另一侧可继续独立滚动）；右键「交换左右侧」可快速切换对比视角
+- **源码文件也能对比（.py / .txt / .cpp …）**：两侧内容按扩展名解析（`services/document_loader.parse_document_text`），因此非 Markdown 文件在对比视图里仍是**带语法高亮的代码块**，与普通编辑标签完全同构，而不是被当成 Markdown 散文。差异高亮下沉到**代码行**：变更行整行底色（左红右绿）+ 行号列左侧 3px 标记条 + 行内字符级强调（只有改动的那几个字加深），对侧多出来的行在本侧留等高占位行对齐——与 VSCode 并排对比的观感一致
 - **列表 / 引用缩进**：`Tab` / `Shift+Tab` 在列表项内调整缩进级别（每级 2 空格，与色阶同步：每次缩进切换一种项目符颜色）；在引用行内调整引用嵌套层级（增减 `>` 前缀），左侧彩色边框随之重排。智能效果：有序列表缩进时序号重置为 1（嵌套子列表自然计数）、任务列表保留勾选状态、`Shift+Tab` 在顶级时转为普通段落（移除标记保留内容）、缩进有上限（列表 6 级 / 引用 6 级）防止无限嵌套；光标保留在文字中的相对位置
 - **行级撤销快照**：单行编辑（字符输入 / backspace / delete / 行内格式包裹）使用 `LineEditSnapshot` 行级快照（内存 O(1)/操作），行结构变化（回车 / 行合并 / 多行粘贴）才使用全文快照；撤销栈固定容量 50，大文档不膨胀
 - **智能复制粘贴**：跨行复制自动还原为 Markdown 源码；多行粘贴自动拆分为新行
@@ -488,6 +489,27 @@ compute_diff_for_editors(left_text, right_text)
   │   ├─ marks_right: {line_idx: "equal"|"added"|"modified"}
   │   └─ gaps_*:      {after_line_idx: [height, ...]} 缺失侧行高间隙
   └─ MarkdownEditor 接收 diff_marks / diff_gaps prop → 行级背景着色 + 间隙占位
+
+compute_changed_ranges(left_text, right_text)
+  ├─ 只处理"改行"配对（纯增/纯删整行就是变更，不需要字符区间）
+  ├─ 返回 (ranges_left, ranges_right)：{line_idx: [(起, 止), ...]}
+  ├─ 行数超过 _MAX_CHAR_DIFF_LINES（4000）时返回空 dict（行级底色照旧）
+  └─ MarkdownEditor 接收 diff_ranges → 代码块在行底色之上叠字符级强调
+```
+
+**两种文档形态的分流**（`views/editor/__init__.py` 的 `_plain_diff`）：
+
+```
+Markdown 文档（document.lines 与文本行一一对应）
+  └─ diff_marks / diff_gaps 直接给块级：wrap_block(diff_mark=…) + ListView 里的间隙容器
+
+纯文本文档（整篇恰 1 个 CODE 行，见 parser/plain.py）
+  ├─ 块级置空（整篇一个逻辑行，块级染色 = 整片代码一种颜色）
+  └─ 改投 code_diff_marks / code_diff_gaps / code_diff_ranges → views/code_block.py
+      ├─ 行号 = code.split("\n") 下标（与行号列同一坐标系）
+      ├─ 逐行底色（added/del/modified，modified 按 diff_side 取红或绿）+ gutter 3px 标记条
+      ├─ 占位行仅在浏览态插入（编辑态是连续 TextField，插了底色与字形错位）
+      └─ 行内强调只切 span 样式，不重排文本（拼接结果必须逐字等于原文）
 ```
 
 **同步滚动**（VSCode 风格像素同步）：
@@ -661,7 +683,7 @@ cs-markdown-editor/
     ├── segment_view.py      # 段级 TextSpan 渲染（含向外选区字符级高亮）
     ├── key_bindings.py      # KeyDispatcher：浏览/编辑两层 + outward 拦截 + 快捷键捕获 + 原生控件守卫
     ├── table_view.py        # 表格视图：DataTable2 单元格编辑、行列增删、对齐、删除整表、Tab/Enter 导航
-    ├── diff_view.py         # 文件对比：compute_diff_for_editors 行级 diff 计算 + 间隙对齐
+    ├── diff_view.py         # 文件对比：compute_diff_for_editors 行级 diff + compute_changed_ranges 字符区间
     ├── file_dialogs.py      # 文件操作对话框：新建文件/文件夹/重命名/删除确认
     ├── toolbar.py           # 格式工具栏：块级/行内按钮，tooltip 动态显示自定义键位
     ├── tab_bar.py           # 顶部多文档标签栏（含 diff 标签渲染）+ ConfirmCloseDialog + 右键菜单
@@ -680,7 +702,7 @@ tests/                      # 单元测试（python -m pytest tests/ -q，共 97
 ├── 拆分编辑器：test_split_editor（拆分开合/递归回归）/ test_open_dedupe（组内去重）/ test_shared_doc_sync（共享document同步）
 ├── 文件侧边栏：test_shortcut（.lnk解析）/ test_fs_watch（文件夹监测）/ test_sidebar_file_tree / test_sidebar_search / test_sidebar_replace / test_open_folder
 ├── 保存备份：test_file_io / test_autosave / test_backup
-├── 文件对比：test_diff_scroll_sync
+├── 文件对比：test_diff_scroll_sync / test_plain_diff（非 Markdown 文件的代码行级 diff）
 ├── 岛屿/渲染：test_table_smoke / test_table_copy / test_table_inline_render / test_fence_code_backspace / test_hr_render / test_task_smoke / test_image_ops / test_image_paste
 └── 其他：test_key_bindings / test_shortcuts / test_text_layout / test_editor_helpers / test_export / test_utils_helpers …
 ```

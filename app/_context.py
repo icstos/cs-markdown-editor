@@ -73,7 +73,9 @@ class AppContext:
     file_path: str | None
     shortcut_mgr: Any  # ShortcutManager
     diff_sync: Any  # DiffScrollSync
-    diff_result: Any  # memoized (marks_l, marks_r, gaps_l, gaps_r, added, removed, modified) | None
+    # memoized (marks_l, marks_r, gaps_l, gaps_r, ranges_l, ranges_r,
+    #           added, removed, modified) | None
+    diff_result: Any
 
     # ============ Setters（稳定区）============
     set_tabs: Callable

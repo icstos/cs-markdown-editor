@@ -445,6 +445,14 @@ def LineView(
     # 大文件改用单层可见编辑框（见 views/code_block 的说明）。
     # 它是文档级常量，同一文档内不变 → 不破坏 @ft.memo 的 prop 稳定性约定。
     plain_document: bool = False,
+    # 代码块行级 diff（对比标签里的纯文本文档）：整篇一个文档行，差异只能按
+    # `code.split("\n")` 的行号着色（块级 diff_mark 表达不了"哪一行不同"）。
+    # dict 身份稳定（来自 App 的 use_memo 缓存），memo 依旧命中。
+    code_diff_marks: dict[int, str] | None = None,
+    code_diff_gaps: dict[int, list[float]] | None = None,
+    # 行内字符级变更区间（只有改行才有）：叠加在行底色之上，见 views/code_block
+    code_diff_ranges: dict[int, list[tuple[int, int]]] | None = None,
+    diff_side: int = 0,
 ) -> ft.Control:
     """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
 
@@ -498,6 +506,14 @@ def LineView(
             enter_off=code_enter_off,
             on_enter_consumed=code_enter_consumed,
             is_plain_doc=plain_document,
+            code_diff_marks=code_diff_marks,
+            code_diff_gaps=code_diff_gaps,
+            code_diff_ranges=code_diff_ranges,
+            diff_side=diff_side,
+            # 向外选区（浏览态拖选）覆盖本块时整块着色。围栏块在选区里是**原子单元**
+            # （见 views/_editor_helpers._build_highlight_map），所以这里只传布尔值：
+            # `outward_range` 非空 = 本块被选中。
+            is_selected=outward_range is not None,
         )
 
     # ============ YAML 前置元数据（Obsidian 风格属性卡片）============

@@ -64,6 +64,13 @@ class EditorContext:
     keyboard_autofocus: bool
     diff_marks: dict[int, str] | None
     diff_gaps: dict[int, list[float]] | None
+    # 代码块行级 diff（纯文本文档专用）：整篇一个逻辑行，块级染色无法表达差异，
+    # 故改由代码块按 `code.split("\n")` 的行号逐行着色（见 views/code_block）。
+    code_diff_marks: dict[int, str] | None
+    code_diff_gaps: dict[int, list[float]] | None
+    # 行内字符级变更区间：{行号: [(起, 止), ...]}，叠加在行底色之上（见 views/code_block）
+    code_diff_ranges: dict[int, list[tuple[int, int]]] | None
+    diff_side: int
     on_scroll_change: Callable[[float, float, float], None] | None
     # 状态栏命令式上报：光标移动 / 内容变化（高频局部 UI，跳过 set_state 全量重建）
     on_cursor_move: Callable[[int, int], None] | None

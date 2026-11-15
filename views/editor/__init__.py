@@ -192,6 +192,14 @@ def MarkdownEditor(
     # diff 对比模式:diff_marks 映射行号→标记,diff_gaps 映射行号→间隙高度列表
     diff_marks: dict[int, str] | None = None,
     diff_gaps: dict[int, list[float]] | None = None,
+    # 对比标签中的侧别：0 = 左（比较源 / 删除侧），1 = 右（比较目标 / 新增侧）。
+    # 只影响"替换行"的差异高亮取红还是取绿 —— 与 VSCode 并排视图同一语义。
+    # 纯文本文档的 diff 高亮落在代码块的**逻辑行**上（见下方 _plain_diff 的分流）。
+    diff_side: int = 0,
+    # 行内字符级变更区间：{行号: [(起, 止), ...]}（只有"改行"才有，见
+    # views.diff_view.compute_changed_ranges）。纯文本文档叠加在代码行的行底色之上；
+    # Markdown 文档不使用（那里的差异由块级染色表达，行内高亮会与散文排版打架）。
+    diff_ranges: dict[int, list[tuple[int, int]]] | None = None,
     # 滚动同步回调:滚动时上报 (offset, max_scroll, viewport_h),供 diff 对比模式
     # 驱动另一侧同步滚动。None 时不同步(单编辑器 / 拆分编辑器)。
     on_scroll_change: Callable[[float, float, float], None] | None = None,
@@ -230,6 +238,23 @@ def MarkdownEditor(
     # show_toolbar prop:None 时回落到 settings,False 时强制隐藏(用于右侧拆分编辑器)
     show_toolbar = show_toolbar if show_toolbar is not None else settings.get("show_toolbar", True)
     word_wrap = settings.get("word_wrap", True)
+
+    # ============ diff 标记的分流（块级 vs 代码行级）============
+    # 纯文本文档整篇只有一个文档行（`parser.plain`）：块级 diff 染色只能把整个文件
+    # 染成一种颜色，等于没有信息。这类文档的差异必须下沉到代码块的**逻辑行**
+    # （行号 = code.split("\n") 下标，恰好就是 `compute_diff_for_editors` 在
+    # serialize 结果上算出的行号），因此把同一份 marks/gaps 换个下游使用方：
+    # - 块级（wrap_block 的 diff_mark / ListView 里的间隙占位）：置空；
+    # - 代码行级（views/code_block 的 code_diff_marks / code_diff_gaps）：接管。
+    # Markdown 保持原样：那里的"一行"就是文档一行，块级染色正是对的。
+    _plain_diff = bool(_is_plain_doc and (diff_marks or diff_gaps))
+    _code_diff_marks = diff_marks if _plain_diff else None
+    # 间隙原样下传（不在这里折成"行数"）：dict 身份要稳定，否则行级 @ft.memo
+    # 每次 App 重渲染都失效，整块代码（含逐行高亮 span）会跟着重建。
+    _code_diff_gaps = diff_gaps if _plain_diff else None
+    _code_diff_ranges = diff_ranges if _plain_diff else None
+    _block_diff_marks = None if _plain_diff else diff_marks
+    _block_diff_gaps = None if _plain_diff else diff_gaps
 
     # ============ 状态:光标级(替代 active/active_seg/draft)============
     cursor_li, set_cursor_li = ft.use_state(None)  # 激活行号 | None(浏览态)
@@ -425,8 +450,13 @@ def MarkdownEditor(
         on_editor_focus=on_editor_focus,
         on_editor_blur=on_editor_blur,
         keyboard_autofocus=keyboard_autofocus,
-        diff_marks=diff_marks,
-        diff_gaps=diff_gaps,
+        diff_marks=_block_diff_marks,
+        diff_gaps=_block_diff_gaps,
+        # 代码块行级 diff（纯文本文档专用，见上方 _plain_diff 的说明）
+        code_diff_marks=_code_diff_marks,
+        code_diff_gaps=_code_diff_gaps,
+        code_diff_ranges=_code_diff_ranges,
+        diff_side=diff_side,
         on_scroll_change=on_scroll_change,
         on_cursor_move=on_cursor_move,
         on_content_change=on_content_change,

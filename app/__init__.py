@@ -58,7 +58,7 @@ from services.shortcuts import ShortcutManager
 from styles import get_colors
 from utils import diagnostics
 from utils.log import apply_settings_level
-from views.diff_view import compute_diff_for_editors
+from views.diff_view import compute_changed_ranges, compute_diff_for_editors
 from views.doc_search import compute_doc_matches
 from views.status_bar import _compute_counts
 
@@ -352,10 +352,16 @@ def App():
         _ltext = parser.serialize(_ld)
         _rtext = parser.serialize(_rd)
         marks_l, marks_r, gaps_l, gaps_r = compute_diff_for_editors(_ltext, _rtext)
+        # 行内字符级区间（仅改行）：整行铺红绿只能说明"这行变了"，改了哪几个字
+        # 还得靠这一层。与 marks/gaps 同签名同缓存，内容不变就不重算。
+        ranges_l, ranges_r = compute_changed_ranges(_ltext, _rtext)
         _added = sum(1 for v in marks_r.values() if v == "added")
         _removed = sum(1 for v in marks_l.values() if v == "removed")
         _modified = sum(1 for v in marks_r.values() if v == "modified")
-        return (marks_l, marks_r, gaps_l, gaps_r, _added, _removed, _modified)
+        return (
+            marks_l, marks_r, gaps_l, gaps_r, ranges_l, ranges_r,
+            _added, _removed, _modified,
+        )
 
     _diff_result = ft.use_memo(_compute_diff_result, [_diff_sig])
 

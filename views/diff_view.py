@@ -19,6 +19,11 @@ import flet as ft
 from styles import FONT_MAIN, FONT_MONO, Elevation, Radius, Spacing, card_shadow, get_colors, only_border
 
 _MAX_DIFF_ROWS = 3000  # 防止超大文件卡顿
+# 行内字符级细化（compute_changed_ranges）的行数上限：它是"整行红绿"之上的
+# 锦上添花，而每多算一次就等于把行级 difflib 再跑一遍（同一份文本）。超过这个
+# 规模时直接放弃字符区间，行级底色照旧 —— 编辑期间每次击键都会重算一次 diff，
+# 大文件上这层开销必须有个硬上限。
+_MAX_CHAR_DIFF_LINES = 4000
 _LN_WIDTH = 38  # 行号列宽
 _DIFF_WARN_COLOR = "#FF9F0A"  # 截断提示的警告色
 
@@ -97,6 +102,71 @@ def compute_diff_for_editors(
             )
 
     return marks_left, marks_right, gaps_left, gaps_right
+
+
+def compute_changed_ranges(
+    left_text: str,
+    right_text: str,
+) -> tuple[dict[int, list[tuple[int, int]]], dict[int, list[tuple[int, int]]]]:
+    """行内**字符级**变更区间：{行号: [(起, 止), ...]}，左右各一份。
+
+    为什么需要：仅有整行红 / 绿底色时，"这一行被改了"看得见、"改了哪几个字"看不见
+    —— 一行 80 个字符里改了 3 个，整行铺满红底等于没有信息。VSCode 的并排对比正是
+    在行底色之上再叠一层更深的字符高亮，这里复刻同一层。
+
+    只处理行级 diff 里的 `replace`（改行）配对：纯增 / 纯删的行不需要字符区间
+    （整行就是变更），而 `equal` 行没有变更。多出来的那几行（一侧比另一侧多）
+    按整行标记。
+
+    规模上限见 `_MAX_CHAR_DIFF_LINES`：超过时返回空 dict，行级底色照旧。
+
+    配对方式是**按序对齐**（第 k 行对第 k 行），不是最优字符串对齐：VSCode 对
+    改行块内部也做近似对齐，但对我们的用途（同段内改写）顺序配对在绝大多数情况下
+    与之一致，且不会引入"看起来更对、实际更乱"的跨行错配。
+
+    返回空 dict 表示没有改行 —— 调用方据此完全不叠加字符层（零开销）。
+    """
+    left_lines = left_text.splitlines()
+    right_lines = right_text.splitlines()
+    if len(left_lines) + len(right_lines) > _MAX_CHAR_DIFF_LINES:
+        return {}, {}
+    matcher = difflib.SequenceMatcher(None, left_lines, right_lines, autojunk=False)
+    ranges_left: dict[int, list[tuple[int, int]]] = {}
+    ranges_right: dict[int, list[tuple[int, int]]] = {}
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "replace":
+            continue
+        for k in range(max(i2 - i1, j2 - j1)):
+            li, rj = i1 + k, j1 + k
+            has_l, has_r = li < i2, rj < j2
+            if has_l and has_r:
+                l_ranges, r_ranges = _line_char_ranges(left_lines[li], right_lines[rj])
+                if l_ranges:
+                    ranges_left[li] = l_ranges
+                if r_ranges:
+                    ranges_right[rj] = r_ranges
+            elif has_l:
+                ranges_left[li] = [(0, len(left_lines[li]))]
+            elif has_r:
+                ranges_right[rj] = [(0, len(right_lines[rj]))]
+
+    return ranges_left, ranges_right
+
+
+def _line_char_ranges(left: str, right: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """两行的字符级差异区间（各自的"非 equal"片段），空区间不入列。"""
+    matcher = difflib.SequenceMatcher(None, left, right, autojunk=False)
+    left_ranges: list[tuple[int, int]] = []
+    right_ranges: list[tuple[int, int]] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if i2 > i1:
+            left_ranges.append((i1, i2))
+        if j2 > j1:
+            right_ranges.append((j1, j2))
+    return left_ranges, right_ranges
 
 
 def _diff_colors(c, is_dark: bool) -> dict:

@@ -494,6 +494,9 @@ class LineControlsEnv(Protocol):
     body_font_size: float
     c: Any
     clipboard_ref: ft.Ref
+    code_diff_gaps: dict[int, list[float]] | None
+    code_diff_marks: dict[int, str] | None
+    code_diff_ranges: dict[int, list[tuple[int, int]]] | None
     content_width: float
     ctrl_pressed_ref: ft.Ref
     cursor_field_ref: ft.Ref
@@ -504,6 +507,7 @@ class LineControlsEnv(Protocol):
     cursor_ref: ft.Ref
     diff_gaps: dict[int, list[float]] | None
     diff_marks: dict[int, str] | None
+    diff_side: int
     document: Document
     estimate_line_offset: Callable[..., float]
     file_path: str | None

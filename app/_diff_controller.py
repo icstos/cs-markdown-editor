@@ -12,6 +12,12 @@ on_diff_dirty_change
 - 对比以 type=="diff" 标签形式管理，可与普通编辑标签并存、切换、关闭。
 - get_text_for_compare 优先用已打开标签的内存内容（含未保存修改），与
   VSCode 行为一致——比较未保存草稿也能反映最新编辑结果。
+- 两侧文档都经 `services.document_loader.parse_document_text` 按**扩展名**解析：
+  `.py/.txt` 走纯文本单代码块（与普通编辑标签同一渲染），`.md` 走行结构。
+  一律 `parse_markdown` 的话，同一个 .py 在编辑标签里是代码块、在对比标签里
+  却是"标题 + 列表"的散文，差异根本无从看起。
+- 编码 / 换行随文档一起落到 `Document.encoding` / `Document.eol`：对比标签两侧
+  也可编辑保存，按原编码（GBK 的 .py）与原换行写回是保存链路的前提。
 - compare_with_selected 复用当前空白未命名标签（完全替换，避免残留 editor
   字段），否则追加新标签。
 - on_diff_dirty_change 仅当状态真正变化时更新标签，避免高频回调触发重渲染；
@@ -19,17 +25,18 @@ on_diff_dirty_change
 
 依赖项：
 - os / parser（解析/序列化）
-- services.file_io.read_text_auto（编码探测：比较的可能是 GBK 的 .txt/.py）
+- services.document_loader.parse_document_text（按类型解析内存文本）
+- services.file_io.read_text_detailed（编码探测：比较的可能是 GBK 的 .txt/.py）
 - app._tab_helpers（is_blank_untitled / tab_paths）
 """
 
 import os
 
 import parser
-from app._tab_helpers import is_blank_untitled, tab_paths
-from services.file_io import read_text_auto
-
 from app._contracts import DiffEnv
+from app._tab_helpers import is_blank_untitled, tab_paths
+from services.document_loader import parse_document_text
+from services.file_io import read_text_detailed
 
 
 def build_diff_controller(ctx: DiffEnv):
@@ -40,24 +47,35 @@ def build_diff_controller(ctx: DiffEnv):
     on_diff_dirty_change
     """
 
-    def get_text_for_compare(path: str) -> str:
-        """获取用于比较的文本：优先用已打开标签的内存内容（含未保存修改），否则读磁盘。
+    def _payload_for_compare(path: str) -> tuple[str, str, str]:
+        """取一侧的比较取材：(正文, 换行符, 编码)。
 
-        这样比较未保存的草稿也能反映最新编辑结果，与 VSCode 行为一致。
+        优先用已打开标签的内存内容（含未保存修改），与 VSCode 行为一致。
 
-        读盘走 `read_text_auto`（BOM / utf-8 / gb18030）：比较对象不再限定
-        Markdown，.txt / .py 在中文 Windows 上常常是 GBK，硬读会直接报"读取失败"。
+        读盘走 `read_text_detailed`（BOM / utf-8 / gb18030）：比较对象不再限定
+        Markdown，.txt / .py 在中文 Windows 上常常是 GBK，硬读会直接报"读取失败"；
+        顺带拿到的编码必须在保存时按原样写回（`# -*- coding: gbk -*-` 的 .py
+        改成 UTF-8 就是语法错误）。
         """
         for t in ctx.tabs_ref.current:
             if path in tab_paths(t):
                 # diff 标签：返回对应侧文档内容；editor 标签：返回 document
+                doc = None
                 if t.get("type") == "diff":
-                    if t.get("left_path") == path:
-                        return parser.serialize(t["left_doc"])
-                    return parser.serialize(t["right_doc"])
-                return parser.serialize(t["document"])
+                    doc = t["left_doc"] if t.get("left_path") == path else t["right_doc"]
+                else:
+                    doc = t["document"]
+                return (
+                    parser.serialize(doc),
+                    getattr(doc, "eol", "\n") or "\n",
+                    getattr(doc, "encoding", "utf-8") or "utf-8",
+                )
+        return read_text_detailed(path)
+
+    def get_text_for_compare(path: str) -> str:
+        """获取用于比较的文本（不含编码 / 换行元信息，保留原契约）。"""
         try:
-            text, _eol = read_text_auto(path)
+            text, _eol, _encoding = _payload_for_compare(path)
             return text
         except Exception as e:
             ctx.show_snack(f"读取失败：{e}")
@@ -73,6 +91,10 @@ def build_diff_controller(ctx: DiffEnv):
 
         两侧均加载为可编辑 Document，实时计算行级 diff 标记和间隙对齐。
         对比以 type=="diff" 标签形式存在，可与普通编辑标签并存、切换、关闭。
+
+        文档形态按扩展名分派（见模块 docstring）：非 Markdown 文件两侧都是
+        "整篇一个代码块"，因此对比视图里代码保持语法高亮，差异高亮落在**代码行**
+        上（`views/code_block` 的逐行底色 / 行号列标记条），而不是把整块染一个色。
         """
         src = ctx.compare_source
         if not src:
@@ -81,12 +103,20 @@ def build_diff_controller(ctx: DiffEnv):
         if os.path.abspath(src) == os.path.abspath(right_path):
             ctx.show_snack("不能与同一个文件进行比较")
             return
-        left_text = get_text_for_compare(src)
-        right_text = get_text_for_compare(right_path)
-        left_doc = parser.parse_markdown(left_text)
-        left_doc.file_path = src
-        right_doc = parser.parse_markdown(right_text)
-        right_doc.file_path = right_path
+        try:
+            left_text, left_eol, left_enc = _payload_for_compare(src)
+        except Exception as e:
+            ctx.show_snack(f"读取失败：{e}")
+            return
+        try:
+            right_text, right_eol, right_enc = _payload_for_compare(right_path)
+        except Exception as e:
+            ctx.show_snack(f"读取失败：{e}")
+            return
+        left_doc = parse_document_text(src, left_text, eol=left_eol, encoding=left_enc)
+        right_doc = parse_document_text(
+            right_path, right_text, eol=right_eol, encoding=right_enc
+        )
         new_tab = {
             "type": "diff",
             "left_path": src,

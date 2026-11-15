@@ -35,6 +35,7 @@ from views._editor_helpers import _compute_delete_result as _compute_delete_resu
 from views._editor_helpers import _select_word_bounds, _vline_off_at_x
 from views._editor_helpers import _step_left as _step_left_impl
 from views._editor_helpers import _step_right as _step_right_impl
+from views._editor_helpers import range_hits_fence as _range_hits_fence_impl
 from views.editor._contracts import OutwardEnv
 
 # 高频编辑路径用原子化重解析（仅触发 1 次 observable 通知）
@@ -296,6 +297,18 @@ def build_outward(ctx: OutwardEnv):
         # 后续 pan_update 走 _extend_outward 扩展 target 端。
         ctx.set_outward_sel((target_li, target_off, target_li, target_off))
 
+    def _range_hits_fence(li_a: int, li_b: int) -> bool:
+        """选区是否覆盖了围栏岛屿（代码块/表格/公式/TOC）。纯计算见 _editor_helpers。
+
+        为什么要整段检查而不是只看起点：拖选现在能命中围栏块（`hit_test` 把块内
+        任意点折成该行行首），于是"从段落后拖过代码块"会得到 b_li = 代码块行。
+        而 `_compute_delete_result` 只会把首尾行的 raw 拼起来 —— 半截围栏文本会
+        被并进上一段，文档直接坏掉（`` ```python `` 残留、代码行变正文）。
+        cut/delete/enter 三条破坏性操作因此一律让路：围栏块请用表格/代码块自己的
+        入口删除，或先只选中它外部的文本。复制（Ctrl+C）不受影响。
+        """
+        return _range_hits_fence_impl(ctx.document.lines, li_a, li_b)
+
     def _delete_raw_range(start_li: int, start_off: int, end_li: int, end_off: int) -> None:
         ctx.push_history()
         ctx.undo_push_pending.current = True
@@ -330,6 +343,8 @@ def build_outward(ctx: OutwardEnv):
         a_li, a_off, b_li, b_off = ctx.outward_sel
         if (a_li, a_off) > (b_li, b_off):
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        if _range_hits_fence(a_li, b_li):
+            return
         _delete_raw_range(a_li, a_off, b_li, b_off)
 
     def handle_outward_enter() -> None:
@@ -345,10 +360,10 @@ def build_outward(ctx: OutwardEnv):
         a_li, a_off, b_li, b_off = ctx.outward_sel
         if (a_li, a_off) > (b_li, b_off):
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
-        # 删除选区边界检查（围栏块不参与 raw 选区）
+        # 删除选区边界检查（围栏块不参与 raw 选区，见 _range_hits_fence）
         if not (0 <= a_li < len(ctx.document.lines)):
             return
-        if _is_fence(ctx.document.lines[a_li]):
+        if _range_hits_fence(a_li, b_li):
             return
         ctx.push_history()
         ctx.undo_push_pending.current = True
@@ -383,6 +398,9 @@ def build_outward(ctx: OutwardEnv):
         a_li, a_off, b_li, b_off = ctx.outward_sel
         if (a_li, a_off) > (b_li, b_off):
             a_li, a_off, b_li, b_off = b_li, b_off, a_li, a_off
+        # 覆盖围栏块时不剪：先复制（Ctrl+C 可用），删除部分让路，理由见 _range_hits_fence
+        if _range_hits_fence(a_li, b_li):
+            return
         text = _extract_outward_text(a_li, a_off, b_li, b_off)
         clipboard = ctx.clipboard_ref.current if ctx.clipboard_ref is not None else None
         if clipboard is not None and text:

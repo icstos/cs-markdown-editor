@@ -47,7 +47,7 @@ from app._tab_helpers import tab_display_name, tab_group
 from styles import get_colors
 from views.activity_bar import ActivityBar
 from views.diff_markers import DiffHeader
-from views.diff_view import compute_diff_for_editors
+from views.diff_view import compute_changed_ranges, compute_diff_for_editors
 from views.editor import MarkdownEditor
 from views.file_dialogs import FileActionDialog
 from views.floating_search import FloatingSearch
@@ -685,11 +685,15 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
     # 文档内搜索浮层 props：仅与搜索作用文档身份一致的编辑器获得行级高亮数据
     _lsp, _lver = _editor_search_props(ctx, _ldoc)
     _rsp, _rver = _editor_search_props(ctx, _rdoc)
-    # diff 标记 / 间隙 / 统计由 App use_memo 预计算（按左右文档行内容签名缓存），
-    # 避免每次 App 重渲染（主题/面板/滚动）重复 serialize+difflib。
+    # diff 标记 / 间隙 / 统计 / 行内字符区间由 App use_memo 预计算（按左右文档行内容
+    # 签名缓存），避免每次 App 重渲染（主题/面板/滚动）重复 serialize+difflib。
     _dr = ctx.diff_result
     if _dr is not None:
-        marks_left, marks_right, gaps_left, gaps_right, _added, _removed, _modified = _dr
+        (
+            marks_left, marks_right, gaps_left, gaps_right,
+            ranges_left, ranges_right,
+            _added, _removed, _modified,
+        ) = _dr
     else:
         # 兜底：memo 未命中（首次渲染竞态 / 异常）时现场计算，保证可用
         _ltext = parser.serialize(_ldoc)
@@ -697,6 +701,7 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
         marks_left, marks_right, gaps_left, gaps_right = compute_diff_for_editors(
             _ltext, _rtext
         )
+        ranges_left, ranges_right = compute_changed_ranges(_ltext, _rtext)
         _added = sum(1 for v in marks_right.values() if v == "added")
         _removed = sum(1 for v in marks_left.values() if v == "removed")
         _modified = sum(1 for v in marks_right.values() if v == "modified")
@@ -751,6 +756,13 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
                             nav_ref=ctx.diff_nav_left,
                             diff_marks=marks_left,
                             diff_gaps=gaps_left,
+                            # 行内字符级变更区间（只有改行才有）：代码块在行底色之上
+                            # 再叠一层更深的字符高亮，与 VSCode 并排对比同构
+                            diff_ranges=ranges_left,
+                            # 侧别：替换行在左取红、在右取绿（VSCode 并排视图语义）。
+                            # 纯文本文档的差异因此落在代码行上而不是整块（见编辑器侧
+                            # _plain_diff 的分流）。
+                            diff_side=0,
                             on_editor_focus=lambda: ctx.set_diff_active_pane(0),
                             on_editor_blur=ctx.trigger_autosave_now,
                             on_dirty_change=lambda d: ctx.on_diff_dirty_change(0, d),
@@ -774,6 +786,8 @@ def _build_diff_area(ctx, sidebar_open: bool, pane_cursor_cb, pane_content_cb) -
                             nav_ref=ctx.diff_nav_right,
                             diff_marks=marks_right,
                             diff_gaps=gaps_right,
+                            diff_ranges=ranges_right,
+                            diff_side=1,
                             on_editor_focus=lambda: ctx.set_diff_active_pane(1),
                             on_editor_blur=ctx.trigger_autosave_now,
                             on_dirty_change=lambda d: ctx.on_diff_dirty_change(1, d),

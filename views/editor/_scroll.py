@@ -177,11 +177,19 @@ def build_scroll(ctx: ScrollEnv):
         容差 0.5px 内不更新，避免 layout 抖动引发无效写入。缓存供
         _estimate_line_offset 精确累加滚动偏移，未命中的行回退到估算。
         行高变化时同步失效前缀和缓存（offset_prefix_ref）。
+
+        围栏行的高度变化还要**额外作废 LineLayoutCache**：该缓存在构建时就把每行
+        的 Y 固化下来了，代码块编辑后长高/变矮而不重建的话，跨行拖选的命中会整体
+        错位（缓存只在行数变化时清空，而"改代码"不改行数）。作废只是置 None，
+        下次拖选才真正重建，代价可忽略。
         """
         cache = ctx.line_heights_ref.current
         if height > 0 and abs(cache.get(li, 0.0) - height) > 0.5:
             cache[li] = height
             ctx.offset_prefix_ref.current = None  # 失效前缀和缓存
+            lines = ctx.document.lines
+            if 0 <= li < len(lines) and _is_fence(lines[li]):
+                ctx.layout_cache_ref.current = None
 
     def _estimate_line_height(li: int) -> float:
         """估算单行渲染高度（px）。优先用 on_size_change 上报的实际高度。
@@ -392,11 +400,21 @@ def build_scroll(ctx: ScrollEnv):
 
         首次 pan 事件触发构建，行数变化时由 reset_line_heights 清空（置 None），
         下次 pan 事件重新构建。典型文档（数百行）单次构建约 10-30ms，可接受。
+
+        `fence_height` 传 `_estimate_line_height`：围栏岛屿（代码块/表格/公式）的
+        真实高度只有它知道（实测高度优先，未构建时按块类型估算）。少了这一项，
+        缓存会把一个 200px 高的代码块当成一行文本 —— 鼠标落在代码块中部，反算出来
+        却是块下面好几行的段落，于是"从段落后拖选跨过代码块"永远选不上代码块
+        （真机实测：outward_sel 直接跳到下一个段落）。
         """
         if ctx.layout_cache_ref.current is None:
             from views.pixel_layout import LineLayoutCache
             ctx.layout_cache_ref.current = LineLayoutCache(
-                ctx.document.lines, ctx.content_width, ctx.line_height, ctx.body_font_size
+                ctx.document.lines,
+                ctx.content_width,
+                ctx.line_height,
+                ctx.body_font_size,
+                fence_height=_estimate_line_height,
             )
         return ctx.layout_cache_ref.current
 

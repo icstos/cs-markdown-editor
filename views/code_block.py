@@ -139,6 +139,17 @@ state，从而不扰动既有的 `code_focus_ref` 路由与 `ft.memo` 依赖。
 
 **选得对**：行号必须是 `selectable=True`，否则跨行拖选代码会把行号一起选进剪贴板
 （见 `_gutter_cell` 的真机实测表）。
+
+**在向外选区里是原子单元**（浏览态拖选 / Shift+方向键）：本组件只收一个
+`is_selected` 布尔值，非空即整块着色——逐行铺 `selection_highlight_bg()`，
+同时行号列让出自己的色带（`bgcolor=None`，否则整行底色被切成深浅两段）。
+为什么不按行内字符偏移做字形级高亮：围栏块的 raw 是 ````` ```lang\ncode\n``` `````
+这种围栏文本，与屏幕上的代码列不是同一套坐标（行号列、软折行、头部工具栏都不在
+raw 里），按偏移取色必然错位；而拖选命中本块时目标偏移恒为**行首**（
+`LineLayoutCache.hit_test` 的占位是单视觉行），照偏移裁切只会得到零长度区间 ——
+于是"明明选中了整块，界面上一点反应都没有"。整块着色的连带后果：复制取整块 raw
+（含开闭围栏，`parser.selection`），删除 / 剪切 / 回车让路（`views/editor/_outward.py`
+的 `_range_hits_fence`），因为半截围栏拼进别的段落就是坏文档。
 """
 
 import contextlib
@@ -162,6 +173,7 @@ from utils.code_indent import apply_indent
 from utils.text_layout import _FLET_DEFAULT_LETTER_SPACING, measure_text_offsets
 from views import _block_frame
 from views.pixel_layout import _wrap_offsets_into_visual_lines, hit_test_line_x_raw
+from views.segment_view import selection_highlight_bg
 
 # 代码块行高倍数：等宽字体下 1.5 倍行距，紧凑与可读的平衡点。
 # 浏览态（TextStyle.height）与编辑态（TextField.text_style.height）共用同一常量，
@@ -196,6 +208,44 @@ def uses_simple_edit(is_plain_doc: bool, line_count: int) -> bool:
     （叠层与单层都表现为一个 TextField）。
     """
     return bool(is_plain_doc) and line_count > _PLAIN_SIMPLE_EDIT_LINES
+
+
+def diff_line_palette(c, side: int) -> dict[str, tuple[str, str]]:
+    """对比视图里**代码行**的配色表：mark → (行底色, 行号列标记条颜色)。
+
+    为什么这张表在代码块里而不是复用 `_block_frame.wrap_block(diff_mark=…)`：
+    纯文本文档整篇只有一个逻辑行，块级染色会把**整个文件**染成一种颜色（差异
+    在哪一行完全看不出来）。所以源码视图的 diff 必须下沉到代码块的**逻辑行**，
+    与 VSCode 打开两个 .py 时的观感一致。
+
+    side：0 = 左（比较源 / 删除侧），1 = 右（比较目标 / 新增侧）。
+    `modified`（替换行）的颜色随侧别切换 —— 左边红、右边绿。两侧同色的话，
+    "这一行是被改掉的旧内容，还是改出来的新内容"就无从判断，而这正是替换行
+    最需要表达的信息。
+
+    占位行（gap）用更浅的一档：它表示"对侧这一行在本侧不存在"，不是本侧的
+    增删，颜色必须比真正的增删行弱，否则读者会把空白行误读成内容被删。
+    """
+    add_bg = c.diff_add_bg
+    del_bg = c.diff_del_bg
+    # 标记条取 Git 状态色（与侧边栏 / 状态栏同一套语义色），缺失时回退主题色
+    add_bar = (getattr(c, "git", None) or {}).get("added") or c.link
+    del_bar = (getattr(c, "git", None) or {}).get("deleted") or c.muted
+    if (side or 0) != 0:
+        return {
+            "added": (add_bg, add_bar),
+            "removed": (del_bg, del_bar),
+            "modified": (add_bg, add_bar),
+            # 右侧的空白：对侧（左）有而本侧没有的行 → 删除的浅色
+            "gap": (c.diff_gap_del_bg, ""),
+        }
+    return {
+        "added": (add_bg, add_bar),
+        "removed": (del_bg, del_bar),
+        "modified": (del_bg, del_bar),
+        # 左侧的空白：对侧（右）新增出来的行 → 新增的浅色
+        "gap": (c.diff_gap_add_bg, ""),
+    }
 
 # 代码块语言选择下拉框的常用语言清单
 # （key = Markdown 围栏语言标识，需与 Pygments get_lexer_by_name 的名称对齐）
@@ -256,7 +306,7 @@ def _lang_entries(current_lang: str) -> list[tuple[str, str]]:
     return entries
 
 
-def _span_style(color: str, size: int) -> ft.TextStyle:
+def _span_style(color: str, size: int, bgcolor: str | None = None) -> ft.TextStyle:
     """代码片段文字样式：等宽 + 固定行高倍数 + 语义色 + 显式字距。
 
     字体族 / 字号 / 行高 / 字距在 span 上重复声明（而非仅依赖 Text 的 style 继承）：
@@ -266,6 +316,9 @@ def _span_style(color: str, size: int) -> ft.TextStyle:
     `letter_spacing` 尤其不能省：`ft.TextStyle.letter_spacing` 默认是 None（走继承），
     而编辑态叠加的 `TextField` 若同样留空，两侧可能取到不同的字距，每个字形差 0.25px
     → 折行点与光标位置随字符数线性漂移（长行尤其明显）。两层显式同值即彻底对齐。
+
+    bgcolor：对比视图的行内变更强调（半透明叠加在行底色之上）。None = 不设，
+    序列化时该字段被省略，普通文档的 span 与加这一层之前逐字节相同。
     """
     return ft.TextStyle(
         color=color,
@@ -273,12 +326,57 @@ def _span_style(color: str, size: int) -> ft.TextStyle:
         size=size,
         height=_CODE_LINE_HEIGHT,
         letter_spacing=_FLET_DEFAULT_LETTER_SPACING,
+        bgcolor=bgcolor,
     )
 
 
 def _syn_color(c, kind: str) -> str:
     """语义类别 → 主题色（未收录类别回退代码块正文色）。"""
     return c.code_syntax.get(kind, c.code_block_fg)
+
+
+def _emphasize_spec(
+    spec: tuple[tuple[str, str], ...],
+    ranges: list[tuple[int, int]],
+) -> list[tuple[str, str, bool]]:
+    """把一行分词结果按**字符级变更区间**切成 (文本, 类别, 是否强调)。
+
+    为什么要在分词结果上切、而不是重新分词：行底色只能说明"这行变了"，改了哪几个
+    字还得靠这一层（VSCode 的行内 diff 就是同一层）。重排序号会丢掉 Pygments 的
+    语义色，所以做的是**切片**：在原有 (文本, 类别) 片段边界之外，再按强调区间
+    二次切分，然后把相邻且同类同强调态的片段合并（控制 span 数量）。
+
+    Args:
+        spec: `highlight_lines` 的单个逻辑行：`((文本, 类别), ...)`，拼接结果
+            等于该行原文（服务层的不变式）。
+        ranges: 本行内的变更字符区间 `[(起, 止), ...]`，可能为空。
+
+    区间越界一律钳制：文档刚被编辑、diff 还没重算时区间可能比现行更长，
+    装饰性逻辑不该因此让整块渲染失败。
+    """
+    if not ranges:
+        return [(t, k, False) for t, k in spec]
+    flagged: set[int] = set()
+    for start, end in ranges:
+        flagged.update(range(int(start), int(end)))
+
+    out: list[tuple[str, str, bool]] = []
+    pos = 0
+    for text, kind in spec:
+        run_start = 0
+        for j in range(1, len(text) + 1):
+            at_end = j == len(text)
+            # 强调态在"当前位置"与"本段起点"不同（或已到段尾）时收一段
+            if at_end or ((pos + j) in flagged) != ((pos + run_start) in flagged):
+                emph = (pos + run_start) in flagged
+                chunk = text[run_start:j]
+                if out and out[-1][1] == kind and out[-1][2] == emph:
+                    out[-1] = (out[-1][0] + chunk, kind, emph)
+                else:
+                    out.append((chunk, kind, emph))
+                run_start = j
+        pos += len(text)
+    return out
 
 
 def _edit_strut(size: int) -> ft.StrutStyle:
@@ -408,6 +506,11 @@ def render_code_block(
     enter_off: int | None = None,
     on_enter_consumed: Callable[[int], None] | None = None,
     is_plain_doc: bool = False,
+    code_diff_marks: dict[int, str] | None = None,
+    code_diff_gaps: dict[int, list[float]] | None = None,
+    code_diff_ranges: dict[int, list[tuple[int, int]]] | None = None,
+    diff_side: int = 0,
+    is_selected: bool = False,
 ) -> ft.Control:
     """渲染代码块（CODE 围栏岛屿）：浏览态语法高亮 + 点击进入原生编辑。
 
@@ -438,6 +541,25 @@ def render_code_block(
               方向键/点击恢复（外面没有其它行可落光标）；
             - 行数超过 _PLAIN_SIMPLE_EDIT_LINES 时，编辑态改用**单层可见编辑框**
               （不再把高亮层垫在下面），见 `_build_edit_body` 的性能说明。
+        code_diff_marks: 对比视图里**代码逻辑行**的差异标记，{行号: "added" |
+            "removed" | "modified"}。行号是 `code.split("\\n")` 的下标（与行号列
+            同一坐标系），不是文档行号 —— 纯文本文档整篇只有一个文档行，块级
+            染色无法表达"哪一行不同"（见 `diff_line_palette`）。
+        code_diff_gaps: 对侧有、本侧没有的行，{行号: [间隙高度, ...]}（-1 = 首行之前）。
+            浏览态在对齐位置插入等高空白行，让两侧同一处差异落在同一水平线上；
+            编辑态不插（见 `_read_column`）。
+            取值沿用 App 的 `compute_diff_for_editors` 原样结构：块这里只用**列表长度**
+            （= 需要几行占位），高度由代码行自身行高决定 —— 代码块的行高与段落行高
+            不是同一个值，照搬 30px 会让两侧越往下越错位。
+        diff_side: 0 = 左（比较源 / 删除侧），1 = 右（比较目标 / 新增侧）。
+            只影响 `modified` 行取红还是取绿。
+        code_diff_ranges: 行内字符级变更区间，{行号: [(起, 止), ...]}（只有"改行"
+            才有）。叠加在行底色之上，说明"这行里改了哪几个字"——只有整行红绿时，
+            一行 80 字符里改 3 个字与整行重写看起来一模一样。
+        is_selected: 本块是否落在「向外选区」（浏览态拖选 / Shift+方向键）内。
+            **整块参与**：围栏块在选区里是原子单元（见 `_build_highlight_map` 的
+            说明），没有"代码里第几个字符被选中"这种东西，所以这里只吃布尔值，
+            选中即整块着色（逐行铺一条选中底色）。
     """
     c = _current_colors()
     code = line.segments[0].text if line.segments else ""
@@ -528,6 +650,8 @@ def render_code_block(
     gutter_w = max(26, round(digits * code_size * 0.5) + Spacing.LG)
     gutter_bg = ft.Colors.with_opacity(0.18 if is_dark else 0.04, c.text)
     border_color = ft.Colors.with_opacity(0.08 if is_dark else 0.06, c.text)
+    # 对比视图的行级配色表：只有拿到行级标记时才构造（普通文档零开销、不取色）
+    diff_palette = diff_line_palette(c, diff_side) if code_diff_marks else None
 
     # 代码文本的可用宽度（点击定位算折行点用，与浏览态的实际排版宽度同源）。
     # 减去的两段 Spacing.MD 是：行号列与代码之间的 Row spacing、代码列右缘的行内边距。
@@ -689,7 +813,9 @@ def render_code_block(
 
     # ============================ 浏览态 ============================
 
-    def _gutter_cell(n: int, active: bool = False) -> ft.Container:
+    def _gutter_cell(
+        n: int, active: bool = False, mark: str | None = None, selected: bool = False
+    ) -> ft.Container:
         """行号单元格：固定列宽 + 顶右对齐 + 行号底色（同列拼接成"装订线"色带）。
 
         height=text_h 固定为**一个视觉行**的高度，不由交叉轴拉伸决定：
@@ -724,8 +850,19 @@ def render_code_block(
 
         active=True（编辑态里光标所在逻辑行）时行号提亮成强调色：VSCode/Typora
         都有的"当前行行号高亮"，编辑时不必数行数。纯静态渲染，无额外事件。
+
+        mark：对比视图里本行的差异标记。非空时在行号列**左缘**画一条 3px 标记条
+        （VSCode 的 gutter indicator）。绘制在行号单元格的左边框上而不是另起一列：
+        边框画在盒子内部、不改变单元格宽度，行号仍右对齐，代码列 x 也不动 ——
+        加一整列会让"浏览态与编辑态文字同 x"那条不变量失效（编辑框 content_padding
+        是按 gutter_w 算的）。
+
+        selected：整块落在向外选区里。此时行号列**不铺自己的色带**（`bgcolor=None`），
+        由行容器的选中底色贯通整行 —— 两个来源同时上色会在行号列叠出一块深浅不同的
+        色带，看起来像"代码被选中、行号没被选中"。
         """
         num_color = c.link if active else ft.Colors.with_opacity(0.55, c.muted)
+        bar = diff_palette.get(mark, ("", ""))[1] if (diff_palette and mark) else ""
         return ft.Container(
             content=ft.Text(
                 value=str(n),
@@ -741,9 +878,19 @@ def render_code_block(
             ),
             width=gutter_w,
             height=text_h,
-            bgcolor=ft.Colors.with_opacity(0.26, c.link) if active else gutter_bg,
-            # 装订线：行号列与代码之间一条 1px 竖线，桌面编辑器惯用的分栏提示
-            border=only_border(right=ft.BorderSide(1, border_color)),
+            # 选中（整块在向外选区里）时不铺自己的色带，让行容器的选中底色贯通整行
+            # —— 否则行号列比代码列多一层半透明灰，"整块被选中"就变成两段不同颜色。
+            bgcolor=(
+                ft.Colors.with_opacity(0.26, c.link)
+                if active
+                else (None if selected else gutter_bg)
+            ),
+            # 装订线：行号列与代码之间一条 1px 竖线，桌面编辑器惯用的分栏提示；
+            # 左缘那条 3px 是对比视图的差异标记条（无标记时不存在）
+            border=only_border(
+                right=ft.BorderSide(1, border_color),
+                left=ft.BorderSide(3, bar) if bar else None,
+            ),
             alignment=ft.Alignment.TOP_RIGHT,
             padding=ft.Padding.only(top=Spacing.XS, right=Spacing.MD),
         )
@@ -808,6 +955,16 @@ def render_code_block(
         base = max(0, min(int(caret[0]), len(text)))
         return text.count("\n", 0, base)
 
+    def _nowrap_fill_width() -> float:
+        """不折行模式下占位行要撑的宽度：按最长一行量出来。
+
+        不折行的浏览态把整列包在横向滚动容器里，父级宽度无界 → 不能用 `expand`，
+        占位行只能给固定宽度。宽度取最长行（与编辑框的算法同源，见
+        `_build_edit_body` 里那段说明），短了会让占位条在长行下方提前断掉。
+        """
+        longest = max(code.split("\n"), key=len, default="")
+        return max(_EDIT_MIN_WIDTH, _measure_mono_width(longest, code_size))
+
     def _read_column() -> ft.Column:
         """高亮正文列：逐逻辑行高亮渲染，折行由 Flutter 按容器宽度原生完成。
 
@@ -820,15 +977,88 @@ def render_code_block(
 
         行号列在编辑态额外高亮光标所在逻辑行（见 `_gutter_cell`）——本层是两态
         共用的，所以"当前行"信息只能在这里算，不能在两处各写一份。
+
+        对比视图（`code_diff_marks` 非空）在此层做两件事，都是**行级**的：
+        - 逐行底色 + 行号列标记条（见 `diff_line_palette`）；
+        - 插入占位行，让两侧同一处差异落在同一水平线上。占位行只在**浏览态**插入：
+          编辑态是原生 `TextField`，它的文本是连续的、无法在中间留空行，插了反而
+          会让底色与字形错位（文本上移、色块留在原处）。所以进编辑时对齐暂停、
+          退出编辑立即恢复——与"编辑时失去高亮"（大文件单层态）同一取舍。
         """
         active_line = caret_line if is_editing else -1
         rows: list[ft.Control] = []
+        gap_rows = code_diff_gaps if (code_diff_gaps and not is_editing) else None
+        # 选中底色：只在**浏览态**铺。编辑态里可见选区由原生编辑框自己画
+        # （`selection_color`），底层再叠一层会在光标闪烁时露出双重色块。
+        # 取色走 `selection_highlight_bg()`——与段落/标题的向外选区同一支取色口，
+        # 整块选中与"选中一段正文"在视觉上必须是同一个颜色。
+        sel_bg = selection_highlight_bg() if (is_selected and not is_editing) else ""
+
+        def _gap_row(bg: str) -> ft.Control:
+            """对侧有、本侧没有的行：等高空白占位，托一层更浅的差异底色。"""
+            return ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Container(
+                            width=gutter_w,
+                            height=text_h,
+                            bgcolor=gutter_bg,
+                            border=only_border(right=ft.BorderSide(1, border_color)),
+                        ),
+                        # 折行模式 expand 吃满剩余宽度；不折行模式父级宽度无界，
+                        # flex 子项会报错，改为按最长行量出的固定宽度。
+                        (
+                            ft.Container(height=text_h, expand=True)
+                            if wrap
+                            else ft.Container(height=text_h, width=_nowrap_fill_width())
+                        ),
+                    ],
+                    spacing=Spacing.MD,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+                bgcolor=bg,
+                padding=ft.Padding.only(right=Spacing.MD),
+            )
+
+        def _emit_gaps(after_idx: int) -> None:
+            if not gap_rows:
+                return
+            # 只取列表长度（= 占位行数），高度由本块行高决定（见 Args 的说明）
+            count = len(gap_rows.get(after_idx) or ())
+            for _ in range(count):
+                rows.append(_gap_row(diff_palette["gap"][0]))
+
+        # 首行之前：对侧在开头就有额外行
+        _emit_gaps(-1)
+
         for i, spec in enumerate(highlight_lines(code, lang)):
-            spans = [
-                ft.TextSpan(text=t, style=_span_style(_syn_color(c, k), code_size))
-                for t, k in spec
-                if t
-            ]
+            mark = code_diff_marks.get(i) if code_diff_marks else None
+            # 无标记 / equal 行取 ("", "")，即不加任何底色（与普通文档逐字一致）
+            row_bg = diff_palette.get(mark, ("", ""))[0] if (diff_palette and mark) else ""
+            # 行内字符级强调：只在"改行"上叠加（纯增 / 纯删整行就是变更，不需要再细）
+            ranges = (
+                code_diff_ranges.get(i)
+                if (code_diff_ranges and mark == "modified")
+                else None
+            )
+            if ranges:
+                emph_bg = ft.Colors.with_opacity(0.30, diff_palette["modified"][1])
+                spans = [
+                    ft.TextSpan(
+                        text=t,
+                        style=_span_style(
+                            _syn_color(c, k), code_size, emph_bg if emph else None
+                        ),
+                    )
+                    for t, k, emph in _emphasize_spec(spec, ranges)
+                    if t
+                ]
+            else:
+                spans = [
+                    ft.TextSpan(text=t, style=_span_style(_syn_color(c, k), code_size))
+                    for t, k in spec
+                    if t
+                ]
             if not spans:
                 # 空行：给一个空格 span 撑出与普通行等高的行盒，否则行高塌陷会让
                 # 行号与代码逐行错位（行号单元格高度恒为 text_h，行高由代码行决定）
@@ -841,7 +1071,12 @@ def render_code_block(
                 ft.Container(
                     content=ft.Row(
                         controls=[
-                            _gutter_cell(i + 1, active=(i == active_line)),
+                            _gutter_cell(
+                                i + 1,
+                                active=(i == active_line),
+                                mark=mark,
+                                selected=bool(sel_bg),
+                            ),
                             ft.Text(
                                 spans=spans,
                                 style=_span_style(c.code_block_fg, code_size),
@@ -858,6 +1093,12 @@ def render_code_block(
                         # STRETCH 会把子控件高度约束成 infinity（整行高度 inf）。
                         vertical_alignment=ft.CrossAxisAlignment.START,
                     ),
+                    # 底色优先级：**选中 > 对比差异**。
+                    # - 选中：整行铺满（含行号列），因为围栏块是原子选区单元——按字形
+                    #   铺会漏掉空代码行与行尾空白，"整块被选中"读不出来；
+                    # - 对比视图的差异底色同样整行着色（与 VSCode 一致）；
+                    # - 普通文档两者都为空串 → 不设底色，行为与加 diff 之前完全相同。
+                    bgcolor=sel_bg or row_bg or None,
                     # ink=False：行内不要水波（配合 SelectionArea 拖选，保持"文本"观感）
                     ink=False,
                     # 代码列右缘的行内边距：块容器已不留水平内边距（行号色带要贴左边框），
@@ -870,6 +1111,7 @@ def render_code_block(
                     on_click=lambda e, i=i: _click_row(i, e),
                 )
             )
+            _emit_gaps(i)
         return ft.Column(controls=rows, spacing=0, tight=True)
 
     def _build_read_body() -> ft.Control:

@@ -27,6 +27,39 @@ class UnsupportedFileType(ValueError):
     """不是可编辑的文本类型（调用方通常转交系统默认程序或提示用户）。"""
 
 
+def parse_document_text(
+    path: str,
+    text: str,
+    *,
+    eol: str = "\n",
+    encoding: str = "utf-8",
+) -> Document:
+    """把**已在内存里的文本**按 `path` 的类型解析成文档。
+
+    与 `load_document` 的分工：那个负责"读盘 + 解析"，这个只负责"解析"，供
+    内容来源不是磁盘的行程复用——典型是**对比标签**：两侧内容可能来自尚未保存
+    的标签页，不能为了拿文本再去读盘（会把用户的未保存修改比没）。
+
+    为什么必须按类型分派而不是一律 `parse_markdown`：对比视图和普通编辑视图
+    必须是**同一种渲染结果**。把 .py 当 Markdown 解析，`# 注释` 会变成一级标题、
+    `- item` 变成列表、代码失去语法高亮——同一个文件在两个标签里长得完全不一样，
+    差异也无从看起。
+
+    未知类型（`lang_for_path` 返回 None）按 Markdown 解析：对话框理论上已经拦住了
+    这类文件，这里只是兜底，不能因为一个意外的扩展名让对比整条链路报错。
+    """
+    lang = text_formats.lang_for_path(path)
+    if lang is not None and not text_formats.is_markdown_path(path):
+        doc = parser.parse_plain_text(text, lang)
+        doc.eol = eol or "\n"
+        doc.encoding = encoding or "utf-8"
+        doc.file_path = path
+        return doc
+    doc = parser.parse_markdown(text)
+    doc.file_path = path
+    return doc
+
+
 def load_document(path: str) -> Document:
     """读取并解析 `path`，返回可直接挂到标签页的文档。
 
@@ -39,12 +72,6 @@ def load_document(path: str) -> Document:
     if lang is None:
         raise UnsupportedFileType(f"不支持的文件类型：{path}")
     if text_formats.is_markdown_path(path):
-        doc = parser.parse_markdown(read_text(path))
-        doc.file_path = path
-        return doc
+        return parse_document_text(path, read_text(path))
     text, eol, encoding = read_text_detailed(path)
-    doc = parser.parse_plain_text(text, lang)
-    doc.eol = eol
-    doc.encoding = encoding
-    doc.file_path = path
-    return doc
+    return parse_document_text(path, text, eol=eol, encoding=encoding)

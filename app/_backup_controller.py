@@ -67,7 +67,7 @@ from app._contracts import BackupEnv
 
 
 class _FileChange(enum.IntEnum):
-    """文件变化事件类型（与 watchfiles.Change 同语义，去除 watchfiles 依赖）。"""
+    """文件变化事件类型"""
 
     added = 1
     modified = 2
@@ -322,9 +322,7 @@ def build_backup_controller(ctx: BackupEnv):
             except Exception:
                 continue
 
-    async def _run_watcher(
-        paths: frozenset[str], stop_event: asyncio.Event
-    ):
+    async def _run_watcher(paths: frozenset[str], stop_event: asyncio.Event):
         """运行 watchdog 监控器，将文件变化事件分发到处理函数。
 
         watchdog.Observer 在后台线程产生事件，经 asyncio.Queue 桥接回
@@ -341,11 +339,7 @@ def build_backup_controller(ctx: BackupEnv):
         # 目标文件集合（大小写不敏感比较，Windows 兼容）
         targets = {os.path.normcase(os.path.abspath(p)) for p in paths}
         dirs = sorted(
-            {
-                os.path.dirname(p)
-                for p in paths
-                if os.path.isdir(os.path.dirname(p))
-            }
+            {os.path.dirname(p) for p in paths if os.path.isdir(os.path.dirname(p))}
         )
 
         if not dirs:
@@ -382,7 +376,7 @@ def build_backup_controller(ctx: BackupEnv):
                     _emit(_FileChange.deleted, event.src_path)
 
             def on_moved(self, event):
-                # 移动 = 旧路径删除 + 新路径创建（与 watchfiles 同语义）
+                # 移动 = 旧路径删除 + 新路径创建
                 if event.is_directory:
                     return
                 if _match(event.src_path):
@@ -400,9 +394,7 @@ def build_backup_controller(ctx: BackupEnv):
         try:
             while not stop_event.is_set():
                 try:
-                    change_type, path = await asyncio.wait_for(
-                        queue.get(), timeout=0.5
-                    )
+                    change_type, path = await asyncio.wait_for(queue.get(), timeout=0.5)
                 except TimeoutError:
                     continue
                 _process_file_changes([(change_type, path)], _FileChange)
@@ -435,7 +427,7 @@ def build_backup_controller(ctx: BackupEnv):
         return frozenset(paths)
 
     def _process_file_changes(changes, Change):
-        """处理文件变化事件（watchfiles 同语义的事件元组，当前由 watchdog 产生）。
+        """处理文件变化事件。
 
         - 仅处理 modified / deleted 事件（忽略 added 等无关事件）
         - 通过 mtime 比较过滤自己保存产生的事件（save_doc 已更新 mtime）
@@ -469,8 +461,11 @@ def build_backup_controller(ctx: BackupEnv):
             # 自我写入过滤：任一副本保存过（mtime 最大值）即视为自身写入。
             # 多副本只比第一个副本会误报——另一副本保存后 mtime 更新，
             # 本副本仍是旧值，会被误判为外部修改。
-            mtimes = [t.get("_last_known_mtime") for _, t in matches
-                      if t.get("_last_known_mtime") is not None]
+            mtimes = [
+                t.get("_last_known_mtime")
+                for _, t in matches
+                if t.get("_last_known_mtime") is not None
+            ]
             last_mtime = max(mtimes) if mtimes else None
             if last_mtime is not None:
                 if change_type == Change.deleted:
@@ -516,16 +511,18 @@ def build_backup_controller(ctx: BackupEnv):
 
     def _show_external_change_dialog(path: str, tab_index: int):
         """弹出外部修改重载确认对话框。"""
-        ctx.set_file_dialog({
-            "mode": "confirm",
-            "title": "文件已被外部修改",
-            "message": f"{os.path.basename(path)} 已在外部被修改。\n是否重新加载最新内容？\n（选择「保留本地版本」将用本地内容覆盖外部修改）",
-            "confirm_label": "重新加载",
-            "cancel_label": "保留本地版本",
-            "action": "reload_external",
-            "target": path,
-            "target_tab_index": tab_index,
-        })
+        ctx.set_file_dialog(
+            {
+                "mode": "confirm",
+                "title": "文件已被外部修改",
+                "message": f"{os.path.basename(path)} 已在外部被修改。\n是否重新加载最新内容？\n（选择「保留本地版本」将用本地内容覆盖外部修改）",
+                "confirm_label": "重新加载",
+                "cancel_label": "保留本地版本",
+                "action": "reload_external",
+                "target": path,
+                "target_tab_index": tab_index,
+            }
+        )
 
     def start_backup_loop():
         """use_effect 回调：启动自动保存 + 备份 + 外部修改检测三个后台循环。
@@ -670,12 +667,14 @@ def build_backup_controller(ctx: BackupEnv):
         # 新建标签载入备份内容（file_path=None 表示未命名草稿），
         # 在焦点侧组打开（拆分下恢复到正在编辑的那一侧）
         g = 1 if (ctx.split_editor and ctx.active_pane_ref.current == 1) else 0
-        ctx.append_and_activate({
-            "document": doc,
-            "file_path": None,
-            "dirty": doc_has_text(doc),
-            "group": g,
-        })
+        ctx.append_and_activate(
+            {
+                "document": doc,
+                "file_path": None,
+                "dirty": doc_has_text(doc),
+                "group": g,
+            }
+        )
         ctx.set_recovery_open(False)
         ctx.show_snack(f"已恢复草稿（共 {line_count} 行），请确认是否保存")
 
@@ -689,9 +688,7 @@ def build_backup_controller(ctx: BackupEnv):
                 pass
             # 刷新恢复列表：过滤掉已删除的项
             current = ctx.recovery_list or []
-            ctx.set_recovery_list([
-                b for b in current if b.backup_path != backup_path
-            ])
+            ctx.set_recovery_list([b for b in current if b.backup_path != backup_path])
 
     def cleanup_expired_backups():
         """清理过期备份（启动时与定时触发）。返回删除数。"""

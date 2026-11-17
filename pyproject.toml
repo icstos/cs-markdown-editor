@@ -11,7 +11,7 @@ keywords = ["markdown", "editor", "cs-ui", "flet", "wysiwyg", "typora"]
 dependencies = [
     # UI 只声明 cs-ui 这一个门面：它自带受版本约束的 flet 1.1.x，
     # 并把未覆写的 flet 名字透传出来。应用不再直接依赖 flet。
-    "cs-ui>=0.2.0,<0.3",
+    "cs-ui==0.3.1",
     "flet-datatable2==1.1.2",
     "mistune>=3.3.4",
     "pillow>=12.3.0",
@@ -69,16 +69,4 @@ exclude = [
     "docs",
     "*.md",
     "*.log",
-]
-
-[tool.flet.compile]
-app = true
-packages = true
-cleanup = true
-
-[tool.flet.flutter]
-build_args = [
-    "--obfuscate",
-    "--split-debug-info=./debug-symbols",
-    "--tree-shake-icons",
 ]

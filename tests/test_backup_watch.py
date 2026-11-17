@@ -1,7 +1,7 @@
 """外部修改检测（watchdog 桥接）集成测试。
 
 覆盖 app._backup_controller：
-- _FileChange：事件类型枚举（与 watchfiles.Change 同语义）
+- _FileChange：事件类型枚举
 - start_backup_loop → _external_check_loop → _run_watcher 端到端：
   外部修改文件 → 弹重载确认对话框；外部删除 → 弹对话框；
   自我写入（mtime 未变）→ 静默不弹
@@ -65,7 +65,7 @@ async def _wait_for(cond, timeout: float = 8.0) -> bool:
 
 
 def test_file_change_enum_semantics():
-    """事件类型与 watchfiles.Change 同语义（added/modified/deleted）。"""
+    """事件类型"""
     assert _FileChange.added == 1
     assert _FileChange.modified == 2
     assert _FileChange.deleted == 3

@@ -20,16 +20,16 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.file_tree import collect_text_paths
-from services.search import (
+from cs_markdown_editor.services.file_tree import collect_text_paths
+from cs_markdown_editor.services.search import (
     MAX_FILE_SIZE,
     MAX_PER_FILE,
     build_query_regex,
     match_lines,
     search_in_file,
 )
-from views.editor._scroll import build_scroll
-from views.sidebar import _build_preview_spans
+from cs_markdown_editor.views.editor._scroll import build_scroll
+from cs_markdown_editor.views.sidebar import _build_preview_spans
 
 # ---- build_query_regex：4 选项组合 ----
 
@@ -273,10 +273,10 @@ def test_build_preview_spans_empty_raw():
 # ---- 跳转链路向后兼容：jump_to(li, off=None) ----
 
 
-@patch("views.editor._scroll.ui")
+@patch("cs_markdown_editor.views.editor._scroll.ui")
 def test_jump_to_off_none_uses_zero(mock_ft):
     """off=None 退化为 off=0（向后兼容大纲等仅传 li 的调用方）。"""
-    from models.document import BlockType
+    from cs_markdown_editor.models.document import BlockType
     ctx = MagicMock()
     line = MagicMock()
     line.block_type = BlockType.PARAGRAPH  # 非围栏块
@@ -286,10 +286,10 @@ def test_jump_to_off_none_uses_zero(mock_ft):
     ctx.set_cursor.assert_called_once_with(0, 0)
 
 
-@patch("views.editor._scroll.ui")
+@patch("cs_markdown_editor.views.editor._scroll.ui")
 def test_jump_to_with_off_uses_provided_offset(mock_ft):
     """off=int 时跳到精确 raw 偏移。"""
-    from models.document import BlockType
+    from cs_markdown_editor.models.document import BlockType
     ctx = MagicMock()
     line = MagicMock()
     line.block_type = BlockType.PARAGRAPH
@@ -299,10 +299,10 @@ def test_jump_to_with_off_uses_provided_offset(mock_ft):
     ctx.set_cursor.assert_called_once_with(0, 5)
 
 
-@patch("views.editor._scroll.ui")
+@patch("cs_markdown_editor.views.editor._scroll.ui")
 def test_jump_to_fence_falls_back_to_browse_mode(mock_ft):
     """围栏块 fallback 到浏览态（set_cursor_line + set_cursor_li(None)）。"""
-    from models.document import BlockType
+    from cs_markdown_editor.models.document import BlockType
     ctx = MagicMock()
     line = MagicMock()
     line.block_type = BlockType.CODE  # 围栏块
@@ -314,7 +314,7 @@ def test_jump_to_fence_falls_back_to_browse_mode(mock_ft):
     ctx.set_cursor.assert_not_called()
 
 
-@patch("views.editor._scroll.ui")
+@patch("cs_markdown_editor.views.editor._scroll.ui")
 def test_jump_to_out_of_range_li_does_nothing(mock_ft):
     """越界 li 静默返回。"""
     ctx = MagicMock()

@@ -18,7 +18,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.file_tree import poll_fs_changes, scan_files, tree_signature
+from cs_markdown_editor.services.file_tree import poll_fs_changes, scan_files, tree_signature
 
 
 # ---- tree_signature：签名与树内容一一对应 ----

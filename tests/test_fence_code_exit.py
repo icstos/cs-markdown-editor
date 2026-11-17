@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from models.document import BlockType, Document, Line, Segment, SegType
-from views.editor._fence import build_fence
+from cs_markdown_editor.models.document import BlockType, Document, Line, Segment, SegType
+from cs_markdown_editor.views.editor._fence import build_fence
 
 
 class FakeRef:

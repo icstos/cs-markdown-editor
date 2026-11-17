@@ -21,9 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-import app._file_io_ops
-from app._file_io_ops import build_file_io_ops
-from views.sidebar import _resolve_files_root
+import cs_markdown_editor.app as app
+from cs_markdown_editor.app._file_io_ops import build_file_io_ops
+from cs_markdown_editor.views.sidebar import _resolve_files_root
 
 
 @pytest.fixture(autouse=True)

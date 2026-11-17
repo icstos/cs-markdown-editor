@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from services.git.difftext import (
+from cs_markdown_editor.services.git.difftext import (
     build_split_rows,
     parse_single_file_diff,
     parse_unified_diff,
     scan_merge_markers,
     synthetic_added_diff,
 )
-from services.git.models import DiffLineKind
+from cs_markdown_editor.services.git.models import DiffLineKind
 
 
 SINGLE_FILE_DIFF = """\

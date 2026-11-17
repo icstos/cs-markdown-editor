@@ -11,16 +11,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from models.document import SegType, Segment  # noqa: E402
-from utils.file_helpers import file_name  # noqa: E402
-from utils.segment_helpers import (  # noqa: E402
+from cs_markdown_editor.models.document import SegType, Segment  # noqa: E402
+from cs_markdown_editor.utils.file_helpers import file_name  # noqa: E402
+from cs_markdown_editor.utils.segment_helpers import (  # noqa: E402
     MONO_SEGTYPES,
     PREFIX_SEGTYPES,
     WRAP_SYNTAX,
     display_text,
     split_seg_for_display,
 )
-from utils.table_helpers import ALIGN_RE, is_table_separator, join_row, split_row  # noqa: E402
+from cs_markdown_editor.utils.table_helpers import ALIGN_RE, is_table_separator, join_row, split_row  # noqa: E402
 
 
 # ---------------- 常量集合 ----------------

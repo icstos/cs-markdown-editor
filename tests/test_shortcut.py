@@ -22,9 +22,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from services import shortcut
-from services.file_ops import rename_path
-from services.file_tree import collect_text_paths
+from cs_markdown_editor.services import shortcut
+from cs_markdown_editor.services.file_ops import rename_path
+from cs_markdown_editor.services.file_tree import collect_text_paths
 
 # ---- 最小 .lnk 构造（MS-SHLLINK） ----
 

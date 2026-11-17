@@ -16,8 +16,8 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import parse_markdown, reparse_line_atomic
-from views.editor._image import (
+from cs_markdown_editor.parser import parse_markdown, reparse_line_atomic
+from cs_markdown_editor.views.editor._image import (
     _fetch_image_bytes,
     _image_extension,
     _sanitize_filename,
@@ -136,7 +136,7 @@ def test_delete_image_mixed_line_preserves_text():
     doc = parse_markdown("![a](b.png) 文字")
     line = doc.lines[0]
     # 定位 IMAGE 段索引
-    from models.document import SegType
+    from cs_markdown_editor.models.document import SegType
     img_idx = next(i for i, s in enumerate(line.segments)
                    if s.seg_type == SegType.IMAGE)
     ctx, _state = _make_ctx(doc.lines)
@@ -172,7 +172,7 @@ def test_delete_image_equivalent_to_manual_reparse():
     doc1 = parse_markdown(md)
     doc2 = parse_markdown(md)
     line1, line2 = doc1.lines[0], doc2.lines[0]
-    from models.document import SegType
+    from cs_markdown_editor.models.document import SegType
     img_idx = next(i for i, s in enumerate(line1.segments)
                    if s.seg_type == SegType.IMAGE)
     seg = line1.segments[img_idx]

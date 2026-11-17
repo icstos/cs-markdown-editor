@@ -18,8 +18,8 @@ import sys
 # 确保项目根目录在 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import parse_markdown  # noqa: E402
-from models.document import SegType  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.models.document import SegType  # noqa: E402
 
 
 def _first_task_line(text: str):
@@ -191,7 +191,7 @@ def test_enter_on_task_with_content_splits():
     before.strip() = "- [ ] task" 不在 ("- [ ]", "- [x]", "- [X]") 中，
     不会触发退出分支，走默认分割逻辑。
     """
-    from views.editor._helpers import _next_line_raw
+    from cs_markdown_editor.views.editor._helpers import _next_line_raw
     line = _first_task_line("- [ ] 有内容\n")
     # 模拟光标在内容末尾
     prefix_raw = line.segments[0].raw
@@ -211,7 +211,7 @@ def test_backspace_at_task_content_start_degrades_to_list():
 
     模拟 backspace_core 的智能降级逻辑。
     """
-    from views.editor._helpers import _RE_UO_MARKER, _inline_content
+    from cs_markdown_editor.views.editor._helpers import _RE_UO_MARKER, _inline_content
     line = _first_task_line("- [ ] 有内容\n")
     assert line.task is True
     prefix_raw = line.segments[0].raw
@@ -238,7 +238,7 @@ def test_backspace_on_empty_task_degrades_to_list():
 
     空内容时降级为 "- "（空普通列表项），而非走默认删除破坏前缀字符 "]"。
     """
-    from views.editor._helpers import _RE_UO_MARKER, _inline_content
+    from cs_markdown_editor.views.editor._helpers import _RE_UO_MARKER, _inline_content
     line = _first_task_line("- [ ] \n")
     assert line.task is True
     prefix_raw = line.segments[0].raw if line.segments else ""

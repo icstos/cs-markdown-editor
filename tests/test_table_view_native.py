@@ -25,10 +25,10 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models.document import BlockType, Line, Segment, SegType
-from parser import parse_markdown
+from cs_markdown_editor.models.document import BlockType, Line, Segment, SegType
+from cs_markdown_editor.parser import parse_markdown
 from tests.harness import RenderHarness, invoke
-from views import table_view as tv
+from cs_markdown_editor.views import table_view as tv
 
 CONTENT_WIDTH = 800.0
 # 4 列（左 / 中 / 左 / 右）、3 行（1 表头 + 2 数据）

@@ -12,9 +12,9 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import parser
+import cs_markdown_editor.parser as parser
 
-from app._split_editor import build_split_editor
+from cs_markdown_editor.app._split_editor import build_split_editor
 
 
 def _make_ctx(active_pane=0, diff_active_pane=0, split_editor=False,

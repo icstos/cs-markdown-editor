@@ -12,8 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from services import file_ops  # noqa: E402
-from services.file_io import read_text, write_text  # noqa: E402
+from cs_markdown_editor.services import file_ops  # noqa: E402
+from cs_markdown_editor.services.file_io import read_text, write_text  # noqa: E402
 
 
 # ---------------- file_io ----------------

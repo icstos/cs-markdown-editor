@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from services.shortcuts import ACTION_REGISTRY, DEFAULT_SHORTCUTS  # noqa: E402
+from cs_markdown_editor.services.shortcuts import ACTION_REGISTRY, DEFAULT_SHORTCUTS  # noqa: E402
 
-from views.key_bindings import _GLOBAL_ACTIONS  # noqa: E402
+from cs_markdown_editor.views.key_bindings import _GLOBAL_ACTIONS  # noqa: E402
 
 # 有意不走 ShortcutManager 的项：
 # - toggle_raw：由编辑器自身处理（EditorActions.toggle_raw），两层的默认键不同

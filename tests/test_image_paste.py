@@ -24,8 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PIL import Image as PILImage
 from ui import ft
 
-from parser import parse_markdown
-from views.editor._image import (
+from cs_markdown_editor.parser import parse_markdown
+from cs_markdown_editor.views.editor._image import (
     _is_image_path,
     _rel_url,
     _resolve_assets_dir,
@@ -199,7 +199,7 @@ def test_paste_unsaved_doc_snackbar_called_when_page_available(tmp_path):
 
     用 PropertyMock patch ft.context.page property，模拟 Flet 上下文可用。
     patch 目标是 `services.ui_feedback.show_snack`：`_image.py` 在函数内
-    `from services.ui_feedback import show_snack`，模块上并没有这个名字，
+    `from cs_markdown_editor.services.ui_feedback import show_snack`，模块上并没有这个名字，
     只有 patch 真正的定义处才能截住这次调用。
     """
     from unittest.mock import PropertyMock
@@ -211,7 +211,7 @@ def test_paste_unsaved_doc_snackbar_called_when_page_available(tmp_path):
     cbs = build_image(ctx)
     snack_calls: list[str] = []
     fake_page = MagicMock()
-    with patch("services.ui_feedback.show_snack", lambda page, msg: snack_calls.append(msg)), \
+    with patch("cs_markdown_editor.services.ui_feedback.show_snack", lambda page, msg: snack_calls.append(msg)), \
          patch.object(ft.context.__class__, "page", new_callable=PropertyMock,
                       return_value=fake_page):
         handled = asyncio.run(cbs["paste_image_from_clipboard"]())

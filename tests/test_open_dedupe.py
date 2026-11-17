@@ -13,9 +13,9 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import app._file_io_ops
-import parser
-from app._file_io_ops import build_file_io_ops
+import cs_markdown_editor.app as app
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.app._file_io_ops import build_file_io_ops
 
 
 def _make_ctx(tabs, split_editor=False, active_pane=0, active_left=0, active_right=0):

@@ -1,4 +1,4 @@
-"""app._tab_helpers 纯函数单元测试。
+"""cs_markdown_editor.app._tab_helpers 纯函数单元测试。
 
 覆盖从 App 闭包剥离的无状态标签页助手：
 tab_is_dirty / tab_paths / doc_has_text / is_blank_untitled / tab_display_name。
@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app._tab_helpers import (
+from cs_markdown_editor.app._tab_helpers import (
     doc_has_text,
     group_indices,
     is_blank_untitled,
@@ -20,7 +20,7 @@ from app._tab_helpers import (
     tab_is_dirty,
     tab_paths,
 )
-from models.document import BlockType, Document, Line
+from cs_markdown_editor.models.document import BlockType, Document, Line
 
 
 def _make_doc(*raws: str) -> Document:

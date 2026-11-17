@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from utils.text_layout import (  # noqa: E402
+from cs_markdown_editor.utils.text_layout import (  # noqa: E402
     FONT_MAIN,
     FONT_MONO,
     _FLET_DEFAULT_LETTER_SPACING,
@@ -168,11 +168,11 @@ def test_measure_clear_cache_then_remeasure_same():
 def test_styles_and_text_layout_font_constants_agree():
     """`styles.FONT_*` 与 `utils.text_layout.FONT_*` 必须逐字相同。
 
-    两者是各自独立声明的（为避免循环依赖，text_layout 不 import styles）。
+    两者是各自独立声明的（为避免循环依赖，text_layout 不 import cs_markdown_editor.styles）。
     一旦漂移，渲染层用 styles 的族名、测量层查 text_layout 的路径表，
     `_FONT_FILES` 就会查不到该族 → 测量静默返回 0.0，光标 X 全错。
     """
-    import styles
+    import cs_markdown_editor.styles as styles
 
     assert styles.FONT_MAIN == FONT_MAIN
     assert styles.FONT_MONO == FONT_MONO

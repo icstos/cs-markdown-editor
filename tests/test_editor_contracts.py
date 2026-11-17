@@ -16,10 +16,11 @@ import dataclasses
 import re
 from pathlib import Path
 
-from views.editor._context import EditorContext
+from cs_markdown_editor.views.editor._context import EditorContext
 
 ROOT = Path(__file__).resolve().parent.parent
-EDITOR = ROOT / "views" / "editor"
+SRC = ROOT / "src" / "cs_markdown_editor"
+EDITOR = SRC / "views" / "editor"
 CONTRACTS_SRC = (EDITOR / "_contracts.py").read_text(encoding="utf-8")
 
 FIELDS = {f.name for f in dataclasses.fields(EditorContext)}

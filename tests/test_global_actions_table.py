@@ -22,7 +22,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC_PATH = ROOT / "views" / "key_bindings.py"
+SRC = ROOT / "src" / "cs_markdown_editor"
+SRC_PATH = SRC / "views" / "key_bindings.py"
 SRC = SRC_PATH.read_text(encoding="utf-8")
 LINES = SRC.splitlines()
 TREE = ast.parse(SRC)

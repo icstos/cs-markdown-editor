@@ -19,10 +19,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-from models.document import SegType  # noqa: E402
-from parser import parse_markdown  # noqa: E402
-from utils.segment_helpers import WRAP_SYNTAX  # noqa: E402
-from views.editor._inline_format import _compute_wrap_toggle  # noqa: E402
+from cs_markdown_editor.models.document import SegType  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.utils.segment_helpers import WRAP_SYNTAX  # noqa: E402
+from cs_markdown_editor.views.editor._inline_format import _compute_wrap_toggle  # noqa: E402
 
 
 def _toggle(raw: str, a_off: int, b_off: int, fmt: str) -> tuple[str, tuple]:

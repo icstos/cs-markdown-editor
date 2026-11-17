@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from services.shortcuts import (  # noqa: E402
+from cs_markdown_editor.services.shortcuts import (  # noqa: E402
     ACTION_REGISTRY,
     DEFAULT_SHORTCUTS,
     ShortcutManager,

@@ -23,7 +23,7 @@
 
 | 任务场景 | 对应代码目录/核心文件 | 必须前置阅读的文档 |
 |---|---|---|
-| 入口/窗口/主题/字体变更 | `main.py`、`app/__init__.py` | `README.md` |
+| 入口/窗口/主题/字体变更 | `main.py`、`src/cs_markdown_editor/bootstrap.py`、`src/cs_markdown_editor/app/__init__.py` | `README.md` |
 | 架构分层调整/大重构 | `app/`、`views/editor/`、`core/` | `.trae/documents/架构重构收尾计划-最终版.md`、`.trae/documents/重构架构说明书.md`、`README.md`「架构设计」 |
 | 光标/IME 输入体验修改 | `views/editor/_cursor.py`、`views/cursor_layer.py`、`views/editor/_focus.py` | `.trae/documents/fix-stack-overlay-bugs.md`、`.trae/documents/input-layer-simplification-plan.md`、`.trae/documents/stack-cursor-refactor-plan.md` |
 | 光标导航（方向键/Home/End/翻页/记忆列） | `views/editor/_navigation.py`、`views/key_bindings.py` | `.trae/documents/cursor-selection-system-refinement.md` |
@@ -60,14 +60,14 @@
 
 **分层依赖顺序（上层 → 下层，禁止反向）**：
 
-1. `main.py` — 入口：注册字体/主题、`page.render(App)`
-2. `app/` — App 组件层（`AppContext` 状态容器 + 控制器模式）：唯一持有 `page` 全局操作权的层（`page.on_keyboard_event` 绑定、`page.theme_mode` 同步写入、对话框/overlay 挂载）
-3. `views/` — 声明式视图层：`views/editor/`（MarkdownEditor 根组件包，`EditorContext` + 工厂模式，约 20 个 `_*.py` 工厂模块）+ 顶层视图组件（`sidebar.py`/`tab_bar.py`/`line_view.py`/`rendered_line.py`/`cursor_layer.py`/`pixel_layout.py`/`segment_view.py`/`key_bindings.py` 等）
-4. `core/` — 编辑器核心状态契约：`actions.py`（EditorActions dataclass，editor → App/key_bindings 动作契约）、`cursor.py`（CursorState）、`history.py`（EditHistory）
-5. `parser/` — Markdown 解析层（包内单向 DAG：`_engine` ← `inline` ← `block` ← `reparse` ← `selection`；`serialize` ← `_engine`）
-6. `models/` — 数据模型层（`@ft.observable`：Segment/Line/Document 三级状态）
-7. `services/` — 业务逻辑层（shortcuts/file_io/backup/recovery/export/file_ops/clipboard_html 等）
-8. `utils/` — 通用工具层（`segment_helpers`/`text_layout`/`table_helpers`/`file_helpers`，**无任何项目内依赖**）
+1. `main.py` — 启动引导（sys.path）；实现见 `src/cs_markdown_editor/bootstrap.py`：注册字体/主题、`page.render(App)`
+2. `src/cs_markdown_editor/app/` — App 组件层（`AppContext` 状态容器 + 控制器模式）：唯一持有 `page` 全局操作权的层（`page.on_keyboard_event` 绑定、`page.theme_mode` 同步写入、对话框/overlay 挂载）
+3. `src/cs_markdown_editor/views/` — 声明式视图层：`views/editor/`（MarkdownEditor 根组件包，`EditorContext` + 工厂模式，约 20 个 `_*.py` 工厂模块）+ 顶层视图组件（`sidebar.py`/`tab_bar.py`/`line_view.py`/`rendered_line.py`/`cursor_layer.py`/`pixel_layout.py`/`segment_view.py`/`key_bindings.py` 等）
+4. `src/cs_markdown_editor/core/` — 编辑器核心状态契约：`actions.py`（EditorActions dataclass，editor → App/key_bindings 动作契约）、`cursor.py`（CursorState）、`history.py`（EditHistory）
+5. `src/cs_markdown_editor/parser/` — Markdown 解析层（包内单向 DAG：`_engine` ← `inline` ← `block` ← `reparse` ← `selection`；`serialize` ← `_engine`）
+6. `src/cs_markdown_editor/models/` — 数据模型层（`@ft.observable`：Segment/Line/Document 三级状态）
+7. `src/cs_markdown_editor/services/` — 业务逻辑层（shortcuts/file_io/backup/recovery/export/file_ops/clipboard_html 等）
+8. `src/cs_markdown_editor/utils/` — 通用工具层（`segment_helpers`/`text_layout`/`table_helpers`/`file_helpers`，**无任何项目内依赖**）
 9. `config/` — 配置层（DEFAULT_SETTINGS/load/save 深合并）+ `styles.py`（主题配色与排版常量，根目录）
 
 **禁止的调用规则**：
@@ -161,7 +161,7 @@
   `config/app_meta.py`（唯一来源）。后果：外链或版本改了但某个入口忘了改，两处静默漂移，
   没有任何测试能发现不一致。
 
-- 禁止延迟 `utils.log.setup()` 的安装位置：必须在 `main.py` 顶部、**早于 `import ui` / `import app`** 执行（`LOG = setup()`）。这是「最早安装」原则——项目自己的模块在导入期就可能抛异常，日志装晚了这些异常就没有任何痕迹。后果：启动即崩时零现场，只能靠逐段注释代码二分。
+- 禁止延迟 `utils.log.setup()` 的安装位置：必须在 `src/cs_markdown_editor/bootstrap.py` 顶部、**早于 `import ui` / `import app`** 执行（`LOG = setup()`）。这是「最早安装」原则——项目自己的模块在导入期就可能抛异常，日志装晚了这些异常就没有任何痕迹。后果：启动即崩时零现场，只能靠逐段注释代码二分。
 - 禁止移除 `utils/log.py::attach_flet` 对 `page.run_task` 的异常现场包装（`_instrument_run_task` / `_report_task_failure`）：flet 的 `page.run_task` 把协程异常 **re-raise 在 `concurrent.futures` 的完成回调里**（该模块只打一行 ERROR，既不写现场文件、logger 名字也不含 crash），而这是本项目最常用的异步入口（打开/保存/导出/自动保存全走它）。后果：所有 `page.run_task` 内的异常重新退化成「只有一行日志、无线索」。
 - 禁止在热路径（逐字符输入 / 每行渲染 / 滚动回调 / 光标移动）打重活日志：日志虽走 `QueueHandler` 入队（写盘在后台线程、调用方 O(1)），但**入队之前的参数求值在调用方线程执行**。因此热路径禁止 `log.debug(f"...")` 形式的 f-string（**无条件先求值**，即使级别过滤掉了也白算）、禁止 `repr(document)` / `json.dumps(...)` 这类为了打日志而遍历大对象、禁止逐行/逐段打日志。需要时用惰性参数形式 `log.debug("x=%s", x)`，并只在排查期临时调 `DEBUG`。
 
@@ -186,7 +186,7 @@
    # 或仅校验已装版本满足约束：
    pip check
    ```
-2. **单元测试执行**（`pyproject.toml` 已配 `pythonpath=["."]`、`testpaths=["tests"]`）：
+2. **单元测试执行**（`pyproject.toml` 已配 `pythonpath=["src"]`、`testpaths=["tests"]`）：
    ```bash
    python -m pytest tests/ -q -p no:cacheprovider
    # 单模块：python -m pytest tests/test_parser_roundtrip.py -q

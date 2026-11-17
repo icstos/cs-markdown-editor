@@ -17,9 +17,9 @@ import sys
 # 确保项目根目录在 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Line, Segment, SegType
-from views._spans import build_raw_to_flat_map, slice_spans_for_visual_line
-from views.pixel_layout import (
+from cs_markdown_editor.models.document import BlockType, Line, Segment, SegType
+from cs_markdown_editor.views._spans import build_raw_to_flat_map, slice_spans_for_visual_line
+from cs_markdown_editor.views.pixel_layout import (
     LineLayoutCache,
     VisualLine,
     _compute_wrap_width,
@@ -288,7 +288,7 @@ def test_cache_long_line_wraps():
     assert layout is not None
     assert layout.num_vlines > 1, f"长行应换行 >1 vline，实际 {layout.num_vlines}"
     # 高度 = num_vlines * text_h + pad
-    from styles import block_text_size
+    from cs_markdown_editor.styles import block_text_size
     base = block_text_size(BlockType.PARAGRAPH, 0)
     expected_h = layout.num_vlines * base * 1.6 + 4.0  # pad_top+pad_bottom=2+2
     assert abs(layout.height - expected_h) < 0.01, \

@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils.code_indent import INDENT, apply_indent  # noqa: E402
+from cs_markdown_editor.utils.code_indent import INDENT, apply_indent  # noqa: E402
 
 
 def test_indent_unit_is_four_spaces():

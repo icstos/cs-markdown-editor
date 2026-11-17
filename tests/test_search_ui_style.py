@@ -22,9 +22,9 @@ from tests._flet_internals import Component
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.settings as cs
-from app import App
-from styles import Radius, get_colors
+import cs_markdown_editor.config.settings as cs
+from cs_markdown_editor.app import App
+from cs_markdown_editor.styles import Radius, get_colors
 from tests.harness import RenderHarness, walk
 
 _SANDBOX = Path(__file__).resolve().parent / ".search-style-sandbox"

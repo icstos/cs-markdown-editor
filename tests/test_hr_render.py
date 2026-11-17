@@ -17,9 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ui import ft  # noqa: E402
 
-from parser import parse_markdown  # noqa: E402
-from styles import _current_colors  # noqa: E402
-from views.segment_view import raw_to_visible_spans  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.styles import _current_colors  # noqa: E402
+from cs_markdown_editor.views.segment_view import raw_to_visible_spans  # noqa: E402
 
 
 def _span_text(spans: list[ft.TextSpan]) -> str:

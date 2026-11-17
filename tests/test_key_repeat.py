@@ -22,8 +22,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from views.editor._key import build_key as build_editor_key
-from views.key_bindings import KeyDispatcher
+from cs_markdown_editor.views.editor._key import build_key as build_editor_key
+from cs_markdown_editor.views.key_bindings import KeyDispatcher
 
 
 class FakeRef:
@@ -212,7 +212,7 @@ def _make_dispatcher_ctx(start_li=0):
 
 
 def _make_dispatcher(actions, arrow_ref):
-    from views.key_bindings import KeyDispatcher
+    from cs_markdown_editor.views.key_bindings import KeyDispatcher
     d = KeyDispatcher(
         shortcut_mgr=type("M", (), {
             "get": lambda self, layer: {},

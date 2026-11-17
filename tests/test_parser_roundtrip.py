@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import parse_markdown, serialize  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown, serialize  # noqa: E402
 
 
 def _roundtrip(md: str) -> str:

@@ -20,9 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from parser import parse_markdown  # noqa: E402
-from views.pixel_layout import _line_raw_offsets_x  # noqa: E402
-from views.segment_view import raw_to_visible_spans  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.views.pixel_layout import _line_raw_offsets_x  # noqa: E402
+from cs_markdown_editor.views.segment_view import raw_to_visible_spans  # noqa: E402
 
 
 def _widths(offsets: list[float]) -> list[float]:

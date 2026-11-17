@@ -1,4 +1,4 @@
-"""app.diff_scroll_sync 单元测试。
+"""cs_markdown_editor.app.diff_scroll_sync 单元测试。
 
 覆盖 DiffScrollSync 状态机：
 - sync_to：触发目标侧 scroll_to_offset + 调度异步追赶
@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from app.diff_scroll_sync import DiffScrollSync
+from cs_markdown_editor.app.diff_scroll_sync import DiffScrollSync
 
 
 # ---------------- 辅助工厂 ----------------

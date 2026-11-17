@@ -270,7 +270,7 @@ cs-markdown-editor
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  main.py            入口：注册字体/主题、page.render(App)     │
+│  main.py            sys.path 引导 → bootstrap.run()         │
 ├──────────────────────────────────────────────────────────────┤
 │  app/               App 组件（AppContext + 控制器模式）       │
 │    __init__.py      App：hooks → ctx → 控制器装配 → render    │
@@ -610,88 +610,90 @@ page.on_keyboard_event → KeyDispatcher.handle(e)
 
 ```
 cs-markdown-editor/
-├── main.py                  # 入口：注册字体/主题、page.render(App)
-├── parser.py                # Markdown 解析：行级 / 段级 / 选区↔源码 / HTML 导出
-├── styles.py                # 主题配色、段→TextStyle、标题字重、列表色阶、Border 工具
+├── main.py                  # 启动引导：把 src/ 放进 sys.path 后调用 bootstrap.run()
 ├── settings.json            # 用户设置（内容宽度、边距、字号、行高、主题、代码高亮、快捷键等）
 ├── pyproject.toml           # 项目元数据与依赖
 ├── assets/
 │   ├── fonts/
 │   │   └── AlibabaPuHuiTi-3-55-Regular.otf
 │   └── images/              # 示例图片等资源
-├── app/                     # App 组件包（AppContext + 控制器模式）
-│   ├── __init__.py          # App 组件：hooks → ctx 构造 → 控制器装配 → render
-│   ├── _context.py          # AppContext dataclass（kw_only：稳定区+快照区+装配槽）
-│   ├── _tab_management.py   # 组感知标签 CRUD / 统一激活 / 批量关闭 / 关闭确认 / 会话计数
-│   ├── _file_io_ops.py      # 文件读写 / 打开（组内去重+共享doc）/ 保存 / 导出 / 最近文件
-│   ├── _file_dialogs.py     # 文件操作对话框 + 标签/侧边栏右键菜单分发 + 外部重载同步
-│   ├── _diff_controller.py  # 对比标签创建 / 选源 / 脏状态上报
-│   ├── _settings_controller.py # 设置更新 / 主题 / 快捷键捕获 / 侧边栏 / 导入导出
-│   ├── _split_editor.py     # 拆分组开关（右组创建/合并）/ 对比焦点视口切换
-│   ├── _focus_router.py     # 焦点路由 / 跳转 / 脏状态按组路由与共享副本同步
-│   ├── _keyboard.py         # KeyDispatcher 构造 + page.on_keyboard_event 绑定
-│   ├── _render.py           # 渲染树：sidebar/双TabBar/editor_area/footer/dialogs/Stack
-│   ├── _tab_helpers.py      # 纯函数：new_tab / tab_group / group_indices / is_blank_untitled …
-│   ├── _backup_controller.py # 定时备份 / 自动保存 / 外部修改检测（多副本mtime过滤）/ 崩溃恢复
-│   ├── autosave.py          # 自动保存（间隔触发 + 共享doc去重，AutosaveContext 注入依赖）
-│   └── diff_scroll_sync.py  # DiffScrollSync：对比双视口同步滚动状态机（4-ref + 60ms 追赶）
-├── config/
-│   ├── settings.py          # DEFAULT_SETTINGS / load_settings / save_settings（深合并 shortcuts）
-│   └── sample.py            # 示例文档 SAMPLE_MD
-├── core/
-│   ├── actions.py           # EditorActions dataclass：editor → App/key_bindings 动作契约
-│   ├── cursor.py            # CursorState：base / extent / draft_len 光标状态
-│   └── history.py           # EditHistory：撤销/重做栈（EditorSnapshot | LineEditSnapshot）
-├── models/
-│   └── document.py          # Segment / Line / Document（@ft.observable）
-├── services/
-│   ├── shortcuts.py         # ShortcutManager：读取/更新/重置/冲突检测 + ACTION_REGISTRY
-│   ├── shortcut.py          # .lnk 快捷方式解析（MS-SHLLINK 纯解析 + PowerShell 回退 + 缓存 + 链式展开）
-│   ├── file_io.py           # read_text / write_text（原子写入）
-│   ├── file_ops.py          # 文件树操作（新建/重命名/删除/复制/移动/在资源管理器中显示）
-│   ├── backup.py / recovery.py / export.py # 备份 / 崩溃恢复 / 导出
-│   └── clipboard_html.py / html_to_markdown.py # 富文本剪贴板转换
-├── utils/
-│   ├── segment_helpers.py   # PREFIX_SEGTYPES / MONO_SEGTYPES / WRAP_SYNTAX / display_text / split_seg_for_display
-│   ├── text_layout.py       # HarfBuzz measure_text_offsets / measure_text_width / image_fit_size
-│   ├── table_helpers.py     # 表格行解析与拼接、对齐正则
-│   └── file_helpers.py      # 文件名派生等文件工具
-└── views/
-    ├── editor/              # 编辑器根组件包（EditorContext + 工厂模式）
-    │   ├── __init__.py      # MarkdownEditor：hooks → ctx → 工厂调用 → 装配 → 渲染
-    │   ├── _context.py      # EditorContext dataclass（双区：稳定区 + 快照区）
-    │   ├── _helpers.py      # _make_stable_cb / _noop / 模块级常量与 re.compile
-    │   ├── _cursor.py       # 光标/IME 输入核心组（set_cursor/handle_char_input/handle_paste/backspace/delete）
-    │   ├── _navigation.py   # 光标移动（left/right/home/end/up/down/视觉行/记忆列）
-    │   ├── _scroll.py       # 滚动/行高缓存/命中测试/跳转/页面滚动
-    │   ├── _outward.py      # 向外选区（步进/扩展/选词/删除/剪切/复制/全选/切行）
-    │   ├── _clipboard.py    # 剪贴板/SelectionArea 选区/行内格式包裹
-    │   ├── _fence.py        # 围栏岛屿编辑（CODE/MATH/TABLE 聚焦/失焦/防抖历史）
-    │   ├── _image.py        # 图片右键菜单操作（拷贝Markdown/拷贝图片/另存为/删除）
-    │   ├── _blocks.py       # 块级操作（标题/任务/表格/语言切换/新行）
-    │   ├── _inline_format.py # 行内格式（加粗/斜体/代码/删除线/链接）
-    │   ├── _indent.py       # 缩进/反缩进/新行后
-    │   ├── _history.py      # 撤销/重做（快照/行编辑/防抖）
-    │   ├── _raw_mode.py     # 原文模式/聚焦模式
-    │   ├── _focus.py        # 光标/公式 TextField 聚焦
-    │   ├── _key.py          # 键盘事件（on_key_down/up）
-    │   ├── _actions.py      # EditorActions 装配（37 字段写入 nav_ref）
-    │   └── _render.py       # 行控件列表构造（LineView/TableView/diff 间隙合并）
-    ├── line_view.py         # 行视图：围栏岛屿分支 + RenderedLine + Stack + 跳转高亮 + diff 行级背景着色
-    ├── rendered_line.py     # 渲染层：raw_to_visible_spans + GestureDetector 命中 + 图片行渲染（左键编辑/右键菜单）
-    ├── cursor_layer.py      # 透明光标 TextField（IME 友好，StrutStyle 行高对齐）
-    ├── pixel_layout.py      # LineLayoutCache：像素布局缓存 + cursor_px + hit_test
-    ├── segment_view.py      # 段级 TextSpan 渲染（含向外选区字符级高亮）
-    ├── key_bindings.py      # KeyDispatcher：浏览/编辑两层 + outward 拦截 + 快捷键捕获 + 原生控件守卫
-    ├── table_view.py        # 表格视图：DataTable2 单元格编辑、行列增删、对齐、删除整表、Tab/Enter 导航
-    ├── diff_view.py         # 文件对比：compute_diff_for_editors 行级 diff + compute_changed_ranges 字符区间
-    ├── file_dialogs.py      # 文件操作对话框：新建文件/文件夹/重命名/删除确认
-    ├── toolbar.py           # 格式工具栏：块级/行内按钮，tooltip 动态显示自定义键位
-    ├── tab_bar.py           # 顶部多文档标签栏（含 diff 标签渲染）+ ConfirmCloseDialog + 右键菜单
-    ├── sidebar.py           # 侧边栏：文件树（.lnk快捷方式/外部变化轮询监测）/ 大纲 / 搜索
-    ├── settings_dialog.py   # 设置对话框：五分区配置面板 + 快捷键捕获式自定义
-    ├── raw_editor.py        # 原文模式编辑器（RawEditor）
-    ├── tool_area.py         # 工具栏区域容器
+└── src/cs_markdown_editor/  # 应用包（下列功能子包均在其下）
+    ├── bootstrap.py         # 入口实现：注册字体/主题、page.render(App)
+    ├── _paths.py            # 资源/设置路径唯一出口
+    ├── styles.py            # 主题配色、段→TextStyle、标题字重、列表色阶、Border 工具
+    ├── app/                     # App 组件包（AppContext + 控制器模式）
+    │   ├── __init__.py          # App 组件：hooks → ctx 构造 → 控制器装配 → render
+    │   ├── _context.py          # AppContext dataclass（kw_only：稳定区+快照区+装配槽）
+    │   ├── _tab_management.py   # 组感知标签 CRUD / 统一激活 / 批量关闭 / 关闭确认 / 会话计数
+    │   ├── _file_io_ops.py      # 文件读写 / 打开（组内去重+共享doc）/ 保存 / 导出 / 最近文件
+    │   ├── _file_dialogs.py     # 文件操作对话框 + 标签/侧边栏右键菜单分发 + 外部重载同步
+    │   ├── _diff_controller.py  # 对比标签创建 / 选源 / 脏状态上报
+    │   ├── _settings_controller.py # 设置更新 / 主题 / 快捷键捕获 / 侧边栏 / 导入导出
+    │   ├── _split_editor.py     # 拆分组开关（右组创建/合并）/ 对比焦点视口切换
+    │   ├── _focus_router.py     # 焦点路由 / 跳转 / 脏状态按组路由与共享副本同步
+    │   ├── _keyboard.py         # KeyDispatcher 构造 + page.on_keyboard_event 绑定
+    │   ├── _render.py           # 渲染树：sidebar/双TabBar/editor_area/footer/dialogs/Stack
+    │   ├── _tab_helpers.py      # 纯函数：new_tab / tab_group / group_indices / is_blank_untitled …
+    │   ├── _backup_controller.py # 定时备份 / 自动保存 / 外部修改检测（多副本mtime过滤）/ 崩溃恢复
+    │   ├── autosave.py          # 自动保存（间隔触发 + 共享doc去重，AutosaveContext 注入依赖）
+    │   └── diff_scroll_sync.py  # DiffScrollSync：对比双视口同步滚动状态机（4-ref + 60ms 追赶）
+    ├── config/
+    │   ├── settings.py          # DEFAULT_SETTINGS / load_settings / save_settings（深合并 shortcuts）
+    │   └── sample.py            # 示例文档 SAMPLE_MD
+    ├── core/
+    │   ├── actions.py           # EditorActions dataclass：editor → App/key_bindings 动作契约
+    │   ├── cursor.py            # CursorState：base / extent / draft_len 光标状态
+    │   └── history.py           # EditHistory：撤销/重做栈（EditorSnapshot | LineEditSnapshot）
+    ├── models/
+    │   └── document.py          # Segment / Line / Document（@ft.observable）
+    ├── services/
+    │   ├── shortcuts.py         # ShortcutManager：读取/更新/重置/冲突检测 + ACTION_REGISTRY
+    │   ├── shortcut.py          # .lnk 快捷方式解析（MS-SHLLINK 纯解析 + PowerShell 回退 + 缓存 + 链式展开）
+    │   ├── file_io.py           # read_text / write_text（原子写入）
+    │   ├── file_ops.py          # 文件树操作（新建/重命名/删除/复制/移动/在资源管理器中显示）
+    │   ├── backup.py / recovery.py / export.py # 备份 / 崩溃恢复 / 导出
+    │   └── clipboard_html.py / html_to_markdown.py # 富文本剪贴板转换
+    ├── utils/
+    │   ├── segment_helpers.py   # PREFIX_SEGTYPES / MONO_SEGTYPES / WRAP_SYNTAX / display_text / split_seg_for_display
+    │   ├── text_layout.py       # HarfBuzz measure_text_offsets / measure_text_width / image_fit_size
+    │   ├── table_helpers.py     # 表格行解析与拼接、对齐正则
+    │   └── file_helpers.py      # 文件名派生等文件工具
+    └── views/
+        ├── editor/              # 编辑器根组件包（EditorContext + 工厂模式）
+        │   ├── __init__.py      # MarkdownEditor：hooks → ctx → 工厂调用 → 装配 → 渲染
+        │   ├── _context.py      # EditorContext dataclass（双区：稳定区 + 快照区）
+        │   ├── _helpers.py      # _make_stable_cb / _noop / 模块级常量与 re.compile
+        │   ├── _cursor.py       # 光标/IME 输入核心组（set_cursor/handle_char_input/handle_paste/backspace/delete）
+        │   ├── _navigation.py   # 光标移动（left/right/home/end/up/down/视觉行/记忆列）
+        │   ├── _scroll.py       # 滚动/行高缓存/命中测试/跳转/页面滚动
+        │   ├── _outward.py      # 向外选区（步进/扩展/选词/删除/剪切/复制/全选/切行）
+        │   ├── _clipboard.py    # 剪贴板/SelectionArea 选区/行内格式包裹
+        │   ├── _fence.py        # 围栏岛屿编辑（CODE/MATH/TABLE 聚焦/失焦/防抖历史）
+        │   ├── _image.py        # 图片右键菜单操作（拷贝Markdown/拷贝图片/另存为/删除）
+        │   ├── _blocks.py       # 块级操作（标题/任务/表格/语言切换/新行）
+        │   ├── _inline_format.py # 行内格式（加粗/斜体/代码/删除线/链接）
+        │   ├── _indent.py       # 缩进/反缩进/新行后
+        │   ├── _history.py      # 撤销/重做（快照/行编辑/防抖）
+        │   ├── _raw_mode.py     # 原文模式/聚焦模式
+        │   ├── _focus.py        # 光标/公式 TextField 聚焦
+        │   ├── _key.py          # 键盘事件（on_key_down/up）
+        │   ├── _actions.py      # EditorActions 装配（37 字段写入 nav_ref）
+        │   └── _render.py       # 行控件列表构造（LineView/TableView/diff 间隙合并）
+        ├── line_view.py         # 行视图：围栏岛屿分支 + RenderedLine + Stack + 跳转高亮 + diff 行级背景着色
+        ├── rendered_line.py     # 渲染层：raw_to_visible_spans + GestureDetector 命中 + 图片行渲染（左键编辑/右键菜单）
+        ├── cursor_layer.py      # 透明光标 TextField（IME 友好，StrutStyle 行高对齐）
+        ├── pixel_layout.py      # LineLayoutCache：像素布局缓存 + cursor_px + hit_test
+        ├── segment_view.py      # 段级 TextSpan 渲染（含向外选区字符级高亮）
+        ├── key_bindings.py      # KeyDispatcher：浏览/编辑两层 + outward 拦截 + 快捷键捕获 + 原生控件守卫
+        ├── table_view.py        # 表格视图：DataTable2 单元格编辑、行列增删、对齐、删除整表、Tab/Enter 导航
+        ├── diff_view.py         # 文件对比：compute_diff_for_editors 行级 diff + compute_changed_ranges 字符区间
+        ├── file_dialogs.py      # 文件操作对话框：新建文件/文件夹/重命名/删除确认
+        ├── toolbar.py           # 格式工具栏：块级/行内按钮，tooltip 动态显示自定义键位
+        ├── tab_bar.py           # 顶部多文档标签栏（含 diff 标签渲染）+ ConfirmCloseDialog + 右键菜单
+        ├── sidebar.py           # 侧边栏：文件树（.lnk快捷方式/外部变化轮询监测）/ 大纲 / 搜索
+        ├── settings_dialog.py   # 设置对话框：五分区配置面板 + 快捷键捕获式自定义
+        ├── raw_editor.py        # 原文模式编辑器（RawEditor）
+        ├── tool_area.py         # 工具栏区域容器
     └── status_bar.py        # 状态栏：光标行列 / 段落数 / 词数 / 字符数 / 阅读时长 / 换行 / 拆分指示
 ```
 

@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-from services.search import (
+from cs_markdown_editor.services.search import (
     expand_replacement,
     find_match_at,
     flatten_cross_matches,

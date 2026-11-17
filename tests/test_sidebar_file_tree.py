@@ -29,16 +29,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ui import ft
 
-from services import shortcut
-from services.file_ops import open_external
-from services.file_tree import (
+from cs_markdown_editor.services import shortcut
+from cs_markdown_editor.services.file_ops import open_external
+from cs_markdown_editor.services.file_tree import (
     collect_text_paths,
     file_icon,
     file_row_icon_data,
     flatten_tree,
     scan_files,
 )
-from views._widgets import _drop_allowed, _wrap_drop_target
+from cs_markdown_editor.views._widgets import _drop_allowed, _wrap_drop_target
 
 # ---- 辅助 ----
 
@@ -178,7 +178,7 @@ def test_scan_files_invalid_root_returns_empty():
 def test_scan_files_oserror_silent(tmp_path):
     """os.scandir 抛 OSError 时静默返回空（无读权限目录不崩溃）。"""
     (tmp_path / "ok.md").write_text("")
-    with patch("views.sidebar.os.scandir", side_effect=OSError("denied")):
+    with patch("cs_markdown_editor.views.sidebar.os.scandir", side_effect=OSError("denied")):
         tree = scan_files(str(tmp_path))
     assert tree == []
 
@@ -460,8 +460,8 @@ def test_open_external_windows(tmp_path):
     """Windows: os.startfile 被调用。"""
     f = tmp_path / "test.png"
     f.write_bytes(b"")
-    with patch("services.file_ops.platform.system", return_value="Windows"), \
-         patch("services.file_ops.os.startfile", create=True) as mock_start:
+    with patch("cs_markdown_editor.services.file_ops.platform.system", return_value="Windows"), \
+         patch("cs_markdown_editor.services.file_ops.os.startfile", create=True) as mock_start:
         open_external(str(f))
         mock_start.assert_called_once_with(str(f))
 
@@ -470,8 +470,8 @@ def test_open_external_macos(tmp_path):
     """macOS: open 命令被调用。"""
     f = tmp_path / "test.png"
     f.write_bytes(b"")
-    with patch("services.file_ops.platform.system", return_value="Darwin"), \
-         patch("services.file_ops.subprocess.Popen") as mock_popen:
+    with patch("cs_markdown_editor.services.file_ops.platform.system", return_value="Darwin"), \
+         patch("cs_markdown_editor.services.file_ops.subprocess.Popen") as mock_popen:
         open_external(str(f))
         mock_popen.assert_called_once_with(["open", str(f)])
 
@@ -480,8 +480,8 @@ def test_open_external_linux(tmp_path):
     """Linux: xdg-open 命令被调用。"""
     f = tmp_path / "test.png"
     f.write_bytes(b"")
-    with patch("services.file_ops.platform.system", return_value="Linux"), \
-         patch("services.file_ops.subprocess.Popen") as mock_popen:
+    with patch("cs_markdown_editor.services.file_ops.platform.system", return_value="Linux"), \
+         patch("cs_markdown_editor.services.file_ops.subprocess.Popen") as mock_popen:
         open_external(str(f))
         mock_popen.assert_called_once_with(["xdg-open", str(f)])
 

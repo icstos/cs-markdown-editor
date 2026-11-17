@@ -30,11 +30,11 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from parser import parse_markdown
-from styles import TOPBAR_H, get_colors
+from cs_markdown_editor.parser import parse_markdown
+from cs_markdown_editor.styles import TOPBAR_H, get_colors
 from tests.harness import RenderHarness
-from views.outline_panel import OutlinePanel
-from views.tab_bar import TabBar
+from cs_markdown_editor.views.outline_panel import OutlinePanel
+from cs_markdown_editor.views.tab_bar import TabBar
 
 C = get_colors(ft.ThemeMode.LIGHT)
 TABS = [

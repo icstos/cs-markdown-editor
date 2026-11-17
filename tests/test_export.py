@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from services.export import (  # noqa: E402
+from cs_markdown_editor.services.export import (  # noqa: E402
     _DEFAULT_HTML_CSS,
     build_standalone_html,
     detect_pandoc,
@@ -128,7 +128,7 @@ def test_export_to_html_writes_file():
 def test_export_to_html_fallback_has_full_structure():
     """pandoc 不可用时回退路径生成完整 HTML 文档（含 DOCTYPE/CSS）。"""
     # 强制 pandoc 不可用（mock detect_pandoc 返回 None）
-    import services.export as exp_module
+    import cs_markdown_editor.services.export as exp_module
     original_detect = exp_module.detect_pandoc
     exp_module.detect_pandoc = lambda: None
     try:
@@ -156,7 +156,7 @@ def test_export_to_html_fallback_has_full_structure():
 
 def test_export_to_docx_raises_without_pandoc():
     """pandoc 不可用时 export_to_docx 抛 RuntimeError 含安装指引。"""
-    import services.export as exp_module
+    import cs_markdown_editor.services.export as exp_module
     original_detect = exp_module.detect_pandoc
     exp_module.detect_pandoc = lambda: None
     try:
@@ -171,7 +171,7 @@ def test_export_to_docx_raises_without_pandoc():
 
 def test_export_to_pdf_raises_without_pandoc():
     """pandoc 不可用时 export_to_pdf 抛 RuntimeError 含安装指引。"""
-    import services.export as exp_module
+    import cs_markdown_editor.services.export as exp_module
     original_detect = exp_module.detect_pandoc
     exp_module.detect_pandoc = lambda: None
     try:
@@ -184,7 +184,7 @@ def test_export_to_pdf_raises_without_pandoc():
 
 def test_export_to_pdf_raises_without_pdf_engine():
     """pandoc 可用但 PDF 引擎缺失时抛 RuntimeError 含引擎安装指引。"""
-    import services.export as exp_module
+    import cs_markdown_editor.services.export as exp_module
     original_detect_pandoc = exp_module.detect_pandoc
     original_detect_engine = exp_module._detect_pdf_engine
     exp_module.detect_pandoc = lambda: "/fake/pandoc"

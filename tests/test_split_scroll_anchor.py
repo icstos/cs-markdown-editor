@@ -29,11 +29,11 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.settings as cs
-from app import App
-from parser import parse_markdown
+import cs_markdown_editor.config.settings as cs
+from cs_markdown_editor.app import App
+from cs_markdown_editor.parser import parse_markdown
 from tests.harness import RenderHarness, walk
-from views.editor import MarkdownEditor
+from cs_markdown_editor.views.editor import MarkdownEditor
 
 _SANDBOX = Path(__file__).resolve().parent / ".split-scroll-sandbox"
 _SANDBOX.mkdir(parents=True, exist_ok=True)
@@ -155,7 +155,7 @@ def test_get_top_line_reflects_scrolled_position(monkeypatch):
 
 def test_anchor_line_only_matches_its_own_session():
     """会话号不匹配即失效：组内换标签后，新标签不会被上一个标签的位置拽走。"""
-    from app._render import _anchor_line
+    from cs_markdown_editor.app._render import _anchor_line
 
     anchor = ((7, 42), (4, 42))
     assert _anchor_line(anchor, 7) == 42
@@ -249,7 +249,7 @@ def test_split_toggle_builds_split_tree_and_carries_anchor(monkeypatch):
 # ---------------------------------------------------------------------------
 
 RENDER_SRC = (
-    Path(__file__).resolve().parent.parent / "app" / "_render.py"
+    Path(__file__).resolve().parent.parent / "src" / "cs_markdown_editor" / "app" / "_render.py"
 ).read_text(encoding="utf-8")
 
 

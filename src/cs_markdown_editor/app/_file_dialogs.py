@@ -1,0 +1,565 @@
+"""文件对话框与右键菜单控制器（从 main.py 闭包抽取）。
+
+闭包组：show_snack / copy_path / update_tab_for_renamed_file /
+close_tabs_for_path / on_file_dialog_confirm / open_input_dialog /
+open_delete_dialog / on_tab_context_action / on_sidebar_context_action
+
+跨组依赖（通过 ctx 装配槽，调用时读取）：
+- file_io_ops 组：open_file_by_path（右键菜单打开/副本）
+- diff_controller 组：select_for_compare / compare_with_selected
+- tab_management 组：do_close_many（删除文件后清理引用标签）
+- split_editor 组：set_diff_active_pane（交换对比标签侧后切焦点）
+- 共享：tab_paths（纯函数，直接导入）
+
+设计要点：
+- show_snack 委托 services.ui_feedback.show_snack，page 从 page_ref 读取，
+  使异步回调（无 ft.context.page）也能弹提示。
+- 文件操作对话框统一用 file_dialog state 管理（input/confirm 双模式），
+  确认回调根据 action 字段分发到 file_ops 对应函数。
+- 重命名/删除后同步更新/关闭引用该路径的标签（含对比标签两侧）。
+
+依赖项：
+- os / flet（Icons / FilePicker 无）
+- parser（外部修改重载时解析磁盘内容）
+- services.file_ops（reveal_in_explorer / create_file / create_folder /
+  rename_path / delete_path / duplicate_file）
+- services.document_loader.load_document（外部修改重载：按类型重新装载）
+- services.ui_feedback.show_snack
+- app._tab_helpers.tab_paths
+"""
+
+import os
+
+import ui
+
+from cs_markdown_editor.app._contracts import FileDialogsEnv
+from cs_markdown_editor.app._tab_helpers import tab_group, tab_paths
+from cs_markdown_editor.services import file_ops, shortcut
+from cs_markdown_editor.services.document_loader import load_document
+
+# 对话框实例计数器：每次弹窗递增。作为 FileActionDialog 的 key 触发重挂载，
+# 使输入框 use_state 重新以 input_value 初始化（新建文件/文件夹不再保留上次
+# 输入内容），并重新 autofocus 聚焦编辑。
+_dialog_seq: int = 0
+
+
+def _next_dialog_seq() -> int:
+    global _dialog_seq
+    _dialog_seq += 1
+    return _dialog_seq
+
+
+def build_file_dialogs(ctx: FileDialogsEnv):
+    """构造文件对话框与右键菜单控制器闭包组。
+
+    返回 dict[str, Callable]：
+    show_snack / copy_path / update_tab_for_renamed_file / close_tabs_for_path /
+    on_file_dialog_confirm / open_input_dialog / open_delete_dialog /
+    on_tab_context_action / on_sidebar_context_action
+    """
+
+    async def _forward_git_action(action: str, target):
+        """把 Git 破坏性操作的确认结果转发给 Git 控制器。
+
+        ``page.run_task`` 只接受协程函数，而 ``git_confirm_dialog_action`` 是同步
+        函数（内部自行调度异步任务），故需要这一层 async 包装。
+        """
+        ctx.git_confirm_dialog_action(action, target)
+
+    def show_snack(msg: str):
+        """SnackBar 提示（委托 services.ui_feedback.show_snack，page 从 page_ref 读取）。
+
+        ui_feedback 惰性导入：仅真正弹提示时才需要，避免启动即加载。
+        """
+        from cs_markdown_editor.services.ui_feedback import show_snack as _show_snack_impl
+
+        _show_snack_impl(ctx.page_ref.current, msg)
+
+    async def copy_path(path: str):
+        cb = ctx.clipboard_holder.current
+        if cb is not None:
+            try:
+                await cb.set(path)
+                if ctx.page_ref.current is not None:
+                    show_snack("路径已复制")
+            except Exception:
+                pass
+
+    def update_tab_for_renamed_file(old_path: str, new_path: str):
+        """文件重命名后，同步更新引用该文件的标签路径（含对比标签两侧）。"""
+        ts = list(ctx.tabs_ref.current)
+        changed = False
+        for i, t in enumerate(ts):
+            if t.get("type") == "diff":
+                # 对比标签：检查左右两侧路径，更新匹配侧
+                updates = {}
+                if t.get("left_path") == old_path:
+                    updates["left_path"] = new_path
+                    if t.get("left_doc") is not None:
+                        t["left_doc"].file_path = new_path
+                if t.get("right_path") == old_path:
+                    updates["right_path"] = new_path
+                    if t.get("right_doc") is not None:
+                        t["right_doc"].file_path = new_path
+                if updates:
+                    ts[i] = {**t, **updates}
+                    changed = True
+            elif t.get("file_path") == old_path:
+                ts[i] = {**t, "file_path": new_path}
+                if t.get("document") is not None:
+                    ts[i]["document"].file_path = new_path
+                changed = True
+        if changed:
+            ctx.set_tabs(ts)
+            ctx.tabs_ref.current = ts
+
+    def close_tabs_for_path(path: str):
+        """关闭引用指定路径的所有标签（含对比标签，用于删除后清理）。"""
+        ts = ctx.tabs_ref.current
+        indices = [i for i, t in enumerate(ts) if path in tab_paths(t)]
+        if indices:
+            ctx.do_close_many(indices)
+
+    def on_file_dialog_confirm(value: str = ""):
+        """文件操作对话框确认回调。
+
+        input 模式：value 为用户输入的文本（文件名/文件夹名/新名称）。
+        confirm 模式：value 为空字符串（删除确认 / 重载确认）。
+        """
+        state = ctx.file_dialog
+        if state is None:
+            return
+        action = state["action"]
+        target = state.get("target")
+        ctx.set_file_dialog(None)  # 先关闭对话框
+
+        if action == "new_file":
+            try:
+                path = file_ops.create_file(target, value)
+                ctx.open_file_by_path(path)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
+                show_snack(f"已创建：{os.path.basename(path)}")
+            except Exception as e:
+                show_snack(f"创建失败：{e}")
+        elif action == "new_folder":
+            try:
+                file_ops.create_folder(target, value)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
+                show_snack(f"已创建文件夹：{value}")
+            except Exception as e:
+                show_snack(f"创建失败：{e}")
+        elif action == "rename":
+            try:
+                new_path = file_ops.rename_path(target, value)
+                update_tab_for_renamed_file(target, new_path)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
+                show_snack(f"已重命名为：{os.path.basename(new_path)}")
+            except Exception as e:
+                show_snack(f"重命名失败：{e}")
+        elif action == "delete":
+            try:
+                fname = os.path.basename(target)
+                file_ops.delete_path(target)
+                close_tabs_for_path(target)
+                ctx.bump_fs_version()  # 刷新侧边栏文件树
+                show_snack(f"已删除：{fname}")
+            except Exception as e:
+                show_snack(f"删除失败：{e}")
+        elif action == "force_save":
+            # 保存失败后强制以当前内容写入（跳过原子写入与完整性校验）
+            tab_index = state.get("target_tab_index")
+            page = ctx.page_ref.current
+            if tab_index is not None and page is not None:
+                page.run_task(ctx.force_save_doc, tab_index)
+        elif action == "reload_external":
+            # 外部修改检测：用户选择「重新加载」→ 用磁盘最新内容覆盖当前标签
+            tab_index = state.get("target_tab_index")
+            if tab_index is None:
+                return
+            try:
+                # 与打开路径共用装载器：纯文本文件重载后仍是「整篇一个代码块」，
+                # 不会退化成 Markdown 行结构（否则重载即改变文档形态）
+                doc = load_document(target)
+                try:
+                    last_mtime = os.path.getmtime(target)
+                except OSError:
+                    last_mtime = None
+                ts = list(ctx.tabs_ref.current)
+                if 0 <= tab_index < len(ts):
+                    # 同文件实时同步：共享旧 document 的所有标签（含另一组
+                    # 副本）统一替换为新 doc、清脏、各自 bump 会话重建编辑器
+                    old_doc = ts[tab_index].get("document")
+                    ctx.bump_tab_session(tab_index)
+                    ts[tab_index] = {
+                        **ts[tab_index],
+                        "document": doc,
+                        "file_path": target,
+                        "dirty": False,
+                        "_last_known_mtime": last_mtime,
+                    }
+                    for j in range(len(ts)):
+                        if (j != tab_index and old_doc is not None
+                                and ts[j].get("document") is old_doc
+                                and ts[j].get("type") != "diff"):
+                            ctx.bump_tab_session(j)
+                            ts[j] = {
+                                **ts[j],
+                                "document": doc,
+                                "file_path": target,
+                                "dirty": False,
+                                "_last_known_mtime": last_mtime,
+                            }
+                    ctx.set_tabs(ts)
+                    ctx.tabs_ref.current = ts
+                    show_snack("已重新加载最新内容")
+                    # 切换到对应文件：外部修改来源标签可能非激活（后台检测弹窗
+                    # 时焦点在其他标签），重新加载后跳转到该文件（分组/焦点/
+                    # 会话由 activate_index 统一处理，已激活则 no-op）
+                    ctx.select_tab(tab_index)
+            except Exception as e:
+                show_snack(f"重载失败：{e}")
+            # 「保留本地版本」走 on_file_dialog_cancel（见下方）
+        elif action.startswith("git_"):
+            # Git 破坏性操作（丢弃更改 / 删除分支）的确认回投：本控制器只负责
+            # 关闭对话框并转发，Git 语义留在 Git 控制器，避免文件对话框反向依赖
+            # Git（契约上的单向依赖）。
+            # 必须包一层 async：page.run_task 要求 handler 是协程**函数**，
+            # 直接传同步回调会抛 TypeError（只在日志里可见，表现为点击无反应）。
+            page = ctx.page_ref.current
+            if page is not None:
+                page.run_task(_forward_git_action, action, target)
+
+    def on_file_dialog_cancel():
+        """文件操作对话框取消回调：根据 action 分发。
+
+        - "reload_external"：用户选择「保留本地版本」→ 用本地内容继续保存
+          （force=True 跳过外部修改检测，直接覆盖磁盘文件）
+        - 其他 action：仅关闭对话框（等价于原 lambda 行为）
+        """
+        state = ctx.file_dialog
+        if state is None:
+            return
+        action = state.get("action")
+        ctx.set_file_dialog(None)  # 先关闭对话框
+
+        if action == "reload_external":
+            # 用户选择保留本地版本 → 强制保存覆盖外部修改
+            tab_index = state.get("target_tab_index")
+            page = ctx.page_ref.current
+            if page is not None:
+                page.run_task(ctx.save_doc, tab_index, True)  # force=True
+
+    def open_input_dialog(action: str, title: str, icon: str, label: str,
+                          hint: str, default_value: str, location: str,
+                          confirm_label: str, target: str):
+        """弹出输入对话框（新建文件/文件夹/重命名）。"""
+        ctx.set_file_dialog({
+            "mode": "input",
+            "instance": _next_dialog_seq(),
+            "title": title,
+            "icon": icon,
+            "input_label": label,
+            "input_value": default_value,
+            "input_hint": hint,
+            "location_hint": location,
+            "confirm_label": confirm_label,
+            "action": action,
+            "target": target,
+        })
+
+    def open_delete_dialog(target: str, is_dir: bool):
+        """弹出删除确认对话框。"""
+        fname = os.path.basename(target)
+        title = "删除文件夹" if is_dir else "删除文件"
+        msg = f"确定删除{'文件夹' if is_dir else '文件'}「{fname}」？\n此操作不可撤销。"
+        ctx.set_file_dialog({
+            "mode": "confirm",
+            "instance": _next_dialog_seq(),
+            "title": title,
+            "icon": ui.Icons.DELETE_OUTLINE,
+            "message": msg,
+            "confirm_label": "删除",
+            "danger": True,
+            "action": "delete",
+            "target": target,
+        })
+
+    def on_tab_context_action(action: str, index: int):
+        """标签右键菜单回调：处理打开/新建/路径/重命名/副本/删除/关闭/交换对比等操作。"""
+        ts = ctx.tabs_ref.current
+        if not (0 <= index < len(ts)):
+            return
+        tab = ts[index]
+        # diff 标签无 file_path 字段；统一用 .get() 避免 KeyError
+        path = tab.get("file_path")
+        is_diff = tab.get("type") == "diff"
+
+        if action == "close":
+            ctx.close_tab(index)
+        elif action == "close_others":
+            # 组内语义（VSCode）：仅关闭该标签所属组的其他标签（非拆分时即全部）
+            g = tab_group(tab)
+            ctx.request_close([
+                j for j in range(len(ts))
+                if j != index and tab_group(ts[j]) == g
+            ])
+        elif action == "close_all":
+            # 组内语义：仅关闭该标签所属组的全部标签
+            g = tab_group(tab)
+            ctx.request_close([j for j in range(len(ts)) if tab_group(ts[j]) == g])
+        elif action == "swap_diff":
+            # 仅对比标签有效：交换左右侧文档/路径/脏状态，便于从不同视角审阅差异
+            if not is_diff:
+                return
+            new_tabs = list(ts)
+            new_tabs[index] = {
+                **tab,
+                "left_path": tab.get("right_path"),
+                "right_path": tab.get("left_path"),
+                "left_doc": tab.get("right_doc"),
+                "right_doc": tab.get("left_doc"),
+                "left_dirty": tab.get("right_dirty", False),
+                "right_dirty": tab.get("left_dirty", False),
+            }
+            ctx.set_tabs(new_tabs)
+            ctx.tabs_ref.current = new_tabs
+            # 切换焦点到原主动侧的对侧，保持视觉焦点对应同一文档
+            ctx.set_diff_active_pane(1 - ctx.diff_active_pane_ref.current)
+            ctx.bump_tab_session(index)
+        elif action == "copy_path":
+            page = ctx.page_ref.current
+            if path and page is not None:
+                page.run_task(copy_path, path)
+            elif page is not None:
+                show_snack("该标签无文件路径")
+        elif action == "open":
+            if path:
+                ctx.open_file_by_path(path)
+        elif action == "select_for_compare":
+            if path:
+                ctx.select_for_compare(path)
+        elif action == "compare_with_selected":
+            if path:
+                ctx.compare_with_selected(path)
+        elif action == "git_history":
+            # 单文件专属修改历史（标签右键菜单）：仅文件路径有效，目录不参与
+            if path and not os.path.isdir(path):
+                ctx.git_open_file_history(path)
+        elif action == "new_file":
+            if path:
+                dir_path = os.path.dirname(path)
+                open_input_dialog(
+                    "new_file", "新建文件", ui.Icons.NOTE_ADD,
+                    "文件名", "输入文件名（自动添加 .md）", "",
+                    f"在 {dir_path} 创建", "创建", dir_path,
+                )
+        elif action == "new_folder":
+            if path:
+                dir_path = os.path.dirname(path)
+                open_input_dialog(
+                    "new_folder", "新建文件夹", ui.Icons.CREATE_NEW_FOLDER,
+                    "文件夹名", "输入文件夹名", "",
+                    f"在 {dir_path} 创建", "创建", dir_path,
+                )
+        elif action == "reveal":
+            if path:
+                try:
+                    file_ops.reveal_in_explorer(path)
+                except Exception as e:
+                    show_snack(f"打开失败：{e}")
+        elif action == "rename":
+            if path:
+                dir_path = os.path.dirname(path)
+                open_input_dialog(
+                    "rename", "重命名", ui.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                    "新名称", "输入新文件名", os.path.basename(path),
+                    f"位置：{dir_path}", "重命名", path,
+                )
+        elif action == "duplicate":
+            if path:
+                try:
+                    new_path = file_ops.duplicate_file(path)
+                    ctx.open_file_by_path(new_path)
+                    ctx.bump_fs_version()  # 刷新侧边栏文件树
+                    show_snack(f"已创建副本：{os.path.basename(new_path)}")
+                except Exception as e:
+                    show_snack(f"创建副本失败：{e}")
+        elif action == "delete" and path:
+            open_delete_dialog(path, is_dir=False)
+
+    def update_tabs_for_moved_path(old_path: str, new_path: str):
+        """文件/文件夹移动后，同步更新引用其路径的标签（前缀替换）。
+
+        与 update_tab_for_renamed_file（精确匹配）不同，本函数做前缀替换：
+        移动文件夹时其内部所有已打开文件（file_path / diff 两侧路径及
+        document.file_path）一并改写为新前缀。
+        """
+        old_abs = os.path.abspath(old_path)
+        old_nc = os.path.normcase(old_abs)
+        new_abs = os.path.abspath(new_path)
+
+        def retarget(p: str | None) -> str | None:
+            if not p:
+                return p
+            p_abs = os.path.abspath(p)
+            p_nc = os.path.normcase(p_abs)
+            if p_nc == old_nc:
+                return new_abs
+            if p_nc.startswith(old_nc + os.sep):
+                return os.path.join(new_abs, p_abs[len(old_abs) + 1:])
+            return p
+
+        ts = list(ctx.tabs_ref.current)
+        changed = False
+        for i, t in enumerate(ts):
+            updates = {}
+            if t.get("type") == "diff":
+                for side in ("left", "right"):
+                    new_p = retarget(t.get(f"{side}_path"))
+                    if new_p != t.get(f"{side}_path"):
+                        updates[f"{side}_path"] = new_p
+                        doc = t.get(f"{side}_doc")
+                        if doc is not None:
+                            doc.file_path = new_p
+            else:
+                new_p = retarget(t.get("file_path"))
+                if new_p != t.get("file_path"):
+                    updates["file_path"] = new_p
+                    doc = t.get("document")
+                    if doc is not None:
+                        doc.file_path = new_p
+            if updates:
+                ts[i] = {**t, **updates}
+                changed = True
+        if changed:
+            ctx.set_tabs(ts)
+            ctx.tabs_ref.current = ts
+
+    def move_fs_item(src: str, dst_dir: str):
+        """侧边栏拖拽移动文件/文件夹到 dst_dir。
+
+        合法性由 file_ops.move_path 校验（原地/循环移动抛 ValueError → snack 提示）；
+        同名冲突自动重命名 "name (1)"。移动后同步 tabs 引用路径并刷新文件树。
+        """
+        try:
+            new_path = file_ops.move_path(src, dst_dir)
+        except ValueError as e:
+            show_snack(f"无法移动：{e}")
+            return
+        except Exception as e:
+            show_snack(f"移动失败：{e}")
+            return
+        update_tabs_for_moved_path(src, new_path)
+        ctx.bump_fs_version()  # 刷新侧边栏文件树
+        old_name = os.path.basename(src)
+        new_name = os.path.basename(new_path)
+        if new_name != old_name:
+            show_snack(f"目标已存在同名项，已移动并重命名为：{new_name}")
+        else:
+            show_snack(f"已移动：{new_name}")
+
+    def on_sidebar_context_action(action: str, path: str):
+        """侧边栏文件/文件夹右键菜单回调。
+
+        path 为文件或文件夹的绝对路径。对于新建操作：
+        - 文件夹：在其内部创建（dir_path = path）
+        - 文件：在其所在目录创建（dir_path = dirname(path)）
+        """
+        is_dir = os.path.isdir(path)
+
+        if action == "open":
+            if is_dir:
+                # 文件夹：在系统资源管理器中打开（资源管理器双击文件夹直觉）
+                try:
+                    file_ops.reveal_in_explorer(path)
+                except Exception as e:
+                    show_snack(f"打开失败：{e}")
+            elif path.lower().endswith((".md", ".markdown", ".lnk")):
+                # .lnk 由 open_file_by_path 统一分流：目标 .md → 编辑器，
+                # 其他 → 系统默认程序（与侧边栏点击行为一致）
+                ctx.open_file_by_path(path)
+            else:
+                # 非 md 文件：用系统默认程序打开（与侧边栏点击行为一致）
+                ctx.open_external(path)
+        elif action == "select_for_compare":
+            if not is_dir:
+                # .lnk 快捷方式：比较其指向的 .md 目标内容（而非快捷方式文件本身）
+                compare_path = (
+                    shortcut.resolve_md_target(path)
+                    if shortcut.is_shortcut(path)
+                    else path
+                )
+                if compare_path:
+                    ctx.select_for_compare(compare_path)
+                else:
+                    show_snack("该快捷方式未指向 Markdown 文件，无法比较")
+        elif action == "compare_with_selected":
+            if not is_dir:
+                compare_path = (
+                    shortcut.resolve_md_target(path)
+                    if shortcut.is_shortcut(path)
+                    else path
+                )
+                if compare_path:
+                    ctx.compare_with_selected(compare_path)
+                else:
+                    show_snack("该快捷方式未指向 Markdown 文件，无法比较")
+        elif action == "new_file":
+            dir_path = path if is_dir else os.path.dirname(path)
+            open_input_dialog(
+                "new_file", "新建文件", ui.Icons.NOTE_ADD,
+                "文件名", "输入文件名（自动添加 .md）", "",
+                f"在 {dir_path} 创建", "创建", dir_path,
+            )
+        elif action == "new_folder":
+            dir_path = path if is_dir else os.path.dirname(path)
+            open_input_dialog(
+                "new_folder", "新建文件夹", ui.Icons.CREATE_NEW_FOLDER,
+                "文件夹名", "输入文件夹名", "",
+                f"在 {dir_path} 创建", "创建", dir_path,
+            )
+        elif action == "git_history":
+            # 单文件专属修改历史（文件树右键菜单）：目录不参与文件历史
+            if not is_dir:
+                ctx.git_open_file_history(path)
+        elif action == "copy_path":
+            page = ctx.page_ref.current
+            if page is not None:
+                page.run_task(copy_path, path)
+        elif action == "reveal":
+            try:
+                file_ops.reveal_in_explorer(path)
+            except Exception as e:
+                show_snack(f"打开失败：{e}")
+        elif action == "rename":
+            dir_path = os.path.dirname(path)
+            open_input_dialog(
+                "rename", "重命名", ui.Icons.DRIVE_FILE_RENAME_OUTLINE,
+                "新名称", "输入新名称", os.path.basename(path),
+                f"位置：{dir_path}", "重命名", path,
+            )
+        elif action == "duplicate":
+            if not is_dir:
+                try:
+                    new_path = file_ops.duplicate_file(path)
+                    ctx.open_file_by_path(new_path)
+                    ctx.bump_fs_version()  # 刷新侧边栏文件树
+                    show_snack(f"已创建副本：{os.path.basename(new_path)}")
+                except Exception as e:
+                    show_snack(f"创建副本失败：{e}")
+        elif action == "delete":
+            open_delete_dialog(path, is_dir=is_dir)
+
+    return {
+        "show_snack": show_snack,
+        "copy_path": copy_path,
+        "update_tab_for_renamed_file": update_tab_for_renamed_file,
+        "close_tabs_for_path": close_tabs_for_path,
+        "move_fs_item": move_fs_item,
+        "on_file_dialog_confirm": on_file_dialog_confirm,
+        "on_file_dialog_cancel": on_file_dialog_cancel,
+        "open_input_dialog": open_input_dialog,
+        "open_delete_dialog": open_delete_dialog,
+        "on_tab_context_action": on_tab_context_action,
+        "on_sidebar_context_action": on_sidebar_context_action,
+    }

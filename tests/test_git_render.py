@@ -26,8 +26,8 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.settings as cs
-from app import App
+import cs_markdown_editor.config.settings as cs
+from cs_markdown_editor.app import App
 from tests._flet_internals import Component
 from tests.harness import RenderHarness, walk
 

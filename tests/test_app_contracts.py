@@ -9,10 +9,11 @@ import dataclasses
 import re
 from pathlib import Path
 
-from app._context import AppContext
+from cs_markdown_editor.app._context import AppContext
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = ROOT / "app"
+SRC = ROOT / "src" / "cs_markdown_editor"
+APP = SRC / "app"
 CONTRACTS_SRC = (APP / "_contracts.py").read_text(encoding="utf-8")
 
 FIELDS = {f.name for f in dataclasses.fields(AppContext)}

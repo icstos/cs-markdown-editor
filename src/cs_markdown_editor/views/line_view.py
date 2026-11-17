@@ -1,0 +1,920 @@
+"""行视图：Stack 双层叠加（渲染层 + 透明光标编辑层）。
+
+架构（Typora 式 WYSIWYG 光标级实时渲染）：
+- 非激活行：RenderedLine 纯渲染（语法标记透明）
+- 激活行：ft.Stack([RenderedLine, cursor_text_field])，光标 TextField 不设 value 属性
+  （IME 友好），由 editor 端 use_effect 异步清空；每个字符输入即时渲染到文档，
+  光标像素级对齐渲染层文字间隙
+- 围栏岛屿（CODE/MATH/HR/TOC）：保留独立分支，不进入 Stack
+  CODE 为 Flet 原生双态（高亮浏览 / 原生编辑，见 views/code_block.py）；
+  MATH/HR/TOC 视图态渲染
+
+状态由 editor.py 驱动：cursor_li/cursor_off/nav_seq/cursor_ref。本文件只负责渲染 + 命中。
+"""
+
+from collections.abc import Callable
+
+import ui
+
+from cs_markdown_editor.models.document import BlockType, Line
+from cs_markdown_editor.styles import (
+    FONT_MAIN,
+    FONT_MONO,
+    Radius,
+    Spacing,
+    _current_colors,
+    block_text_size,
+    heading_text_color,
+    only_border,
+    outline_heading_weight,
+)
+from cs_markdown_editor.utils.segment_helpers import PREFIX_SEGTYPES
+from cs_markdown_editor.views import _block_frame, _frontmatter
+from cs_markdown_editor.views.code_block import render_code_block as _render_code_block
+from cs_markdown_editor.views.cursor_layer import cursor_text_field
+from cs_markdown_editor.views.pixel_layout import (
+    _block_padding,
+    _compute_wrap_width,
+    _find_vline_for_raw,
+    _line_visual_layout,
+    _value_linear_width,
+)
+from cs_markdown_editor.views.rendered_line import RenderedLine
+
+# 代码块（CODE 围栏岛屿）实现在 views/code_block.py：Flet 原生双态（高亮浏览 +
+# 原生编辑），替代不支持软换行的 flet-code-editor。此处以别名引入，保持
+# `line_view._render_code_block` 调用点与测试契约不变。
+
+
+def _cursor_overlay(
+    line: Line,
+    base: int,
+    line_height: float,
+    cursor_off: int,
+    content_width: float | None,
+    li: int,
+    nav_seq: int,
+    field_ref: ui.Ref | None,
+    cursor_value: str,
+    on_change: Callable[[str], None],
+    on_submit: Callable[[str], None] | None,
+    on_focus: Callable | None,
+    on_blur: Callable | None,
+    on_selection_change: Callable | None,
+    *,
+    precomputed_vlines: list | None = None,
+    precomputed_wrap_width: float | None = None,
+    pos_value: str | None = None,
+    wrap_sel_seq: int = 0,
+) -> ui.TextField:
+    """构造光标透明 TextField（Stack 顶层），像素定位到 cursor_off（2D 视觉行）。
+
+    软换行 2D 定位（与渲染层 _maybe_stack_multi 共用 _line_visual_layout，
+    换行点天然一致）：
+    - _line_visual_layout 按 wrap_width 切出 N 视觉行
+    - _find_vline_for_raw 找到 cursor_off 所在视觉行
+    - cursor_px_x = vline.offsets_x[local_off]（局部于视觉行，已 rebase 到 0）
+    - cursor_px_y = vline.vline_idx * text_h（非零，2D 定位）
+
+    li 传入 cursor_text_field 作为 key 主体，保证同行输入不重建控件（IME 友好）；
+    key 不含 vline_idx → 同行跨视觉行移动仅改 top/left，不重建控件，IME 组合态保持。
+
+    任务行：Checkbox 替代了前缀，text_ctrl 只渲染内容（skip_prefix=True），
+    cursor_overlay 在内容 Text 的 Stack 内。前缀段在 vline 0 占宽度，需扣除
+    vline.offsets_x[prefix_len] 使光标 X 相对内容起点；vline 1+ 起点已在内容区，
+    无需扣除。
+
+    光标在段内：该段标记变灰可见占宽度（逐字符测量 raw）；其余段标记折叠。
+
+    性能优化：precomputed_vlines / precomputed_wrap_width 由 LineView 共享传入，
+    避免与 RenderedLine._get_vlayout 重复调用 _line_visual_layout（内含
+    HarfBuzz 整形测量）。传入时跳过内部 _line_visual_layout 调用。
+    """
+    # 视觉行布局：优先复用 LineView 预计算结果，否则自行计算
+    if precomputed_vlines is not None and precomputed_wrap_width is not None:
+        visual_lines = precomputed_vlines
+        wrap_width = precomputed_wrap_width
+    else:
+        _, _, left_pad = _block_padding(line)
+        cw = content_width if content_width is not None else float("inf")
+        wrap_width = _compute_wrap_width(cw, left_pad)
+        visual_lines = _line_visual_layout(
+            line,
+            base,
+            wrap_width,
+            cursor_raw_offset=cursor_off,
+            line_height=line_height,
+        )
+
+    # 找到 cursor_off 所在视觉行
+    vline = _find_vline_for_raw(visual_lines, cursor_off)
+    text_h = base * line_height
+    # 定位与 TextField value 均使用 _eff_value：
+    # 优先 pos_value（input_session_ref 的 last_value，ref 即时同步 cursor_ref），
+    # 避免 cursor_field_value state 滞后于 cursor_ref.current.base 导致 start_local
+    # 偏移、光标与内容距离累积增大（连续输入漂移根因）。
+    _eff_value = pos_value if pos_value is not None else cursor_value
+    if vline is None:
+        cursor_px_x = 0.0
+        cursor_px_y = 0.0
+    else:
+        local_off = cursor_off - vline.start_raw
+        local_off = max(0, min(local_off, len(vline.offsets_x) - 1))
+        cursor_px_x = vline.offsets_x[local_off]
+        cursor_px_y = vline.vline_idx * text_h
+        # value 文本起始位置：TextField 显示 value（透明但占宽度），
+        # 需将 left 调整为 value 起始位置，使光标落在 cursor_off 对应的像素位置。
+        # start_local = local_off - len(value)，对应 value 首字符的像素位置。
+        if _eff_value:
+            start_local = local_off - len(_eff_value)
+            if 0 <= start_local < len(vline.offsets_x):
+                cursor_px_x = vline.offsets_x[start_local]
+            else:
+                # value 跨视觉行（起点在上一个视觉行，start_local < 0）：单行
+                # TextField 的 value 从 left 线性布局，caret 位于 left + textwidth。
+                # 若 left 保持 caret 位置，caret 会渲染在距文字约一个 value 宽度之外
+                # 且被字段裁切（Clip.hardEdge）→ 光标"丢失"。left = caret_x -
+                # textwidth（跨视觉行累加，与渲染层同源 offsets_x），caret 精确
+                # 落回光标像素位置，IME 候选框跟随正确位置弹出。
+                _w = _value_linear_width(
+                    visual_lines,
+                    cursor_off - len(_eff_value),
+                    vline,
+                    cursor_px_x,
+                )
+                if _w is not None:
+                    cursor_px_x = cursor_px_x - _w
+
+    # 任务行前缀宽度扣除（仅 vline 0：前缀占宽度，需相对内容起点定位光标）
+    if line.task and line.segments and vline is not None and vline.vline_idx == 0:
+        prefix_raw = line.segments[0].raw
+        prefix_len = len(prefix_raw) if prefix_raw else 0
+        if 0 < prefix_len < len(vline.offsets_x):
+            cursor_px_x -= vline.offsets_x[prefix_len]
+
+    # 软换行一次性选区折叠：换行边界变化时 IME 可能因失焦/重挂载提交并选中刚输入
+    # 的文本（继续输入会覆盖选区）。wrap_sel_seq > 0 时给客户端传 collapsed 选区
+    # （caret 在 value 末尾），清掉该选区；仅此一次（use_effect 随即复位）。
+    selection = None
+    if wrap_sel_seq > 0 and _eff_value:
+        selection = ui.TextSelection(len(_eff_value), len(_eff_value))
+
+    return cursor_text_field(
+        li=li,
+        cursor_px_x=cursor_px_x,
+        cursor_px_y=cursor_px_y,
+        line_height_px=text_h,  # 单视觉行高（TextField 高度，Stack 高 = N * text_h）
+        base_size=base,
+        line_height=line_height,
+        value=_eff_value,
+        on_change=on_change,
+        on_submit=on_submit,
+        on_focus=on_focus,
+        on_blur=on_blur,
+        on_selection_change=on_selection_change,
+        field_ref=field_ref,
+        nav_seq=nav_seq,
+        selection=selection,
+        content_width=wrap_width,  # vline 内剩余宽度（IME 友好）
+    )
+
+
+def _render_math_block(
+    line: Line,
+    line_idx: int,
+    base: int,
+    content_width: float | None,
+    on_change_math: Callable[[int, str], None] | None,
+    on_math_focus: Callable[[int], None] | None,
+    on_math_blur: Callable[[int], None] | None,
+    math_field_ref: ui.Ref | None,
+    is_editing: bool,
+    is_current_line: bool,
+    is_flash: bool = False,
+    on_line_size_change: Callable[[int, float], None] | None = None,
+    diff_mark: str | None = None,
+) -> ui.Control:
+    """公式块：浏览态 ft.Markdown 渲染 LaTeX；编辑态源码 + 实时预览。
+
+    双态切换由 editor 端 math_focus_li state 驱动（Typora 式：点击进入编辑，
+    失焦/点击外部回到渲染态）。左侧 math_fg 强调边框 + math_bg 底色，
+    与行内公式配色统一。
+
+    编辑态布局（垂直堆叠）：
+    - header：ƒ 图标 + "公式编辑" + "点击外部完成"
+    - 源码区：TextField（monospace, math_fg）+ "源码" 标签
+    - 分隔线：math_fg 半透明
+    - 预览区：ft.Markdown 实时渲染 LaTeX + "预览" 标签
+    on_change_math 更新 line.segments[0].text 触发重渲染，预览自动刷新。
+    """
+    c = _current_colors()
+    formula = line.segments[0].text if line.segments else ""
+
+    if is_editing:
+        # 编辑态：源码编辑器 + 实时预览（垂直堆叠）
+        # on_change_math 更新 line.segments[0].text 触发 observable 重渲染，
+        # 本函数重新执行读取最新 formula，preview_md 的 value 自动同步刷新。
+        text_field = ui.TextField(
+            key=f"math-edit-{line_idx}",
+            # ref 必须在构造时传入：flet 的 ref 是 InitVar，只在 __init__ 里绑定
+            # （BaseControl.__post_init__ 的 `ref.current = self`），事后 `text_field.ref = x`
+            # 不会绑定，ref 恒为 None（进入编辑态后无法把焦点交给源码框）。
+            ref=math_field_ref,
+            value=formula,
+            multiline=True,
+            min_lines=2,
+            max_lines=6,
+            border=ui.NoInputBorder(),
+            text_size=14,
+            text_style=ui.TextStyle(font_family=FONT_MONO, color=c.math_fg),
+            on_change=lambda e: (
+                on_change_math(line_idx, e.control.value) if on_change_math else None
+            ),
+            on_focus=lambda e: on_math_focus(line_idx) if on_math_focus else None,
+            on_blur=lambda e: on_math_blur(line_idx) if on_math_blur else None,
+            expand=True,
+        )
+        header = ui.Row(
+            [
+                ui.Icon(ui.Icons.FUNCTIONS, size=13, color=c.math_fg),
+                ui.Text(
+                    "公式编辑",
+                    size=11,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                    weight=ui.FontWeight.W_600,
+                ),
+                ui.Container(expand=True),
+                ui.Text("点击外部完成", size=11, color=c.muted),
+            ],
+            spacing=Spacing.SM,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
+        )
+
+        source_label = ui.Text(
+            "源码",
+            size=10,
+            color=c.muted,
+            font_family=FONT_MONO,
+            weight=ui.FontWeight.W_500,
+        )
+
+        source_section = ui.Container(
+            content=text_field,
+            border_radius=Radius.SM,
+            padding=ui.Padding.symmetric(horizontal=Spacing.SM, vertical=Spacing.XS),
+        )
+
+        divider = ui.Divider(
+            height=1,
+            thickness=1,
+            color=ui.Colors.with_opacity(0.2, c.math_fg),
+            leading_indent=0,
+            trailing_indent=0,
+        )
+
+        preview_label = ui.Text(
+            "预览",
+            size=10,
+            color=c.muted,
+            font_family=FONT_MONO,
+            weight=ui.FontWeight.W_500,
+        )
+
+        preview_md = ui.ft.Markdown(
+            value=f"$$\n{formula}\n$$",
+            selectable=False,
+            extension_set=ui.MarkdownExtensionSet.GITHUB_WEB,
+            soft_line_break=True,
+            latex_style=ui.TextStyle(color=c.text),
+        )
+
+        preview_section = ui.Container(
+            content=preview_md,
+            alignment=ui.Alignment.CENTER_LEFT,
+            padding=ui.Padding.symmetric(horizontal=Spacing.MD, vertical=Spacing.SM),
+        )
+
+        content = ui.Container(
+            content=ui.Column(
+                controls=[
+                    header,
+                    source_label,
+                    source_section,
+                    divider,
+                    preview_label,
+                    preview_section,
+                ],
+                spacing=Spacing.SM,
+                tight=True,
+            ),
+            bgcolor=c.math_bg,
+            border_radius=Radius.MD,
+            width=float("inf"),
+            padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            border=only_border(left=ui.BorderSide(3, c.math_fg)),
+        )
+    else:
+        # 浏览态：ft.Markdown 渲染 LaTeX（ selectable 便于复制）
+        md = ui.ft.Markdown(
+            value=f"$$\n{formula}\n$$",
+            selectable=True,
+            extension_set=ui.MarkdownExtensionSet.GITHUB_WEB,
+        )
+        content = ui.Container(
+            content=md,
+            bgcolor=c.math_bg,
+            border_radius=Radius.MD,
+            width=float("inf"),
+            padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            alignment=ui.Alignment.CENTER,
+            ink=True,
+            on_click=lambda e: on_math_focus(line_idx) if on_math_focus else None,
+        )
+
+    return _block_frame.wrap_block(
+        content,
+        line,
+        base,
+        line_idx,
+        is_current_line=is_current_line,
+        is_flash=is_flash,
+        on_size_change=on_line_size_change,
+        diff_mark=diff_mark,
+    )
+
+
+@ui.memo
+@ui.component
+def LineView(
+    line: Line,
+    line_idx: int,
+    *,
+    cursor_off: int | None = None,
+    cursor_ref: ui.Ref | None = None,
+    nav_seq: int = 0,
+    wrap_sel_seq: int = 0,  # >0 时给 overlay 传 collapsed 选区（软换行一次性折叠）
+    field_ref: ui.Ref | None = None,
+    input_session_ref: ui.Ref | None = None,
+    cursor_value: str = "",
+    content_width: float | None = None,
+    # 软换行总开关（settings.word_wrap）：代码块浏览态据此决定折行 / 横向滚动
+    word_wrap: bool = True,
+    line_height: float = 1.6,
+    body_font_size: int = 16,
+    is_current_line: bool = False,
+    is_flash: bool = False,
+    # 版本号触发 prop：reparse_line 就地修改 line 对象不替换引用，
+    # ft.memo 浅比较 line 引用未变会误判未刷新。通过 raw 长度 + 段数
+    # 两个值变化触发 memo 检测，让屏幕刷新。LineView 内部不读取这两个值。
+    line_raw_version: int = 0,
+    line_seg_count: int = 0,
+    # 主题失效 prop：切换主题时 line/版本号/回调均不变，ft.memo 会复用缓存
+    # 跳过函数体执行，导致 _current_colors() 不被重新调用，行内代码、公式、
+    # 引用、列表、标题色与代码块的 code_syntax 停留在旧主题。
+    # 通过 theme_mode 变化触发 memo 失效，重新执行函数体取色。LineView
+    # 内部不读取此值（_current_colors 直接读 page.theme_mode，已由 App
+    # 在渲染期同步写入），仅作 memo 触发用。
+    theme_mode: ui.ThemeMode = ui.ThemeMode.LIGHT,
+    # 光标输入（激活行用）
+    on_cursor_change: Callable[[str], None] | None = None,
+    on_cursor_submit: Callable[[str], None] | None = None,
+    on_cursor_focus: Callable | None = None,
+    on_cursor_blur: Callable | None = None,
+    on_selection_change: Callable | None = None,
+    # 点击 / 拖拽
+    on_tap: Callable[[int, int], None] | None = None,
+    on_pan_start: Callable[[int, int], None] | None = None,
+    on_pan_update: Callable[[int, int], None] | None = None,
+    on_toggle_task: Callable[[int], None] | None = None,
+    # 代码块
+    on_change_code: Callable[[int, str], None] | None = None,
+    on_code_focus: Callable[[int], None] | None = None,
+    on_code_blur: Callable[[int], None] | None = None,
+    on_code_selection: Callable[..., None] | None = None,
+    code_field_ref: ui.Ref | None = None,
+    on_change_lang: Callable[[int, str], None] | None = None,
+    # 块级公式：浏览态 ft.Markdown 渲染 LaTeX，编辑态 TextField 编辑源码
+    is_math_editing: bool = False,
+    on_change_math: Callable[[int, str], None] | None = None,
+    on_math_focus: Callable[[int], None] | None = None,
+    on_math_blur: Callable[[int], None] | None = None,
+    math_field_ref: ui.Ref | None = None,
+    clipboard_ref: ui.Ref | None = None,
+    # TOC
+    toc_entries: list[tuple[int, int, str]] | None = None,
+    on_jump_to: Callable[[int], None] | None = None,
+    # 行高上报：on_size_change 触发时回传 (line_idx, height)，用于精确滚动定位
+    on_line_size_change: Callable[[int, float], None] | None = None,
+    # 向外选区
+    outward_range: tuple[int, int] | None = None,
+    on_extend_outward: Callable[[int, int], None] | None = None,
+    on_clear_outward: Callable[[], None] | None = None,
+    shift_pressed_ref: ui.Ref | None = None,
+    ctrl_pressed_ref: ui.Ref | None = None,
+    alt_pressed_ref: ui.Ref | None = None,
+    on_hit_test_x: Callable[[int, float], int] | None = None,
+    on_hit_test_xy: Callable[[int, float, float], tuple[int, int] | None] | None = None,
+    on_double_tap: Callable[[int, int], None] | None = None,
+    # 图片右键菜单操作：(action, line_idx, seg_idx, url, alt)，透传至 RenderedLine
+    on_image_action: Callable[[str, int, int, str, str], None] | None = None,
+    # 文档路径：透传至 RenderedLine，用于解析相对路径图片（assets/xxx.png）
+    file_path: str | None = None,
+    # diff 对比：行级背景着色标记（"added"|"removed"|"modified"|None）
+    diff_mark: str | None = None,
+    # 文档内搜索（浮层）：本行命中 [(s, e, is_current)] raw 区间 | None。
+    # 纯装饰（bgcolor），不改文档/排版/测量；is_current 行内至多一个。
+    search_hits: list[tuple[int, int, bool]] | None = None,
+    # 搜索数据版本号：查询/匹配/当前项变化时递增，兜底 @ft.memo 失效
+    search_hits_version: int = 0,
+    # 多光标：本行的副光标列表 [(li, base, extent)]，用于渲染副光标标记 + 选区高亮
+    secondary_cursors: list[tuple[int, int, int]] | None = None,
+    # 多光标版本号：secondary_cursors 内容变化时递增，强制 ft.memo 失效重渲染
+    # （ft.memo 对 list 走身份比较，list comprehension 每次生成新对象虽能触发
+    # 重渲染，但状态批处理可能导致部分行未及时刷新，版本号兜底确保所有行同步）
+    secondary_cursors_version: int = 0,
+    # 代码块"外部请求进入编辑态"：序号（0=未请求）+ 初始光标偏移。
+    # 由导航层（方向键跨界）递增序号产生，透传给 code_block 组件消费一次。
+    # 只有目标行会拿到非 0 序号 / 非 None 偏移，其余行恒为 0/None → 不invalidate memo。
+    code_enter_seq: int = 0,
+    code_enter_off: int | None = None,
+    # 代码块兑现"进入编辑态"请求后的回报（编辑器据此作废那条一次性待办；
+    # 不作废的话，本行滚出/滚回渲染窗口重建时会拿旧序号再进一次编辑态）。
+    code_enter_consumed: Callable[[int], None] | None = None,
+    # 纯文本文档（.py/.txt…，整篇一个代码块）：代码块据此隐藏"折叠"入口、
+    # 大文件改用单层可见编辑框（见 views/code_block 的说明）。
+    # 它是文档级常量，同一文档内不变 → 不破坏 @ft.memo 的 prop 稳定性约定。
+    plain_document: bool = False,
+    # 代码块行级 diff（对比标签里的纯文本文档）：整篇一个文档行，差异只能按
+    # `code.split("\n")` 的行号着色（块级 diff_mark 表达不了"哪一行不同"）。
+    # dict 身份稳定（来自 App 的 use_memo 缓存），memo 依旧命中。
+    code_diff_marks: dict[int, str] | None = None,
+    code_diff_gaps: dict[int, list[float]] | None = None,
+    # 行内字符级变更区间（只有改行才有）：叠加在行底色之上，见 views/code_block
+    code_diff_ranges: dict[int, list[tuple[int, int]]] | None = None,
+    diff_side: int = 0,
+) -> ui.Control:
+    """渲染一行：围栏块走独立分支，普通文本行走 RenderedLine + Stack。
+
+    is_current_line：唯一激活标志（替代原 cursor_li == line_idx 比较）。
+    cursor_ref：激活行的光标位置 ref（CursorState）。
+    handle_char_input 中不调用 set_cursor_off（避免重渲染打断 IME），
+    光标位置仅由 cursor_ref.current.base 跟踪。
+    LineView 通过 cursor_ref 读取最新光标位置，计算光标像素坐标。
+    parser.reparse_line 触发的重渲染会重新调用 LineView，此时读取
+    cursor_ref.current.base 获取最新光标位置，实现光标实时跟随。
+
+    memo 化：非激活行的 prop 集合稳定（line/line_idx/content_width/line_height
+    + 版本号 prop + 回调），cursor 移动时仅旧激活行 + 新激活行 prop 变化，
+    其余 N-2 行 ft.memo 直接复用缓存，跳过 Python 函数体执行。主题切换时
+    line/版本号/回调均不变，靠 theme_mode prop 变化触发 memo 失效，让
+    _current_colors() 与代码块的 code_syntax 重新取最新主题色。
+    """
+    c = _current_colors()
+    base = block_text_size(line.block_type, line.level, body_font_size)
+    is_active = is_current_line
+
+    # 激活行：优先使用 cursor_ref.current.base（IME 组合期间最新位置）
+    # cursor_off state 在 IME 组合期间不更新（避免重渲染打断 IME），
+    # 仅在 _end_input_session 中同步。cursor_ref 实时跟踪最新位置。
+    effective_cursor_off = cursor_off if cursor_off is not None else 0
+    if is_active and cursor_ref is not None and cursor_ref.current is not None:
+        ref_off = getattr(cursor_ref.current, "base", None)
+        if ref_off is not None and ref_off >= 0:
+            effective_cursor_off = ref_off
+
+    # ============ 代码块（Flet 原生双态独立岛屿，见 views/code_block.py）============
+    if line.block_type == BlockType.CODE:
+        return _render_code_block(
+            line,
+            line_idx,
+            base,
+            content_width,
+            clipboard_ref,
+            on_change_code,
+            on_code_focus,
+            on_code_blur,
+            on_change_lang,
+            on_code_selection,
+            code_field_ref,
+            is_current_line,
+            is_flash,
+            on_line_size_change,
+            diff_mark=diff_mark,
+            word_wrap=word_wrap,
+            enter_seq=code_enter_seq,
+            enter_off=code_enter_off,
+            on_enter_consumed=code_enter_consumed,
+            is_plain_doc=plain_document,
+            code_diff_marks=code_diff_marks,
+            code_diff_gaps=code_diff_gaps,
+            code_diff_ranges=code_diff_ranges,
+            diff_side=diff_side,
+            # 向外选区（浏览态拖选）覆盖本块时整块着色。围栏块在选区里是**原子单元**
+            # （见 views/_editor_helpers._build_highlight_map），所以这里只传布尔值：
+            # `outward_range` 非空 = 本块被选中。
+            is_selected=outward_range is not None,
+        )
+
+    # ============ YAML 前置元数据（Obsidian 风格属性卡片）============
+    if line.block_type == BlockType.FRONTMATTER:
+        return _frontmatter.render_frontmatter(
+            line,
+            line_idx,
+            base,
+            content_width,
+            clipboard_ref,
+            on_change_code,
+            on_code_focus,
+            on_code_blur,
+            code_field_ref,
+            is_current_line,
+            is_flash,
+            on_line_size_change,
+            diff_mark=diff_mark,
+        )
+
+    # ============ 块级公式 MATH（浏览态 ft.Markdown / 编辑态 TextField）============
+    if line.block_type == BlockType.MATH:
+        return _render_math_block(
+            line,
+            line_idx,
+            base,
+            content_width,
+            on_change_math,
+            on_math_focus,
+            on_math_blur,
+            math_field_ref,
+            is_math_editing,
+            is_current_line,
+            is_flash,
+            on_line_size_change,
+            diff_mark=diff_mark,
+        )
+
+    # ============ 分隔线 HR（Typora 式 WYSIWYG：浏览态横线，激活态 fall through 显示源码）============
+    if line.block_type == BlockType.HR and not is_active:
+        content = ui.Container(
+            content=ui.Container(
+                height=1,
+                bgcolor=ui.Colors.with_opacity(0.25, c.muted),
+                border_radius=0.5,
+                width=float("inf"),
+            ),
+            padding=ui.Padding.symmetric(vertical=Spacing.LG),
+            alignment=ui.Alignment.CENTER,
+            ink=True,
+            on_click=lambda e, raw=line.raw: (
+                on_tap(line_idx, len(raw) if raw else 0) if on_tap else None
+            ),
+        )
+        return _block_frame.wrap_block(
+            content,
+            line,
+            base,
+            line_idx,
+            is_current_line=is_current_line,
+            is_flash=is_flash,
+            on_size_change=on_line_size_change,
+            diff_mark=diff_mark,
+        )
+    # HR 激活态：fall through 到下方普通文本路径（显示 --- 源码 + 光标，可编辑）
+
+    # ============ 目录 [toc] ============
+    if line.block_type == BlockType.TOC:
+        # 目录卡片：与侧边栏大纲面板**同一套取色口**——文字与色条都走
+        # styles.heading_text_color(level)，字重走 styles.outline_heading_weight(level)，
+        # 两处颜色与正文标题逐级对应（改主题同步换色，无需各自调色）。
+        # 同级别条目左对齐到同一缩进位置，色条作为级别强调。
+        # 头部含图标 + 标题 + 计数，清爽卡片边框，科学有序。
+        entries = toc_entries or []
+        header = ui.Row(
+            controls=[
+                ui.Icon(ui.Icons.FORMAT_LIST_BULLETED, size=14, color=c.muted),
+                ui.Text(
+                    value="目录",
+                    size=base - 5,
+                    color=c.muted,
+                    font_family=FONT_MAIN,
+                    weight=ui.FontWeight.W_600,
+                ),
+                ui.Container(expand=True),
+                ui.Text(
+                    value=f"{len(entries)} 项",
+                    size=base - 6,
+                    color=c.muted,
+                    font_family=FONT_MONO,
+                ),
+            ],
+            spacing=Spacing.SM,
+            vertical_alignment=ui.CrossAxisAlignment.CENTER,
+        )
+
+        if not entries:
+            body = ui.Container(
+                content=ui.Text(
+                    value="文档无标题，目录为空",
+                    size=base - 4,
+                    color=c.muted,
+                    font_family=FONT_MAIN,
+                ),
+                padding=ui.Padding.symmetric(vertical=Spacing.XL),
+                alignment=ui.Alignment.CENTER,
+                width=float("inf"),
+            )
+        else:
+            items: list[ui.Control] = []
+            for li, lvl, text in entries:
+                level_color = heading_text_color(lvl, c)
+                bar = ui.Container(width=2, height=14, bgcolor=level_color, border_radius=2)
+                txt = ui.Text(
+                    value=text,
+                    size=base - 3,
+                    color=level_color,
+                    font_family=FONT_MAIN,
+                    weight=outline_heading_weight(lvl),
+                    max_lines=1,
+                    overflow=ui.TextOverflow.ELLIPSIS,
+                    expand=True,
+                )
+                row = ui.Row(
+                    controls=[bar, txt],
+                    spacing=Spacing.MD,
+                    vertical_alignment=ui.CrossAxisAlignment.CENTER,
+                )
+                # 同级别左对齐：缩进 = (lvl-1) * Spacing.XXL，色条作为级别标识
+                items.append(
+                    ui.Container(
+                        content=row,
+                        padding=ui.Padding.only(
+                            left=(lvl - 1) * Spacing.XXL,
+                            top=Spacing.SM,
+                            bottom=Spacing.SM,
+                            right=Spacing.SM,
+                        ),
+                        on_click=lambda e, t=li: on_jump_to(t) if on_jump_to else None,
+                        ink=True,
+                        border_radius=Radius.SM,
+                    )
+                )
+            body = ui.Column(controls=items, spacing=0)
+
+        content = ui.Container(
+            content=ui.Column(
+                controls=[
+                    header,
+                    ui.Divider(height=1, thickness=1, color=c.border),
+                    body,
+                ],
+                spacing=Spacing.SM,
+            ),
+            width=float("inf"),
+            padding=ui.Padding.symmetric(horizontal=Spacing.XL, vertical=Spacing.LG),
+            bgcolor=c.code_bg,
+            border_radius=Radius.LG,
+            border=only_border(
+                top=ui.BorderSide(1, c.border),
+                bottom=ui.BorderSide(1, c.border),
+                left=ui.BorderSide(1, c.border),
+                right=ui.BorderSide(1, c.border),
+            ),
+        )
+        return _block_frame.wrap_block(
+            content,
+            line,
+            base,
+            line_idx,
+            is_current_line=is_current_line,
+            is_flash=is_flash,
+            on_size_change=on_line_size_change,
+            diff_mark=diff_mark,
+        )
+
+    # ============ 普通文本行（段落/标题/列表/引用/空行）：RenderedLine + Stack ============
+    # 性能优化：激活行在此计算一次视觉行布局，共享给 _cursor_overlay 和 RenderedLine，
+    # 消除原先三处独立调用 _line_visual_layout（内含 HarfBuzz 整形测量）的冗余。
+    # 非激活行无 overlay，vlayout 由 RenderedLine 内部惰性计算（无重复）。
+    cursor_off_val = effective_cursor_off if is_active else None
+    shared_vlayout: tuple[float, list] | None = None
+    if is_active:
+        _, _, left_pad = _block_padding(line)
+        cw = content_width if content_width is not None else float("inf")
+        shared_ww = _compute_wrap_width(cw, left_pad)
+        shared_vlines = _line_visual_layout(
+            line,
+            base,
+            shared_ww,
+            cursor_raw_offset=effective_cursor_off,
+            line_height=line_height,
+        )
+        shared_vlayout = (shared_ww, shared_vlines)
+
+    overlay = None
+    if is_active and on_cursor_change is not None:
+        # 定位用 value：优先 input_session_ref 的 last_value（ref，与
+        # cursor_ref.current.base 在同一 handle_char_input 调用中即时更新），
+        # 避免 cursor_field_value state 滞后导致 start_local 偏移、光标与内容
+        # 距离累积增大（连续输入漂移根因）。会话不在本行或已结束时回退 cursor_value。
+        pos_value = cursor_value
+        if input_session_ref is not None and input_session_ref.current is not None:
+            _sess = input_session_ref.current
+            if _sess.get("li") == line_idx and _sess.get("start_off", -1) >= 0:
+                _lv = _sess.get("last_value")
+                if _lv is not None:
+                    pos_value = _lv
+        overlay = _cursor_overlay(
+            line,
+            base,
+            line_height,
+            effective_cursor_off,
+            content_width,
+            line_idx,
+            nav_seq,
+            field_ref,
+            cursor_value,
+            on_cursor_change,
+            on_cursor_submit,
+            on_cursor_focus,
+            on_cursor_blur,
+            on_selection_change,
+            precomputed_vlines=shared_vlayout[1] if shared_vlayout else None,
+            wrap_sel_seq=wrap_sel_seq,
+            precomputed_wrap_width=shared_vlayout[0] if shared_vlayout else None,
+            pos_value=pos_value,
+        )
+
+    inner = RenderedLine(
+        line=line,
+        line_idx=line_idx,
+        cursor_off=cursor_off_val,
+        base_size=base,
+        line_height=line_height,
+        body_font_size=body_font_size,
+        content_width=content_width,
+        cursor_overlay=overlay,
+        precomputed_vlayout=shared_vlayout,
+        on_tap=on_tap,
+        on_pan_start=on_pan_start,
+        on_pan_update=on_pan_update,
+        on_toggle_task=on_toggle_task,
+        outward_range=outward_range,
+        on_extend_outward=on_extend_outward,
+        on_clear_outward=on_clear_outward,
+        shift_pressed_ref=shift_pressed_ref,
+        ctrl_pressed_ref=ctrl_pressed_ref,
+        alt_pressed_ref=alt_pressed_ref,
+        on_hit_test_x=on_hit_test_x,
+        on_hit_test_xy=on_hit_test_xy,
+        on_double_tap=on_double_tap,
+        on_image_action=on_image_action,
+        file_path=file_path,
+        search_hits=search_hits,
+    )
+
+    # ============ 多光标：副光标标记 + 选区高亮 ============
+    # 副光标为纯视觉标记（thin vertical bar），不承载 IME 输入（仅主光标有 TextField）。
+    # 有选区时（base != extent）渲染半透明背景高亮。
+    # 主光标在多光标模式下也用 cursor_ref.base/extent 跟踪选区（非 outward_sel），
+    # 此处一并渲染主光标选区高亮。
+    # 关键：主光标所在行通常没有副光标（副光标在其他行），条件必须同时覆盖
+    # "本行有副光标" 和 "本行是激活行且主光标有选区" 两种情况，否则主光标
+    # 选区高亮不渲染。
+    _has_primary_sel = (
+        is_active
+        and cursor_ref is not None
+        and cursor_ref.current is not None
+        and cursor_ref.current.base != cursor_ref.current.extent
+    )
+    if secondary_cursors or _has_primary_sel:
+        # 计算视觉行布局：复用激活行的 shared_vlayout，否则惰性计算
+        if shared_vlayout is not None:
+            sec_ww, sec_vlines = shared_vlayout
+        else:
+            _, _, left_pad = _block_padding(line)
+            cw = content_width if content_width is not None else float("inf")
+            sec_ww = _compute_wrap_width(cw, left_pad)
+            sec_vlines = _line_visual_layout(
+                line,
+                base,
+                sec_ww,
+                cursor_raw_offset=None,
+                line_height=line_height,
+            )
+        text_h = base * line_height
+        # 光标竖条垂直居中偏移：text 内文字在 line_height 行框内垂直居中，
+        # 竖条 height=base 需下移 (text_h - base) / 2 才对齐文字基线区域。
+        cursor_y_off = (text_h - base) / 2
+        sec_overlays: list[ui.Control] = []
+        # 主光标选区高亮（多光标模式 Shift+Arrow 扩展的选区）
+        if _has_primary_sel:
+            pbase = cursor_ref.current.base
+            pext = cursor_ref.current.extent
+            pv = _find_vline_for_raw(sec_vlines, pbase)
+            if pv is not None:
+                ps = min(pbase, pext)
+                pe = max(pbase, pext)
+                ps_local = max(0, min(ps - pv.start_raw, len(pv.offsets_x) - 1))
+                pe_local = max(0, min(pe - pv.start_raw, len(pv.offsets_x) - 1))
+                psx = pv.offsets_x[ps_local]
+                pex = pv.offsets_x[pe_local]
+                if line.task and line.segments and pv.vline_idx == 0:
+                    prefix_raw = line.segments[0].raw
+                    prefix_len = len(prefix_raw) if prefix_raw else 0
+                    if 0 < prefix_len < len(pv.offsets_x):
+                        psx -= pv.offsets_x[prefix_len]
+                        pex -= pv.offsets_x[prefix_len]
+                sec_overlays.append(
+                    ui.Container(
+                        width=max(pex - psx, 2),
+                        height=text_h,
+                        left=psx,
+                        top=pv.vline_idx * text_h,
+                        bgcolor=ui.Colors.with_opacity(0.25, c.link),
+                        border_radius=2,
+                    )
+                )
+        for _sli, sbase, sext in secondary_cursors:
+            vline = _find_vline_for_raw(sec_vlines, sbase)
+            if vline is None:
+                continue
+            local_off = sbase - vline.start_raw
+            local_off = max(0, min(local_off, len(vline.offsets_x) - 1))
+            px_x = vline.offsets_x[local_off]
+            px_y = vline.vline_idx * text_h
+            # 任务行前缀宽度扣除（vline 0：前缀占宽度，需相对内容起点定位）
+            if line.task and line.segments and vline.vline_idx == 0:
+                prefix_raw = line.segments[0].raw
+                prefix_len = len(prefix_raw) if prefix_raw else 0
+                if 0 < prefix_len < len(vline.offsets_x):
+                    px_x -= vline.offsets_x[prefix_len]
+            # 选区高亮（base != extent）
+            if sbase != sext:
+                sel_start_raw = min(sbase, sext)
+                sel_end_raw = max(sbase, sext)
+                start_local = sel_start_raw - vline.start_raw
+                end_local = sel_end_raw - vline.start_raw
+                start_local = max(0, min(start_local, len(vline.offsets_x) - 1))
+                end_local = max(0, min(end_local, len(vline.offsets_x) - 1))
+                sel_x_start = vline.offsets_x[start_local]
+                sel_x_end = vline.offsets_x[end_local]
+                if line.task and line.segments and vline.vline_idx == 0:
+                    prefix_raw = line.segments[0].raw
+                    prefix_len = len(prefix_raw) if prefix_raw else 0
+                    if 0 < prefix_len < len(vline.offsets_x):
+                        sel_x_start -= vline.offsets_x[prefix_len]
+                        sel_x_end -= vline.offsets_x[prefix_len]
+                sel_width = max(sel_x_end - sel_x_start, 2)
+                sec_overlays.append(
+                    ui.Container(
+                        width=sel_width,
+                        height=text_h,
+                        left=sel_x_start,
+                        top=px_y,
+                        bgcolor=ui.Colors.with_opacity(0.25, c.link),
+                        border_radius=2,
+                    )
+                )
+            # 副光标竖条标记（垂直居中于行框）
+            sec_overlays.append(
+                ui.Container(
+                    width=2,
+                    height=base,
+                    left=px_x,
+                    top=px_y + cursor_y_off,
+                    bgcolor=c.text,
+                    border_radius=1,
+                )
+            )
+        if sec_overlays:
+            inner = ui.Stack(
+                controls=[inner] + sec_overlays,
+                width=float("inf"),
+            )
+
+    # 最外层 Container 点击兜底：点击引用缩进/边框、列表缩进等 padding 死区时
+    # 定位光标到内容起点（内层 GestureDetector 只覆盖内容区）。桌面端直觉：
+    # 点击整行任意位置（含引用左侧色条）即可编辑。
+    content_start_off = 0
+    if line.segments and line.segments[0].seg_type in PREFIX_SEGTYPES:
+        content_start_off = len(line.segments[0].raw)
+    return _block_frame.wrap_block(
+        inner,
+        line,
+        base,
+        line_idx,
+        is_current_line=is_current_line,
+        on_size_change=on_line_size_change,
+        diff_mark=diff_mark,
+        on_click=(
+            lambda e, li=line_idx, off=content_start_off: (
+                on_tap(li, off) if on_tap is not None else None
+            )
+        ),
+    )
+
+
+# 前置元数据属性行拖拽分组已随 render_frontmatter 迁至 views/_frontmatter.py
+
+# 代码块（CODE 围栏岛屿）渲染实现已迁至 views/code_block.py（Flet 原生双态：
+# 高亮浏览 + 原生编辑），本模块通过顶部 import 的 _render_code_block 别名调用，
+# 调用点参数与测试契约保持不变。

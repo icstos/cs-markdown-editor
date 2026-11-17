@@ -48,17 +48,17 @@ from tests._flet_internals import patch_dataclass
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models.document import BlockType  # noqa: E402
-from parser import parse_markdown  # noqa: E402
-from services.code_highlight import (  # noqa: E402
+from cs_markdown_editor.models.document import BlockType  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.services.code_highlight import (  # noqa: E402
     DEFAULT,
     clear_highlight_cache,
     highlight_lines,
 )
-from styles import FONT_MONO, Spacing, get_colors  # noqa: E402
+from cs_markdown_editor.styles import FONT_MONO, Spacing, get_colors  # noqa: E402
 from tests.harness import RenderHarness, walk  # noqa: E402
-from views import code_block as blk  # noqa: E402
-from views import line_view as lv  # noqa: E402
+from cs_markdown_editor.views import code_block as blk  # noqa: E402
+from cs_markdown_editor.views import line_view as lv  # noqa: E402
 
 # 含空行、缩进、字符串，覆盖"空行行盒高度"与多类语义色
 RAW_CODE = "import os\n\ndef main():\n    print('hi')\n"
@@ -70,6 +70,7 @@ PARSED_CODE = parse_markdown(FENCE).lines[0].segments[0].text
 LOGICAL_LINES = PARSED_CODE.split("\n")
 
 ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / "src" / "cs_markdown_editor"
 # 夹具给代码块的内容宽度（渲染参数）。点击定位的折行宽度必须由它减去实测内边距推出，
 # 故提为常量：改这里就等于改夹具的画布宽度。
 _CONTENT_WIDTH = 800.0
@@ -535,7 +536,7 @@ def test_flet_code_editor_dependency_removed():
     assert "pygments" in pyproject, "依赖清单缺少 pygments"
 
     for rel in ("views/code_block.py", "views/line_view.py", "views/editor/_render.py"):
-        src = (ROOT / rel).read_text(encoding="utf-8")
+        src = (SRC / rel).read_text(encoding="utf-8")
         assert "import flet_code_editor" not in src, f"{rel} 仍导入 flet_code_editor"
 
 

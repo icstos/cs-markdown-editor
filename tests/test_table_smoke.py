@@ -17,8 +17,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import parse_markdown  # noqa: E402
-from utils.table_helpers import align_marker, is_table_separator, join_row, split_row
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.utils.table_helpers import align_marker, is_table_separator, join_row, split_row
 
 
 def test_join_row_format():
@@ -107,7 +107,7 @@ def test_parse_markdown_preserves_alignment():
     sep_cells = split_row(table_lines[1].raw)
     assert sep_cells == [":---:", "---:"], f"align lost: {sep_cells}"
     # 序列化往返：serialize 应还原原始 markdown（含分隔行）
-    from parser import serialize
+    from cs_markdown_editor.parser import serialize
     out = serialize(doc).strip()
     assert ":---:" in out and "---:" in out, f"align lost in serialize: {out!r}"
     print("PASS test_parse_markdown_preserves_alignment")

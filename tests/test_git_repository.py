@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from services.git import (
+from cs_markdown_editor.services.git import (
     ChangeKind,
     GitCommandError,
     GitConflictError,
@@ -21,7 +21,7 @@ from services.git import (
     is_git_available,
     is_repository,
 )
-from services.git.runner import GitRunner
+from cs_markdown_editor.services.git.runner import GitRunner
 
 pytestmark = pytest.mark.skipif(not is_git_available(), reason="环境未安装 git")
 
@@ -526,7 +526,7 @@ def test_pull_network_failure_is_classified(repo):
     # 指向一个本地不存在、会立即失败的远端地址
     repo.add_remote("origin", "https://127.0.0.1:1/does-not-exist.git")
     repo.runner.run(["branch", "--set-upstream-to=origin/main", "main"], check=False)
-    from services.git.errors import GitError
+    from cs_markdown_editor.services.git.errors import GitError
 
     with pytest.raises(GitError) as ei:
         repo.pull()

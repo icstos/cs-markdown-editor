@@ -18,11 +18,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from models.document import Segment, SegType  # noqa: E402
-from parser import parse_markdown, serialize, to_html  # noqa: E402
-from services.shortcuts import ShortcutManager  # noqa: E402
-from styles import _DARK, _LIGHT, segment_style  # noqa: E402
-from utils.segment_helpers import WRAP_SYNTAX, display_text, split_seg_for_display  # noqa: E402
+from cs_markdown_editor.models.document import Segment, SegType  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown, serialize, to_html  # noqa: E402
+from cs_markdown_editor.services.shortcuts import ShortcutManager  # noqa: E402
+from cs_markdown_editor.styles import _DARK, _LIGHT, segment_style  # noqa: E402
+from cs_markdown_editor.utils.segment_helpers import WRAP_SYNTAX, display_text, split_seg_for_display  # noqa: E402
 
 # ================ 解析与序列化 ================
 

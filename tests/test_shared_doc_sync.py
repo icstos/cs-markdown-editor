@@ -14,10 +14,10 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import parser
+import cs_markdown_editor.parser as parser
 
-from app._focus_router import build_focus_router
-from app.autosave import AutosaveContext, autosave_all_dirty
+from cs_markdown_editor.app._focus_router import build_focus_router
+from cs_markdown_editor.app.autosave import AutosaveContext, autosave_all_dirty
 
 
 def _shared_tabs():
@@ -127,7 +127,7 @@ class TestAutosaveDedupe:
 class TestReloadSync:
     def test_reload_replaces_all_shared_copies(self, tmp_path):
         """外部重载：共享旧 doc 的所有副本统一替换 + 清脏 + 各自 bump 会话。"""
-        from app._file_dialogs import build_file_dialogs
+        from cs_markdown_editor.app._file_dialogs import build_file_dialogs
 
         target = tmp_path / "a.md"
         target.write_text("# 磁盘最新内容", encoding="utf-8")

@@ -24,9 +24,9 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models.document import BlockType
-from parser import parse_markdown
-from styles import (
+from cs_markdown_editor.models.document import BlockType
+from cs_markdown_editor.parser import parse_markdown
+from cs_markdown_editor.styles import (
     _HEADING_WEIGHTS,
     _OUTLINE_HEADING_WEIGHTS,
     block_text_size,
@@ -35,10 +35,10 @@ from styles import (
     outline_heading_weight,
 )
 from tests.harness import RenderHarness, walk
-from utils.toc import compute_toc
-from views.line_view import LineView
-from views.segment_view import raw_to_visible_spans
-from views.toc import render_outline_panel
+from cs_markdown_editor.utils.toc import compute_toc
+from cs_markdown_editor.views.line_view import LineView
+from cs_markdown_editor.views.segment_view import raw_to_visible_spans
+from cs_markdown_editor.views.toc import render_outline_panel
 
 LEVELS = (1, 2, 3, 4, 5, 6)
 MODES = (ft.ThemeMode.LIGHT, ft.ThemeMode.DARK)

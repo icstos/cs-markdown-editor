@@ -1,0 +1,1070 @@
+"""应用根组件 App（从 main.py 抽取）。
+
+包结构（AppContext + 控制器模式，同 views/editor）：
+- __init__.py（本文件）：App 组件入口
+  hooks → state/ref 镜像 → 派生值 → 渲染期同步 → shortcut_mgr → ctx 构造
+  → 控制器装配 → 装配槽填充 → ref 同步 → use_effect → build_render
+- _context.py：AppContext dataclass（双区：稳定区 + 快照区 + 装配槽）
+- _tab_management.py / _file_io_ops.py / _file_dialogs.py / _diff_controller.py /
+  _settings_controller.py / _split_editor.py / _focus_router.py /
+  _keyboard.py：控制器模块（build_xxx(ctx) -> dict）
+- _render.py：渲染树构造（build_render(ctx) -> ft.Stack）
+- _tab_helpers.py / autosave.py / diff_scroll_sync.py：已抽取的纯函数/状态机
+
+状态分层：
+- tabs：多文档标签列表（每个 tab 持有 {document, file_path, dirty} 或 diff 字段）
+- active_index / session：当前标签索引 / 切换计数器（强制编辑器重置内部状态）
+- theme_mode / settings：主题模式 / 设置字典
+- split_editor / active_pane：拆分编辑器开关 / 焦点视口
+- diff_active_pane：对比标签焦点视口
+
+硬约束（来自重构架构说明书）：
+- 所有 use_* hook 必须在组件函数体顶层顺序调用（Flet 0.86 约束）
+- 控制器内禁止任何 use_* hook
+- 跨控制器调用通过 ctx 装配槽（带 default=lambda）
+- tabs_ref / active_index_ref / diff_active_pane_ref / active_pane_ref /
+  is_diff_tab_ref 渲染期同步写入，供异步回调读取最新值
+- 渲染期同步 page.theme_mode/bgcolor（保证子组件取色正确），apply_theme
+  在 use_effect 中再次推送确保原生 chrome 同步
+- shortcut_mgr ↔ update_setting 前向引用循环用 update_setting_ref 打破：
+  shortcut_mgr 构造时 lambda 捕获 update_setting_ref，控制器装配后
+  update_setting_ref.current = settings_cbs["update_setting"]
+"""
+
+import asyncio
+import contextlib
+import logging
+
+import ui
+
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.app._backup_controller import build_backup_controller
+from cs_markdown_editor.app._context import AppContext
+from cs_markdown_editor.app._diff_controller import build_diff_controller
+from cs_markdown_editor.app._file_dialogs import build_file_dialogs
+from cs_markdown_editor.app._file_io_ops import build_file_io_ops
+from cs_markdown_editor.app._focus_router import build_focus_router
+from cs_markdown_editor.app._git_controller import build_git_controller
+from cs_markdown_editor.app._keyboard import build_keyboard
+from cs_markdown_editor.app._render import build_render
+from cs_markdown_editor.app._settings_controller import build_settings_controller
+from cs_markdown_editor.app._split_editor import build_split_editor
+from cs_markdown_editor.app._tab_management import build_tab_management
+from cs_markdown_editor.app.diff_scroll_sync import DiffScrollSync
+from cs_markdown_editor.config.sample import SAMPLE_MD
+from cs_markdown_editor.config.settings import load_settings
+from cs_markdown_editor.services import file_ops
+from cs_markdown_editor.services.shortcuts import ShortcutManager
+from cs_markdown_editor.styles import get_colors
+from cs_markdown_editor.utils import diagnostics
+from cs_markdown_editor.utils.log import apply_settings_level
+from cs_markdown_editor.views.diff_view import compute_changed_ranges, compute_diff_for_editors
+from cs_markdown_editor.views.doc_search import compute_doc_matches
+from cs_markdown_editor.views.status_bar import _compute_counts
+
+log = logging.getLogger(__name__)
+
+
+@ui.component
+def App():
+    # ============ State（快照区）============
+    # 设置必须最先加载：初始标签文档取决于 settings["sample_shown"]（首启判定）。
+    settings, set_settings = ui.use_state(load_settings)
+    # 日志级别：环境变量优先（启动最早期已生效），否则用设置里的值
+    apply_settings_level(settings.get("log_level"))
+    # 多文档标签：每个 tab 持有 {document, file_path, dirty}；active_index 指向当前标签
+    # 初始文档：仅首次启动展示内置示例（SAMPLE_MD 约 298 行 → 首次渲染 ~225ms /
+    # 2400+ 控件）；之后启动直接空白文档（~63ms / 558 控件），客户端需构建的控件
+    # 树同步缩小，启动明显更快。首启标记由 _mark_sample_shown effect 落盘。
+    tabs, set_tabs = ui.use_state(
+        lambda: [
+            {
+                "document": parser.parse_markdown(
+                    "" if settings.get("sample_shown", False) else SAMPLE_MD
+                ),
+                "file_path": None,
+                "dirty": False,
+            }
+        ]
+    )
+    active_index, set_active_index = ui.use_state(0)
+    session, set_session = ui.use_state(0)  # 切换标签时自增，强制编辑器重置内部状态
+    # 拆分编辑组（VSCode 风格）：每侧组各自的激活标签全局索引与会话计数。
+    # 不变式：active_index == 焦点侧组的激活索引（activate_index 统一维护）。
+    # session_left/right 仅该组激活标签变化时递增 → 另一侧编辑器 key 不变，
+    # 光标/滚动不重置；编辑器 key 统一用组会话（f"{session_left}-0" 等），
+    # 切换拆分模式时左编辑器 key 不变、不重建。
+    active_index_left, set_active_index_left = ui.use_state(0)
+    active_index_right, set_active_index_right = ui.use_state(0)
+    session_left, set_session_left = ui.use_state(0)
+    session_right, set_session_right = ui.use_state(0)
+    # 跨文件"打开后跳转"：open_file_by_path(path, jump_to=(li, off)) 暂存跳转任务，
+    # session 变化（重建 MarkdownEditor）或 sig 变化（文件已是当前 tab，session 不变）
+    # 时 _fire_pending_jump effect 消费并调用 jump_to_line(li, off)。
+    # 双触发器设计：session 处理"切换/打开新 tab"，sig 处理"同 tab 重复点击搜索结果"。
+    pending_jump_ref = ui.use_ref(None)  # (li, off) | None
+    pending_jump_sig, set_pending_jump_sig = ui.use_state(0)
+    confirm_close, set_confirm_close = ui.use_state(None)  # 待确认关闭的 tab index | None
+    # Ctrl+F 聚焦搜索框：序号递增驱动 Sidebar 的 use_effect 聚焦搜索输入框。
+    # ref 记录最新值供稳定闭包读取；use_state 触发 Sidebar 渲染侧 effect。
+    search_focus_seq_ref = ui.use_ref(0)
+    search_focus_seq, set_search_focus_seq = ui.use_state(0)
+    # ============ 文档内搜索浮层状态（Ctrl+F；独立于侧边栏搜索面板）============
+    # open/query/case/regex/active 全部提升到 App：查询结果要驱动编辑器行级
+    # 高亮装饰与匹配导航。active = 当前匹配在扁平匹配列表中的索引（-1=无）。
+    doc_search_open, set_doc_search_open = ui.use_state(False)
+    doc_search_open_ref = ui.use_ref(False)
+    doc_search_open_ref.current = doc_search_open
+    doc_search_query, set_doc_search_query = ui.use_state("")
+    doc_search_case, set_doc_search_case = ui.use_state(False)
+    doc_search_regex, set_doc_search_regex = ui.use_state(False)
+    doc_search_active, set_doc_search_active = ui.use_state(-1)
+    doc_search_active_ref = ui.use_ref(-1)
+    doc_search_active_ref.current = doc_search_active
+    # Ctrl+F 每次唤起递增 focus_seq：FloatingSearch use_effect 聚焦其输入框
+    doc_search_focus_seq_ref = ui.use_ref(0)
+    doc_search_focus_seq, set_doc_search_focus_seq = ui.use_state(0)
+    # 匹配列表 ref 镜像（稳定闭包读取最新，避免捕获过期渲染快照）
+    doc_search_matches_ref = ui.use_ref([])
+    # 文件操作对话框状态：{"mode":"input"|"confirm", "action":..., "target":...} | None
+    # 由右键菜单触发（新建文件/文件夹/重命名/删除），确认后执行对应文件操作
+    file_dialog, set_file_dialog = ui.use_state(None)
+    # 文件比较（VSCode 风格）：compare_source 为「选择以进行比较」记录的源文件路径。
+    # 对比以标签形式管理：tabs 中 type=="diff" 的标签即对比视图（双编辑器 + 行级 diff），
+    # 可与普通编辑标签并存、切换、关闭。is_diff_tab_ref 标记当前激活标签是否为对比。
+    compare_source, set_compare_source = ui.use_state(None)
+    is_diff_tab_ref = ui.use_ref(False)
+    # 对比标签双编辑器导航接口 + 焦点视口
+    diff_nav_left = ui.use_ref(None)
+    diff_nav_right = ui.use_ref(None)
+    diff_active_pane, set_diff_active_pane = ui.use_state(0)  # 0=左, 1=右
+    diff_active_pane_ref = ui.use_ref(0)
+    diff_active_pane_ref.current = diff_active_pane
+    # diff 同步滚动（VSCode 风格）：一侧滚动时另一侧跟随相同像素偏移。
+    # 状态机封装在 app.diff_scroll_sync.DiffScrollSync（page_ref 定义后通过 use_memo 创建）。
+    # 亮/暗主题模式
+    theme_mode, set_theme_mode = ui.use_state(ui.ThemeMode.LIGHT)
+    settings_open, set_settings_open = ui.use_state(False)
+    settings_tab, set_settings_tab = ui.use_state("edit")
+    shortcut_focus, set_shortcut_focus = ui.use_state((None, None))
+    # 快捷键捕获模式：(layer, action_id) | (None, None)。设置页点"修改"时置为
+    # (layer, action_id)，KeyDispatcher 顶部拦截下一个组合键经 on_capture 写入配置。
+    capturing, set_capturing = ui.use_state((None, None))
+    # 导航接口：editor 把光标状态与导航函数写入此 ref，App 的 on_key 据此分发
+    nav_ref = ui.use_ref(None)
+    # 向右拆分编辑器（VSCode 风格 Ctrl+\）：右侧第二个 MarkdownEditor 视口，
+    # 共享同一 document（@ft.observable 自动同步），独立光标/滚动。
+    # nav_ref_split 为右侧编辑器的导航接口；active_pane 跟踪当前焦点视口（0=左, 1=右），
+    # KeyDispatcher 据此选择 actions_ref，状态栏据此选择光标位置来源。
+    split_editor, set_split_editor = ui.use_state(False)
+    active_pane, set_active_pane = ui.use_state(0)
+    nav_ref_split = ui.use_ref(None)
+    active_pane_ref = ui.use_ref(active_pane)
+    active_pane_ref.current = active_pane
+    # 切换拆分时下发的「浏览位置锚点」：((session_left, 行号), (session_right, 行号)) | None。
+    # 开/收拆分都会让两个视口一起重建（单编辑器 ↔ Row 内左右视口，控件树路径不同，
+    # Flutter 不复用元素），而 ListView 默认停在文档首行——用户却在文档中部阅读，
+    # 视觉上就是"一切分就跳回开头"。锚点取源视口此刻顶部可见的那一行，由重建后的
+    # 编辑器在挂载期 effect 贴顶（views/editor 的 initial_scroll_line）。
+    # 用行号而非像素偏移：拆分后窗格宽度减半，软换行口径随之改变，像素偏移会落到
+    # 别的行上。每个视口只认自己那组的会话号 → 组内换标签（该组 session 递增）锚点
+    # 即自动失效，不需要"消费后清除"的额外生命周期。
+    split_scroll, set_split_scroll = ui.use_state(None)
+
+    # FilePicker / Clipboard：service 实例，通过 ref 在事件回调中访问
+    picker_holder = ui.use_ref()
+    clipboard_holder = ui.use_ref()
+    # page 引用：事件回调中 ft.context.page 可能不可用，提前缓存
+    page_ref = ui.use_ref()
+    # diff 滚动同步状态机（封装 4-ref + 60ms 异步追赶逻辑，详见 app.diff_scroll_sync）
+    diff_sync = ui.use_memo(
+        lambda: DiffScrollSync(page_ref, diff_nav_left, diff_nav_right), []
+    )
+    # tabs / active_index 的 ref 镜像：异步回调（autosave 延时保存）读取最新值，
+    # 避免闭包捕获渲染期快照导致保存到错误标签
+    tabs_ref = ui.use_ref(tabs)
+    tabs_ref.current = tabs
+    active_index_ref = ui.use_ref(active_index)
+    active_index_ref.current = active_index
+    # 「重新打开已关闭标签」栈（Ctrl+Shift+T）：do_close_many 入栈、reopen_closed_tab
+    # 出栈。刻意不进 state——栈变化不需要重渲染，只影响下一次按键的恢复结果。
+    closed_tabs_ref = ui.use_ref([])
+    # 组激活索引 / 组会话计数 ref 镜像：控制器（activate_index / do_close_many）
+    # 与异步回调读取最新值，避免闭包捕获渲染期快照（同 tabs_ref 模式）。
+    active_index_left_ref = ui.use_ref(active_index_left)
+    active_index_left_ref.current = active_index_left
+    active_index_right_ref = ui.use_ref(active_index_right)
+    active_index_right_ref.current = active_index_right
+    session_left_ref = ui.use_ref(session_left)
+    session_left_ref.current = session_left
+    session_right_ref = ui.use_ref(session_right)
+    session_right_ref.current = session_right
+    # update_setting_ref：打破 shortcut_mgr ↔ update_setting 前向引用循环。
+    # shortcut_mgr 构造时 lambda 捕获此 ref，控制器装配后写入实际 update_setting。
+    update_setting_ref = ui.use_ref(None)
+    # 粘贴前的 draft 快照（供 handle_paste 做 diff 定位粘贴位置）
+    paste_old_draft = ui.use_ref("")
+    # 上/下键自驱动重复标志（KeyDispatcher 启动/停止，editor _on_key_up 停止）
+    arrow_repeat_ref = ui.use_ref(None)
+    # dispatcher_ref：渲染期同步赋值最新 dispatcher，_handler 通过 ref 读取。
+    # 修复 use_effect(_bind_keyboard, []) 空依赖导致 _handler 闭包捕获首次渲染
+    # dispatcher 的过期问题——改快捷键后新键位才能立即生效（无需重启）。
+    dispatcher_ref = ui.use_ref(None)
+    # 非编辑器原生输入框焦点域 ref：各输入框 on_focus/on_blur 写入 token
+    # （views.native_scope.native_focus_hooks）。KeyDispatcher 据此把「焦点在
+    # 外部输入框时的按键」与编辑器隔离（如搜索框内 Ctrl+A 只全选搜索框文本）。
+    native_input_ref = ui.use_ref(None)
+    # close_tab_ref：渲染期同步赋值最新 close_tab（控制器装配产物，每次渲染新建但
+    # 行为一致——仅读稳定 ref/setter）。供稳定化的 close_current_tab 读取最新实例，
+    # 打破「lambda 捕获 ctx.close_tab 导致 DiffHeader on_close 身份不稳定」问题。
+    close_tab_ref = ui.use_ref(None)
+    # 状态栏命令式更新器注册点：StatusBar 在渲染期写入 update_cursor/update_counts
+    status_ref = ui.use_ref(None)
+    # 字数防抖：mark_dirty 触发 on_content_change → 300ms 防抖后重算计数并命令式推送。
+    # count_token_ref 递增 token 做防抖 + 跨标签竞态防护：过期任务醒来校验失败即丢弃。
+    count_token_ref = ui.use_ref(0)
+    # 文件系统版本号：文件增删改后递增，驱动侧边栏文件树异步重扫。
+    # fs_version_ref 持最新值供 bump 闭包读取（避免闭包捕获渲染期快照）。
+    fs_version, set_fs_version = ui.use_state(0)
+    fs_version_ref = ui.use_ref(0)
+    fs_version_ref.current = fs_version
+    # 搜索/替换快捷键桥接 ref：Sidebar 渲染期写入 {replace_current, replace_all}，
+    # App 稳定闭包通过此 ref 调用 Sidebar 最新回调（类似 nav_ref 模式）。
+    sidebar_replace_ref = ui.use_ref({})
+    # settings_ref：供 use_memo([]) 稳定闭包读取最新设置（避免闭包捕获渲染期快照）
+    settings_ref = ui.use_ref(settings)
+    settings_ref.current = settings
+
+    # ============ 自动备份 / 崩溃恢复 / 状态栏消息 状态 ============
+    # status_message: (msg, kind) | None —— 状态栏轻量消息（"已自动保存" 等），
+    # 3 秒后由 StatusBar 内部计时器调 on_status_clear 清空。
+    status_message, set_status_message_state = ui.use_state(None)
+    # recovery_open / recovery_list: 恢复面板可见性与可恢复草稿列表。
+    # 启动时若 scan_recoverable 返回非空则自动弹出。
+    recovery_open, set_recovery_open = ui.use_state(False)
+    recovery_list, set_recovery_list = ui.use_state(None)
+    # backup_started_ref: 防止 use_effect 严格模式下重复启动备份循环
+    backup_started_ref = ui.use_ref(False)
+
+    # ============ Git 版本管理 状态 ============
+    # 分层原则（见 views/git_panel.py 模块 docstring）：
+    # - App 持有「异步任务产物」与「跨面板共享状态」（探测结果 / status / 分支 /
+    #   历史 / 差异视图 / 分支面板开关），以便状态栏角标、活动栏角标、Git 面板、
+    #   分支面板读同一份数据。
+    # - 面板局部状态（提交信息草稿、过滤词、分区折叠）留在组件内，避免每敲一个字
+    #   都触发 App 全量重渲染（编辑器控件树很重）。
+    git_available, set_git_available = ui.use_state(False)
+    git_version, set_git_version = ui.use_state("")
+    git_workspace, set_git_workspace = ui.use_state(None)
+    git_root, set_git_root = ui.use_state(None)
+    git_status, set_git_status = ui.use_state(None)
+    git_error, set_git_error = ui.use_state(None)
+    git_busy, set_git_busy = ui.use_state(False)
+    git_view, set_git_view = ui.use_state("changes")
+    git_branches, set_git_branches = ui.use_state(None)
+    git_history, set_git_history = ui.use_state(None)
+    git_history_has_more, set_git_history_has_more = ui.use_state(False)
+    git_history_loading, set_git_history_loading = ui.use_state(False)
+    git_history_filter, set_git_history_filter = ui.use_state(None)
+    git_commit_details, set_git_commit_details = ui.use_state(None)
+    git_expanded_commits, set_git_expanded_commits = ui.use_state(frozenset())
+    git_commit_push, set_git_commit_push = ui.use_state(
+        bool(settings.get("git_commit_push", False))
+    )
+    git_commit_seq, set_git_commit_seq = ui.use_state(0)
+    git_active_path, set_git_active_path = ui.use_state(None)
+    git_diff_open, set_git_diff_open = ui.use_state(False)
+    git_diff, set_git_diff = ui.use_state(None)
+    git_diff_meta, set_git_diff_meta = ui.use_state(None)
+    git_diff_mode, set_git_diff_mode = ui.use_state(
+        settings.get("git_diff_mode", "unified")
+    )
+    git_branch_menu_open, set_git_branch_menu_open = ui.use_state(False)
+
+    # Git ref：异步任务读最新值（渲染快照在异步回调里已经过期）
+    # - service_ref：GitService（按仓库根缓存 GitRepository；每次渲染重建会丢掉缓存）
+    # - busy_ref：并发保护真源（state 回流有延迟，拦不住同一事件内的连点）
+    # - refresh_token：刷新去抖令牌（切标签连点只执行最后一次 git 调用）
+    # - dialog_seq_ref：确认对话框实例序号（key 变化驱动 FileActionDialog 重挂载）
+    # - commit_message_ref：提交框草稿镜像（面板局部 state 的只读副本，供面板外的
+    #   Ctrl+Enter / 「提交」按钮读取最新文本）
+    git_service_ref = ui.use_ref(None)
+    git_busy_ref = ui.use_ref(False)
+    git_refresh_token = ui.use_ref(0)
+    git_dialog_seq_ref = ui.use_ref(0)
+    git_commit_message_ref = ui.use_ref("")
+
+    # ============ 派生值 ============
+    # 当前激活标签的派生值（供下游闭包与渲染使用）
+    _safe_idx = active_index if 0 <= active_index < len(tabs) else 0
+    cur_tab = tabs[_safe_idx] if tabs else {"type": "editor", "document": parser.parse_markdown(""), "file_path": None, "dirty": False}
+    is_diff_tab = cur_tab.get("type") == "diff"
+    is_diff_tab_ref.current = is_diff_tab
+    # editor 标签派生值（diff 标签无这些字段，对应分支不访问）
+    document = cur_tab.get("document") if not is_diff_tab else None
+    file_path = cur_tab.get("file_path") if not is_diff_tab else None
+
+    # ============ 渲染期同步 page.theme_mode/bgcolor ============
+    # 同步设置 page.theme_mode：use_effect 在渲染之后执行，本次渲染期间
+    # 子组件（MarkdownEditor→LineView 等）调用 _current_colors() 读到的
+    # 还是旧 page.theme_mode，导致切换主题后内容颜色不实时刷新。
+    # 在渲染期间同步写入，保证子组件取色正确。
+    _page_now = ui.context.page
+    if _page_now is not None:
+        _page_now.theme_mode = theme_mode
+        _page_now.bgcolor = get_colors(theme_mode).bg
+
+    # ============ shortcut_mgr（use_memo 缓存 + 前向引用 update_setting_ref）============
+    # ShortcutManager：无状态读取器。原每次渲染重建，现用 use_memo([id(settings)])
+    # 缓存——settings 不变时（文档编辑/光标移动等高频场景）复用实例，避免重复解析
+    # shortcuts dict。update_setting 通过 lambda 前向引用 update_setting_ref
+    # （控制器装配后写入），打破循环依赖。
+    shortcut_mgr = ui.use_memo(
+        lambda: ShortcutManager(
+            settings, lambda key, value: update_setting_ref.current(key, value)
+        ),
+        [id(settings)],
+    )
+
+    # ============ diff 计算 memoize ============
+    # 对比标签下 serialize(left/right)+difflib 较耗时，非内容变化的 App 重渲染
+    # （主题切换 / 侧边栏面板切换 / 宽度拖拽 / 滚动同步）不应重复计算。
+    # 签名含左右文档 id + 行 raw 元组：内容不变则复用缓存结果。
+    # 非对比标签签名为 ()，工厂早退返回 None，零开销。
+    if is_diff_tab:
+        _ld = cur_tab.get("left_doc")
+        _rd = cur_tab.get("right_doc")
+        _diff_sig = (
+            id(_ld), id(_rd),
+            tuple(ln.raw for ln in _ld.lines) if _ld is not None else (),
+            tuple(ln.raw for ln in _rd.lines) if _rd is not None else (),
+        )
+    else:
+        _diff_sig = ()
+
+    def _compute_diff_result():
+        if not is_diff_tab:
+            return None
+        _ld = cur_tab.get("left_doc")
+        _rd = cur_tab.get("right_doc")
+        if _ld is None or _rd is None:
+            return None
+        _ltext = parser.serialize(_ld)
+        _rtext = parser.serialize(_rd)
+        marks_l, marks_r, gaps_l, gaps_r = compute_diff_for_editors(_ltext, _rtext)
+        # 行内字符级区间（仅改行）：整行铺红绿只能说明"这行变了"，改了哪几个字
+        # 还得靠这一层。与 marks/gaps 同签名同缓存，内容不变就不重算。
+        ranges_l, ranges_r = compute_changed_ranges(_ltext, _rtext)
+        _added = sum(1 for v in marks_r.values() if v == "added")
+        _removed = sum(1 for v in marks_l.values() if v == "removed")
+        _modified = sum(1 for v in marks_r.values() if v == "modified")
+        return (
+            marks_l, marks_r, gaps_l, gaps_r, ranges_l, ranges_r,
+            _added, _removed, _modified,
+        )
+
+    _diff_result = ui.use_memo(_compute_diff_result, [_diff_sig])
+
+    # ============ 文档内搜索（浮层）派生 ============
+    # 作用文档 = 当前焦点编辑视口的文档（diff 按焦点侧、拆分按焦点组、否则激活标签）
+    if is_diff_tab:
+        _search_doc = cur_tab.get("right_doc") if diff_active_pane == 1 else cur_tab.get("left_doc")
+    elif split_editor and active_pane == 1:
+        _gi = active_index_right if 0 <= active_index_right < len(tabs) else active_index_left
+        _search_doc = tabs[_gi].get("document") if tabs else None
+    else:
+        _search_doc = document
+    _search_sig = (
+        tuple(ln.raw for ln in _search_doc.lines) if _search_doc is not None else ()
+    )
+    doc_search_matches = ui.use_memo(
+        lambda: (
+            compute_doc_matches(
+                _search_doc, doc_search_query, doc_search_case, doc_search_regex
+            )
+            if doc_search_open and _search_doc is not None
+            else []
+        ),
+        [doc_search_query, doc_search_case, doc_search_regex,
+         doc_search_open, id(_search_doc), _search_sig],
+    )
+    doc_search_matches_ref.current = doc_search_matches
+    _ds_total = len(doc_search_matches)
+    _ds_active = doc_search_active if 0 <= doc_search_active < _ds_total else -1
+
+    # {li: [(s, e, is_current)]}：行级高亮装饰输入（identity 稳定化，避免无关
+    # 渲染击穿 LineView memo；数据不变时列表对象复用）
+    def _build_ds_map():
+        if not doc_search_matches or _search_doc is None:
+            return {}
+        out: dict[int, list[tuple[int, int, bool]]] = {}
+        for i, (li, s, e) in enumerate(doc_search_matches):
+            out.setdefault(li, []).append((s, e, i == _ds_active))
+        return out
+
+    doc_search_map = ui.use_memo(_build_ds_map, [doc_search_matches, _ds_active])
+    # 版本号：查询结果数 + 当前匹配索引复合（数据变化时必变，供行级 memo 兜底）
+    doc_search_map_version = _ds_total * 100003 + (_ds_active + 1)
+
+    # ============ 构造 AppContext ============
+    ctx = AppContext(
+        # State 值
+        tabs=tabs,
+        active_index=active_index,
+        session=session,
+        pending_jump_ref=pending_jump_ref,
+        pending_jump_sig=pending_jump_sig,
+        set_pending_jump_sig=set_pending_jump_sig,
+        search_focus_seq=search_focus_seq,
+        set_search_focus_seq=set_search_focus_seq,
+        confirm_close=confirm_close,
+        file_dialog=file_dialog,
+        compare_source=compare_source,
+        diff_active_pane=diff_active_pane,
+        theme_mode=theme_mode,
+        settings=settings,
+        settings_open=settings_open,
+        settings_tab=settings_tab,
+        shortcut_focus=shortcut_focus,
+        capturing=capturing,
+        split_editor=split_editor,
+        active_pane=active_pane,
+        split_scroll=split_scroll,
+        active_index_left=active_index_left,
+        active_index_right=active_index_right,
+        session_left=session_left,
+        session_right=session_right,
+        fs_version=fs_version,
+        # 派生值
+        cur_tab=cur_tab,
+        is_diff_tab=is_diff_tab,
+        document=document,
+        file_path=file_path,
+        shortcut_mgr=shortcut_mgr,
+        diff_sync=diff_sync,
+        diff_result=_diff_result,
+        # Setters
+        set_tabs=set_tabs,
+        set_active_index=set_active_index,
+        set_session=set_session,
+        set_confirm_close=set_confirm_close,
+        set_file_dialog=set_file_dialog,
+        set_compare_source=set_compare_source,
+        set_diff_active_pane=set_diff_active_pane,
+        set_theme_mode=set_theme_mode,
+        set_settings=set_settings,
+        set_settings_open=set_settings_open,
+        set_settings_tab=set_settings_tab,
+        set_shortcut_focus=set_shortcut_focus,
+        set_capturing=set_capturing,
+        set_split_editor=set_split_editor,
+        set_active_pane=set_active_pane,
+        set_split_scroll=set_split_scroll,
+        set_active_index_left=set_active_index_left,
+        set_active_index_right=set_active_index_right,
+        set_session_left=set_session_left,
+        set_session_right=set_session_right,
+        # Refs
+        is_diff_tab_ref=is_diff_tab_ref,
+        diff_nav_left=diff_nav_left,
+        diff_nav_right=diff_nav_right,
+        diff_active_pane_ref=diff_active_pane_ref,
+        nav_ref=nav_ref,
+        nav_ref_split=nav_ref_split,
+        active_pane_ref=active_pane_ref,
+        active_index_left_ref=active_index_left_ref,
+        active_index_right_ref=active_index_right_ref,
+        session_left_ref=session_left_ref,
+        session_right_ref=session_right_ref,
+        picker_holder=picker_holder,
+        clipboard_holder=clipboard_holder,
+        page_ref=page_ref,
+        tabs_ref=tabs_ref,
+        active_index_ref=active_index_ref,
+        closed_tabs_ref=closed_tabs_ref,
+        settings_ref=settings_ref,
+        dispatcher_ref=dispatcher_ref,
+        native_input_ref=native_input_ref,
+        paste_old_draft=paste_old_draft,
+        arrow_repeat_ref=arrow_repeat_ref,
+        status_ref=status_ref,
+        sidebar_replace_ref=sidebar_replace_ref,
+        # 自动备份 / 崩溃恢复 / 状态消息 UI 状态
+        recovery_open=recovery_open,
+        set_recovery_open=set_recovery_open,
+        recovery_list=recovery_list,
+        set_recovery_list=set_recovery_list,
+        status_message=status_message,
+        # Git 版本管理（状态 / setter / ref）
+        git_available=git_available,
+        git_version=git_version,
+        git_workspace=git_workspace,
+        git_root=git_root,
+        git_status=git_status,
+        git_error=git_error,
+        git_busy=git_busy,
+        git_view=git_view,
+        git_branches=git_branches,
+        git_history=git_history,
+        git_history_has_more=git_history_has_more,
+        git_history_loading=git_history_loading,
+        git_history_filter=git_history_filter,
+        git_commit_details=git_commit_details,
+        git_expanded_commits=git_expanded_commits,
+        git_commit_push=git_commit_push,
+        git_commit_seq=git_commit_seq,
+        git_active_path=git_active_path,
+        git_diff_open=git_diff_open,
+        git_diff=git_diff,
+        git_diff_meta=git_diff_meta,
+        git_diff_mode=git_diff_mode,
+        git_branch_menu_open=git_branch_menu_open,
+        set_git_available=set_git_available,
+        set_git_version=set_git_version,
+        set_git_workspace=set_git_workspace,
+        set_git_root=set_git_root,
+        set_git_status=set_git_status,
+        set_git_error=set_git_error,
+        set_git_busy=set_git_busy,
+        set_git_view=set_git_view,
+        set_git_branches=set_git_branches,
+        set_git_history=set_git_history,
+        set_git_history_has_more=set_git_history_has_more,
+        set_git_history_loading=set_git_history_loading,
+        set_git_history_filter=set_git_history_filter,
+        set_git_commit_details=set_git_commit_details,
+        set_git_expanded_commits=set_git_expanded_commits,
+        set_git_commit_push=set_git_commit_push,
+        set_git_commit_seq=set_git_commit_seq,
+        set_git_active_path=set_git_active_path,
+        set_git_diff_open=set_git_diff_open,
+        set_git_diff=set_git_diff,
+        set_git_diff_meta=set_git_diff_meta,
+        set_git_diff_mode=set_git_diff_mode,
+        set_git_branch_menu_open=set_git_branch_menu_open,
+        git_service_ref=git_service_ref,
+        git_busy_ref=git_busy_ref,
+        git_refresh_token=git_refresh_token,
+        git_dialog_seq_ref=git_dialog_seq_ref,
+        git_commit_message_ref=git_commit_message_ref,
+    )
+
+    # ============ 文档内搜索（浮层）控制器与装配槽 ============
+    # 在控制器装配前把状态/回调挂到 ctx（build_keyboard 的 app_callbacks 与
+    # build_render 立即读取）。事件回调运行时经 ref/attr 读取最新状态。
+    def _ds_jump_to(li: int, off: int) -> None:
+        """路由到焦点视口的编辑动作：优先视口中部平滑滚动，缺省退化为常规跳转。"""
+        nav = ctx.get_active_nav()
+        if nav is not None and nav.current is not None:
+            act = nav.current
+            fn = getattr(act, "jump_to_line_center", None) or act.jump_to_line
+            with contextlib.suppress(Exception):
+                fn(li, off)
+
+    def _ds_goto(idx: int) -> None:
+        m = doc_search_matches_ref.current
+        if not m:
+            return
+        idx = idx % len(m)
+        set_doc_search_active(idx)
+        doc_search_active_ref.current = idx
+        li, s, _e = m[idx]
+        _ds_jump_to(li, s)
+
+    def _ds_open() -> None:
+        """Ctrl+F：唤起浮层文档内搜索并聚焦输入框（不触碰侧边栏）。"""
+        set_doc_search_open(True)
+        doc_search_focus_seq_ref.current += 1
+        set_doc_search_focus_seq(doc_search_focus_seq_ref.current)
+        if doc_search_active == -1 and doc_search_matches_ref.current:
+            set_doc_search_active(0)
+            doc_search_active_ref.current = 0
+
+    def _ds_close() -> None:
+        """关闭浮层：清高亮并把焦点交还编辑器编辑区。
+
+        焦点函数是 async（Flet 需 await 才真正执行）：把整个 async 可调用对象
+        交给 page.run_task 调度（项目约定：run_task 接收 async 函数而非协程
+        实例），绝不自行调用生成悬空协程。
+        """
+        set_doc_search_open(False)
+        set_doc_search_active(-1)
+        doc_search_active_ref.current = -1
+        nav = ctx.get_active_nav()
+        if nav is not None and nav.current is not None:
+            fn = getattr(nav.current, "focus_document", None)
+            if fn is not None:
+                page = ctx.page_ref.current
+                if page is not None:
+                    with contextlib.suppress(Exception):
+                        page.run_task(fn)
+
+    def _ds_next() -> None:
+        m = doc_search_matches_ref.current
+        if not m:
+            return
+        cur = doc_search_active_ref.current
+        _ds_goto((cur + 1) if 0 <= cur < len(m) else 0)
+
+    def _ds_prev() -> None:
+        m = doc_search_matches_ref.current
+        if not m:
+            return
+        cur = doc_search_active_ref.current
+        _ds_goto((cur - 1) if 0 <= cur < len(m) else len(m) - 1)
+
+    def _ds_global_search() -> None:
+        """Ctrl+Shift+F：激活侧边栏「文件夹全局搜索」并聚焦输入框。
+
+        打开侧边栏 → 切到 search 面板 → 打开 search_folder（跨文件/文件夹范围）
+        选项 → 递增 focus_seq 驱动 Sidebar 聚焦输入框。与 Ctrl+F（文档内浮层）
+        严格分流。
+        """
+        us = update_setting_ref.current
+        if us is None:
+            return
+        s = settings_ref.current or {}
+        if not s.get("sidebar_open", False):
+            us("sidebar_open", True)
+        us("sidebar_panel", "search")
+        us("search_folder", True)
+        search_focus_seq_ref.current += 1
+        set_search_focus_seq(search_focus_seq_ref.current)
+
+    ctx.doc_search_open = doc_search_open
+    ctx.doc_search_open_ref = doc_search_open_ref
+    ctx.doc_search_focus_seq = doc_search_focus_seq
+    ctx.doc_search_query = doc_search_query
+    ctx.set_doc_search_query = set_doc_search_query
+    ctx.doc_search_case = doc_search_case
+    ctx.set_doc_search_case = set_doc_search_case
+    ctx.doc_search_regex = doc_search_regex
+    ctx.set_doc_search_regex = set_doc_search_regex
+    ctx.doc_search_total = _ds_total
+    ctx.doc_search_active = doc_search_active
+    ctx.doc_search_doc = _search_doc
+    ctx.doc_search_map = doc_search_map
+    ctx.doc_search_map_version = doc_search_map_version
+    ctx.doc_search_matches_ref = doc_search_matches_ref
+    ctx.doc_search_active_ref = doc_search_active_ref
+    ctx.open_doc_search = _ds_open
+    ctx.close_doc_search = _ds_close
+    ctx.doc_search_next = _ds_next
+    ctx.doc_search_prev = _ds_prev
+    ctx.global_search = _ds_global_search
+    ctx.native_input_ref = native_input_ref
+
+    # ============ 控制器装配（拓扑序）============
+    # 装配顺序：tab_management → file_io_ops → file_dialogs → diff_controller
+    # → settings_controller → split_editor → focus_router → keyboard
+    # 跨控制器调用通过 ctx 装配槽延迟求值，但 KeyDispatcher 构造时
+    # app_callbacks 立即求值 ctx.save_doc 等，故 file_io_ops 必须先于 keyboard。
+    tab_cbs = build_tab_management(ctx)
+    ctx.cur_tab_fn = tab_cbs["cur_tab"]
+    # 统一激活入口 + 新标签入口 + 会话计数（拆分组感知，file_io/diff/backup 共用）
+    # 渲染期同步：close_tab 每次渲染新建但行为一致（仅读稳定 ref/setter），
+    # 写入 ref 供稳定化的 close_current_tab 读取最新实例。
+    close_tab_ref.current = tab_cbs["close_tab"]
+
+    file_cbs = build_file_io_ops(ctx)
+
+    # 跨文件"打开后跳转"：供侧边栏跨文件搜索结果点击调用。
+    # 内部转调 open_file_by_path(path, jump_to=(li, off))，由 pending_jump 机制处理时序。
+    def _open_file_and_jump(path: str, li: int, off: int | None = None):
+        ctx.open_file_by_path(path, jump_to=(li, off))
+
+    ctx.open_file_and_jump = _open_file_and_jump
+
+
+    dialog_cbs = build_file_dialogs(ctx)
+
+    # 非 md 文件用系统默认程序打开（资源管理器双击直觉）：try/except 捕获后 SnackBar 提示
+    def _open_external(path: str):
+        try:
+            file_ops.open_external(path)
+        except Exception as e:
+            ctx.show_snack(f"打开失败：{e}")
+
+    ctx.open_external = _open_external
+
+    # 聚焦模式：路由到当前焦点编辑器的动作（不触碰文档，属视图范畴）。
+    # 之所以要在 app 层提供，是因为 KeyDispatcher 的「外来输入域」路径拿不到
+    # EditorActions：焦点在搜索框时 Ctrl+Shift+K 原本会静默失效。
+    def _toggle_focus_mode():
+        nav = ctx.get_active_nav()
+        if nav is None or nav.current is None:
+            return
+        fn = getattr(nav.current, "toggle_focus_mode", None)
+        if fn is not None:
+            with contextlib.suppress(Exception):
+                fn()
+
+    ctx.focus_mode = _toggle_focus_mode
+
+    diff_cbs = build_diff_controller(ctx)
+
+    # ============ 状态栏消息推送桥接 ============
+    # set_status_message(msg, kind) → 写入 status_message state（tuple），
+    # StatusBar 监听 status_message prop 变化展示，3s 后自动清空。
+    # msg=None 时清空状态（供 on_status_clear 回调使用）。
+    # 必须在 backup_controller / file_io_ops 装配前设置（二者闭包内调用此槽位）。
+    def _set_status_message(msg: str | None, kind: str = "info"):
+        if msg is None:
+            set_status_message_state(None)
+        else:
+            set_status_message_state((msg, kind))
+
+    ctx.set_status_message = _set_status_message
+
+    # ============ 备份控制器（自动备份 / 崩溃恢复 / 启动扫描）============
+    # 在 settings_controller 之前装配：settings_controller 的 open_recovery_panel
+    # 闭包在调用时读取 ctx.scan_recent_backups，需此槽位已填充。
+    backup_cbs = build_backup_controller(ctx)
+    # 程序退出前同步自动保存所有脏标签到原文件（auto_save 开启时）
+
+    settings_cbs = build_settings_controller(ctx)
+
+    # ============ Git 版本管理控制器 ============
+    # 依赖均为「调用时读取」的装配槽（update_setting / show_snack /
+    # set_status_message / open_file_and_jump / set_file_dialog），故装配顺序
+    # 只需早于 build_keyboard（KeyDispatcher 构造期立即求值 app_callbacks）。
+    git_cbs = build_git_controller(ctx)
+
+    split_cbs = build_split_editor(ctx)
+
+    focus_cbs = build_focus_router(ctx)
+
+
+    # ============ 控制器输出装配 ============
+    # 控制器返回 {槽位名: 回调}，槽位名与 AppContext 字段同名，故统一循环装配，
+    # 不再逐槽手写 80 行 ctx.x = cbs["y"]。同名映射由 tests/test_app_wiring.py
+    # 断言守护：改名漏改立即测试失败，而不是运行时静默退化成默认 no-op。
+    #
+    # 关键时序：KeyDispatcher 在构造期就把 ctx 回调立即求值进 app_callbacks，
+    # 因此装配必须早于 build_keyboard，否则 dispatcher 捕获到默认 no-op。
+    #
+    # 三类例外：
+    #   _RENAMED   —— 控制器 key 与 AppContext 既有字段同名（cur_tab 是派生字典），
+    #                 不可覆盖，改走专用槽位 cur_tab_fn。
+    #   _UNSTORED  —— 控制器输出由 __init__ 另行接收（dispatcher / bind_keyboard /
+    #                 autosave_on_exit），不落 ctx。
+    #   _HAND_WIRED—— 由本文件在别处注入真实实现的槽位（doc_search / 稳定 use_memo /
+    #                 只读槽位），循环跳过以免覆盖。
+    _RENAMED = ['cur_tab']
+    _UNSTORED = ['autosave_on_exit', 'bind_keyboard', 'dispatcher']
+    _HAND_WIRED = ('active_index', 'bump_fs_version', 'close_current_tab', 'close_doc_search', 'doc_search_active', 'doc_search_active_ref', 'doc_search_case', 'doc_search_doc', 'doc_search_focus_seq', 'doc_search_map', 'doc_search_map_version', 'doc_search_matches_ref', 'doc_search_next', 'doc_search_open', 'doc_search_open_ref', 'doc_search_prev', 'doc_search_query', 'doc_search_regex', 'doc_search_total', 'focus_search', 'global_search', 'native_input_ref', 'open_doc_search', 'open_external', 'open_file_and_jump', 'page_ref', 'push_cursor_to_status', 'replace_all', 'replace_current', 'schedule_status_count_update', 'set_doc_search_case', 'set_doc_search_query', 'set_doc_search_regex', 'set_status_message', 'toggle_replace_bar')
+    for _group in (tab_cbs, file_cbs, dialog_cbs, diff_cbs, backup_cbs,
+                   settings_cbs, git_cbs, split_cbs, focus_cbs):
+        for _slot, _fn in _group.items():
+            if _slot in _RENAMED or _slot in _UNSTORED or _slot in _HAND_WIRED:
+                continue
+            setattr(ctx, _slot, _fn)
+
+    # ============ 搜索/替换稳定闭包（KeyDispatcher → App → Sidebar 桥接）============
+    # 必须在 build_keyboard 之前装配：KeyDispatcher 构造期就把 app_callbacks 的值
+    # 立即取出，装配晚一步会让 Ctrl+H / Alt+Enter 等捕获到 AppContext 默认 no-op，
+    # 表现为「按键完全无反应」且不报错。
+    # 与 close_current_tab 同模式：use_memo([]) 创建一次，通过 ref 读取最新值。
+    # update_setting_ref 在 settings_controller 装配后写入；settings_ref 每渲染同步。
+    # Ctrl+F 聚焦：search_focus_seq_ref 持最新序号，set_search_focus_seq 触发渲染。
+    def _make_focus_search():
+        def _focus():
+            us = update_setting_ref.current
+            if us is None:
+                return
+            s = settings_ref.current
+            if not s.get("sidebar_open", False):
+                us("sidebar_open", True)
+            us("sidebar_panel", "search")
+            # 驱动 Sidebar 聚焦搜索输入框（面板切换 + 序号变化 → effect 聚焦）
+            search_focus_seq_ref.current += 1
+            set_search_focus_seq(search_focus_seq_ref.current)
+        return _focus
+
+    def _make_toggle_replace_bar():
+        def _toggle():
+            us = update_setting_ref.current
+            if us is None:
+                return
+            s = settings_ref.current
+            if not s.get("sidebar_open", False):
+                us("sidebar_open", True)
+            us("sidebar_panel", "search")
+            us("search_replace_expanded", not s.get("search_replace_expanded", False))
+        return _toggle
+
+    def _make_replace_current():
+        def _replace():
+            actions = sidebar_replace_ref.current
+            fn = actions.get("replace_current") if actions else None
+            if fn is not None:
+                fn()
+        return _replace
+
+    def _make_replace_all():
+        def _replace():
+            actions = sidebar_replace_ref.current
+            fn = actions.get("replace_all") if actions else None
+            if fn is not None:
+                fn()
+        return _replace
+
+    ctx.focus_search = ui.use_memo(_make_focus_search, [])
+    ctx.toggle_replace_bar = ui.use_memo(_make_toggle_replace_bar, [])
+    ctx.replace_current = ui.use_memo(_make_replace_current, [])
+    ctx.replace_all = ui.use_memo(_make_replace_all, [])
+
+    keyboard_cbs = build_keyboard(ctx)
+    # keyboard 组输出（dispatcher 由渲染期写入 dispatcher_ref，不落 ctx）
+    for _slot, _fn in keyboard_cbs.items():
+        if _slot in _UNSTORED:
+            continue
+        setattr(ctx, _slot, _fn)
+    # 打破前向引用循环：update_setting 装配后写入 ref，shortcut_mgr 的 lambda 即可调用
+    update_setting_ref.current = settings_cbs["update_setting"]
+    # 渲染期同步：每次重渲染把最新 dispatcher 写入 ref，_handler 即可读到最新值
+    dispatcher_ref.current = keyboard_cbs["dispatcher"]
+
+    # ============ 状态栏命令式更新装配 ============
+    # push_cursor_to_status(row, col)：async，直接调 status_ref.update_cursor。
+    # schedule_status_count_update()：sync，300ms 防抖后异步重算计数并推送。
+    # 由 _render.py 按焦点视口包装（拆分/对比模式下非焦点视口上报被丢弃）。
+    #
+    # 稳定化：两个更新器用 use_memo([]) 创建一次——它们仅读稳定 ref（status_ref /
+    # count_token_ref / page_ref / tabs_ref / active_index_ref / diff_active_pane_ref），
+    # 行为与每次渲染重建一致（读取 ref 的最新值），但函数身份跨渲染不变 →
+    # on_cursor_move / on_content_change prop 身份稳定，MarkdownEditor @ft.component
+    # memo 在光标/内容 prop 上成立，App 重渲染（侧边栏切换 / 主题切换）不再因此
+    # 触发编辑器全量重跑。这是规则 2（高频局部 UI 稳定回调身份）的关键一环。
+
+    # 文件系统变更信号：文件增删改后递增 fs_version，驱动侧边栏文件树异步重扫。
+    # 在文件操作控制器之前装配，供 on_file_dialog_confirm / duplicate 等回调调用。
+    def _bump_fs_version():
+        fs_version_ref.current += 1
+        set_fs_version(fs_version_ref.current)
+
+    ctx.bump_fs_version = _bump_fs_version
+
+    def _make_push_cursor():
+        async def _push(row: int, col: int):
+            s = status_ref.current
+            if s is not None:
+                await s.update_cursor(row, col)
+        return _push
+
+    def _make_schedule_count():
+        def _schedule():
+            # token 防抖：每次调用递增 token，_do_count 醒来后校验 token 是否仍是最新，
+            # 过期任务（防抖期间又有新编辑 / 切标签）直接丢弃，等价于取消未触发的定时器。
+            count_token_ref.current += 1
+            my_token = count_token_ref.current
+            page = page_ref.current
+            if page is None:
+                return
+
+            async def _do_count():
+                await asyncio.sleep(0.3)
+                # 防抖期间又有新编辑 → token 已变，本任务放弃
+                if count_token_ref.current != my_token:
+                    return
+                # 取当前焦点视口的文档（diff 模式按 diff_active_pane 选侧）
+                ts = tabs_ref.current
+                ai = active_index_ref.current
+                if not (0 <= ai < len(ts)):
+                    return
+                tab = ts[ai]
+                if tab.get("type") == "diff":
+                    doc = (tab.get("right_doc") if diff_active_pane_ref.current == 1
+                           else tab.get("left_doc"))
+                else:
+                    doc = tab.get("document")
+                if doc is None:
+                    return
+                # 跨标签竞态校验：doc 引用须仍是当前焦点侧文档
+                ts2 = tabs_ref.current
+                ai2 = active_index_ref.current
+                if not (0 <= ai2 < len(ts2)):
+                    return
+                tab2 = ts2[ai2]
+                cur_doc = (tab2.get("right_doc") if (tab2.get("type") == "diff"
+                            and diff_active_pane_ref.current == 1)
+                           else (tab2.get("left_doc") if tab2.get("type") == "diff"
+                                 else tab2.get("document")))
+                if doc is not cur_doc:
+                    return
+                word, char, para, reading = _compute_counts(doc)
+                s = status_ref.current
+                if s is not None:
+                    await s.update_counts(word, char, para, reading)
+
+            page.run_task(_do_count)
+        return _schedule
+
+    ctx.push_cursor_to_status = ui.use_memo(_make_push_cursor, [])
+    ctx.schedule_status_count_update = ui.use_memo(_make_schedule_count, [])
+
+    # 稳定化「关闭当前标签」：供 DiffHeader on_close 使用。@ft.memo 要求 prop 身份
+    # 跨渲染不变，原 lambda: ctx.close_tab(ctx.active_index) 每次渲染新建会击穿 memo。
+    # 读 close_tab_ref.current（渲染期同步最新 close_tab）+ active_index_ref.current，
+    # 行为与原 lambda 一致，身份稳定 → DiffHeader memo 成立。
+    def _make_close_current_tab():
+        def _close():
+            fn = close_tab_ref.current
+            if fn is not None:
+                fn(active_index_ref.current)
+        return _close
+
+    ctx.close_current_tab = ui.use_memo(_make_close_current_tab, [])
+
+    # ============ use_effect（hooks 顺序约束：函数体顶层调用）============
+    ui.use_effect(settings_cbs["mount_picker"], [])
+    ui.use_effect(settings_cbs["apply_theme"], [theme_mode])
+    ui.use_effect(keyboard_cbs["bind_keyboard"], [])
+
+    # 文档搜索当前匹配索引归一化：匹配数变化后自动落到首/末合法值（-1=无匹配）
+    def _normalize_doc_search_active():
+        if not doc_search_open:
+            return
+        total = len(doc_search_matches_ref.current)
+        cur = doc_search_active_ref.current
+        if total == 0:
+            if cur != -1:
+                set_doc_search_active(-1)
+                doc_search_active_ref.current = -1
+        elif not (0 <= cur < total):
+            set_doc_search_active(0)
+            doc_search_active_ref.current = 0
+
+    ui.use_effect(_normalize_doc_search_active, [doc_search_open, _ds_total])
+
+    # 跨文件"打开后跳转"：消费 pending_jump_ref。
+    # 触发条件：session 变化（切换/打开 tab 重建编辑器）或 pending_jump_sig 变化
+    # （文件已是当前 tab，session 不变）。Flet effect 在子组件渲染后执行，此时
+    # nav_ref.current 已是新的 EditorActions，可安全调用 jump_to_line(li, off)。
+    # 消费即清，避免重复跳转。
+    def _fire_pending_jump():
+        job = pending_jump_ref.current
+        if job is None:
+            return
+        pending_jump_ref.current = None
+        li, off = job
+        # ctx.jump_to_line 已路由到当前焦点视口（diff/拆分/单编辑器统一）
+        ctx.jump_to_line(li, off)
+
+    ui.use_effect(_fire_pending_jump, [session, pending_jump_sig])
+
+    # ============ 自动备份循环 + 窗口事件钩子 + 启动扫描 ============
+    # start_backup_loop：启动自动保存 + 备份两个后台 asyncio 循环（独立于自动保存
+    # 开关，备份始终运行）。返回 cleanup 取消任务，组件卸载 / 应用退出时调用。
+    ui.use_effect(ctx.start_backup_loop, [])
+
+    # 窗口事件钩子：失焦 / 最小化 → 即时触发自动保存；关闭 / 断连 → 先同步
+    # 自动保存所有脏标签到原文件（autosave_on_exit），再写退出哨兵。
+    # page.window.on_event 在桌面端捕获窗口状态变化（Flet 0.86+ API）；
+    # on_disconnect 捕获 websocket 断连（含异常崩溃场景）。
+    # 两者共同确保崩溃/退出前最后一次状态既落盘到原文件（自动保存开启时）
+    # 也写入备份目录（哨兵 + 全量备份，未命名文档由恢复面板兜底）。
+    def _bind_window_hooks():
+        page = page_ref.current
+        if page is None:
+            return lambda: None
+
+        def _on_window_event(e):
+            # Flet 0.86+：e.type 为 WindowEventType 枚举（.value 小写字符串）
+            # BLUR/FOCUS/MINIMIZE/HIDE/CLOSE 等，统一取 .value 小写比较
+            etype = getattr(e, "type", None)
+            etype_val = etype.value if etype is not None else ""
+            etype_str = str(etype_val).lower() if etype_val else str(etype).lower()
+            if etype_str in ("blur", "minimize", "hide"):
+                ctx.trigger_autosave_now()
+            elif etype_str == "close":
+                ctx.autosave_on_exit()
+                ctx.write_exit_sentinel()
+
+        def _on_disconnect(_e):
+            # websocket 断连（含崩溃）→ 尽力同步自动保存 + 写入退出哨兵
+            ctx.autosave_on_exit()
+            ctx.write_exit_sentinel()
+
+        # Flet 0.86+：page.window.on_event 替代旧的 page.on_window_event
+        window = getattr(page, "window", None)
+        try:
+            if window is not None:
+                window.on_event = _on_window_event
+            page.on_disconnect = _on_disconnect
+        except Exception:
+            log.debug("窗口钩子绑定失败（Flet 版本差异？）", exc_info=True)
+
+        def _cleanup():
+            try:
+                if window is not None and window.on_event is _on_window_event:
+                    window.on_event = None
+                if page.on_disconnect is _on_disconnect:
+                    page.on_disconnect = None
+            except Exception:
+                log.debug("窗口钩子清理失败（退出路径，可忽略）", exc_info=True)
+
+        return _cleanup
+
+    ui.use_effect(_bind_window_hooks, [])
+
+    # 启动扫描可恢复草稿：仅在首次挂载时执行一次（backup_started_ref 防严格模式重复）。
+    # 扫描上次会话哨兵，若存在未保存文档则弹出恢复面板（非阻塞）。
+    # 同时清理过期备份（低频，启动时一次）。
+    def _startup_scan_recoverable():
+        if backup_started_ref.current:
+            return
+        backup_started_ref.current = True
+
+        def _do_scan():
+            # 说明：此处刻意保持同步执行（而非 asyncio.to_thread）——页面 run_task
+            # 在测试夹具的短生命周期事件循环里会留下 pending 线程任务，且备份扫描
+            # 只读哨兵清单（通常个位数文件），阻塞量可忽略。
+            with diagnostics.timed("启动 · 扫描可恢复草稿", slow_ms=1000):
+                try:
+                    ctx.cleanup_expired_backups()
+                except Exception:
+                    log.warning("启动清理过期备份失败", exc_info=True)
+                infos = ctx.scan_recoverable()
+                if infos:
+                    log.info("发现 %d 份可恢复草稿，弹出恢复面板", len(infos))
+                    set_recovery_list(infos)
+                    set_recovery_open(True)
+
+        page = page_ref.current
+        if page is not None:
+            try:
+                page.run_task(_do_scan)
+            except Exception:
+                log.debug("启动扫描任务未能提交（页面尚未就绪？）", exc_info=True)
+
+    ui.use_effect(_startup_scan_recoverable, [])
+
+    # 首次启动标记：本次已展示内置示例 → 落盘 sample_shown=True，之后启动直接打开
+    # 空白文档（省去示例文档的解析与渲染）。仅首启有一次额外重渲染。
+    def _mark_sample_shown():
+        us = update_setting_ref.current
+        if us is None:
+            return
+        if not (settings_ref.current or {}).get("sample_shown", False):
+            us("sample_shown", True)
+
+    ui.use_effect(_mark_sample_shown, [])
+
+    # ============ Git：工作区 / 文件系统变化时自动刷新 ============
+    # 对齐 VS Code 的行为：打开文件夹、切换工作区（workspace_folder 设置变化）、
+    # 文件增删改（fs_version 递增）、文档保存（dirty 由 True 翻回 False）都重新
+    # 探测仓库根并刷新状态；首次挂载即完成一次启动探测（未安装 Git / 不是仓库时
+    # 控制器自身会降级成"可用但未初始化"的提示态，不会抛错）。
+    # 依赖里只放"脏标记元组"而不是整个 tabs：内容编辑期间 dirty 只翻转一次，
+    # 因此不会每次击键都触发 git 子进程；控制器内部另有 0.12s 去抖兜底。
+    _git_ws_key = (settings or {}).get("workspace_folder") or ""
+    _git_dirty_sig = tuple(bool(t.get("dirty")) for t in tabs)
+
+    def _sync_git_state():
+        ctx.git_refresh()
+
+    ui.use_effect(_sync_git_state, [_git_ws_key, fs_version, _git_dirty_sig])
+
+    # ============ 渲染树 ============
+    return build_render(ctx)

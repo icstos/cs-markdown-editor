@@ -1,0 +1,585 @@
+"""滚动 / 导航 / 布局命中工厂（从 views/editor.py 闭包抽取）。
+
+闭包组：_on_scroll / _get_scroll_state / _get_top_line / _scroll_to_offset / _on_content_resize /
+on_line_size_change / _estimate_line_height / _estimate_line_offset / _safe_scroll_to /
+_ensure_visible / jump_to / _hit_test_line_x / _get_layout_cache / _hit_test_xy /
+_page_vlines / page_up / page_down / _scroll_by_page / _reset_line_heights /
+_get_cursor_row_col / _build_highlight_map
+
+跨组依赖（通过 ctx 装配槽，调用时读取）：
+- cursor_base（cursor 组）：_ensure_visible 读取
+- cursor_vline_info（navigation 组）：_ensure_visible 读取
+- set_cursor（cursor 组）：jump_to 调用
+- move_vline（navigation 组）：page_up / page_down 调用
+- set_cursor_li / set_cursor_line / set_flash_li（state setters）：jump_to 调用
+
+依赖项：
+- asyncio（scroll_to 协程 await / sleep）
+- flet（ft.context.page.run_task 调度协程）
+- models（BlockType：块类型判定）
+- styles（FONT_MAIN / block_text_size：字号与行高估算）
+- utils.segment_helpers（is_fence / line_raw：行级判定与源码）
+- views._editor_helpers（_build_offset_prefix / _build_highlight_map 纯函数实现）
+
+设计要点：
+- 行高估算（_estimate_line_height）：优先用 on_size_change 上报的实测高度，
+  未命中时按块类型估算（CODE 工具栏 + 代码行 / 围栏块占位 / 普通行软换行）。
+- 前缀和缓存（_estimate_line_offset）：O(n) 一次性构建，后续 O(1) 查表；
+  行高变化（on_line_size_change）或行数变化（_reset_line_heights）时失效。
+- 两步滚动（_safe_scroll_to to_top=True）：视口外未构建行无实测高度，
+  先估算滚动触发构建，等一帧后用实测高度精确贴顶。
+- vline 级精确滚动：用光标在行内 Y 偏移定位到具体视觉行（软换行长行只滚到光标所在行）。
+- LineLayoutCache 惰性构建：首次 pan 事件触发，行数变化时清空重建。
+"""
+
+import asyncio
+import bisect
+import contextlib
+
+import ui
+
+from cs_markdown_editor.models.document import BlockType
+from cs_markdown_editor.styles import FONT_MAIN, block_text_size
+from cs_markdown_editor.utils.segment_helpers import is_fence as _is_fence
+from cs_markdown_editor.utils.segment_helpers import line_raw as _line_raw
+from cs_markdown_editor.views._editor_helpers import (
+    _build_highlight_map as _build_highlight_map_impl,
+)
+from cs_markdown_editor.views._editor_helpers import _build_offset_prefix
+from cs_markdown_editor.views.editor._contracts import ScrollEnv
+
+
+def _run_task_safe(page, coro_fn, *args, **kwargs) -> None:
+    """安全调度协程：page 为 None 或 session 销毁时静默跳过。
+
+    组件卸载后异步回调（_focus_cursor_field 重试 / diff 同步滚动）可能命中
+    page.session 已销毁。page.run_task 内部先创建协程对象再访问 self.session，
+    session 销毁时抛 RuntimeError 但协程已创建未调度 → "coroutine never
+    awaited" 警告 + Task exception。提前检查 session 存活避免协程泄漏。
+    """
+    if page is None:
+        return
+    try:
+        _ = page.session  # 销毁后抛 RuntimeError("destroyed session")
+    except RuntimeError:
+        return
+    try:
+        page.run_task(coro_fn, *args, **kwargs)
+    except RuntimeError:
+        pass
+
+
+def build_scroll(ctx: ScrollEnv):
+    """构造滚动 / 导航 / 布局命中闭包组。
+
+    返回 dict[str, Callable]：
+    on_scroll / get_scroll_state / scroll_to_offset / on_content_resize /
+    on_line_size_change / estimate_line_height / estimate_line_offset /
+    safe_scroll_to / ensure_visible / jump_to / hit_test_line_x /
+    get_layout_cache / hit_test_xy / page_vlines / page_up / page_down /
+    scroll_by_page / reset_line_heights / get_cursor_row_col / build_highlight_map
+    """
+
+    def _on_scroll(e):
+        try:
+            ctx.scroll_offset_ref.current = e.pixels
+            if hasattr(e, "max_scroll_extent"):
+                ctx.max_scroll_ref.current = e.max_scroll_extent
+            if hasattr(e, "viewport_dimension"):
+                ctx.viewport_h_ref.current = e.viewport_dimension
+            # 窗口化（大文件首屏优化）：视口底部接近已构建边界时按块外扩窗口。
+            # 热路径：窗口够用时 request_line_window 立即返回（仅两次二分查找）。
+            if ctx.viewport_h_ref.current > 0:
+                _, last = _visible_line_range(
+                    ctx.scroll_offset_ref.current, ctx.viewport_h_ref.current
+                )
+                ctx.request_line_window(last)
+            # diff 对比模式滚动同步：上报当前滚动位置，main.py 据此驱动另一侧
+            if ctx.on_scroll_change is not None:
+                ctx.on_scroll_change(
+                    ctx.scroll_offset_ref.current,
+                    ctx.max_scroll_ref.current,
+                    ctx.viewport_h_ref.current,
+                )
+        except (AttributeError, RuntimeError):
+            pass  # 滚动上报回调失败不应影响滚动本身；其余异常照常抛出以便定位
+
+    def _get_scroll_state() -> tuple[float, float, float]:
+        """返回当前滚动状态 (offset, max_scroll_extent, viewport_height)。"""
+        return (
+            ctx.scroll_offset_ref.current,
+            ctx.max_scroll_ref.current,
+            ctx.viewport_h_ref.current,
+        )
+
+    def _get_top_line() -> int:
+        """当前视口**顶部可见行号**（浏览位置）。
+
+        用途：拆分编辑器开启时，新视口要停在「用户此刻正在浏览的那一行」而不是
+        文档首行（见 app/_split_editor.py 的 `_split_on`）。行号而非像素偏移才是
+        正确锚点——拆分后窗格变窄，同一份文档的软换行口径随之改变，像素偏移会
+        落到另一行上。
+
+        快路径：未滚动（offset ≤ 0）直接返回 0，避免为「首屏取位置」白建一遍
+        行偏移前缀和（大文档下那是一次 O(n) 估算，含 HarfBuzz 测量）。
+        """
+        if ctx.scroll_offset_ref.current <= 0:
+            return 0
+        first, _ = _visible_line_range(
+            ctx.scroll_offset_ref.current, ctx.viewport_h_ref.current
+        )
+        return first
+
+    def _scroll_to_offset(offset: float) -> None:
+        """同步调度异步 scroll_to(offset, duration=0)。
+
+        duration=0 即时跳转，跟随滚轮无动画延迟（diff 同步滚动专用）。
+        对外非阻塞：内部用 _run_task_safe 调度协程（session 销毁时静默跳过）。
+        """
+        page = ui.context.page
+
+        async def _do():
+            if ctx.list_view_ref.current is None:
+                return
+            with contextlib.suppress(Exception):
+                await ctx.list_view_ref.current.scroll_to(offset, duration=0)
+
+        if page is not None:
+            _run_task_safe(page, _do)
+
+    def _on_content_resize(e):
+        """内容 Container 尺寸变化回调：跟踪视口宽度，实现段落自适应换行。
+
+        程序尺寸变化时 Container 宽度变化 → set_viewport_w 触发重渲染 →
+        content_width 重算为 min(视口宽度, content_max_width) → 文本按新宽度换行。
+        去重：宽度变化 >1px 才更新 state，避免 sub-pixel 抖动引发频繁重渲染。
+
+        侧边栏拖拽中跳过 set_viewport_w：开启换行时每帧全量软换行重算（HarfBuzz
+        测量）会导致卡顿。viewport_w_ref 已记录最新宽度，拖拽结束后由 editor
+        use_effect([settings]) 一次性同步（page.sidebar_dragging 标志由 Sidebar
+        _on_pan_start/_on_pan_end 设置）。
+        """
+        try:
+            new_w = float(e.width) if e.width else 0.0
+            if new_w > 0 and abs(new_w - ctx.viewport_w_ref.current) > 1:
+                ctx.viewport_w_ref.current = new_w
+                # 侧边栏拖拽中：只更新 ref，跳过 set_viewport_w 避免换行重算卡顿
+                page = ui.context.page
+                if getattr(page, "sidebar_dragging", False):
+                    return
+                ctx.set_viewport_w(new_w)
+        except (AttributeError, RuntimeError):
+            pass  # 视口尺寸更新在控件未挂载 / 会话销毁时可能失败；其余异常照常抛出
+
+    def on_line_size_change(li: int, height: float):
+        """LineView on_size_change 回调：缓存行实际渲染高度。
+
+        容差 0.5px 内不更新，避免 layout 抖动引发无效写入。缓存供
+        _estimate_line_offset 精确累加滚动偏移，未命中的行回退到估算。
+        行高变化时同步失效前缀和缓存（offset_prefix_ref）。
+
+        围栏行的高度变化还要**额外作废 LineLayoutCache**：该缓存在构建时就把每行
+        的 Y 固化下来了，代码块编辑后长高/变矮而不重建的话，跨行拖选的命中会整体
+        错位（缓存只在行数变化时清空，而"改代码"不改行数）。作废只是置 None，
+        下次拖选才真正重建，代价可忽略。
+        """
+        cache = ctx.line_heights_ref.current
+        if height > 0 and abs(cache.get(li, 0.0) - height) > 0.5:
+            cache[li] = height
+            ctx.offset_prefix_ref.current = None  # 失效前缀和缓存
+            lines = ctx.document.lines
+            if 0 <= li < len(lines) and _is_fence(lines[li]):
+                ctx.layout_cache_ref.current = None
+
+    def _estimate_line_height(li: int) -> float:
+        """估算单行渲染高度（px）。优先用 on_size_change 上报的实际高度。
+
+        未命中缓存（行未构建或已被销毁）时按块类型估算：
+        - CODE：头部工具栏 + 每代码行 + padding（多行内容必须计入）
+        - 围栏块（MATH/HR/TOC/TABLE）：占位单行高
+        - 普通行：num_vlines × text_h + padding（软换行变量高度）
+          · 优先用 LineLayoutCache 的精确视觉行数
+          · 回退：measure_text_width(raw) / wrap_width 估算
+        """
+        cache = ctx.line_heights_ref.current
+        cached = cache.get(li)
+        if cached is not None and cached > 0:
+            return cached
+        if not (0 <= li < len(ctx.document.lines)):
+            return ctx.body_font_size * ctx.line_height + 4
+        line = ctx.document.lines[li]
+        base = block_text_size(line.block_type, line.level, ctx.body_font_size)
+        if line.block_type == BlockType.CODE:
+            code = line.segments[0].text if line.segments else ""
+            code_lines = max(1, code.count("\n") + 1)
+            # 头部工具栏(~28) + 代码行(14×line_height) + 容器 padding(~12)
+            return 28 + code_lines * 14 * ctx.line_height + 12
+        # 围栏块（MATH/TOC/TABLE）：占位单行高（实际高度由原生控件决定）
+        if line.block_type in (BlockType.MATH, BlockType.TOC, BlockType.TABLE):
+            return base * ctx.line_height + 4
+        # HR 行：padding 8+8（与 _block_padding 一致），单视觉行文本 + 上下间距
+        if line.block_type == BlockType.HR:
+            return base * ctx.line_height + 16
+        # 普通行：估算视觉行数（软换行）
+        # 优先用 LineLayoutCache 的精确视觉行数
+        layout_cache = ctx.layout_cache_ref.current
+        if layout_cache is not None:
+            layout = layout_cache.get(li)
+            if layout is not None:
+                return layout.num_vlines * base * ctx.line_height + 4
+        # 回退：用 measure_text_width 估算视觉行数
+        from cs_markdown_editor.utils.text_layout import measure_text_width
+        from cs_markdown_editor.views.pixel_layout import _block_padding, _compute_wrap_width
+        _, _, left_pad = _block_padding(line)
+        cw = ctx.content_width if ctx.content_width is not None else float("inf")
+        wrap_width = _compute_wrap_width(cw, left_pad)
+        raw = _line_raw(line)
+        if wrap_width != float("inf") and raw:
+            est_w = measure_text_width(raw, FONT_MAIN, base)
+            num_vlines = max(1, int(est_w / wrap_width) + 1)
+        else:
+            num_vlines = 1
+        return num_vlines * base * ctx.line_height + 4
+
+    def _offset_prefix() -> list[float]:
+        """行偏移前缀和（O(n) 一次性构建，后续 O(1)/O(log n) 复用）。
+
+        前缀和缓存：offset_prefix_ref。行高变化（on_line_size_change）或行数
+        变化（_reset_line_heights）时置 None 失效。滚动定位（_estimate_line_offset）
+        与窗口可见范围反查（_visible_line_range）共用同一份，保证两者坐标一致——
+        窗口化后「哪一行该被构建」与「滚动到第 N 行」必须用同一把尺子，
+        否则视口边缘会出现空占位或抖动。
+        """
+        n = len(ctx.document.lines)
+        prefix = ctx.offset_prefix_ref.current
+        if prefix is None or len(prefix) != n + 1:
+            # 前缀和构建已抽取到 _editor_helpers._build_offset_prefix（可单测）
+            prefix = _build_offset_prefix([_estimate_line_height(j) for j in range(n)])
+            ctx.offset_prefix_ref.current = prefix
+        return prefix
+
+    def _estimate_line_offset(li: int) -> float:
+        """累加 0..li 行高，得到目标行顶部的 y 偏移（相对 ListView 内容起点）。
+
+        比旧的 li × (目标行字号 × line_height + 4) 估算准确得多：
+        - 各行按自身字号/块类型累加，而非统一用目标行字号
+        - 已构建行用实测高度，消除代码块/长段落换行/表格的估算偏差
+        """
+        prefix = _offset_prefix()
+        n = len(prefix) - 1
+        if 0 <= li <= n:
+            return prefix[li]
+        return prefix[n] if n > 0 else 0.0
+
+    def _visible_line_range(offset: float, viewport: float) -> tuple[int, int]:
+        """由滚动偏移 + 视口高度反查可见行范围 [first, last]（含边界行）。
+
+        用与滚动定位同一份前缀和，二分定位首/末可见行。
+        供窗口化（request_line_window）判断「窗口是否还够用」——
+        不够时按块外扩，够时立即返回（热路径，每次滚动都会调）。
+        """
+        prefix = _offset_prefix()
+        n = len(prefix) - 1
+        if n <= 0:
+            return (0, 0)
+        first = bisect.bisect_right(prefix, offset) - 1
+        last = bisect.bisect_right(prefix, offset + max(0.0, viewport)) - 1
+        first = max(0, min(first, n - 1))
+        last = max(first, min(last, n - 1))
+        return (first, last)
+
+    async def _safe_scroll_to(li: int, to_top: bool = False,
+                              cursor_y_in_line: float = 0.0):
+        """异步滚动：Flet 的 scroll_to 是协程，需 await。
+
+        Args:
+            li: 目标行索引
+            to_top: True=滚动到视口顶部（大纲跳转），False=仅在不可见时滚动（光标导航）
+            cursor_y_in_line: 光标在行内的 Y 偏移（vline_idx * text_h），
+                to_top=False 时用于 vline 级精确滚动（软换行：长行只滚到光标所在视觉行）
+
+        两步滚动（to_top=True 且目标行未构建时）：
+        build_controls_on_demand 下视口外的行尚未构建，无实测高度缓存。
+        第一步用估算 offset 滚动到目标附近，触发 ListView 构建目标行并经
+        on_size_change 上报实测高度到 line_heights_ref；等待一帧后第二步
+        用缓存中的实测高度重新累加 offset，精确滚到视口顶部。这样首次点击
+        大纲项即可贴顶，无需第二次点击。缓存已命中时一步到位。
+        """
+        if ctx.list_view_ref.current is None:
+            return
+        # 窗口化（大文件）：目标行若在窗口外，先请求扩展——否则目标行根本不存在，
+        # scroll_to 落点会偏、ensure_visible 也找不到行。请求幂等，窗口足够时零开销；
+        # 外扩后 ListView 重挂载该段行，随后两步滚动（估算→实测精修）用更新后的
+        # 实测高度重新累加，落点依旧精确。
+        ctx.request_line_window(li)
+        try:
+            top_padding = ctx.content_padding_top
+            if to_top:
+                cache = ctx.line_heights_ref.current
+                already_built = cache.get(li, 0.0) > 0
+                est_y = _estimate_line_offset(li)
+                target_scroll = max(0, est_y - top_padding)
+                if already_built:
+                    # 缓存命中：目标行已构建，一步精确到位
+                    await ctx.list_view_ref.current.scroll_to(target_scroll, duration=200)
+                    return
+                # 缓存未命中：第一步估算滚动，触发目标行动态构建
+                await ctx.list_view_ref.current.scroll_to(target_scroll, duration=150)
+                # 等待 Flutter layout 完成 + on_size_change 上报实测高度
+                await asyncio.sleep(0.15)
+                # 第二步：用缓存中的实测高度重新累加，精确贴顶
+                precise_y = _estimate_line_offset(li)
+                precise_scroll = max(0, precise_y - top_padding)
+                if abs(precise_scroll - target_scroll) > 4:
+                    await ctx.list_view_ref.current.scroll_to(
+                        precise_scroll, duration=120
+                    )
+            else:
+                # vline 级精确滚动：用光标在行内的 Y 偏移定位到具体视觉行
+                line_y = _estimate_line_offset(li)
+                cursor_abs_y = line_y + cursor_y_in_line
+                text_h = ctx.body_font_size * ctx.line_height  # 单视觉行高
+                viewport = ctx.viewport_h_ref.current or 600
+                cur = ctx.scroll_offset_ref.current
+                if cursor_abs_y < cur + 40:
+                    await ctx.list_view_ref.current.scroll_to(
+                        max(0, cursor_abs_y - 40), duration=100
+                    )
+                elif cursor_abs_y + text_h > cur + viewport - 40:
+                    await ctx.list_view_ref.current.scroll_to(
+                        max(0, cursor_abs_y + text_h - viewport + 40), duration=100
+                    )
+        except (AttributeError, RuntimeError):
+            pass  # 控件未挂载时 scroll_to 不可用；其余异常照常抛出
+
+    def _ensure_visible(li: int, only_when_offscreen: bool = False):
+        """确保光标所在视觉行可见（vline 级精确滚动）。
+
+        计算光标在行内的 Y 偏移（vline_idx × text_h），传给 _safe_scroll_to
+        实现软换行场景下的精确滚动：长行只滚到光标所在视觉行，而非整行顶部。
+
+        only_when_offscreen=True：仅当目标行未构建时才滚动。用于常规点击编辑
+        场景——用户点击的必然是可见行（已构建），跳过滚动避免文档上下滚动调整。
+        用 line_heights 缓存判断行是否已构建（有实测高度），不依赖
+        _estimate_line_offset 估算——文档含表格/公式/代码块时视口外行高度为
+        估算值，累加产生累积误差，滚动条滚动后会误判已可见行为视口外触发滚动。
+        键盘导航场景仍用默认 False，保留 40px 安全边距以保证光标有可视空间。
+        """
+        page = ui.context.page
+        if page is None:
+            return
+        # 点击场景：用户点击的行必然已构建（可见才能点击），line_heights 缓存
+        # 有实测高度 -> 跳过滚动。零误差判断，不受估算累积偏差影响。
+        if only_when_offscreen:
+            if ctx.line_heights_ref.current.get(li, 0.0) > 0:
+                return
+        cursor_y_in_line = 0.0
+        if 0 <= li < len(ctx.document.lines):
+            off = ctx.cursor_base()
+            info = ctx.cursor_vline_info(li, off)
+            if info is not None:
+                _, vline, _ = info
+                base = block_text_size(
+                    ctx.document.lines[li].block_type, ctx.document.lines[li].level,
+                    ctx.body_font_size,
+                )
+                cursor_y_in_line = vline.vline_idx * base * ctx.line_height
+        _run_task_safe(page, _safe_scroll_to, li, cursor_y_in_line=cursor_y_in_line)
+
+    def _hit_test_line_x(li: int, x: float) -> int:
+        """跨行拖拽用：返回目标行 raw 偏移。"""
+        if not (0 <= li < len(ctx.document.lines)):
+            return 0
+        from cs_markdown_editor.views.pixel_layout import hit_test_line_x
+        line = ctx.document.lines[li]
+        base = block_text_size(line.block_type, line.level, ctx.body_font_size)
+        return hit_test_line_x(line, x, base)
+
+    def _get_layout_cache():
+        """惰性构建 LineLayoutCache：跨行拖拽精确命中。
+
+        首次 pan 事件触发构建，行数变化时由 reset_line_heights 清空（置 None），
+        下次 pan 事件重新构建。典型文档（数百行）单次构建约 10-30ms，可接受。
+
+        `fence_height` 传 `_estimate_line_height`：围栏岛屿（代码块/表格/公式）的
+        真实高度只有它知道（实测高度优先，未构建时按块类型估算）。少了这一项，
+        缓存会把一个 200px 高的代码块当成一行文本 —— 鼠标落在代码块中部，反算出来
+        却是块下面好几行的段落，于是"从段落后拖选跨过代码块"永远选不上代码块
+        （真机实测：outward_sel 直接跳到下一个段落）。
+        """
+        if ctx.layout_cache_ref.current is None:
+            from cs_markdown_editor.views.pixel_layout import LineLayoutCache
+            ctx.layout_cache_ref.current = LineLayoutCache(
+                ctx.document.lines,
+                ctx.content_width,
+                ctx.line_height,
+                ctx.body_font_size,
+                fence_height=_estimate_line_height,
+            )
+        return ctx.layout_cache_ref.current
+
+    def _hit_test_xy(anchor_li: int, x: float, y: float) -> tuple[int, int] | None:
+        """跨行拖拽精确命中：LineLayoutCache.hit_test 透传。
+
+        anchor_li：拖拽起始行（pan 事件来源行的 line_idx）
+        x/y：GestureDetector 局部坐标（相对 anchor_li 行内容左上角）
+
+        坐标系换算：
+        - LineLayoutCache 的 Y 是整文档坐标（top=0 = 文档第一行顶）
+        - GestureDetector 局部 Y 是相对 anchor_li 行内容顶
+        - 加上 anchor_li 的 layout.text_top 即得到整文档 Y
+        - 同理 X 加上 anchor_li 的 left_pad 得到整文档 X
+
+        返回 (target_li, target_raw_off) | None（cache 未就绪或越界）
+        """
+        cache = _get_layout_cache()
+        layout = cache.get(anchor_li)
+        if layout is None:
+            return None
+        # GestureDetector 局部坐标 → 整文档坐标
+        doc_x = x + layout.left_pad
+        doc_y = y + layout.text_top
+        return cache.hit_test(doc_x, doc_y)
+
+    def _page_vlines() -> int:
+        """每页视觉行数：视口高度 / 单视觉行高（软换行按视觉行翻页）。"""
+        viewport = ctx.viewport_h_ref.current or 600
+        text_h = ctx.body_font_size * ctx.line_height
+        return max(1, int(viewport / text_h))
+
+    def page_up():
+        if ctx.cursor_li is not None:
+            ctx.move_vline(-1, _page_vlines())
+        else:
+            _run_task_safe(ui.context.page, _scroll_by_page, -1)
+
+    def page_down():
+        if ctx.cursor_li is not None:
+            ctx.move_vline(1, _page_vlines())
+        else:
+            _run_task_safe(ui.context.page, _scroll_by_page, 1)
+
+    async def _scroll_by_page(direction: int):
+        if ctx.list_view_ref.current is None:
+            return
+        try:
+            delta = direction * (ctx.viewport_h_ref.current or 600) * 0.9
+            await ctx.list_view_ref.current.scroll_to(
+                ctx.scroll_offset_ref.current + delta, duration=100
+            )
+        except (AttributeError, RuntimeError):
+            pass  # 翻页滚动依赖已挂载的 ListView；其余异常照常抛出
+
+    def jump_to(li: int, off: int | None = None):
+        """跳转到指定行（可选精确 offset）。
+
+        off=None 时退化为 off=0（向后兼容大纲 / [toc] / 测试 mock 等仅传 li 的调用方）；
+        off=int 时跳到精确 raw 偏移（侧边栏搜索结果点击关键词位置）。
+        围栏块（CODE/MATH/HR/TOC/TABLE）无法定位 offset，fallback 到浏览态。
+        set_cursor 内部会钳制 off 到 [0, len(raw)]，越界安全。
+        """
+        if not (0 <= li < len(ctx.document.lines)):
+            return
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            ctx.set_cursor_line(li)
+            ctx.set_cursor_li(None)
+        else:
+            ctx.set_cursor(li, off if off is not None else 0)
+        # 跳转目标行脉冲高亮：置 flash_li 触发重渲染，1.2s 后异步清回 -1 淡出
+        ctx.set_flash_li(li)
+        page = ui.context.page
+        _run_task_safe(page, _safe_scroll_to, li, to_top=True)
+
+        async def _clear_flash():
+            await asyncio.sleep(1.2)
+            ctx.set_flash_li(-1)
+
+        _run_task_safe(page, _clear_flash)
+
+    async def _scroll_line_centered(li: int):
+        """把第 li 行平滑滚动到视口中部（搜索匹配跳转专用）。
+
+        目标 scroll = est_y - (viewport - line_h) / 2。缓存未命中时先估算滚动
+        触发构建，sleep 后用实测高度精修（参考 _safe_scroll_to 的两步骨架）。
+        """
+        lv = ctx.list_view_ref.current
+        if lv is None:
+            return
+        # 窗口化（大文件）：搜索跳转目标行可能远在窗口外，先请求物化该行
+        ctx.request_line_window(li)
+        try:
+            viewport = ctx.viewport_h_ref.current or 600
+            cache = ctx.line_heights_ref.current
+            built = cache.get(li, 0.0) > 0
+            est_y = _estimate_line_offset(li)
+            est_h = _estimate_line_height(li) or ctx.body_font_size * ctx.line_height
+            target = max(0.0, est_y - (viewport - est_h) / 2.0)
+            if built:
+                await lv.scroll_to(target, duration=250)
+                return
+            await lv.scroll_to(target, duration=150)
+            await asyncio.sleep(0.15)
+            precise_y = _estimate_line_offset(li)
+            precise_h = _estimate_line_height(li) or ctx.body_font_size * ctx.line_height
+            precise = max(0.0, precise_y - (viewport - precise_h) / 2.0)
+            if abs(precise - target) > 4:
+                await lv.scroll_to(precise, duration=250)
+        except (AttributeError, RuntimeError):
+            pass  # 平滑滚动在控件未挂载时可能失败；其余异常照常抛出
+
+    def reveal_match(li: int, off: int | None = None):
+        """文档内搜索跳转：把匹配行滚动到视口中部（平滑），并置光标于 raw 偏移。
+
+        区别于 jump_to（贴顶 + 淡蓝脉冲）：不抢当前匹配的橙黄高亮，只做
+        光标定位 + 视口中部滚动。围栏块（无行内 offset 语义）退化为行级浏览态。
+        """
+        if not (0 <= li < len(ctx.document.lines)):
+            return
+        line = ctx.document.lines[li]
+        if _is_fence(line):
+            ctx.set_cursor_line(li)
+            ctx.set_cursor_li(None)
+        else:
+            ctx.set_cursor(li, off if off is not None else 0)
+        page = ui.context.page
+        _run_task_safe(page, _scroll_line_centered, li)
+
+    def _get_cursor_row_col() -> tuple[int, int]:
+        if ctx.cursor_li is not None and 0 <= ctx.cursor_li < len(ctx.document.lines):
+            return (ctx.cursor_li + 1, ctx.cursor_off + 1)
+        return (ctx.cursor_line + 1, 1)
+
+    def _build_highlight_map() -> dict[int, tuple[int, int]]:
+        # 纯计算已抽取到 _editor_helpers（接收 lines + outward_sel 参数）
+        return _build_highlight_map_impl(ctx.document.lines, ctx.outward_sel)
+
+    def _reset_line_heights():
+        ctx.line_heights_ref.current = {}
+        ctx.layout_cache_ref.current = None
+        ctx.offset_prefix_ref.current = None  # 失效前缀和缓存
+
+    return {
+        "on_scroll": _on_scroll,
+        "get_scroll_state": _get_scroll_state,
+        "get_top_line": _get_top_line,
+        "scroll_to_offset": _scroll_to_offset,
+        "on_content_resize": _on_content_resize,
+        "on_line_size_change": on_line_size_change,
+        "estimate_line_height": _estimate_line_height,
+        "estimate_line_offset": _estimate_line_offset,
+        "safe_scroll_to": _safe_scroll_to,
+        "ensure_visible": _ensure_visible,
+        "jump_to": jump_to,
+        "reveal_match": reveal_match,
+        "hit_test_line_x": _hit_test_line_x,
+        "get_layout_cache": _get_layout_cache,
+        "hit_test_xy": _hit_test_xy,
+        "page_vlines": _page_vlines,
+        "page_up": page_up,
+        "page_down": page_down,
+        "scroll_by_page": _scroll_by_page,
+        "reset_line_heights": _reset_line_heights,
+        "get_cursor_row_col": _get_cursor_row_col,
+        "build_highlight_map": _build_highlight_map,
+    }

@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import parser
-from app._file_dialogs import build_file_dialogs
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.app._file_dialogs import build_file_dialogs
 
 
 def _make_ctx():

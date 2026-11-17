@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.markdown_format import format_markdown
+from cs_markdown_editor.services.markdown_format import format_markdown
 
 
 def fmt(text: str) -> str:

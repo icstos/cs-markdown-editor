@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import ui
 
-from styles import FONT_MAIN, FONT_MONO, Colors, Radius, Spacing, get_colors
+from cs_markdown_editor.styles import FONT_MAIN, FONT_MONO, Colors, Radius, Spacing, get_colors
 
 __all__ = [
     "FONT_MAIN",

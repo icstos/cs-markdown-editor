@@ -1,0 +1,563 @@
+"""共享样式常量与段→TextStyle 映射。
+
+职责：
+- 主题配色（亮/暗两套 Colors、get_colors / _current_colors）
+- 块级排版（block_text_size / block_weight / list_color_level）
+- 段样式映射（segment_style / prefix_style）
+- 通用 Border 工具（only_border）
+
+依赖项：models（BlockType / SegType / Segment）、flet。
+对外接口：见每条 def 与模块顶层常量 FONT_MAIN / FONT_MONO。
+
+文本测量与图片尺寸相关功能已迁移至 utils/text_layout.py；
+本模块仅保留样式与配色职责，避免职责重叠。
+"""
+
+from dataclasses import dataclass, field
+
+import ui
+
+from cs_markdown_editor.models.document import (
+    BlockType,
+    Segment,
+    SegType,
+)
+
+# 字体族。两者都是**随包分发**的本地字体（`assets/fonts/`），在 `main.py` 里经
+# `page.fonts` 注册——不依赖用户机器上装了什么。
+# - FONT_MAIN：正文（AlibabaPuHuiTi-3-55-Regular.otf），含完整 CJK 字形。
+# - FONT_MONO：代码块 / 行内代码 / 公式 / 行号（NotoSansMonoCJKsc-Regular.otf）。
+#   **必须用这个含 CJK 的等宽字体，不能用 Consolas 之类的系统等宽字体**：
+#   后者不含 CJK 字形，中文注释与全角标点会走 Skia 的字体回退链，落到一个**非等宽**
+#   的 CJK 字体上——代码块里"中文注释比英文代码宽"、制表对齐错位，且回退字体的
+#   行盒更高（中文行 25px vs 纯 ASCII 24px），叠层编辑框的光标会逐行漂移。
+#   Noto Sans Mono CJK SC 实测（HarfBuzz，upem=1000）：拉丁恒 0.5em、CJK 恒 1.0em
+#   （`a`=8.0 / `abc`=24.0 / `中文`=32.0 @ 字号 16），全角与半角严格 2:1，
+#   中英混排也不破栅格；且自带 CJK 字形，回退链不再被触发。
+FONT_MAIN = "Alibaba"
+FONT_MONO = "NotoSansMonoCJKsc"
+
+# 顶栏行高（逻辑像素）：标签行与大纲头部共用同一高度，使两列顶栏连成**同一条水平带**
+# ——底边线重合、下方内容区（编辑区 / 大纲列表）顶部齐平。
+# 32 即大纲头部的内容固有高（上下 padding LG×2 + 单行 11px 文本），与本项目
+# 「紧凑面板头」的既有尺度一致（对照 views/code_block.py 的 _HEADER_H=22、
+# views/status_bar.py 的 22）。
+# 真机实测（PrintWindow 逐列行程编码）：改前标签行 66/1.5=44、大纲头部 48/1.5=32，
+# 两条底边线相差 12px，顶栏出现可见台阶。
+# ⚠ 改动本值必须同时保证两处内容不被裁切：标签行内的图标按钮是固定 22 见方的
+# `Container(ink=True)`（见 views/tab_bar.py 的 _ICON_BTN），**不能换回 ft.IconButton**
+# ——Material 的最小点击区会把它撑到 40px 固有高，直接顶破本值（标签行行高由最高
+# 子项决定，压内边距无效）。tests/test_topbar_height.py 守护该不变式。
+TOPBAR_H = 32
+
+
+# ---------------------------------------------------------------------------
+# 主题配色：亮/暗两套，科学、有序、清爽、科技、专业
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class Colors:
+    """主题颜色集合。"""
+
+    bg: str
+    surface: str
+    text: str
+    muted: str
+    link: str
+    code_bg: str  # 行内代码背景
+    code_fg: str  # 行内代码文字
+    strike: str
+    math_fg: str
+    math_bg: str
+    quote_fg: str
+    quote_bar: str
+    quote_bg: str  # 引用块整块背景（浅蓝，Typora 式柔和）
+    code_block_bg: str
+    code_block_fg: str
+    hover: str
+    active_bg: str  # 正在编辑的段淡黄底
+    toolbar_bg: str
+    border: str
+    # 输入框填充底（侧边栏搜索 / 替换 / 过滤框）：比 surface 略深一档，
+    # 让"可输入"这块在自己的面板里立起来；不能直接用 bg —— 亮色下 #FAFBFC
+    # 与侧栏的 #FFFFFF 几乎同色，输入框会显得"虚"，只剩一圈淡边框。
+    input_bg: str = "#F2F4F7"
+    highlight_bg: str = "#FBF2A8"  # ==高亮== 背景（Typora 式柔和荧光笔黄）
+    supsub_fg: str = "#8A919E"  # 上下标文字色
+    # 搜索匹配段高亮（区别于 ==高亮== 语法，独立 token 便于单独调色）
+    search_match_bg: str = "#FFE082"  # 搜索匹配段背景（亮黄）
+    search_match_fg: str = "#1F2329"  # 搜索匹配段文字
+    # 文档内搜索浮层：当前跳转定位的激活匹配背景（橙黄，比普通匹配更深/更饱和）
+    search_active_bg: str = "#FFB300"  # 搜索当前激活匹配背景（橙黄）
+    heading_colors: dict[int, str] = field(default_factory=dict)
+    # diff 对比配色（GitHub 风格绿增红删）
+    diff_add_bg: str = "#e6ffed"  # 新增行背景
+    diff_del_bg: str = "#ffeef0"  # 删除行背景
+    diff_gap_add_bg: str = "#f0fff4"  # 新增侧间隙背景（更浅）
+    diff_gap_del_bg: str = "#fff5f5"  # 删除侧间隙背景（更浅）
+    # 代码块语法高亮：语义类别 → 颜色。类别常量见 services/code_highlight.py
+    # （kw/str/com/num/fn/type/var/op/err），未收录类别回退 code_block_fg。
+    code_syntax: dict[str, str] = field(default_factory=dict)
+    # Git 变更标记色：键为变更类型字符串（services.git.models.ChangeKind 的值：
+    # added / modified / deleted / renamed / copied / type_changed / untracked /
+    # ignored / conflicted）。取色口统一为 styles.git_status_color()，禁止各处
+    # 另写一套色值——否则侧边栏 Git 面板、状态栏角标、diff 头部三处会逐渐漂移。
+    git: dict[str, str] = field(default_factory=dict)
+
+
+# 亮色：浅色商务科技配色，简洁专业，适配白天办公场景
+# - bg 采用极浅冷调米白（FAFBFC），降低纯白刺眼感，长时间阅读更舒适
+# - surface 纯白保留，与 bg 形成微妙层次，强化"卡片浮起"语义
+# - 标题色采用商务科技色阶：海军蓝→亮蓝→深青→雅紫→焦糖橙→石板灰
+#   每级色相相邻但有明显明度差，层级递进清晰，规避高饱和彩虹色
+# - 边框/引用条统一偏冷中性灰，视觉干净克制
+_LIGHT = Colors(
+    bg="#FAFBFC",           # 极浅冷调米白，缓解纯白刺眼
+    surface="#FFFFFF",       # 纯白表面，与 bg 微妙分层
+    text="#1F2329",          # 深炭黑，高对比锐利
+    muted="#8A919E",         # 中性灰，弱化辅助信息
+    link="#1677FF",          # Ant Design 蓝，专业商务
+    code_bg="#F2F3F5",       # 浅灰底，行内代码
+    code_fg="#C7254E",       # 经典红，代码字符
+    strike="#8A919E",
+    math_fg="#C41E7A",       # 深紫红，公式
+    math_bg="#FAF0F5",       # 浅紫粉底
+    quote_fg="#595959",
+    quote_bar="#DDE0E6",     # 偏冷中性灰，去黄感
+    quote_bg="#EEF4FC",      # 极浅蓝底（引用整块背景）
+    code_block_bg="#F6F8FA", # GitHub 风格浅灰
+    code_block_fg="#1F2329",
+    hover="#F0F7FF",         # 浅蓝 hover
+    active_bg="#FFFBEA",     # 淡黄激活态
+    toolbar_bg="#F1F3F7",    # 工具栏底，与 bg 明显分层
+    border="#E5E8ED",        # 偏冷边框灰
+    search_active_bg="#FFB300",  # 激活匹配：饱和橙黄（普通匹配 #FFE082 之上更醒目）
+    # 代码块语法高亮：取 GitHub Light 语义色阶（红关键字 / 深蓝字符串 / 灰注释 /
+    # 蓝数字 / 紫函数 / 焦糖类型），与 code_block_bg(#F6F8FA) 同一色系语言
+    code_syntax={
+        "kw": "#CF222E",   # 关键字、控制流
+        "str": "#0A3069",  # 字符串
+        "com": "#6E7781",  # 注释
+        "num": "#0550AE",  # 数字、常量
+        "fn": "#8250DF",   # 函数名、内置名
+        "type": "#953800",  # 类、命名空间、装饰器
+        "var": "#24292F",  # 变量、属性
+        "op": "#57606A",   # 运算符、标点
+        "err": "#CF222E",  # 词法错误
+    },
+    heading_colors={
+        1: "#1A4480",  # 深海军蓝 - 最高层级，权威
+        2: "#2C7BE5",  # 亮蓝 - 主结构
+        3: "#0E7C66",  # 深青绿 - 章节分隔
+        4: "#6B5B95",  # 雅致紫 - 子小节
+        5: "#B54708",  # 焦糖橙 - 次级
+        6: "#5C6573",  # 石板灰 - 最低级
+    },
+    # Git 变更标记色：沿用本主题既有色阶（绿=新增、橙=修改、红=删除/冲突、
+    # 紫=重命名、灰=忽略），与 heading_colors / code_syntax 同一套色相语言。
+    git={
+        "added": "#1A7F37",       # 新增（GitHub 绿）
+        "modified": "#B54708",    # 已修改（焦糖橙，同 H5）
+        "deleted": "#CF222E",     # 已删除（GitHub 红）
+        "renamed": "#8250DF",     # 已重命名（雅致紫）
+        "copied": "#0E7C66",      # 已复制（深青绿）
+        "type_changed": "#6B5B95",  # 类型变更
+        "untracked": "#1A7F37",   # 未跟踪（同绿，语义为「待加入」）
+        "ignored": "#8A919E",     # 已忽略（弱化）
+        "conflicted": "#CF222E",  # 冲突（红，需人工介入）
+    },
+)
+
+# 暗色：暗色护眼科技配色，降低蓝光与饱和度
+# - bg 由 GitHub #0D1117 (B=23 最高) 调整为 #14161A (R=G=B 平衡)，
+#   降低蓝色通道占比，减少蓝光刺激；色温偏中性暖，长时间阅读更护眼
+# - 标题色统一降饱和（原高饱和亮色 → 柔粉/雾感色），保留色相区分层级，
+#   但去掉刺眼感，符合"护眼 + 科技 + 简洁专业"诉求
+# - 行内代码/公式/链接等强调色同步降饱和，避免暗背景下高饱和闪烁
+# - 边框/引用条/工具栏底统一中性偏暖灰，避免冷蓝漂移
+_DARK = Colors(
+    bg="#14161A",            # 中性偏暖深色，降蓝光
+    surface="#1A1D22",       # 表面色，与 bg 分层
+    text="#E6EDF3",          # 高对比浅文本
+    muted="#8B939E",         # 略亮中性灰，弱化信息更易辨识
+    link="#6BA0F5",          # 柔化蓝，降低饱和度
+    code_bg="#1F242B",       # 行内代码底
+    code_fg="#E88989",       # 柔粉红，替代高饱和珊瑚红
+    strike="#8B939E",
+    math_fg="#E891B5",       # 柔粉，替代高饱和粉
+    math_bg="#281D24",       # 偏暖暗紫底
+    quote_fg="#B0B8C1",
+    quote_bar="#353B43",     # 偏暖中性灰
+    quote_bg="#1D2733",      # 暗蓝灰底（引用整块背景）
+    code_block_bg="#1A1D22", # 代码块底，与 surface 一致
+    code_block_fg="#E6EDF3",
+    hover="#1F242B",         # 偏暖 hover
+    active_bg="#3A2F1A",     # 暗琥珀激活态
+    toolbar_bg="#1A1D22",    # 工具栏底
+    border="#2F353D",        # 偏暖边框
+    input_bg="#22262E",      # 输入框填充底（略亮于 surface，暗底上才看得出）
+    search_active_bg="#A67B12",  # 激活匹配：暗底上的琥珀橙黄（比普通匹配 #5D4E1A 醒目）
+    highlight_bg="#5D4E1A",  # 暗琥珀高亮（Typora 式，与 search_match_bg 一致更鲜明）
+    search_match_bg="#5D4E1A",  # 暗琥珀搜索匹配
+    search_match_fg="#E6EDF3",
+    supsub_fg="#B0B8C1",
+    diff_add_bg="#1a2e22",   # 暗色新增行背景
+    diff_del_bg="#2e1a1d",   # 暗色删除行背景
+    diff_gap_add_bg="#16201a",  # 暗色新增侧间隙
+    diff_gap_del_bg="#1f1618",   # 暗色删除侧间隙
+    # 代码块语法高亮：在 One Dark 语义分工上统一降饱和（与暗色主题"护眼、低饱和"
+    # 一致），避免暗底上高饱和色闪烁
+    code_syntax={
+        "kw": "#C08BD8",   # 关键字、控制流（柔紫）
+        "str": "#8FBF7F",  # 字符串（柔绿）
+        "com": "#6E7A86",  # 注释（中性灰，最弱）
+        "num": "#D9A05B",  # 数字、常量（柔琥珀）
+        "fn": "#7FB2E8",   # 函数名、内置名（柔蓝）
+        "type": "#D8C078",  # 类、命名空间、装饰器（柔黄）
+        "var": "#D98C8C",  # 变量、属性（柔珊瑚）
+        "op": "#9AA4B0",   # 运算符、标点（中性）
+        "err": "#D98C8C",  # 词法错误
+    },
+    heading_colors={
+        1: "#75A4F0",  # 柔雾蓝 - 最高层级
+        2: "#65C292",  # 柔薄荷绿
+        3: "#4FB8C9",  # 柔青蓝
+        4: "#B08FD8",  # 柔丁香紫
+        5: "#DD9658",  # 柔琥珀橙
+        6: "#C78787",  # 柔珊瑚红
+    },
+    # Git 变更标记色（暗色）：与 code_syntax 同一套降饱和策略，避免暗底闪烁
+    git={
+        "added": "#8FBF7F",       # 柔绿
+        "modified": "#D9A05B",    # 柔琥珀
+        "deleted": "#D98C8C",     # 柔珊瑚
+        "renamed": "#C08BD8",     # 柔紫
+        "copied": "#4FB8C9",      # 柔青
+        "type_changed": "#B08FD8",  # 柔丁香
+        "untracked": "#8FBF7F",
+        "ignored": "#8B939E",
+        "conflicted": "#D98C8C",
+    },
+)
+
+
+def get_colors(mode: ui.ThemeMode | str | None) -> Colors:
+    """根据主题模式返回颜色集合。"""
+    if mode == ui.ThemeMode.DARK:
+        return _DARK
+    return _LIGHT
+
+
+def _current_colors() -> Colors:
+    """读取当前 page.theme_mode 取色；非渲染上下文回退亮色。"""
+    try:
+        page = ui.context.page
+        if page is not None:
+            return get_colors(page.theme_mode)
+    except Exception:
+        pass
+    return _LIGHT
+
+
+def block_text_size(block_type: BlockType, level: int = 0, base_size: int = 16) -> int:
+    """块级正文基础字号。
+
+    标题字号递进 30→24→20→18→16→15：每级 -2~-6px，H6 略小于正文（16）
+    以"小一号+加粗"区分；正文 16，代码 14（紧凑可读）。
+
+    base_size：正文字号基准（默认 16）。Typora 式缩放时传入缩放后的 body_font_size，
+    所有字号按比例联动（标题/代码/正文均基于 base_size 等比缩放）。
+    """
+    _ratio = base_size / 16.0
+    if block_type == BlockType.HEADING:
+        return max(8, round({1: 30, 2: 24, 3: 20, 4: 18, 5: 16, 6: 15}.get(level, 16) * _ratio))
+    if block_type == BlockType.CODE:
+        return max(8, round(14 * _ratio))
+    return base_size
+
+
+# 字重递进：W_800→W_700→W_700→W_600→W_600→W_500
+# 相邻级别差异 ≥100，避免 H4/H5/H6 同字重导致层级模糊
+_HEADING_WEIGHTS: dict[int, ui.FontWeight] = {
+    1: ui.FontWeight.W_800,
+    2: ui.FontWeight.W_700,
+    3: ui.FontWeight.W_700,
+    4: ui.FontWeight.W_600,
+    5: ui.FontWeight.W_600,
+    6: ui.FontWeight.W_500,
+}
+
+
+def block_weight(block_type: BlockType, level: int = 0) -> ui.FontWeight:
+    if block_type == BlockType.HEADING:
+        return _HEADING_WEIGHTS.get(level, ui.FontWeight.NORMAL)
+    return ui.FontWeight.NORMAL
+
+
+# 大纲条目的字重递进：把上面的编辑区字重**整体降一档**（800→700…500→400）。
+# 不是另起一套配色/粗细，而是同一套层级在另一档字号下的换算——编辑区标题是
+# 30→15px，大纲条目只有 12px，照搬 W_800 会糊成一团。降档后「大纲里的粗细顺序」
+# 与「正文里的粗细顺序」逐级一致，且相邻级别仍差 ≥100（不产生同重级别）。
+# tests/test_outline_color.py 守护这条对应关系。
+_OUTLINE_HEADING_WEIGHTS: dict[int, ui.FontWeight] = {
+    1: ui.FontWeight.W_700,
+    2: ui.FontWeight.W_600,
+    3: ui.FontWeight.W_600,
+    4: ui.FontWeight.W_500,
+    5: ui.FontWeight.W_500,
+    6: ui.FontWeight.W_400,
+}
+
+
+def outline_heading_weight(level: int) -> ui.FontWeight:
+    """大纲条目字重（侧栏大纲 / 文档内 [toc] 卡片共用）。"""
+    return _OUTLINE_HEADING_WEIGHTS.get(level, ui.FontWeight.NORMAL)
+
+
+def heading_text_color(level: int, c: Colors | None = None) -> str:
+    """标题文字色：编辑区正文、侧栏大纲、文档内 [toc] 卡片**共用的唯一取色口**。
+
+    三处标题文字都从这里取色，因此「大纲里的这一条」与「正文里的那行标题」
+    颜色天然一致——对应关系由同源保证，不靠各自维护一张对照表；亮/暗主题的
+    六级色阶由 `Colors.heading_colors` 提供，切主题时三处一起变
+    （tests/test_outline_color.py 直接对比「大纲取到的色」与「编辑区渲染出的色」）。
+
+    c：当前主题配色。渲染函数已持有 `_current_colors()` 时显式传入，避免重复取色。
+    """
+    colors = c if c is not None else _current_colors()
+    return colors.heading_colors.get(level, colors.text)
+
+
+def list_color_level(indent: int) -> int:
+    """列表缩进（空格数）→ 1..6 色阶，与 heading_colors 共用。"""
+    return min(max(indent // 2 + 1, 1), 6)
+
+
+def git_status_color(kind: object, c: Colors | None = None) -> str:
+    """Git 变更类型的标记色：侧边栏面板 / 状态栏角标 / diff 头部**共用的唯一取色口**。
+
+    kind 接受 ``services.git.models.ChangeKind``（StrEnum，其 ``str()`` 即值）或
+    任意字符串；未收录的类别回退 ``muted``。三处都从这里取色，因此同一文件在
+    面板里的字母色与 diff 头部的统计色天然一致，切主题时一起变。
+    """
+    colors = c if c is not None else _current_colors()
+    return colors.git.get(str(kind), colors.muted)
+
+
+def segment_style(seg: Segment, base_size: int = 16) -> ui.TextStyle:
+    """把段类型映射为 TextStyle（渲染态）。
+
+    支持组合格式：seg.marks 记录作用于整段的所有包裹器（如 (EMPHASIS, STRONG)
+    对应 ***加粗斜体***），按 marks 累加效果。单一类型沿用原样式。
+    """
+    c = _current_colors()
+    t = seg.seg_type
+
+    # 原子类型（不参与组合）
+    if t == SegType.INLINE_MATH:
+        return ui.TextStyle(
+            size=base_size - 1,
+            color=c.math_fg,
+            bgcolor=c.math_bg,
+            font_family=FONT_MONO,
+            italic=True,
+        )
+    if t == SegType.CODESPAN:
+        return ui.TextStyle(
+            size=base_size - 1,
+            color=c.code_fg,
+            bgcolor=c.code_bg,
+            font_family=FONT_MONO,
+        )
+    if t == SegType.LINK:
+        return ui.TextStyle(
+            size=base_size, color=c.link, decoration=ui.TextDecoration.UNDERLINE
+        )
+    if t == SegType.IMAGE:
+        return ui.TextStyle(size=base_size, color=c.link, italic=True)
+
+    # 包裹器类型：单一沿用原样式，组合按 marks 累加
+    marks = seg.marks
+    if not marks or len(marks) == 1:
+        single = marks[0] if marks else t
+        if single == SegType.STRONG:
+            return ui.TextStyle(size=base_size, weight=ui.FontWeight.BOLD, color=c.text)
+        if single == SegType.EMPHASIS:
+            return ui.TextStyle(size=base_size, italic=True, color=c.text)
+        if single == SegType.STRIKE:
+            return ui.TextStyle(
+                size=base_size,
+                color=c.strike,
+                decoration=ui.TextDecoration.LINE_THROUGH,
+            )
+        if single == SegType.HIGHLIGHT:
+            return ui.TextStyle(size=base_size, color=c.text, bgcolor=c.highlight_bg)
+        if single == SegType.SUPERSCRIPT:
+            return ui.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
+        if single == SegType.SUBSCRIPT:
+            return ui.TextStyle(size=max(base_size - 4, 10), color=c.supsub_fg)
+        # TEXT / 其它
+        return ui.TextStyle(size=base_size, color=c.text)
+
+    # 组合格式：累加各 mark 效果
+    weight = ui.FontWeight.NORMAL
+    italic = False
+    decoration = ui.TextDecoration.NONE
+    color = c.text
+    bgcolor = None
+    size = base_size
+    for m in marks:
+        if m == SegType.STRONG:
+            weight = ui.FontWeight.BOLD
+        elif m == SegType.EMPHASIS:
+            italic = True
+        elif m == SegType.STRIKE:
+            decoration = ui.TextDecoration.LINE_THROUGH
+            color = c.strike
+        elif m == SegType.HIGHLIGHT:
+            bgcolor = c.highlight_bg
+        elif m in (SegType.SUPERSCRIPT, SegType.SUBSCRIPT):
+            size = max(base_size - 4, 10)
+    kwargs: dict = {"size": size, "weight": weight, "color": color}
+    if italic:
+        kwargs["italic"] = True
+    if decoration != ui.TextDecoration.NONE:
+        kwargs["decoration"] = decoration
+    if bgcolor is not None:
+        kwargs["bgcolor"] = bgcolor
+    return ui.TextStyle(**kwargs)
+
+
+def prefix_style(seg: Segment, base_size: int = 16) -> ui.TextStyle:
+    """块级前缀段（# - >）的样式：弱化显示。"""
+    return ui.TextStyle(
+        size=base_size, color=_current_colors().muted, weight=ui.FontWeight.BOLD
+    )
+
+
+_NO_BORDER = ui.BorderSide.none()
+
+
+def only_border(
+    *,
+    top: ui.BorderSide | None = None,
+    bottom: ui.BorderSide | None = None,
+    left: ui.BorderSide | None = None,
+    right: ui.BorderSide | None = None,
+) -> ui.Border:
+    """便捷构造单边 Border。"""
+    return ui.Border(
+        top=top or _NO_BORDER,
+        right=right or _NO_BORDER,
+        bottom=bottom or _NO_BORDER,
+        left=left or _NO_BORDER,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Design Token：间距 / 圆角 / 海拔 / 阴影的统一来源
+# ---------------------------------------------------------------------------
+# 设计原则：
+# - 4px 基准网格，2px 半步长用于紧凑控件
+# - 圆角递进 4-6-8-12-16-18，嵌套时外层 = 内层 + padding
+# - 海拔用 BoxShadow 表达（不用 Container.elevation，Material 风格过重）
+# - 亮/暗主题共享 token，颜色差异由 Colors 处理
+# 符合「科学、有序、清爽、科技、专业」的视觉偏好。
+
+
+class Spacing:
+    """间距 token（4px 基准网格）。"""
+
+    XS = 2  # 紧凑控件内间距（toolbar 按钮 padding、TOC 列表 spacing）
+    SM = 4  # 标准控件内间距（图标按钮 padding）
+    MD = 6  # 中等间距（Row spacing、紧凑容器 padding）
+    LG = 8  # 标准垂直间距（块级容器 vertical padding）
+    XL = 12  # 标准水平间距（块级容器 horizontal padding、引用缩进）
+    XXL = 16  # 大间距（对话框 padding、TOC 缩进）
+    XXXL = 24  # 超大间距（对话框外 padding、章节间距）
+
+
+class Radius:
+    """圆角 token（4-6-8-12-16-18 递进，嵌套时外层 = 内层 + padding）。"""
+
+    SM = 4  # 小圆角（行内代码、行内公式）
+    MD = 6  # 中圆角（代码块、表格单元格、TOC 块）
+    LG = 8  # 大圆角（按钮、当前行高亮、侧边栏列表项）
+    XL = 12  # 超大圆角（DataTable、设置面板卡片）
+    XXL = 16  # 容器圆角（表格容器、代码块外层）
+    XXXL = 18  # 对话框圆角
+
+
+class Elevation:
+    """海拔 token（BoxShadow 配置预设）。"""
+
+    NONE = 0
+    LOW = 1  # 代码块、表格（微妙层次）
+    MEDIUM = 2  # 浮动工具栏、弹出菜单
+    HIGH = 4  # 对话框
+    DIALOG = 8  # 模态对话框（强层次）
+
+
+def card_shadow(
+    elevation: int = Elevation.LOW, is_dark: bool = False
+) -> list[ui.BoxShadow]:
+    """按海拔返回阴影列表。
+
+    亮色：低 opacity（0.06）淡黑阴影，微妙层次感
+    暗色：高 opacity（0.30）深黑阴影，暗背景下需更强对比才可见
+    """
+    if elevation == Elevation.NONE:
+        return []
+    if elevation == Elevation.LOW:
+        opacity = 0.30 if is_dark else 0.06
+        blur = 8 if is_dark else 6
+        return [
+            ui.BoxShadow(
+                spread_radius=0,
+                blur_radius=blur,
+                color=ui.Colors.with_opacity(opacity, ui.Colors.BLACK),
+                offset=ui.Offset(0, 1),
+            )
+        ]
+    if elevation == Elevation.MEDIUM:
+        opacity = 0.40 if is_dark else 0.10
+        blur = 12 if is_dark else 10
+        return [
+            ui.BoxShadow(
+                spread_radius=0,
+                blur_radius=blur,
+                color=ui.Colors.with_opacity(opacity, ui.Colors.BLACK),
+                offset=ui.Offset(0, 2),
+            )
+        ]
+    # HIGH / DIALOG
+    opacity = 0.50 if is_dark else 0.18
+    blur = 24 if is_dark else 20
+    return [
+        ui.BoxShadow(
+            spread_radius=0,
+            blur_radius=blur,
+            color=ui.Colors.with_opacity(opacity, ui.Colors.BLACK),
+            offset=ui.Offset(0, 8),
+        )
+    ]
+
+
+def hairline_border(color: str, opacity: float = 1.0) -> ui.BorderSide:
+    """1px 细线边框（表格分割线、弱化边框）。"""
+    return ui.BorderSide(1, ui.Colors.with_opacity(opacity, color))
+
+
+def focus_ring(color: str, is_dark: bool = False) -> list[ui.BoxShadow]:
+    """输入框聚焦时的外扩描边（focus ring）。
+
+    实现委托给 cs-ui 公共令牌 ``ui.focus_ring``：用 `spread_radius` 的**实心**
+    外扩而不是模糊光晕，浅色底上不会糊成一团灰，与 1px 边框同色系、层次清楚。
+    暗色底需要更高的不透明度才看得见。这里只保留「返回列表 + 明暗档位」这层
+    项目内的调用约定，几何与取色只有 cs-ui 一个事实源。
+    """
+    return [ui.focus_ring(color, opacity=0.45 if is_dark else 0.18)]
+
+
+def accent_border(color: str, width: int = 2) -> ui.BorderSide:
+    """强调边框（当前行/激活态）。"""
+    return ui.BorderSide(width, color)

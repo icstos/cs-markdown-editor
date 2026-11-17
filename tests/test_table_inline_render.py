@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ui import ft  # noqa: E402
 
-from views.table_view import _render_cell_spans  # noqa: E402
+from cs_markdown_editor.views.table_view import _render_cell_spans  # noqa: E402
 
 
 def _span_text(spans: list[ft.TextSpan]) -> str:

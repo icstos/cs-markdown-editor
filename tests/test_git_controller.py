@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from app._git_controller import build_git_controller
-from services.git.repository import is_git_available
-from services.git.runner import GitRunner
+from cs_markdown_editor.app._git_controller import build_git_controller
+from cs_markdown_editor.services.git.repository import is_git_available
+from cs_markdown_editor.services.git.runner import GitRunner
 
 pytestmark = pytest.mark.skipif(not is_git_available(), reason="环境未安装 git")
 

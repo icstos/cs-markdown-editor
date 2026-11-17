@@ -14,12 +14,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from core.actions import EditorActions  # noqa: E402
-from models.document import BlockType, Line  # noqa: E402
-from services.shortcuts import DEFAULT_SHORTCUTS, ShortcutManager  # noqa: E402
-from views._combo import combo, extract_printable_char
-from views.key_bindings import KeyDispatcher
-from views.native_scope import DOMAIN_GIT_COMMIT  # noqa: E402
+from cs_markdown_editor.core.actions import EditorActions  # noqa: E402
+from cs_markdown_editor.models.document import BlockType, Line  # noqa: E402
+from cs_markdown_editor.services.shortcuts import DEFAULT_SHORTCUTS, ShortcutManager  # noqa: E402
+from cs_markdown_editor.views._combo import combo, extract_printable_char
+from cs_markdown_editor.views.key_bindings import KeyDispatcher
+from cs_markdown_editor.views.native_scope import DOMAIN_GIT_COMMIT  # noqa: E402
 
 
 # ---------------- 测试助手 ----------------

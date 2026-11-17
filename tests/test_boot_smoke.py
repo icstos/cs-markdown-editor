@@ -19,8 +19,8 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.settings as cs
-from app import App
+import cs_markdown_editor.config.settings as cs
+from cs_markdown_editor.app import App
 from tests.harness import RenderHarness, walk
 
 # 设置文件隔离目录：在导入期一次性创建（受限环境下 pytest tmp_path 不可用，

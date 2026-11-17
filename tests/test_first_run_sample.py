@@ -18,10 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.settings as cs
-import parser
-from app import App
-from config.sample import SAMPLE_MD
+import cs_markdown_editor.config.settings as cs
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.app import App
+from cs_markdown_editor.config.sample import SAMPLE_MD
 from tests.harness import RenderHarness
 
 _SANDBOX = Path(__file__).resolve().parent / ".firstrun-sandbox"

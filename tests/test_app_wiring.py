@@ -18,10 +18,11 @@ import dataclasses
 import re
 from pathlib import Path
 
-from app._context import AppContext
+from cs_markdown_editor.app._context import AppContext
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = ROOT / "app"
+SRC = ROOT / "src" / "cs_markdown_editor"
+APP = SRC / "app"
 INIT = APP / "__init__.py"
 
 # 与 AppContext 既有字段同名的控制器 key（改名装配，不可被覆盖）

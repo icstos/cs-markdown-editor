@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from core.history import EditHistory, EditorSnapshot, LineEditSnapshot  # noqa: E402
+from cs_markdown_editor.core.history import EditHistory, EditorSnapshot, LineEditSnapshot  # noqa: E402
 
 
 # ---------------- 快照构造助手 ----------------

@@ -22,17 +22,17 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import parser
-from app._file_io_ops import build_file_io_ops
-from app._tab_helpers import (
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.app._file_io_ops import build_file_io_ops
+from cs_markdown_editor.app._tab_helpers import (
     CLOSED_TABS_LIMIT,
     closed_tab_snapshot,
     push_closed_tabs,
 )
-from app._tab_management import build_tab_management
-from services.shortcuts import ACTION_REGISTRY, DEFAULT_SHORTCUTS
+from cs_markdown_editor.app._tab_management import build_tab_management
+from cs_markdown_editor.services.shortcuts import ACTION_REGISTRY, DEFAULT_SHORTCUTS
 from tests.test_tab_management import _make_ctx, _make_tab
-from views.key_bindings import _GLOBAL_ACTIONS
+from cs_markdown_editor.views.key_bindings import _GLOBAL_ACTIONS
 
 
 @pytest.fixture

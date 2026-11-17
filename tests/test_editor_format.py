@@ -15,9 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from core.history import EditHistory
-from models.document import BlockType, Document, Line, Segment, SegType
-from views.editor._format import build_format
+from cs_markdown_editor.core.history import EditHistory
+from cs_markdown_editor.models.document import BlockType, Document, Line, Segment, SegType
+from cs_markdown_editor.views.editor._format import build_format
 
 
 class FakeRef:

@@ -22,9 +22,9 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.settings as cs
-from app import App
-from app._settings_controller import build_settings_controller
+import cs_markdown_editor.config.settings as cs
+from cs_markdown_editor.app import App
+from cs_markdown_editor.app._settings_controller import build_settings_controller
 from tests.harness import RenderHarness, walk
 from tests.test_boot_smoke import press, read_settings
 
@@ -162,8 +162,8 @@ def test_keyboard_callbacks_are_not_context_defaults(app_harness):
     ``AppContext`` 的默认 no-op —— 该快捷键完全无反应且不报错
     （Ctrl+H / Alt+Enter / Ctrl+Alt+Enter / Ctrl+F 回退路径曾整体失效）。
     """
-    from app._context import AppContext
-    from views.key_bindings import _GLOBAL_ACTIONS
+    from cs_markdown_editor.app._context import AppContext
+    from cs_markdown_editor.views.key_bindings import _GLOBAL_ACTIONS
 
     d = dispatcher(app_harness)
     missing = []

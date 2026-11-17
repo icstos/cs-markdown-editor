@@ -28,8 +28,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Document, Line, Segment, SegType
-from views.editor._cursor import build_cursor
+from cs_markdown_editor.models.document import BlockType, Document, Line, Segment, SegType
+from cs_markdown_editor.views.editor._cursor import build_cursor
 
 
 class FakeRef:
@@ -154,7 +154,7 @@ def test_set_cursor_same_line_pulse_throttled():
     ctx, calls = _make_ctx(doc, cursor_li=0, base=0)
     cbs = build_cursor(ctx)
     times = iter([10.0, 10.1, 10.4])
-    with patch("views.editor._cursor._monotonic", side_effect=lambda: next(times)):
+    with patch("cs_markdown_editor.views.editor._cursor._monotonic", side_effect=lambda: next(times)):
         cbs["set_cursor"](0, 1)  # t=10.0：首次脉冲
         cbs["set_cursor"](0, 2)  # t=10.1：窗口内（0.1s < 0.25s）→ 跳过
         cbs["set_cursor"](0, 3)  # t=10.4：距上次 0.4s ≥ 窗口 → 脉冲

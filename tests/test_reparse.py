@@ -17,7 +17,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import parse_markdown, reparse_line, reparse_line_atomic, staging_reparse  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown, reparse_line, reparse_line_atomic, staging_reparse  # noqa: E402
 
 
 def _line_state(line):
@@ -119,8 +119,8 @@ def test_hr_segments_preserve_original_raw():
 
 def test_hr_not_fence():
     """HR 不再是围栏块（走普通文本路径，可承载光标）。"""
-    from models.document import BlockType
-    from utils.segment_helpers import FENCE_BLOCK_TYPES, is_fence
+    from cs_markdown_editor.models.document import BlockType
+    from cs_markdown_editor.utils.segment_helpers import FENCE_BLOCK_TYPES, is_fence
 
     doc = parse_markdown("---")
     assert not is_fence(doc.lines[0])

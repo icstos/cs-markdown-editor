@@ -25,16 +25,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from ui import ft
 
-import parser
-from app._diff_controller import build_diff_controller
-from services.document_loader import load_document, parse_document_text
-from services.file_io import read_text_detailed
-from styles import get_colors
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.app._diff_controller import build_diff_controller
+from cs_markdown_editor.services.document_loader import load_document, parse_document_text
+from cs_markdown_editor.services.file_io import read_text_detailed
+from cs_markdown_editor.styles import get_colors
 from tests.harness import RenderHarness, walk
-from views import code_block as blk
-from views.code_block import diff_line_palette
-from views.diff_view import compute_changed_ranges, compute_diff_for_editors
-from views.editor import MarkdownEditor
+from cs_markdown_editor.views import code_block as blk
+from cs_markdown_editor.views.code_block import diff_line_palette
+from cs_markdown_editor.views.diff_view import compute_changed_ranges, compute_diff_for_editors
+from cs_markdown_editor.views.editor import MarkdownEditor
 
 LEFT = "import os\n\ndef main():\n    print('hi')\n    return 0\n"
 RIGHT = "import os\nimport sys\n\ndef main():\n    print('hello')\n    return 0\n"
@@ -464,7 +464,7 @@ def test_emphasize_spec_keeps_text_intact():
     这条是"重排行号 / 丢字符"这类缺陷的唯一护栏——多切一刀少切一刀，
     用户看到的就是代码缺字，而且只在对比视图里出现，最难被发现。
     """
-    from services.code_highlight import highlight_lines
+    from cs_markdown_editor.services.code_highlight import highlight_lines
 
     code = "    print('hello')  # 注释 emoji: X"
     spec = highlight_lines(code, "python")[0]
@@ -479,7 +479,7 @@ def test_emphasize_spec_keeps_text_intact():
 
 def test_emphasize_spec_clamps_out_of_range():
     """越界区间一律钳制（diff 尚未重算时区间可能比现行更长）。"""
-    from services.code_highlight import highlight_lines
+    from cs_markdown_editor.services.code_highlight import highlight_lines
 
     spec = highlight_lines("abc", "python")[0]
     out = blk._emphasize_spec(spec, [(1, 99)])
@@ -528,7 +528,7 @@ def test_no_inline_emphasis_without_ranges():
 
 def test_changed_ranges_skipped_for_huge_documents():
     """超大规模时放弃字符区间（行级底色照旧）：每次击键都会重算，必须设上限。"""
-    from views.diff_view import _MAX_CHAR_DIFF_LINES
+    from cs_markdown_editor.views.diff_view import _MAX_CHAR_DIFF_LINES
 
     n = _MAX_CHAR_DIFF_LINES  # 左右各一半 → 合计刚好触顶
     left = "\n".join(f"line_{i} = {i}" for i in range(n))
@@ -544,7 +544,7 @@ def test_changed_ranges_skipped_for_huge_documents():
 
 def _write_backup_file(tmp_path, name: str | None, content: str) -> str:
     """按真实备份流程落一份备份（含 original_path 元数据），返回备份路径。"""
-    from services.backup import write_backup
+    from cs_markdown_editor.services.backup import write_backup
 
     settings = {"backup_dir": str(tmp_path / "bk"), "backup_enabled": True}
     path = write_backup(settings, {"file_path": str(tmp_path / name) if name else None}, content)
@@ -554,7 +554,7 @@ def _write_backup_file(tmp_path, name: str | None, content: str) -> str:
 
 def test_restore_backup_parses_py_as_plain_document(tmp_path):
     """恢复 .py 草稿必须还原成代码块，而不是被当 Markdown 拆成散文行。"""
-    from services.recovery import load_backup_document
+    from cs_markdown_editor.services.recovery import load_backup_document
 
     backup = _write_backup_file(tmp_path, "a.py", LEFT)
     restored = load_backup_document(backup)
@@ -569,7 +569,7 @@ def test_restore_backup_parses_py_as_plain_document(tmp_path):
 
 def test_restore_backup_keeps_markdown_as_markdown(tmp_path):
     """Markdown 备份恢复后仍是行结构（历史行为不能被顺手改掉）。"""
-    from services.recovery import load_backup_document
+    from cs_markdown_editor.services.recovery import load_backup_document
 
     backup = _write_backup_file(tmp_path, "a.md", "# 标题\n\n正文\n")
     restored = load_backup_document(backup)
@@ -581,7 +581,7 @@ def test_restore_backup_keeps_markdown_as_markdown(tmp_path):
 
 def test_restore_untitled_backup_falls_back_to_markdown(tmp_path):
     """未命名草稿的备份没有 original_path，无从判断类型 → 按 Markdown（兜底）。"""
-    from services.recovery import load_backup_document
+    from cs_markdown_editor.services.recovery import load_backup_document
 
     backup = _write_backup_file(tmp_path, None, "# 草稿\n\n正文\n")
     restored = load_backup_document(backup)
@@ -592,14 +592,14 @@ def test_restore_untitled_backup_falls_back_to_markdown(tmp_path):
 
 def test_restore_missing_backup_returns_none(tmp_path):
     """备份不存在 / 损坏 → None（由调用方提示，不得抛异常打断恢复面板）。"""
-    from services.recovery import load_backup_document
+    from cs_markdown_editor.services.recovery import load_backup_document
 
     assert load_backup_document(str(tmp_path / "nope.md.autosave")) is None
 
 
 def test_open_backup_in_new_tab_loads_plain_document(tmp_path):
     """控制器恢复入口：新标签里的文档与「Ctrl+O 打开同一个 .py」形态一致。"""
-    from app._backup_controller import build_backup_controller
+    from cs_markdown_editor.app._backup_controller import build_backup_controller
 
     backup = _write_backup_file(tmp_path, "a.py", LEFT)
     appended: list[dict] = []

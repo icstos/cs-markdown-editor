@@ -12,7 +12,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from views._frontmatter import drag_src_idx, reorder_pairs
+from cs_markdown_editor.views._frontmatter import drag_src_idx, reorder_pairs
 
 # ---------------- _drag_src_idx ----------------
 

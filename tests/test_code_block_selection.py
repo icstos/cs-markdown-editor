@@ -29,14 +29,14 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from parser import parse_markdown
-from parser.selection import extract_outward_text
-from styles import get_colors
+from cs_markdown_editor.parser import parse_markdown
+from cs_markdown_editor.parser.selection import extract_outward_text
+from cs_markdown_editor.styles import get_colors
 from tests.harness import RenderHarness
-from utils.segment_helpers import FENCE_BLOCK_TYPES, line_raw
-from views import line_view as lv
-from views._editor_helpers import _build_highlight_map, range_hits_fence
-from views.pixel_layout import LineLayoutCache
+from cs_markdown_editor.utils.segment_helpers import FENCE_BLOCK_TYPES, line_raw
+from cs_markdown_editor.views import line_view as lv
+from cs_markdown_editor.views._editor_helpers import _build_highlight_map, range_hits_fence
+from cs_markdown_editor.views.pixel_layout import LineLayoutCache
 
 MD = "PARA_ABOVE_TEXT\n\n```python\nA = 1\nB = 2\nC = 3\n```\n\nPARA_BELOW_TEXT\n"
 # 行号：0=段落 1=空行 2=代码块 3=空行 4=段落
@@ -104,7 +104,7 @@ def test_scroll_group_wires_fence_height():
     走 `hit_test_xy` 这条真机拖选的真实入口，而不是直接构造 LineLayoutCache：
     只测缓存本身的话，"忘了传 fence_height"会静默存活。
     """
-    from views.editor._scroll import build_scroll
+    from cs_markdown_editor.views.editor._scroll import build_scroll
 
     lines = _lines()
     ctx = MagicMock()
@@ -198,7 +198,7 @@ def _outward_group(sel, calls: list[str]):
     或写在了 `_delete_raw_range` 之后，纯函数测试照样全绿。真机症状是"删一下文档
     就坏掉"，所以必须从 handle_* 入口进。
     """
-    from views.editor._outward import build_outward
+    from cs_markdown_editor.views.editor._outward import build_outward
 
     doc = parse_markdown(MD)
     clipboard = _FakeClipboard()

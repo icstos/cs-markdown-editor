@@ -34,7 +34,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from services.shortcuts import (  # noqa: E402
+from cs_markdown_editor.services.shortcuts import (  # noqa: E402
     ACTION_REGISTRY,
     DEFAULT_SHORTCUTS,
     _INLINE_FORMAT_ACTIONS,
@@ -45,9 +45,9 @@ from tests.test_key_bindings import (  # noqa: E402
     make_actions,
     make_dispatcher,
 )
-from views.key_bindings import _GLOBAL_ACTIONS  # noqa: E402
+from cs_markdown_editor.views.key_bindings import _GLOBAL_ACTIONS  # noqa: E402
 
-SRC_PATH = Path(__file__).resolve().parent.parent / "views" / "key_bindings.py"
+SRC_PATH = Path(__file__).resolve().parent.parent / "src" / "cs_markdown_editor" / "views" / "key_bindings.py"
 SRC = SRC_PATH.read_text(encoding="utf-8")
 TREE = ast.parse(SRC)
 

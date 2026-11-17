@@ -9,8 +9,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.sample import SAMPLE_MD  # noqa: E402
-from parser import parse_markdown, serialize, to_html  # noqa: E402
+from cs_markdown_editor.config.sample import SAMPLE_MD  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown, serialize, to_html  # noqa: E402
 
 
 def test_sample_md_roundtrip():

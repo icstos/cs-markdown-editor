@@ -21,10 +21,21 @@ dependencies = [
 ]
 
 [project.scripts]
-cs-markdown-editor = "main:main_sync"
+cs-markdown-editor = "cs_markdown_editor.bootstrap:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# src 布局：开发态直接运行、pip install -e . 可编辑安装、隔离打包三种场景共存。
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.uv]
-package = false
+package = true
 
 [tool.ruff]
 line-length = 100
@@ -41,7 +52,7 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
 testpaths = ["tests"]
 filterwarnings = ["error::DeprecationWarning:flet.*"]
 
@@ -65,6 +76,7 @@ exclude = [
     "dist",
     "__pycache__",
     "*.pyc",
+    "*.egg-info",
     "tests",
     "docs",
     "*.md",

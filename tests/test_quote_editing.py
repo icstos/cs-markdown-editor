@@ -18,10 +18,10 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Document, Line, Segment, SegType
-from parser.block import parse_markdown
-from views.editor._cursor import build_cursor
-from views.pixel_layout import (
+from cs_markdown_editor.models.document import BlockType, Document, Line, Segment, SegType
+from cs_markdown_editor.parser.block import parse_markdown
+from cs_markdown_editor.views.editor._cursor import build_cursor
+from cs_markdown_editor.views.pixel_layout import (
     _find_vline_for_raw,
     _line_visual_layout,
     hit_test_line_x_raw,

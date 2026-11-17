@@ -24,13 +24,14 @@ from pathlib import Path
 import pytest
 from ui import ft
 
-from config import app_meta
-from config.settings import DEFAULT_SETTINGS
-from services.shortcuts import ShortcutManager
+from cs_markdown_editor.config import app_meta
+from cs_markdown_editor.config.settings import DEFAULT_SETTINGS
+from cs_markdown_editor.services.shortcuts import ShortcutManager
 from tests.harness import RenderHarness, invoke, walk
-from views import settings_dialog as sd
+from cs_markdown_editor.views import settings_dialog as sd
 
 ROOT = Path(__file__).resolve().parent.parent
+SRC = ROOT / "src" / "cs_markdown_editor"
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +328,6 @@ def test_every_tab_renders_its_own_description(tab):
 
 def test_no_code_still_targets_the_removed_advanced_tab():
     """面板已无「高级」tab，任何切到该 tab 的调用都会静默回退到「编辑」页。"""
-    src = (ROOT / "app" / "_settings_controller.py").read_text(encoding="utf-8")
+    src = (SRC / "app" / "_settings_controller.py").read_text(encoding="utf-8")
     assert '"advanced"' not in src
-    assert "settings_dialog" in (ROOT / "app" / "_render.py").read_text(encoding="utf-8")
+    assert "settings_dialog" in (SRC / "app" / "_render.py").read_text(encoding="utf-8")

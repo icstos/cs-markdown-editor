@@ -13,7 +13,7 @@
 `config/app_meta.py` 的版本号，不反向依赖 `app/` 或 `views/`。
 
 脚本在 `docs/` 下直接运行，Python 默认只把脚本目录放进 `sys.path`，
-所以这里显式把仓库根目录插进去——否则 `import styles` 会失败。
+所以这里显式把仓库根目录插进去——否则 `import cs_markdown_editor.styles` 会失败。
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ import ui
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+if str(_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_ROOT / "src"))
 
 from cmsite import main as site_main  # noqa: E402  （必须晚于 sys.path 调整）
 from cmsite import set_start_anchor, set_start_size, set_start_theme  # noqa: E402

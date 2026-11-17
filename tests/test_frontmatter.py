@@ -12,8 +12,8 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.clipboard import paste_row_from_clipboard
-from views._frontmatter import parse_yaml_pairs
+from cs_markdown_editor.services.clipboard import paste_row_from_clipboard
+from cs_markdown_editor.views._frontmatter import parse_yaml_pairs
 
 
 # ---------------- _parse_yaml_pairs ----------------

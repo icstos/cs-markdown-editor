@@ -20,8 +20,8 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Document, Line, Segment, SegType
-from views.editor._navigation import build_navigation
+from cs_markdown_editor.models.document import BlockType, Document, Line, Segment, SegType
+from cs_markdown_editor.views.editor._navigation import build_navigation
 
 
 class FakeRef:
@@ -169,7 +169,7 @@ def test_document_bottom_still_degrades_to_last_line():
 # ===========================================================================
 def test_consumed_request_is_cleared():
     """兑现的就是当前那条请求 → 作废。"""
-    from views.editor import _code_enter_after_consumed
+    from cs_markdown_editor.views.editor import _code_enter_after_consumed
 
     assert _code_enter_after_consumed((3, 1, 0), 3) is None
 
@@ -180,7 +180,7 @@ def test_consumed_report_does_not_clear_another_lines_request():
     返回同一对象（而不是内容相等的新元组）让调用方可以用 `is` 判定"没变化、
     不必 set_state"，避免无意义重渲染。
     """
-    from views.editor import _code_enter_after_consumed
+    from cs_markdown_editor.views.editor import _code_enter_after_consumed
 
     pending = (7, 2, 5)
     assert _code_enter_after_consumed(pending, 3) is pending
@@ -188,7 +188,7 @@ def test_consumed_report_does_not_clear_another_lines_request():
 
 def test_consumed_report_without_pending_request_is_noop():
     """没有待办时回报 → 仍是没有待办（且不产生新对象）。"""
-    from views.editor import _code_enter_after_consumed
+    from cs_markdown_editor.views.editor import _code_enter_after_consumed
 
     assert _code_enter_after_consumed(None, 0) is None
 
@@ -201,14 +201,14 @@ def test_consumed_report_without_pending_request_is_noop():
 # ===========================================================================
 def test_render_props_only_target_line_gets_request():
     """命中目标行 → 拿到 (序号, 偏移)，两者都透传。"""
-    from views.editor._render import code_enter_props
+    from cs_markdown_editor.views.editor._render import code_enter_props
 
     assert code_enter_props((2, 7, 5), 2) == (7, 5)
 
 
 def test_render_props_other_lines_stay_inert():
     """非目标行恒为 (0, None)：otherwise 逐行击穿 ft.memo，一次方向键重渲整块。"""
-    from views.editor._render import code_enter_props
+    from cs_markdown_editor.views.editor._render import code_enter_props
 
     state = (2, 7, 5)
     assert code_enter_props(state, 1) == (0, None)
@@ -221,7 +221,7 @@ def test_render_props_cleared_request_never_reenters():
     这是"行被卸载又重建后不幽灵进入编辑态"的最后一道闸：真机可达的缺陷路径是
     目标行滚出视口被卸载、再滚回时重建，挂载期 effect 拿旧序号**再消费一次**。
     """
-    from views.editor._render import code_enter_props
+    from cs_markdown_editor.views.editor._render import code_enter_props
 
     for li in range(5):
         assert code_enter_props(None, li) == (0, None)

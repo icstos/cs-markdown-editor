@@ -20,9 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from services import backup as bk  # noqa: E402
-from services import recovery as rc  # noqa: E402
-from services.file_io import read_text, write_text, write_text_atomic  # noqa: E402
+from cs_markdown_editor.services import backup as bk  # noqa: E402
+from cs_markdown_editor.services import recovery as rc  # noqa: E402
+from cs_markdown_editor.services.file_io import read_text, write_text, write_text_atomic  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ class TestWriteTextAtomic:
             calls.append((src, dst))
             return orig_replace(src, dst)
 
-        monkeypatch.setattr("services.file_io.os.replace", _spy)
+        monkeypatch.setattr("cs_markdown_editor.services.file_io.os.replace", _spy)
         write_text_atomic(str(p), "content")
         assert len(calls) == 1
         assert calls[0][1] == str(p)

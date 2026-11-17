@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.git.errors import (
+from cs_markdown_editor.services.git.errors import (
     GitAuthError,
     GitCommandError,
     GitConflictError,

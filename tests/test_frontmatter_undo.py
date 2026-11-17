@@ -20,11 +20,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-import parser
-from core.history import EditHistory, EditorSnapshot
-from models.document import BlockType, Document, Line, Segment, SegType
-from views.editor._fence import build_fence
-from views._frontmatter import pairs_to_yaml, parse_yaml_pairs
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.core.history import EditHistory, EditorSnapshot
+from cs_markdown_editor.models.document import BlockType, Document, Line, Segment, SegType
+from cs_markdown_editor.views.editor._fence import build_fence
+from cs_markdown_editor.views._frontmatter import pairs_to_yaml, parse_yaml_pairs
 
 
 class FakeRef:

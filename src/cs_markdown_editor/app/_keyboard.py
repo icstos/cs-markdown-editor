@@ -1,0 +1,144 @@
+"""键盘分发控制器（从 main.py 闭包抽取）。
+
+闭包组：build_dispatcher / bind_keyboard
+
+跨组依赖（通过 ctx 装配槽，调用时读取）：
+- file_io_ops 组：save_doc / new_doc / open_doc / reopen_closed_tab
+- settings_controller 组：toggle_sidebar / toggle_theme / toggle_word_wrap /
+  toggle_split_editor / open_settings / on_capture / on_cancel_capture
+- tab_management 组：close_tab / cycle_tab
+- split_editor 组：无（active_nav_ref 选择基于 state 快照，不调用 set_*）
+
+设计要点：
+- KeyDispatcher 替代 on_key 闭包。持有 shortcut_mgr + nav_ref 引用，
+  editor.py 每次渲染写入最新 EditorActions 后 dispatcher 读到的就是最新值，
+  无需 on_key_ref 中转层。
+- dispatcher_ref 渲染期同步赋值最新 dispatcher，_handler 通过 ref 读取。
+  修复 use_effect(_bind_keyboard, []) 空依赖导致 _handler 闭包捕获首次渲染
+  dispatcher 的过期问题——改快捷键后新键位才能立即生效（无需重启）。
+- 拆分/对比编辑器：根据当前模式选择对应视口的 nav_ref，键盘事件作用于焦点视口。
+- use_ref（paste_old_draft / dispatcher_ref）与 use_effect 调用留在 __init__.py
+  （hooks 顺序约束），本控制器仅返回 dispatcher 实例与 bind_keyboard 回调。
+
+依赖项：
+- contextlib（_cleanup 静默清理 on_keyboard_event）
+- flet
+- views.key_bindings.KeyDispatcher
+"""
+
+import contextlib
+
+import ui
+
+from cs_markdown_editor.app._contracts import KeyboardEnv
+from cs_markdown_editor.views.key_bindings import KeyDispatcher
+
+
+def build_keyboard(ctx: KeyboardEnv):
+    """构造键盘分发控制器。
+
+    返回 dict[str, Any]：
+    dispatcher（KeyDispatcher 实例，渲染期由 __init__.py 写入 dispatcher_ref）
+    bind_keyboard（use_effect 回调，绑定 page.on_keyboard_event）
+    """
+
+    # 拆分/对比编辑器：根据当前模式选择对应视口的 nav_ref
+    if ctx.is_diff_tab:
+        active_nav_ref = ctx.diff_nav_right if ctx.diff_active_pane == 1 else ctx.diff_nav_left
+    elif ctx.split_editor and ctx.active_pane == 1:
+        active_nav_ref = ctx.nav_ref_split
+    else:
+        active_nav_ref = ctx.nav_ref
+
+    dispatcher = KeyDispatcher(
+        shortcut_mgr=ctx.shortcut_mgr,
+        actions_ref=active_nav_ref,
+        clipboard_ref=ctx.clipboard_holder,
+        page_ref=ctx.page_ref,
+        paste_old_draft=ctx.paste_old_draft,
+        app_callbacks={
+            "save": ctx.save_doc,
+            "save_as": ctx.save_as_doc,
+            "new": ctx.new_doc,
+            "open": ctx.open_doc,
+            "open_folder": ctx.open_folder,
+            "toggle_sidebar": ctx.toggle_sidebar,
+            "toggle_theme": ctx.toggle_theme,
+            "toggle_word_wrap": ctx.toggle_word_wrap,
+            "zoom_in": ctx.zoom_in,
+            "zoom_out": ctx.zoom_out,
+            "zoom_reset": ctx.zoom_reset,
+            "toggle_split_editor": ctx.toggle_split_editor,
+            "open_settings": ctx.open_settings,
+            "close_tab": lambda: ctx.close_tab(ctx.active_index_ref.current),
+            # Ctrl+Shift+T：恢复最近关闭的标签（LIFO 栈，全部关闭路径的唯一漏斗
+            # do_close_many 入栈，此处出栈并重新打开）
+            "reopen_closed_tab": ctx.reopen_closed_tab,
+            "next_tab": lambda: ctx.cycle_tab(1),
+            "prev_tab": lambda: ctx.cycle_tab(-1),
+            "focus_search": ctx.focus_search,
+            "toggle_replace_bar": ctx.toggle_replace_bar,
+            "replace_current": ctx.replace_current,
+            "replace_all": ctx.replace_all,
+            # 聚焦模式属视图范畴，必须经 app 层桥接：焦点在原生输入框时
+            # dispatcher 拿不到 EditorActions，缺失此键会让 Ctrl+Shift+K 静默失效。
+            "focus_mode": ctx.focus_mode,
+            # 文档内搜索浮层（Ctrl+F）与侧边栏全局文件夹搜索（Ctrl+Shift+F）
+            "doc_search_open": ctx.open_doc_search,
+            "doc_search_close": ctx.close_doc_search,
+            "doc_search_next": ctx.doc_search_next,
+            "doc_search_prev": ctx.doc_search_prev,
+            "global_search": ctx.global_search,
+            # 源代码管理：Ctrl+Shift+G 打开面板；提交两个动作只在「提交框焦点域」
+            # 内被派发（见 views/key_bindings._handle_git_commit_box），
+            # 不会在编辑器里抢走 Ctrl+Enter（那里是切换原文模式）。
+            "git_panel": ctx.git_open_panel,
+            "git_commit": lambda: ctx.git_commit(False),
+            "git_commit_all": lambda: ctx.git_commit(True),
+            # Escape 关闭 Git 覆盖层（差异视图 / 分支面板）。返回 True 表示已消费，
+            # 分发器据此在常规分发之前拦截（覆盖层才是当前"前台"）。
+            "git_escape": ctx.git_escape,
+        },
+        capturing=ctx.capturing,
+        on_capture=ctx.on_capture,
+        on_cancel_capture=ctx.on_cancel_capture,
+        arrow_repeat_ref=ctx.arrow_repeat_ref,
+        # 非编辑器原生输入框焦点域：current 非 None 时只放行全局窗口级快捷键，
+        # 文档编辑/选区/导航/剪贴板键交原生输入框（搜索框 Ctrl+A 等不再误触编辑器）
+        native_input_ref=ctx.native_input_ref,
+        # 文档内搜索浮层打开标志（current=True 且输入框聚焦时拦截 Enter/Esc 等）
+        doc_search_open_ref=ctx.doc_search_open_ref,
+    )
+
+    def bind_keyboard():
+        """use_effect 回调：绑定 page.on_keyboard_event 到最新 dispatcher。
+
+        通过 dispatcher_ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例。
+        """
+        page = ui.context.page
+        ctx.page_ref.current = page
+        if page is None:
+            return lambda: None
+
+        def _handler(e):
+            # 通过 ref 读最新 dispatcher，避免闭包捕获首次渲染的过期实例。
+            # 刻意不吞异常：静默 except 会让「快捷键失效」这类回归无处可查；
+            # 分发器自身的异常由 Flet 事件循环上报（tests/test_boot_smoke.py 兜底）。
+            d = ctx.dispatcher_ref.current
+            if d is None:
+                return
+            d.handle(e)
+
+        page.on_keyboard_event = _handler
+
+        def _cleanup():
+            if ctx.page_ref.current is not None:
+                with contextlib.suppress(Exception):
+                    ctx.page_ref.current.on_keyboard_event = None
+
+        return _cleanup
+
+    return {
+        "dispatcher": dispatcher,
+        "bind_keyboard": bind_keyboard,
+    }

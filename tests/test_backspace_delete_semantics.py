@@ -28,8 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models.document import BlockType, Document, Line, Segment, SegType  # noqa: E402
-from views.editor._cursor import build_cursor  # noqa: E402
+from cs_markdown_editor.models.document import BlockType, Document, Line, Segment, SegType  # noqa: E402
+from cs_markdown_editor.views.editor._cursor import build_cursor  # noqa: E402
 
 
 class FakeRef:

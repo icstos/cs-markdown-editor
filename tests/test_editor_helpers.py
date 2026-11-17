@@ -13,8 +13,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Line
-from views._editor_helpers import (
+from cs_markdown_editor.models.document import BlockType, Line
+from cs_markdown_editor.views._editor_helpers import (
     _build_highlight_map,
     _build_offset_prefix,
     _char_kind,
@@ -31,7 +31,7 @@ from views._editor_helpers import (
     _table_cells,
     _vline_off_at_x,
 )
-from views.pixel_layout import VisualLine
+from cs_markdown_editor.views.pixel_layout import VisualLine
 
 
 # ---------------- _snap_indent_up ----------------

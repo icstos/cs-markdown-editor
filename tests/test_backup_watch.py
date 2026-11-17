@@ -20,7 +20,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app._backup_controller import _FileChange, build_backup_controller
+from cs_markdown_editor.app._backup_controller import _FileChange, build_backup_controller
 
 
 class _FakePage:

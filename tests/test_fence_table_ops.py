@@ -25,10 +25,10 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Document, SegType
-from parser import parse_markdown
-from utils.table_helpers import is_table_separator, join_row, split_row
-from views.editor._fence import build_fence
+from cs_markdown_editor.models.document import BlockType, Document, SegType
+from cs_markdown_editor.parser import parse_markdown
+from cs_markdown_editor.utils.table_helpers import is_table_separator, join_row, split_row
+from cs_markdown_editor.views.editor._fence import build_fence
 
 TABLE_TEXT = (
     "前言段落\n\n"

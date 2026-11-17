@@ -16,7 +16,7 @@ import ui
 
 from cmsite import _content
 from cmsite._shell import SiteShell
-from styles import get_colors
+from cs_markdown_editor.styles import get_colors
 
 __all__ = [
     "SiteShell",
@@ -50,7 +50,7 @@ def set_start_size(width: int, height: int) -> None:
 def inject_runtime_facts() -> None:
     """把应用元信息写进 `_content.RUNTIME`（读不到就保留静态回退值）。"""
     try:
-        from config.app_meta import app_version, runtime_summary
+        from cs_markdown_editor.config.app_meta import app_version, runtime_summary
     except Exception:  # 站点被单独拷走 / 未安装主程序：用回退值
         return
     _content.RUNTIME["version"] = app_version()

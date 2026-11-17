@@ -12,9 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from ui import ft
 
-import parser
-from views._spans import decorate_search_hits
-from views.doc_search import compute_doc_matches
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.views._spans import decorate_search_hits
+from cs_markdown_editor.views.doc_search import compute_doc_matches
 
 
 def _span(text: str) -> ft.TextSpan:

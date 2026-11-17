@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from services.git.models import ChangeKind
-from services.git.porcelain import (
+from cs_markdown_editor.services.git.models import ChangeKind
+from cs_markdown_editor.services.git.porcelain import (
     LOG_FORMAT,
     parse_ahead_behind,
     parse_branches,

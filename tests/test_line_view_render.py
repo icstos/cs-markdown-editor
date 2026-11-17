@@ -17,9 +17,9 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
 from tests.harness import RenderHarness  # noqa: E402
-from views.line_view import LineView  # noqa: E402
+from cs_markdown_editor.views.line_view import LineView  # noqa: E402
 
 # (说明, Markdown 源码) —— 覆盖全部块类型分支
 CASES = [
@@ -135,7 +135,7 @@ def test_every_wrap_block_call_passes_base():
     from pathlib import Path as _Path
 
     problems = []
-    for path in sorted((_Path(__file__).resolve().parent.parent / "views").rglob("*.py")):
+    for path in sorted((_Path(__file__).resolve().parent.parent / "src" / "cs_markdown_editor" / "views").rglob("*.py")):
         src = path.read_text(encoding="utf-8")
         if "wrap_block(" not in src:
             continue

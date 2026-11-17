@@ -84,7 +84,7 @@ def _default_combo(default: dict[str, str] | None) -> str:
 def load_groups() -> tuple[ShortcutGroup, ...]:
     """读取注册表并分组；失败时回退内置子集。"""
     try:
-        from services.shortcuts import ACTION_REGISTRY
+        from cs_markdown_editor.services.shortcuts import ACTION_REGISTRY
 
         buckets: dict[str, list[ShortcutRow]] = {}
         for action in ACTION_REGISTRY:

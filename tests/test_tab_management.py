@@ -19,7 +19,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from app._tab_management import build_tab_management
+from cs_markdown_editor.app._tab_management import build_tab_management
 
 
 def _make_ctx(

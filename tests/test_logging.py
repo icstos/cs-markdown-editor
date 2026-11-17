@@ -22,8 +22,8 @@ import time
 
 import pytest
 
-from utils import diagnostics
-from utils import log as ulog
+from cs_markdown_editor.utils import diagnostics
+from cs_markdown_editor.utils import log as ulog
 
 # ---------------------------------------------------------------------------
 # 夹具与工具
@@ -264,7 +264,7 @@ def test_timed_marks_normal_path(clean_log):
 
 def test_timed_warns_when_slow(clean_log, caplog):
     with (
-        caplog.at_level(logging.WARNING, logger="utils.diagnostics"),
+        caplog.at_level(logging.WARNING, logger="cs_markdown_editor.utils.diagnostics"),
         diagnostics.timed("慢操作", slow_ms=1, very_slow_ms=10_000),
     ):
         time.sleep(0.02)
@@ -273,7 +273,7 @@ def test_timed_warns_when_slow(clean_log, caplog):
 
 def test_timed_errors_when_very_slow(clean_log, caplog):
     with (
-        caplog.at_level(logging.ERROR, logger="utils.diagnostics"),
+        caplog.at_level(logging.ERROR, logger="cs_markdown_editor.utils.diagnostics"),
         diagnostics.timed("极慢操作", slow_ms=1, very_slow_ms=5),
     ):
         time.sleep(0.03)
@@ -283,7 +283,7 @@ def test_timed_errors_when_very_slow(clean_log, caplog):
 def test_timed_reraises_and_records_failure(clean_log, caplog):
     """诊断层只观察，不改变控制流——异常必须原样抛出。"""
     with (
-        caplog.at_level(logging.ERROR, logger="utils.diagnostics"),
+        caplog.at_level(logging.ERROR, logger="cs_markdown_editor.utils.diagnostics"),
         pytest.raises(RuntimeError, match="故意失败"),
         diagnostics.timed("会失败的操作"),
     ):

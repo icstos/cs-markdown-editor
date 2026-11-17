@@ -70,9 +70,9 @@ def _multi_cursor_dispatcher(actions, app_calls: list):
             app_calls.append(name)
         return fn
 
-    from services.shortcuts import ShortcutManager
+    from cs_markdown_editor.services.shortcuts import ShortcutManager
 
-    from views.key_bindings import KeyDispatcher
+    from cs_markdown_editor.views.key_bindings import KeyDispatcher
 
     cb = {
         "copy": rec("cb.copy"),

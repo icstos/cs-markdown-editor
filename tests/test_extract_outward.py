@@ -1,4 +1,4 @@
-"""parser.selection.extract_outward_text 纯函数单元测试。
+"""cs_markdown_editor.parser.selection.extract_outward_text 纯函数单元测试。
 
 覆盖向外选区文本提取（cut/copy 共用）：单行/多行/边界无效/空选区。
 偏移约定为行级 raw 偏移（与 editor 光标/选区偏移一致）。
@@ -9,8 +9,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.document import BlockType, Line
-from parser.selection import extract_outward_text
+from cs_markdown_editor.models.document import BlockType, Line
+from cs_markdown_editor.parser.selection import extract_outward_text
 
 
 def _make_doc(*raws: str) -> list[Line]:

@@ -15,10 +15,11 @@ import ast
 import dataclasses
 from pathlib import Path
 
-from views.editor._context import EditorContext
+from cs_markdown_editor.views.editor._context import EditorContext
 
 ROOT = Path(__file__).resolve().parent.parent
-EDITOR = ROOT / "views" / "editor"
+SRC = ROOT / "src" / "cs_markdown_editor"
+EDITOR = SRC / "views" / "editor"
 CONTEXT = EDITOR / "_context.py"
 
 # 由 __init__.py 直接赋值的槽位（非工厂产物）

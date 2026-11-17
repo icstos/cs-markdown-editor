@@ -33,18 +33,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from ui import ft
 
-import parser
-from app._file_io_ops import _save_dialog_exts, _text_for_write
-from models.document import BlockType, SegType
-from services.document_loader import UnsupportedFileType, load_document
-from services.file_io import read_text_auto, read_text_detailed
+import cs_markdown_editor.parser as parser
+from cs_markdown_editor.app._file_io_ops import _save_dialog_exts, _text_for_write
+from cs_markdown_editor.models.document import BlockType, SegType
+from cs_markdown_editor.services.document_loader import UnsupportedFileType, load_document
+from cs_markdown_editor.services.file_io import read_text_auto, read_text_detailed
 from tests.harness import RenderHarness, walk
-from utils import text_formats
-from views import code_block as blk
-from views._editor_helpers import parse_draft_lines
-from views.editor._blocks import build_blocks
-from views.editor._fence import build_fence
-from views.line_view import LineView
+from cs_markdown_editor.utils import text_formats
+from cs_markdown_editor.views import code_block as blk
+from cs_markdown_editor.views._editor_helpers import parse_draft_lines
+from cs_markdown_editor.views.editor._blocks import build_blocks
+from cs_markdown_editor.views.editor._fence import build_fence
+from cs_markdown_editor.views.line_view import LineView
 
 PY_SAMPLE = "import os\n\n\ndef main():\n    print('hi')\n"
 
@@ -257,7 +257,7 @@ def test_save_dialog_exts_plain_untitled_defaults_txt():
 
 def test_encoding_for_write_plain_uses_original():
     """纯文本文档按原编码写回；Markdown 恒 UTF-8（既有契约）。"""
-    from app._file_io_ops import _encoding_for_write
+    from cs_markdown_editor.app._file_io_ops import _encoding_for_write
 
     doc = parser.parse_plain_text("x", "python")
     doc.encoding = "gb18030"
@@ -281,7 +281,7 @@ def test_encoding_for_write_plain_uses_original():
 )
 def test_save_roundtrip_preserves_bytes(tmp_path, name, payload):
     """打开 → 写回：字节完全一致（编码 + BOM + 换行三者都不许变）。"""
-    from services.file_io import write_text_atomic
+    from cs_markdown_editor.services.file_io import write_text_atomic
 
     p = tmp_path / name
     p.write_bytes(payload)
@@ -292,7 +292,7 @@ def test_save_roundtrip_preserves_bytes(tmp_path, name, payload):
 
 def test_write_text_atomic_encoding_roundtrip(tmp_path):
     """原子写入的编码参数生效，且完整性校验按字节比对（不是按 str 长度）。"""
-    from services.file_io import write_text_atomic
+    from cs_markdown_editor.services.file_io import write_text_atomic
 
     p = tmp_path / "gbk.txt"
     write_text_atomic(str(p), "中文\r\n第二行", encoding="gb18030")
@@ -305,7 +305,7 @@ def test_write_text_atomic_rejects_unencodable(tmp_path):
     用 ascii 举例（gb18030 是全 Unicode 映射，连 emoji 都能编出来，不适合作反例）：
     宁可让保存失败并触发兜底备份，也不要把用户的中文写成问号。
     """
-    from services.file_io import write_text_atomic
+    from cs_markdown_editor.services.file_io import write_text_atomic
 
     p = tmp_path / "x.txt"
     with pytest.raises(UnicodeEncodeError):
@@ -549,7 +549,7 @@ def test_plain_doc_suppresses_whole_block_current_highlight():
 
 def test_page_padding_zero_for_source_view():
     """页面级留白策略：源码视图归零，Markdown 照旧随 zoom 缩放。"""
-    from views.editor import page_padding
+    from cs_markdown_editor.views.editor import page_padding
 
     sets = {"content_padding": 36, "content_padding_top": 24}
     assert page_padding(sets, 1.0, is_plain=True) == (0, 0)
@@ -567,7 +567,7 @@ def test_root_spacing_follows_toolbar():
     一条 10px 的页面底色横带——源码视图里正是"代码块与框架之间的那道缝"
     （真机实测 17 物理 px @DPR1.75）。
     """
-    from views.editor import _TOOLBAR_GAP, root_spacing
+    from cs_markdown_editor.views.editor import _TOOLBAR_GAP, root_spacing
 
     assert root_spacing(False) == 0
     assert root_spacing(True) == _TOOLBAR_GAP > 0
@@ -576,7 +576,7 @@ def test_root_spacing_follows_toolbar():
 def test_editor_tree_has_no_gap_above_first_block():
     """真实渲染：工具栏隐藏时，ToolArea 之后直接就是正文（间距 0）。"""
     from tests.harness import RenderHarness
-    from views.editor import MarkdownEditor
+    from cs_markdown_editor.views.editor import MarkdownEditor
 
     doc = parser.parse_plain_text("import os\nprint(1)\n", "python")
     for show, want in ((False, 0), (True, 10)):
@@ -597,7 +597,7 @@ def test_editor_tree_has_no_gap_above_first_block():
 
 def test_status_bar_counts_logical_lines_for_source_view():
     """源码视图的状态栏第三段按非空逻辑行数计（不是恒为 0 的"段"）。"""
-    from views.status_bar import _compute_counts
+    from cs_markdown_editor.views.status_bar import _compute_counts
 
     body = "import os\n\nprint(1)\n"
     doc = parser.parse_plain_text(body, "python")
@@ -651,8 +651,8 @@ def _render_file_panel(flat, opened, external):
     `_render_files_panel` 里用到了 `ft.use_*`（搜索框 / 上下文菜单），必须在
     渲染上下文中调用，故套一层 `@ft.component` 再交给 RenderHarness。
     """
-    from styles import _current_colors
-    from views.sidebar import _render_files_panel
+    from cs_markdown_editor.styles import _current_colors
+    from cs_markdown_editor.views.sidebar import _render_files_panel
 
     @ft.component
     def Root():

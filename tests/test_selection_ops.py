@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import (  # noqa: E402
+from cs_markdown_editor.parser import (  # noqa: E402
     apply_inline_format_to_selections,
     compute_markdown_from_selections,
     compute_markdown_from_text,
@@ -20,7 +20,7 @@ from parser import (  # noqa: E402
     match_text_to_selections,
     parse_markdown,
 )
-from utils.segment_helpers import display_text  # noqa: E402
+from cs_markdown_editor.utils.segment_helpers import display_text  # noqa: E402
 
 
 def _line_display(line) -> str:
@@ -269,7 +269,7 @@ def test_delete_single_line_partial():
     line.raw（与跨行分支调用 reparse_line 不同）。这是当前实际行为——
     调用方（editor）负责后续同步 raw。本测试验证 segments 拼接结果正确。
     """
-    from parser import segment_raw
+    from cs_markdown_editor.parser import segment_raw
 
     doc = parse_markdown("abcdef")
     new_lines, li, si, off = delete_selections(doc.lines, {0: (2, 4)})

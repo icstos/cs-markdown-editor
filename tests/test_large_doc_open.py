@@ -34,8 +34,8 @@ from ui import ft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.settings as cs  # noqa: E402
-from models.document import (  # noqa: E402
+import cs_markdown_editor.config.settings as cs  # noqa: E402
+from cs_markdown_editor.models.document import (  # noqa: E402
     BlockType,
     Document,
     Line,
@@ -44,16 +44,16 @@ from models.document import (  # noqa: E402
     new_line,
     new_segment,
 )
-from parser import parse_markdown  # noqa: E402
+from cs_markdown_editor.parser import parse_markdown  # noqa: E402
 from tests.harness import RenderHarness, walk  # noqa: E402
-from views.editor import (  # noqa: E402
+from cs_markdown_editor.views.editor import (  # noqa: E402
     _WINDOW_ACTIVATE,
     _WINDOW_CHUNK,
     _WINDOW_INITIAL,
     _WINDOW_MARGIN,
     MarkdownEditor,
 )
-from views.editor._render import _snap_window, resolve_window  # noqa: E402
+from cs_markdown_editor.views.editor._render import _snap_window, resolve_window  # noqa: E402
 
 # 设置文件隔离（同 tests/test_boot_smoke.py：受限环境下 pytest tmp_path 不可用）
 _SANDBOX = Path(__file__).resolve().parent / ".perf-sandbox"
@@ -220,7 +220,7 @@ def _render_capturing_prefix(md: str, monkeypatch, **props):
     留白高度」共用的唯一尺子。这里替换 `_scroll` 模块里的构建函数来拿它的
     返回值——测试断言的是**与被测代码同一把尺子**算出来的结果，不是复算一遍。
     """
-    import views.editor._scroll as scroll_mod
+    import cs_markdown_editor.views.editor._scroll as scroll_mod
 
     holder: dict = {}
     orig = scroll_mod._build_offset_prefix

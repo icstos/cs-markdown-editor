@@ -1,4 +1,4 @@
-"""app.autosave 单元测试（间隔触发模型）。
+"""cs_markdown_editor.app.autosave 单元测试（间隔触发模型）。
 
 覆盖：
 - autosave_enabled_for：纯函数，检查 settings.auto_save + tab 可写路径
@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from app.autosave import (
+from cs_markdown_editor.app.autosave import (
     AutosaveContext,
     autosave_all_dirty,
     autosave_all_dirty_sync,
